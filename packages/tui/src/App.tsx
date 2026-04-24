@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
 import type { AgentEvent, SessionId } from '@chimera/core';
+import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import { renderMarkdown } from './markdown';
 import { PermissionModal } from './PermissionModal';
@@ -18,6 +19,7 @@ export interface AppProps {
   modelRef: string;
   cwd: string;
   commands?: CommandRegistry;
+  skills?: SkillRegistry;
 }
 
 interface PendingPermission {
@@ -134,8 +136,18 @@ export function App(props: AppProps): React.ReactElement {
         description: c.description,
         kind: 'user' as const,
       }));
-    return [...builtins, ...users];
-  }, [input, props.commands, menuDismissed, registryVersion]);
+    // Skills are shadowed by built-ins and commands with the same name.
+    const userCmdNames = new Set(users.map((u) => u.name));
+    const skills: SlashMenuItem[] = (props.skills?.all() ?? [])
+      .filter((s) => !builtinNames.has(`/${s.name}`) && !userCmdNames.has(s.name))
+      .filter((s) => s.name.toLowerCase().startsWith(partial))
+      .map((s) => ({
+        name: s.name,
+        description: s.description,
+        kind: 'skill' as const,
+      }));
+    return [...builtins, ...users, ...skills];
+  }, [input, props.commands, props.skills, menuDismissed, registryVersion]);
 
   const menuOpen = menuItems.length > 0;
 
@@ -280,12 +292,19 @@ export function App(props: AppProps): React.ReactElement {
       const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(latestInput));
       if (match) {
         setInput(match.name);
-      } else if (props.commands) {
-        const userMatch = props.commands
-          .list()
-          .find((c) => `/${c.name}`.startsWith(latestInput));
-        if (userMatch) setInput(`/${userMatch.name}`);
+        return;
       }
+      const userMatch = props.commands
+        ?.list()
+        .find((c) => `/${c.name}`.startsWith(latestInput));
+      if (userMatch) {
+        setInput(`/${userMatch.name}`);
+        return;
+      }
+      const skillMatch = props.skills
+        ?.all()
+        .find((s) => `/${s.name}`.startsWith(latestInput));
+      if (skillMatch) setInput(`/${skillMatch.name}`);
       return;
     }
     if (key.backspace || key.delete) {
@@ -426,7 +445,16 @@ export function App(props: AppProps): React.ReactElement {
           void sendUserMessage(expanded);
           return;
         }
-        const suggestion = findClosestCommand(name!, props.commands);
+        const skill = props.skills?.find(templateName);
+        if (skill) {
+          const body = expandSkillInvocation(skill.name, skill.path, arg);
+          scrollback.addUserMessage(raw);
+          scrollback.suppressUserMessageMatching(body);
+          setEntries(scrollback.all());
+          void sendUserMessage(body);
+          return;
+        }
+        const suggestion = findClosestCommand(name!, props.commands, props.skills);
         scrollback.addError(
           suggestion
             ? `unknown command: ${name} — did you mean ${suggestion}?`
@@ -566,6 +594,18 @@ export function App(props: AppProps): React.ReactElement {
 }
 
 /**
+ * Synthesize the user message sent when the user invokes a skill via
+ * `/skillName [args]`. The message names the skill and its SKILL.md path so
+ * the model reads it (firing `skill_activated`), and appends any args as the
+ * user's request.
+ */
+function expandSkillInvocation(name: string, path: string, args: string): string {
+  const trimmed = args.trim();
+  const head = `Use the "${name}" skill from ${path}.`;
+  return trimmed.length > 0 ? `${head}\n\n${trimmed}` : head;
+}
+
+/**
  * Hard-wrap `text` into one string per visual line. Splits on explicit `\n`
  * first, then breaks each segment at `width` characters. The first segment's
  * available width is reduced by `firstOffset` to leave room for a prefix
@@ -641,6 +681,11 @@ function renderEntryLines(
             <Text color={theme.secondary}>{line}</Text>
           </Box>
         ))}
+        {entry.skillName && (
+          <Box paddingLeft={prefixLen}>
+            <Text color={theme.accent}>📚 skill: {entry.skillName}</Text>
+          </Box>
+        )}
       </Box>,
     ];
     if (entry.toolError) {

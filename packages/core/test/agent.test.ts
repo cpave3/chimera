@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { LanguageModel, ToolSet } from 'ai';
+import { tool, type LanguageModel, type ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
+import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Agent, buildPermissionRequest } from '../src/agent';
 import type { ModelConfig } from '../src/types';
@@ -158,6 +159,98 @@ describe('Agent', () => {
     expect(res.decision).toBe('allow');
     expect(res.remembered).toBe(false);
     await runPromise;
+  });
+
+  it('emits skill_activated on a read of a known SKILL.md path', async () => {
+    const readTool = tool({
+      description: 'read',
+      inputSchema: z.object({ path: z.string() }),
+      execute: async () => ({ content: 'ok', total_lines: 1, truncated: false }),
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'call-1',
+              toolName: 'read',
+              input: JSON.stringify({ path: '.chimera/skills/pdf/SKILL.md' }),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const hits: Array<{ skillName: string; source: string }> = [];
+    const agent = new Agent({
+      cwd: '/tmp',
+      // maxSteps: 1 so the mock stream runs one step; otherwise the AI SDK
+      // loops on `tool-calls` finish and the mock replays forever.
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 1 },
+      languageModel: model,
+      tools: { read: readTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      skillActivation: (readPath) =>
+        readPath === '.chimera/skills/pdf/SKILL.md'
+          ? { skillName: 'pdf', source: 'project' }
+          : undefined,
+    });
+
+    for await (const ev of agent.run('go')) {
+      if (ev.type === 'skill_activated') {
+        hits.push({ skillName: ev.skillName, source: ev.source });
+      }
+    }
+    expect(hits).toEqual([{ skillName: 'pdf', source: 'project' }]);
+  });
+
+  it('does not emit skill_activated when read path is not a skill', async () => {
+    const readTool = tool({
+      description: 'read',
+      inputSchema: z.object({ path: z.string() }),
+      execute: async () => ({ content: '', total_lines: 0, truncated: false }),
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'c1',
+              toolName: 'read',
+              input: JSON.stringify({ path: 'src/index.ts' }),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const events: string[] = [];
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 1 },
+      languageModel: model,
+      tools: { read: readTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      skillActivation: () => undefined,
+    });
+    for await (const ev of agent.run('go')) events.push(ev.type);
+    expect(events).not.toContain('skill_activated');
   });
 
   it('resolvePermission with remember fires the registered handler', async () => {

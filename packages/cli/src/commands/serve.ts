@@ -2,6 +2,7 @@ import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
+import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface ServeOptions {
   port?: number;
@@ -23,10 +24,18 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     config,
   });
 
+  const skills = loadSkillsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
+
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
+    skills,
   });
 
   const registry = new AgentRegistry({
@@ -38,6 +47,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       sandboxMode: 'off',
       parentId: opts.parent,
     },
+    loadSkills: () => skills.all(),
   });
 
   const app = buildApp({ registry });

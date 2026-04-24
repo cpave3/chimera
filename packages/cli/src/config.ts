@@ -13,6 +13,10 @@ export interface ChimeraConfig {
     enabled?: boolean;
     claudeCompat?: boolean;
   };
+  skills?: {
+    enabled?: boolean;
+    claudeCompat?: boolean;
+  };
 }
 
 export function configPath(home = homedir()): string {

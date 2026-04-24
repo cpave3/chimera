@@ -6,7 +6,7 @@ export interface SlashMenuItem {
   /** Command name without the leading slash. */
   name: string;
   description?: string;
-  kind: 'builtin' | 'user';
+  kind: 'builtin' | 'user' | 'skill';
 }
 
 export interface SlashMenuProps {
@@ -32,7 +32,8 @@ export function SlashMenu({ items, highlightIdx, theme }: SlashMenuProps): React
       {visible.map((item, i) => {
         const idx = start + i;
         const selected = idx === highlightIdx;
-        const badge = item.kind === 'builtin' ? 'built-in' : 'user';
+        const badge =
+          item.kind === 'builtin' ? 'built-in' : item.kind === 'skill' ? 'skill' : 'user';
         return (
           <Text key={item.name} inverse={selected}>
             <Text color={selected ? undefined : theme.primary}>/{item.name}</Text>

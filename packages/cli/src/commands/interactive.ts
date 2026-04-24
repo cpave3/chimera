@@ -5,6 +5,7 @@ import { mountTui } from '@chimera/tui';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface InteractiveOptions {
   cwd: string;
@@ -14,6 +15,8 @@ export interface InteractiveOptions {
   session?: string;
   home?: string;
   claudeCompat?: boolean;
+  /** False → skip skill discovery + injection (from `--no-skills`). */
+  skills?: boolean;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -24,10 +27,22 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     config,
   });
 
+  const skills = loadSkillsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    claudeCompatOverride: opts.claudeCompat,
+    skillsDisabled: opts.skills === false,
+    // Interactive TUI: swallow frontmatter-validation warnings rather than
+    // bleeding them into the terminal above the header. Users who want the
+    // diagnostic run `chimera skills` which keeps the warnings.
+  });
+
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
+    skills,
   });
 
   const commands = loadReloadingCommandsFromConfig({
@@ -46,6 +61,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       sandboxMode: 'off',
     },
     loadCommands: () => commands.list(),
+    loadSkills: () => skills.all(),
   });
   const app = buildApp({ registry });
   const server = await startServer({ app });
@@ -58,7 +74,14 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     sessionId: opts.session,
   });
 
-  const handle = mountTui({ client, sessionId, modelRef: ref, cwd: opts.cwd, commands });
+  const handle = mountTui({
+    client,
+    sessionId,
+    modelRef: ref,
+    cwd: opts.cwd,
+    commands,
+    skills,
+  });
   try {
     await handle.waitUntilExit();
   } finally {

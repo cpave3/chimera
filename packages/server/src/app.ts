@@ -46,6 +46,12 @@ export function buildApp(opts: AppOptions): Hono {
     return c.json(e.commands);
   });
 
+  app.get('/v1/sessions/:id/skills', (c) => {
+    const e = registry.get(c.req.param('id'));
+    if (!e) return c.json({ error: 'not found' }, 404);
+    return c.json(e.skills);
+  });
+
   // --- Messages / interrupt ---------------------------------------------
   app.post('/v1/sessions/:id/messages', async (c) => {
     const id = c.req.param('id');

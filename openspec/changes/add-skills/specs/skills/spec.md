@@ -79,6 +79,17 @@ Activation tracking SHALL NOT change the behavior of the `read` tool; it is pure
 - **WHEN** the model calls `read { path: "src/index.ts" }`
 - **THEN** no `skill_activated` event SHALL be emitted
 
+### Requirement: Slash invocation from the TUI
+
+The TUI SHALL permit users to invoke a skill as a slash command (`/<skillName> [args]`). When the skill name does not collide with a built-in or a user command template, submitting `/<skillName> [args]` SHALL send a user message to the session containing both the literal text `Use the "<skillName>" skill` and the absolute path to its `SKILL.md`. If `args` has non-whitespace content, it SHALL be appended separated by a blank line; otherwise the message contains only the skill identification.
+
+Skill names SHALL be shadowed by built-ins and command templates of the same name (see the `commands` capability's "TUI dispatch of slash input" requirement). Skills SHALL also appear in the slash-menu autocomplete and in the fuzzy-suggestion pool used for unknown commands.
+
+#### Scenario: Skill dispatch with args
+
+- **WHEN** skill `pdf` resolves to `/abs/.chimera/skills/pdf/SKILL.md` and the user types `/pdf merge foo.pdf bar.pdf`
+- **THEN** the TUI SHALL send a single user message containing both `Use the "pdf" skill` and `merge foo.pdf bar.pdf`, pointing at `/abs/.chimera/skills/pdf/SKILL.md`
+
 ### Requirement: CLI / SDK surface
 
 `@chimera/cli` SHALL:

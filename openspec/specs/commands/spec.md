@@ -93,13 +93,24 @@ The result SHALL be a string that the consumer uses as a user message. `expand()
 
 ### Requirement: TUI dispatch of slash input
 
-When a user submits input beginning with `/` in the TUI, the TUI SHALL resolve it in three tiers: built-in, user template, then fuzzy-match fallback. Specifically:
+When a user submits input beginning with `/` in the TUI, the TUI SHALL resolve it in four tiers: built-in, user template, skill, then fuzzy-match fallback. Specifically:
 
 1. The TUI SHALL first consult its hardcoded built-in list (`/help`, `/clear`, `/new`, `/sessions`, `/exit`, `/model`, `/rules`, plus any built-ins added by other changes). On a match, the built-in SHALL handle the input without involving the commands registry.
 2. Otherwise, the TUI SHALL consult the loaded commands registry. On a match, it SHALL call `registry.expand(name, args)` and send the expanded string as a normal user message to the current session.
-3. Otherwise, the TUI SHALL render an inline hint `unknown command: /<name> — did you mean /<best-match>?` using a fuzzy match against the union of built-in and template names. The input SHALL NOT be sent to the model.
+3. Otherwise, the TUI SHALL consult the loaded skill registry. On a match, it SHALL synthesize a user message that identifies the skill by name and absolute `SKILL.md` path and appends the raw args when non-empty, separated by a blank line, and send it as a normal user message.
+4. Otherwise, the TUI SHALL render an inline hint `unknown command: /<name> — did you mean /<best-match>?` using a fuzzy match against the union of built-in, template, and skill names. The input SHALL NOT be sent to the model.
 
-Built-in names SHALL shadow template names with the same name, and a single log warning SHALL be emitted at session start per such collision.
+Built-in names SHALL shadow template names with the same name, and template names SHALL shadow skill names with the same name. A single log warning SHALL be emitted at session start per built-in/template collision.
+
+#### Scenario: Skill invoked as a slash command
+
+- **WHEN** a skill `pdf` is resolved at `/abs/.chimera/skills/pdf/SKILL.md` and the user types `/pdf merge foo.pdf bar.pdf`
+- **THEN** the TUI SHALL send a user message that contains both `Use the "pdf" skill` and the substring `merge foo.pdf bar.pdf`, and points the model at the absolute SKILL.md path
+
+#### Scenario: Command template shadows a same-named skill
+
+- **WHEN** both `.chimera/commands/pdf.md` and `.chimera/skills/pdf/SKILL.md` exist and the user types `/pdf hello`
+- **THEN** the command template SHALL be expanded and sent; the skill SHALL NOT be invoked
 
 #### Scenario: User template handles previously-unknown slash
 

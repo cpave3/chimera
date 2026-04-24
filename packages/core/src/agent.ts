@@ -30,6 +30,15 @@ export interface AgentOptions {
   session?: Session;
   /** Home directory for session persistence. Defaults to os.homedir(). */
   home?: string;
+  /**
+   * Optional hook: if a `read` tool call resolves to a known SKILL.md, returns
+   * `{ skillName, source }` so the agent can emit `skill_activated`. Purely
+   * observational; return value does not change tool behavior.
+   */
+  skillActivation?: (readPath: string) => {
+    skillName: string;
+    source: 'project' | 'user' | 'claude-compat';
+  } | undefined;
 }
 
 export type PermissionRaiseHandler = (
@@ -269,6 +278,19 @@ export class Agent {
               result,
               durationMs: Date.now() - info.startedAt,
             });
+            if (info.name === 'read' && this.opts.skillActivation) {
+              const readPath = extractReadPath(rec?.args);
+              if (readPath) {
+                const hit = this.opts.skillActivation(readPath);
+                if (hit) {
+                  queue.push({
+                    type: 'skill_activated',
+                    skillName: hit.skillName,
+                    source: hit.source,
+                  });
+                }
+              }
+            }
             callInfo.delete(part.toolCallId);
             break;
           }
@@ -360,6 +382,14 @@ export class Agent {
       error: errorMessage,
     });
   }
+}
+
+function extractReadPath(args: unknown): string | undefined {
+  if (args && typeof args === 'object' && 'path' in args) {
+    const p = (args as { path?: unknown }).path;
+    if (typeof p === 'string' && p.length > 0) return p;
+  }
+  return undefined;
 }
 
 function extractTarget(args: unknown): ExecutionTarget {

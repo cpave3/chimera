@@ -1,6 +1,7 @@
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
 import type { SessionId } from '@chimera/core';
+import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import React from 'react';
 import { App } from './App';
@@ -11,6 +12,7 @@ export interface MountOptions {
   modelRef: string;
   cwd: string;
   commands?: CommandRegistry;
+  skills?: SkillRegistry;
 }
 
 export interface TuiHandle {
@@ -31,6 +33,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
       modelRef={opts.modelRef}
       cwd={opts.cwd}
       commands={opts.commands}
+      skills={opts.skills}
     />,
     {
       exitOnCtrlC: false,

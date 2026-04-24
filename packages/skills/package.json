@@ -1,5 +1,5 @@
 {
-  "name": "@chimera/client",
+  "name": "@chimera/skills",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,20 +13,17 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "@chimera/commands": "workspace:*",
-    "@chimera/core": "workspace:*",
-    "@chimera/skills": "workspace:*"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@chimera/server": "workspace:*",
-    "ai": "^6.0.168",
+    "@chimera/core": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"

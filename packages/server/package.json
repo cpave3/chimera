@@ -23,6 +23,7 @@
     "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
     "@chimera/permissions": "workspace:*",
+    "@chimera/skills": "workspace:*",
     "@chimera/tools": "workspace:*",
     "@hono/node-server": "^1.13.7",
     "hono": "^4.12.14"

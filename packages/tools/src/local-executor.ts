@@ -14,13 +14,22 @@ const SIGKILL_DELAY_MS = 2_000;
 
 export interface LocalExecutorOptions {
   cwd: string;
+  /**
+   * Extra absolute directories that are permitted for READ operations only.
+   * Used for out-of-cwd resources the agent legitimately needs (notably
+   * skill directories under `~/.chimera/skills/` and `~/.claude/skills/`).
+   * Writes and exec remain strictly cwd-scoped regardless of this list.
+   */
+  readAllowDirs?: string[];
 }
 
 export class LocalExecutor implements Executor {
   private readonly rootCwd: string;
+  private readonly readAllowDirs: string[];
 
   constructor(opts: LocalExecutorOptions) {
     this.rootCwd = resolve(opts.cwd);
+    this.readAllowDirs = (opts.readAllowDirs ?? []).map((d) => resolve(d));
   }
 
   cwd(): string {
@@ -44,13 +53,29 @@ export class LocalExecutor implements Executor {
     return absolute;
   }
 
+  /**
+   * Read-mode path resolution: allow `rootCwd` plus any configured
+   * `readAllowDirs`. Returns the absolute path on success.
+   */
+  private resolveReadable(path: string): string {
+    const absolute = isAbsolute(path) ? resolve(path) : resolve(this.rootCwd, path);
+    const relCwd = relative(this.rootCwd, absolute);
+    const underCwd = !relCwd.startsWith('..') && !isAbsolute(relCwd);
+    if (underCwd) return absolute;
+    for (const dir of this.readAllowDirs) {
+      const rel = relative(dir, absolute);
+      if (!rel.startsWith('..') && !isAbsolute(rel)) return absolute;
+    }
+    throw new PathEscapeError(path, this.rootCwd);
+  }
+
   async readFile(path: string): Promise<string> {
-    const abs = this.resolveSafe(path);
+    const abs = this.resolveReadable(path);
     return readFile(abs, 'utf8');
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    const abs = this.resolveSafe(path);
+    const abs = this.resolveReadable(path);
     return readFile(abs);
   }
 
@@ -64,7 +89,7 @@ export class LocalExecutor implements Executor {
 
   async stat(path: string): Promise<StatResult | null> {
     try {
-      const abs = this.resolveSafe(path);
+      const abs = this.resolveReadable(path);
       const st = await stat(abs);
       return { exists: true, isDir: st.isDirectory(), size: st.size };
     } catch (err) {

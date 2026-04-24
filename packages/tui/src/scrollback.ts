@@ -8,6 +8,9 @@ export interface ScrollbackEntry {
   toolTarget?: 'sandbox' | 'host';
   toolResult?: unknown;
   toolError?: string;
+  /** Set when a `skill_activated` event follows a `read` tool call. */
+  skillName?: string;
+  skillSource?: 'project' | 'user' | 'claude-compat';
 }
 
 export class Scrollback {
@@ -108,6 +111,20 @@ export class Scrollback {
       const entry = this.toolsByCallId.get(ev.callId);
       if (entry) entry.toolError = ev.error;
       else this.addError(`tool error: ${ev.error}`);
+      return;
+    }
+    if (ev.type === 'skill_activated') {
+      // Attach to the most recent `read` tool entry, which is the one that
+      // triggered activation. Walk backwards — there's usually only one
+      // entry between the read and this event.
+      for (let i = this.entries.length - 1; i >= 0; i -= 1) {
+        const e = this.entries[i]!;
+        if (e.kind === 'tool' && e.toolName === 'read') {
+          e.skillName = ev.skillName;
+          e.skillSource = ev.source;
+          return;
+        }
+      }
       return;
     }
     if (ev.type === 'run_finished' && ev.reason === 'error' && ev.error) {

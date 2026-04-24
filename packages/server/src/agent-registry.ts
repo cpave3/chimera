@@ -8,6 +8,7 @@ import type {
   Session,
   SessionId,
 } from '@chimera/core';
+import type { Skill } from '@chimera/skills';
 import { EventBus } from './event-bus';
 
 export interface SessionInit {
@@ -33,6 +34,8 @@ export interface AgentEntry {
    * mid-session filesystem changes do not affect what `listCommands` returns.
    */
   commands: Command[];
+  /** Skills bound to this session at creation time. Same snapshot discipline. */
+  skills: Skill[];
 }
 
 export interface InstanceInfo {
@@ -51,11 +54,17 @@ export interface CommandsLoader {
   (ctx: { cwd: string }): Command[];
 }
 
+export interface SkillsLoader {
+  (ctx: { cwd: string }): Skill[];
+}
+
 export interface AgentRegistryOptions {
   factory: AgentFactory;
   instance: InstanceInfo;
   /** Optional hook to load user commands at session-creation time. */
   loadCommands?: CommandsLoader;
+  /** Optional hook to load skills at session-creation time. */
+  loadSkills?: SkillsLoader;
 }
 
 export class AgentRegistry {
@@ -63,11 +72,13 @@ export class AgentRegistry {
   private readonly factory: AgentFactory;
   private readonly instance: InstanceInfo;
   private readonly loadCommands?: CommandsLoader;
+  private readonly loadSkills?: SkillsLoader;
 
   constructor(opts: AgentRegistryOptions) {
     this.factory = opts.factory;
     this.instance = opts.instance;
     this.loadCommands = opts.loadCommands;
+    this.loadSkills = opts.loadSkills;
   }
 
   getInstanceInfo(): InstanceInfo {
@@ -78,6 +89,7 @@ export class AgentRegistry {
     const { agent, gate } = await this.factory.build(init);
     const bus = new EventBus(agent.session.id);
     const commands = this.loadCommands ? this.loadCommands({ cwd: init.cwd }) : [];
+    const skills = this.loadSkills ? this.loadSkills({ cwd: init.cwd }) : [];
     const entry: AgentEntry = {
       agent,
       gate,
@@ -85,6 +97,7 @@ export class AgentRegistry {
       runActive: false,
       resolvedPermissionIds: new Set(),
       commands,
+      skills,
     };
     this.entries.set(agent.session.id, entry);
     bus.publish({ type: 'session_started', sessionId: agent.session.id });

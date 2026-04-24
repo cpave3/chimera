@@ -52,6 +52,35 @@ describe('Scrollback', () => {
     expect(sb.all()[0]).toMatchObject({ kind: 'user', text: 'next one' });
   });
 
+  it('attaches skill_activated metadata to the most recent read tool entry', () => {
+    const sb = new Scrollback();
+    sb.apply({
+      type: 'tool_call_start',
+      callId: 'c1',
+      name: 'read',
+      args: { path: '.chimera/skills/pdf/SKILL.md' },
+      target: 'host',
+    });
+    sb.apply({ type: 'skill_activated', skillName: 'pdf', source: 'project' });
+    const rows = sb.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.skillName).toBe('pdf');
+    expect(rows[0]!.skillSource).toBe('project');
+  });
+
+  it('ignores skill_activated when the most recent tool is not a read', () => {
+    const sb = new Scrollback();
+    sb.apply({
+      type: 'tool_call_start',
+      callId: 'c1',
+      name: 'bash',
+      args: { command: 'echo hi' },
+      target: 'host',
+    });
+    sb.apply({ type: 'skill_activated', skillName: 'pdf', source: 'project' });
+    expect(sb.all()[0]!.skillName).toBeUndefined();
+  });
+
   it('suppressUserMessageMatching on a non-match still renders and clears the flag', () => {
     const sb = new Scrollback();
     sb.suppressUserMessageMatching('expected');

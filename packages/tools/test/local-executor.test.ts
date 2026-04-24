@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -65,6 +65,46 @@ describe('LocalExecutor', () => {
     const r = await exec.exec('sleep 5', { signal: ac.signal });
     expect(r.exitCode).not.toBe(0);
   }, 10_000);
+
+  it('readAllowDirs permits reads outside cwd on allow-listed paths', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-allow-'));
+    try {
+      const skillDir = join(outside, 'pdf');
+      await mkdir(skillDir);
+      await writeFile(join(skillDir, 'SKILL.md'), 'hello-skill');
+
+      const exec = new LocalExecutor({
+        cwd: root,
+        readAllowDirs: [skillDir],
+      });
+      const content = await exec.readFile(join(skillDir, 'SKILL.md'));
+      expect(content).toBe('hello-skill');
+
+      // Stat of the allow-listed file also succeeds.
+      expect((await exec.stat(join(skillDir, 'SKILL.md')))?.exists).toBe(true);
+
+      // A sibling path outside the allow-list is still rejected.
+      const sibling = join(outside, 'other.txt');
+      await writeFile(sibling, 'nope');
+      await expect(exec.readFile(sibling)).rejects.toBeInstanceOf(PathEscapeError);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('readAllowDirs does NOT permit writes outside cwd', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-allow-w-'));
+    try {
+      const allowed = join(outside, 'pdf');
+      await mkdir(allowed);
+      const exec = new LocalExecutor({ cwd: root, readAllowDirs: [allowed] });
+      await expect(
+        exec.writeFile(join(allowed, 'new.txt'), 'x'),
+      ).rejects.toBeInstanceOf(PathEscapeError);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
 
   it('writeFile is atomic: uses a temp+rename path', async () => {
     const exec = new LocalExecutor({ cwd: root });

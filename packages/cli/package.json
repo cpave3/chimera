@@ -30,6 +30,7 @@
     "@chimera/permissions": "workspace:*",
     "@chimera/providers": "workspace:*",
     "@chimera/server": "workspace:*",
+    "@chimera/skills": "workspace:*",
     "@chimera/tools": "workspace:*",
     "@chimera/tui": "workspace:*",
     "commander": "^14.0.3"

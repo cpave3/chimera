@@ -1,4 +1,5 @@
 import type { CommandRegistry } from '@chimera/commands';
+import type { SkillRegistry } from '@chimera/skills';
 
 export interface SlashCommand {
   name: string;
@@ -28,10 +29,12 @@ export function isBuiltin(name: string): boolean {
 export function findClosestCommand(
   input: string,
   registry?: CommandRegistry,
+  skills?: SkillRegistry,
 ): string | null {
   const names = [
     ...BUILTIN_COMMANDS.map((c) => c.name),
     ...(registry ? registry.list().map((c) => `/${c.name}`) : []),
+    ...(skills ? skills.all().map((s) => `/${s.name}`) : []),
   ];
   if (names.includes(input)) return input;
   let best: string | null = null;

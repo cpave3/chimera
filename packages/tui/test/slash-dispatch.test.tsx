@@ -1,6 +1,7 @@
 import type { ChimeraClient } from '@chimera/client';
 import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands';
 import type { AgentEvent } from '@chimera/core';
+import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
@@ -60,6 +61,21 @@ function registry(
     })),
     [],
     '/tmp',
+  );
+}
+
+function skillRegistry(
+  skills: { name: string; description: string; path?: string }[],
+): SkillRegistry {
+  return new InMemorySkillRegistry(
+    skills.map((s) => ({
+      name: s.name,
+      description: s.description,
+      path: s.path ?? `/tmp/.chimera/skills/${s.name}/SKILL.md`,
+      source: 'project' as const,
+      frontmatter: {},
+    })),
+    [],
   );
 }
 
@@ -238,6 +254,75 @@ describe('TUI slash dispatch', () => {
     );
     await type(stdin, '/help\r');
     expect(lastFrame()!).toContain('/reload');
+    unmount();
+  });
+
+  it('/<skill> with args dispatches as a synthesized user message', async () => {
+    const skills = skillRegistry([
+      {
+        name: 'pdf',
+        description: 'PDF things',
+        path: '/abs/.chimera/skills/pdf/SKILL.md',
+      },
+    ]);
+    const sent: string[] = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({ sendSpy: (m) => sent.push(m) })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+        commands={registry([])}
+        skills={skills}
+      />,
+    );
+    await type(stdin, '/pdf merge foo.pdf bar.pdf\r');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('Use the "pdf" skill');
+    expect(sent[0]).toContain('/abs/.chimera/skills/pdf/SKILL.md');
+    expect(sent[0]).toContain('merge foo.pdf bar.pdf');
+    unmount();
+  });
+
+  it('/<skill> with no args still dispatches (no appended body)', async () => {
+    const skills = skillRegistry([
+      { name: 'pdf', description: 'PDF things' },
+    ]);
+    const sent: string[] = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({ sendSpy: (m) => sent.push(m) })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+        commands={registry([])}
+        skills={skills}
+      />,
+    );
+    await type(stdin, '/pdf\r');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('Use the "pdf" skill');
+  });
+
+  it('user command shadows a skill of the same name', async () => {
+    const reg = registry([{ name: 'pdf', body: 'Command body $ARGUMENTS' }]);
+    const skills = skillRegistry([{ name: 'pdf', description: 'PDF things' }]);
+    const sent: string[] = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({ sendSpy: (m) => sent.push(m) })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+        commands={reg}
+        skills={skills}
+      />,
+    );
+    await type(stdin, '/pdf hello\r');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toEqual(['Command body hello']);
     unmount();
   });
 

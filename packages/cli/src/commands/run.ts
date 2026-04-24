@@ -3,6 +3,7 @@ import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimer
 import { loadCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface RunOptions {
   prompt: string;
@@ -17,8 +18,10 @@ export interface RunOptions {
   command?: string;
   /** Raw args string for the command template. */
   commandArgs?: string;
-  /** If false, skip `.claude/commands/` discovery. */
+  /** If false, skip `.claude/commands/` and `.claude/skills/` discovery. */
   claudeCompat?: boolean;
+  /** If false, skip skill discovery + system-prompt injection entirely. */
+  skills?: boolean;
   /** Test hook: bypass provider loading and supply a pre-built factory. */
   factoryOverride?: AgentFactory;
   /** Test hook: override model config when `factoryOverride` is supplied. */
@@ -33,6 +36,14 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   let model: { providerId: string; modelId: string; maxSteps: number };
   let factory: AgentFactory;
   const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);
+  const skills = loadSkillsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    claudeCompatOverride: opts.claudeCompat,
+    skillsDisabled: opts.skills === false,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
   if (opts.factoryOverride && opts.modelOverride) {
     model = opts.modelOverride;
     factory = opts.factoryOverride;
@@ -47,6 +58,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       home: opts.home,
+      skills,
     });
   }
 
@@ -76,6 +88,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     factory,
     instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode: 'off' },
     loadCommands: () => commands.list(),
+    loadSkills: () => skills.all(),
   });
   const app = buildApp({ registry });
   const server = await startServer({ app });

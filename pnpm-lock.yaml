@@ -47,6 +47,9 @@ importers:
       '@chimera/server':
         specifier: workspace:*
         version: link:../server
+      '@chimera/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@chimera/tools':
         specifier: workspace:*
         version: link:../tools
@@ -78,6 +81,9 @@ importers:
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
+      '@chimera/skills':
+        specifier: workspace:*
+        version: link:../skills
     devDependencies:
       '@chimera/server':
         specifier: workspace:*
@@ -187,6 +193,9 @@ importers:
       '@chimera/permissions':
         specifier: workspace:*
         version: link:../permissions
+      '@chimera/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@chimera/tools':
         specifier: workspace:*
         version: link:../tools
@@ -200,6 +209,21 @@ importers:
       ai:
         specifier: ^6.0.168
         version: 6.0.168(zod@4.3.6)
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(postcss@8.5.10)(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.27.7))
+
+  packages/skills:
+    devDependencies:
+      '@chimera/core':
+        specifier: workspace:*
+        version: link:../core
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.10)(typescript@6.0.3)
@@ -243,6 +267,9 @@ importers:
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
+      '@chimera/skills':
+        specifier: workspace:*
+        version: link:../skills
       ink:
         specifier: npm:@jrichman/ink@6.6.9
         version: '@jrichman/ink@6.6.9(@types/react@19.2.14)(react@19.2.5)'

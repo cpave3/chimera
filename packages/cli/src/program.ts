@@ -6,6 +6,7 @@ import { runLs } from './commands/ls';
 import { runOneShot } from './commands/run';
 import { runServe } from './commands/serve';
 import { runSessionsList, runSessionsRm } from './commands/sessions';
+import { runSkillsList } from './commands/skills';
 
 const BANNED_SANDBOX_FLAGS = [
   '--sandbox',
@@ -49,7 +50,8 @@ export function buildProgram(): Command {
     .option('--stdin', 'Read prompt from stdin', false)
     .option('--command <name>', 'Run a user command template by name')
     .option('--args <args>', 'Arguments for --command (quoted string)')
-    .option('--no-claude-compat', 'Skip .claude/commands/ discovery')
+    .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+    .option('--no-skills', 'Skip skill discovery and system-prompt injection')
     .option('-v, --verbose', 'Verbose logging', false)
     .option('-q, --quiet', 'Suppress non-essential logging', false)
     .action(async (promptArgs: string[], opts) => {
@@ -78,6 +80,7 @@ export function buildProgram(): Command {
         command: opts.command,
         commandArgs: opts.args,
         claudeCompat: opts.claudeCompat,
+        skills: opts.skills,
       });
       process.exit(exitCode);
     });
@@ -90,6 +93,20 @@ export function buildProgram(): Command {
     .option('--no-claude-compat', 'Skip .claude/commands/ discovery')
     .action(async (opts) => {
       await runCommandsList({
+        cwd: opts.cwd,
+        json: opts.json,
+        claudeCompat: opts.claudeCompat,
+      });
+    });
+
+  program
+    .command('skills')
+    .description('List skills discovered from the current working directory.')
+    .option('--cwd <path>', 'Working directory', process.cwd())
+    .option('--json', 'Emit JSON', false)
+    .option('--no-claude-compat', 'Skip .claude/skills/ discovery')
+    .action(async (opts) => {
+      await runSkillsList({
         cwd: opts.cwd,
         json: opts.json,
         claudeCompat: opts.claudeCompat,
@@ -156,7 +173,8 @@ export function buildProgram(): Command {
     .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
     .option('--auto-approve <level>', 'none|sandbox|host|all')
     .option('--session <id>', 'Resume a persisted session')
-    .option('--no-claude-compat', 'Skip .claude/commands/ discovery')
+    .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+    .option('--no-skills', 'Skip skill discovery and system-prompt injection')
     .action(async (opts) => {
       await runInteractive({
         cwd: opts.cwd ?? process.cwd(),
@@ -165,6 +183,7 @@ export function buildProgram(): Command {
         autoApprove: opts.autoApprove,
         session: opts.session,
         claudeCompat: opts.claudeCompat,
+        skills: opts.skills,
       });
     });
 

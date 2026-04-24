@@ -10,6 +10,7 @@ import type {
   Session,
   SessionId,
 } from '@chimera/core';
+import type { Skill } from '@chimera/skills';
 import { ChimeraHttpError, PermissionAlreadyResolvedError } from './errors';
 import { parseSSE } from './sse';
 
@@ -142,6 +143,10 @@ export class ChimeraClient {
 
   async listCommands(sessionId: SessionId): Promise<Command[]> {
     return this.json<Command[]>(`/v1/sessions/${sessionId}/commands`);
+  }
+
+  async listSkills(sessionId: SessionId): Promise<Skill[]> {
+    return this.json<Skill[]>(`/v1/sessions/${sessionId}/skills`);
   }
 
   /**
