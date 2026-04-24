@@ -9,6 +9,10 @@ export interface ChimeraConfig {
   defaultModel?: string;
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
+  commands?: {
+    enabled?: boolean;
+    claudeCompat?: boolean;
+  };
 }
 
 export function configPath(home = homedir()): string {

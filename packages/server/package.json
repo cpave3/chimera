@@ -20,6 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
     "@chimera/permissions": "workspace:*",
     "@chimera/tools": "workspace:*",

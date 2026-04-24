@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@chimera/client": "workspace:*",
+    "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
     "@chimera/permissions": "workspace:*",
     "@chimera/providers": "workspace:*",

@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { runAttach } from './commands/attach';
+import { runCommandsList } from './commands/commands';
 import { runInteractive } from './commands/interactive';
 import { runLs } from './commands/ls';
 import { runOneShot } from './commands/run';
@@ -37,7 +38,7 @@ export function buildProgram(): Command {
   program.version('0.1.0');
 
   program
-    .command('run <prompt...>', { isDefault: false })
+    .command('run [prompt...]', { isDefault: false })
     .description('Run a one-shot prompt non-interactively.')
     .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
     .option('--cwd <path>', 'Working directory', process.cwd())
@@ -46,12 +47,25 @@ export function buildProgram(): Command {
     .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
     .option('--session <id>', 'Resume a persisted session')
     .option('--stdin', 'Read prompt from stdin', false)
+    .option('--command <name>', 'Run a user command template by name')
+    .option('--args <args>', 'Arguments for --command (quoted string)')
+    .option('--no-claude-compat', 'Skip .claude/commands/ discovery')
     .option('-v, --verbose', 'Verbose logging', false)
     .option('-q, --quiet', 'Suppress non-essential logging', false)
     .action(async (promptArgs: string[], opts) => {
       let prompt = promptArgs.join(' ');
       if (opts.stdin) {
         prompt = await readStdin();
+      }
+      if (opts.command && prompt.length > 0) {
+        process.stderr.write(
+          'error: --command is mutually exclusive with a positional prompt.\n',
+        );
+        process.exit(1);
+      }
+      if (!opts.command && prompt.length === 0) {
+        process.stderr.write('error: run requires a prompt or --command <name>.\n');
+        process.exit(1);
       }
       const { exitCode } = await runOneShot({
         prompt,
@@ -61,8 +75,25 @@ export function buildProgram(): Command {
         cwd: opts.cwd,
         autoApprove: opts.autoApprove,
         session: opts.session,
+        command: opts.command,
+        commandArgs: opts.args,
+        claudeCompat: opts.claudeCompat,
       });
       process.exit(exitCode);
+    });
+
+  program
+    .command('commands')
+    .description('List user commands discovered from the current working directory.')
+    .option('--cwd <path>', 'Working directory', process.cwd())
+    .option('--json', 'Emit JSON', false)
+    .option('--no-claude-compat', 'Skip .claude/commands/ discovery')
+    .action(async (opts) => {
+      await runCommandsList({
+        cwd: opts.cwd,
+        json: opts.json,
+        claudeCompat: opts.claudeCompat,
+      });
     });
 
   program
@@ -125,6 +156,7 @@ export function buildProgram(): Command {
     .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
     .option('--auto-approve <level>', 'none|sandbox|host|all')
     .option('--session <id>', 'Resume a persisted session')
+    .option('--no-claude-compat', 'Skip .claude/commands/ discovery')
     .action(async (opts) => {
       await runInteractive({
         cwd: opts.cwd ?? process.cwd(),
@@ -132,6 +164,7 @@ export function buildProgram(): Command {
         maxSteps: opts.maxSteps,
         autoApprove: opts.autoApprove,
         session: opts.session,
+        claudeCompat: opts.claudeCompat,
       });
     });
 

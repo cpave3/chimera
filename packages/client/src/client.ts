@@ -1,3 +1,4 @@
+import type { Command } from '@chimera/commands';
 import type {
   AgentEvent,
   AgentEventEnvelope,
@@ -137,6 +138,10 @@ export class ChimeraClient {
     await this.json<void>(`/v1/sessions/${sessionId}/permissions/rules/${index}`, {
       method: 'DELETE',
     });
+  }
+
+  async listCommands(sessionId: SessionId): Promise<Command[]> {
+    return this.json<Command[]>(`/v1/sessions/${sessionId}/commands`);
   }
 
   /**

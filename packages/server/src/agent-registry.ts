@@ -1,3 +1,4 @@
+import type { Command } from '@chimera/commands';
 import type {
   Agent,
   AgentEvent,
@@ -27,6 +28,11 @@ export interface AgentEntry {
   bus: EventBus;
   runActive: boolean;
   resolvedPermissionIds: Set<string>;
+  /**
+   * Commands bound to this session at creation time. Captured once so that
+   * mid-session filesystem changes do not affect what `listCommands` returns.
+   */
+  commands: Command[];
 }
 
 export interface InstanceInfo {
@@ -41,19 +47,27 @@ export interface AgentFactory {
   build(init: SessionInit): Promise<BuildResult>;
 }
 
+export interface CommandsLoader {
+  (ctx: { cwd: string }): Command[];
+}
+
 export interface AgentRegistryOptions {
   factory: AgentFactory;
   instance: InstanceInfo;
+  /** Optional hook to load user commands at session-creation time. */
+  loadCommands?: CommandsLoader;
 }
 
 export class AgentRegistry {
   private readonly entries = new Map<SessionId, AgentEntry>();
   private readonly factory: AgentFactory;
   private readonly instance: InstanceInfo;
+  private readonly loadCommands?: CommandsLoader;
 
   constructor(opts: AgentRegistryOptions) {
     this.factory = opts.factory;
     this.instance = opts.instance;
+    this.loadCommands = opts.loadCommands;
   }
 
   getInstanceInfo(): InstanceInfo {
@@ -63,12 +77,14 @@ export class AgentRegistry {
   async create(init: SessionInit): Promise<{ sessionId: SessionId; entry: AgentEntry }> {
     const { agent, gate } = await this.factory.build(init);
     const bus = new EventBus(agent.session.id);
+    const commands = this.loadCommands ? this.loadCommands({ cwd: init.cwd }) : [];
     const entry: AgentEntry = {
       agent,
       gate,
       bus,
       runActive: false,
       resolvedPermissionIds: new Set(),
+      commands,
     };
     this.entries.set(agent.session.id, entry);
     bus.publish({ type: 'session_started', sessionId: agent.session.id });

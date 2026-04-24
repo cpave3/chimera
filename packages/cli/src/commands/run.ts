@@ -1,5 +1,6 @@
 import { ChimeraClient } from '@chimera/client';
 import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimera/server';
+import { loadCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 
@@ -12,6 +13,12 @@ export interface RunOptions {
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   session?: string;
   home?: string;
+  /** Name of a user command template to expand into the prompt. */
+  command?: string;
+  /** Raw args string for the command template. */
+  commandArgs?: string;
+  /** If false, skip `.claude/commands/` discovery. */
+  claudeCompat?: boolean;
   /** Test hook: bypass provider loading and supply a pre-built factory. */
   factoryOverride?: AgentFactory;
   /** Test hook: override model config when `factoryOverride` is supplied. */
@@ -25,11 +32,11 @@ export interface RunResult {
 export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   let model: { providerId: string; modelId: string; maxSteps: number };
   let factory: AgentFactory;
+  const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);
   if (opts.factoryOverride && opts.modelOverride) {
     model = opts.modelOverride;
     factory = opts.factoryOverride;
   } else {
-    const config = loadConfig(opts.home);
     const resolved = resolveModel({
       cliModel: opts.model,
       maxSteps: opts.maxSteps,
@@ -43,9 +50,32 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     });
   }
 
+  // Load the commands registry for both server introspection and client-side
+  // expansion (when `--command` is used).
+  const commands = loadCommandsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    claudeCompatOverride: opts.claudeCompat,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
+
+  let effectivePrompt = opts.prompt;
+  if (opts.command) {
+    const cmd = commands.find(opts.command);
+    if (!cmd) {
+      process.stderr.write(`unknown command: ${opts.command}\n`);
+      return { exitCode: 1 };
+    }
+    effectivePrompt = commands.expand(opts.command, opts.commandArgs ?? '', {
+      cwd: opts.cwd,
+    });
+  }
+
   const registry = new AgentRegistry({
     factory,
     instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode: 'off' },
+    loadCommands: () => commands.list(),
   });
   const app = buildApp({ registry });
   const server = await startServer({ app });
@@ -68,7 +98,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     };
     process.once('SIGINT', sigintHandler);
 
-    for await (const ev of client.send(sessionId, opts.prompt)) {
+    for await (const ev of client.send(sessionId, effectivePrompt)) {
       if (opts.json) {
         process.stdout.write(`${JSON.stringify(ev)}\n`);
       } else if (ev.type === 'assistant_text_delta') {

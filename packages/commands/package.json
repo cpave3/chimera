@@ -1,5 +1,5 @@
 {
-  "name": "@chimera/client",
+  "name": "@chimera/commands",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -19,13 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "@chimera/commands": "workspace:*",
-    "@chimera/core": "workspace:*"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@chimera/server": "workspace:*",
-    "ai": "^6.0.168",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
