@@ -39,4 +39,28 @@ describe('Scrollback', () => {
     sb.clear();
     expect(sb.all()).toEqual([]);
   });
+
+  it('suppressUserMessageMatching drops a single matching user_message event', () => {
+    const sb = new Scrollback();
+    sb.suppressUserMessageMatching('expanded body');
+    sb.apply({ type: 'user_message', content: 'expanded body' });
+    expect(sb.all()).toEqual([]);
+
+    // After one consumption, subsequent events render normally.
+    sb.apply({ type: 'user_message', content: 'next one' });
+    expect(sb.all()).toHaveLength(1);
+    expect(sb.all()[0]).toMatchObject({ kind: 'user', text: 'next one' });
+  });
+
+  it('suppressUserMessageMatching on a non-match still renders and clears the flag', () => {
+    const sb = new Scrollback();
+    sb.suppressUserMessageMatching('expected');
+    sb.apply({ type: 'user_message', content: 'something else' });
+    // The non-matching content still renders.
+    expect(sb.all()).toHaveLength(1);
+    expect(sb.all()[0]!.text).toBe('something else');
+    // And the suppression has been cleared, so a later 'expected' renders too.
+    sb.apply({ type: 'user_message', content: 'expected' });
+    expect(sb.all()).toHaveLength(2);
+  });
 });

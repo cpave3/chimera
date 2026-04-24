@@ -1,10 +1,12 @@
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChimeraClient } from '@chimera/client';
+import type { CommandRegistry } from '@chimera/commands';
 import type { AgentEvent, SessionId } from '@chimera/core';
 import { PermissionModal } from './PermissionModal';
 import { Scrollback, type ScrollbackEntry } from './scrollback';
-import { BUILTIN_COMMANDS, findClosestCommand } from './slash-commands';
+import { SLASH_MENU_MAX_ROWS, SlashMenu, type SlashMenuItem } from './SlashMenu';
+import { BUILTIN_COMMANDS, findClosestCommand, isBuiltin } from './slash-commands';
 import { buildTheme, type Theme } from './theme';
 
 export interface AppProps {
@@ -12,6 +14,13 @@ export interface AppProps {
   sessionId: SessionId;
   modelRef: string;
   cwd: string;
+  commands?: CommandRegistry;
+  /**
+   * Subscribe to mouse wheel events. Returns unsubscribe. When the harness
+   * doesn't support mouse reporting (e.g. non-TTY), this may be omitted or
+   * return a no-op unsubscribe.
+   */
+  subscribeWheel?: (handler: (dir: 'up' | 'down') => void) => () => void;
 }
 
 interface PendingPermission {
@@ -48,8 +57,96 @@ export function App(props: AppProps): React.ReactElement {
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
+  const [menuHighlight, setMenuHighlight] = useState(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  // Bumped when the commands registry reloads so useMemos re-derive.
+  const [registryVersion, setRegistryVersion] = useState(0);
   const historyRef = useRef<string[]>([]);
   const historyIdxRef = useRef<number>(-1);
+
+  // On first mount, surface commands-registry warnings (one per collision).
+  useEffect(() => {
+    const reg = props.commands;
+    if (!reg) return;
+    for (const c of reg.collisions()) {
+      scrollback.addInfo(
+        `warning: command "${c.name}" at ${c.loserPath} is shadowed by ${c.winnerPath}`,
+      );
+    }
+    for (const cmd of reg.list()) {
+      if (isBuiltin(`/${cmd.name}`)) {
+        scrollback.addInfo(
+          `warning: user command /${cmd.name} is shadowed by the built-in of the same name`,
+        );
+      }
+    }
+    setEntries(scrollback.all());
+    // Only once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Subscribe to wheel events for scrollback paging. We read the current line
+  // count and viewport size via refs so the subscription itself never churns
+  // on content updates.
+  const linesLenRef = useRef(0);
+  const scrollRowsRef = useRef(0);
+  useEffect(() => {
+    if (!props.subscribeWheel) return;
+    return props.subscribeWheel((dir) => {
+      if (dir === 'up') {
+        const max = Math.max(0, linesLenRef.current - scrollRowsRef.current);
+        setScrollOffset((o) => Math.min(max, o + 3));
+      } else {
+        setScrollOffset((o) => Math.max(0, o - 3));
+      }
+    });
+  }, [props.subscribeWheel]);
+
+  // Subscribe to registry reloads so disk changes show up live.
+  useEffect(() => {
+    const reg = props.commands;
+    if (!reg?.onChange) return;
+    const unsub = reg.onChange(() => {
+      scrollback.addInfo(`commands reloaded (${reg.list().length} total)`);
+      setEntries(scrollback.all());
+      setRegistryVersion((v) => v + 1);
+    });
+    return unsub;
+  }, [props.commands, scrollback]);
+
+  // Filtered slash-menu items derived from input + registry.
+  const menuItems = useMemo<SlashMenuItem[]>(() => {
+    if (!input.startsWith('/') || input.includes(' ') || menuDismissed) return [];
+    const partial = input.slice(1).toLowerCase();
+    const builtins: SlashMenuItem[] = BUILTIN_COMMANDS
+      .filter((c) => c.name.toLowerCase().slice(1).startsWith(partial))
+      .map((c) => ({
+        name: c.name.slice(1),
+        description: c.description,
+        kind: 'builtin' as const,
+      }));
+    const builtinNames = new Set(BUILTIN_COMMANDS.map((c) => c.name));
+    const users: SlashMenuItem[] = (props.commands?.list() ?? [])
+      .filter((c) => !builtinNames.has(`/${c.name}`))
+      .filter((c) => c.name.toLowerCase().startsWith(partial))
+      .map((c) => ({
+        name: c.name,
+        description: c.description,
+        kind: 'user' as const,
+      }));
+    return [...builtins, ...users];
+  }, [input, props.commands, menuDismissed, registryVersion]);
+
+  const menuOpen = menuItems.length > 0;
+
+  // Reset menu highlight + dismissal when input changes.
+  useEffect(() => {
+    setMenuHighlight(0);
+  }, [input]);
+  useEffect(() => {
+    if (!input.startsWith('/')) setMenuDismissed(false);
+  }, [input]);
 
   // Tick the spinner while waiting for a response.
   useEffect(() => {
@@ -77,6 +174,13 @@ export function App(props: AppProps): React.ReactElement {
     })();
     return () => controller.abort();
   }, [props.client, props.sessionId]);
+
+  // Reserved row calc happens before useInput so the key handler can consult it.
+  const inputLineRows = Math.max(1, Math.ceil((input.length + 3) / Math.max(10, columns)));
+  const modalRows = pending ? 7 : 0;
+  const menuRows = menuOpen ? Math.min(menuItems.length, SLASH_MENU_MAX_ROWS) + 2 : 0;
+  const reserved = 1 + modalRows + menuRows + inputLineRows + 1;
+  const scrollRows = Math.max(3, rows - reserved);
 
   function apply(ev: AgentEvent | { type: 'permission_timeout'; requestId: string }): void {
     scrollback.apply(ev as AgentEvent);
@@ -117,10 +221,56 @@ export function App(props: AppProps): React.ReactElement {
       app.exit();
       return;
     }
+
+    // Scrollback paging (always available).
+    if (key.pageUp) {
+      const step = Math.max(1, Math.floor(scrollRows / 2));
+      const maxOffset = Math.max(0, entries.length - 1);
+      setScrollOffset((o) => Math.min(maxOffset, o + step));
+      return;
+    }
+    if (key.pageDown) {
+      const step = Math.max(1, Math.floor(scrollRows / 2));
+      setScrollOffset((o) => Math.max(0, o - step));
+      return;
+    }
+
+    // Slash-menu key handling.
+    if (menuOpen) {
+      if (key.escape) {
+        setMenuDismissed(true);
+        return;
+      }
+      if (key.upArrow) {
+        setMenuHighlight((h) => Math.max(0, h - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setMenuHighlight((h) => Math.min(menuItems.length - 1, h + 1));
+        return;
+      }
+      if (key.tab) {
+        const sel = menuItems[menuHighlight];
+        if (sel) setInput(`/${sel.name} `);
+        return;
+      }
+      if (key.return) {
+        const sel = menuItems[menuHighlight];
+        // If input already matches the highlighted command exactly, submit.
+        if (!sel || input === `/${sel.name}`) {
+          // fall through to submit below
+        } else {
+          setInput(`/${sel.name} `);
+          return;
+        }
+      }
+    }
+
     if (key.return) {
       if (input.trim().length === 0) return;
       const text = input;
       setInput('');
+      setScrollOffset(0); // always return to live tail on submit
       historyRef.current.push(text);
       historyIdxRef.current = historyRef.current.length;
       void handleSubmit(text);
@@ -141,8 +291,17 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
     if (key.tab && input.startsWith('/')) {
+      // Menu-closed Tab fallback: if the user dismissed the menu but still
+      // wants prefix completion, do a best-effort single-match fill.
       const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(input));
-      if (match) setInput(match.name);
+      if (match) {
+        setInput(match.name);
+      } else if (props.commands) {
+        const userMatch = props.commands
+          .list()
+          .find((c) => `/${c.name}`.startsWith(input));
+        if (userMatch) setInput(`/${userMatch.name}`);
+      }
       return;
     }
     if (key.backspace || key.delete) {
@@ -159,6 +318,10 @@ export function App(props: AppProps): React.ReactElement {
       handleSlash(text.trim());
       return;
     }
+    await sendUserMessage(text);
+  }
+
+  async function sendUserMessage(text: string): Promise<void> {
     setRunning(true);
     setStreaming(false);
     try {
@@ -176,8 +339,15 @@ export function App(props: AppProps): React.ReactElement {
     const arg = rest.join(' ');
     switch (name) {
       case '/help': {
-        const lines = BUILTIN_COMMANDS.map((c) => `${c.name} — ${c.description}`);
-        scrollback.addInfo(lines.join('\n'));
+        const builtinLines = BUILTIN_COMMANDS.map((c) => `${c.name} — ${c.description}`);
+        const userLines = (props.commands?.list() ?? []).map(
+          (c) => `/${c.name} — ${c.description ?? '(user command)'}`,
+        );
+        const all =
+          userLines.length > 0
+            ? [...builtinLines, '', 'User commands:', ...userLines]
+            : builtinLines;
+        scrollback.addInfo(all.join('\n'));
         setEntries(scrollback.all());
         return;
       }
@@ -234,8 +404,42 @@ export function App(props: AppProps): React.ReactElement {
         setEntries(scrollback.all());
         return;
       }
+      case '/reload': {
+        const reg = props.commands;
+        if (!reg?.reload) {
+          scrollback.addInfo('commands: reload not supported in this session.');
+          setEntries(scrollback.all());
+          return;
+        }
+        void reg.reload().catch((err) => {
+          scrollback.addError(`reload failed: ${(err as Error).message}`);
+          setEntries(scrollback.all());
+        });
+        return;
+      }
       default: {
-        const suggestion = findClosestCommand(name!);
+        // Fall through to the user-template registry.
+        const templateName = name!.startsWith('/') ? name!.slice(1) : name!;
+        const template = props.commands?.find(templateName);
+        if (template) {
+          let expanded: string;
+          try {
+            expanded = props.commands!.expand(templateName, arg, { cwd: props.cwd });
+          } catch (err) {
+            scrollback.addError(
+              `/${templateName}: ${(err as Error).message}`,
+            );
+            setEntries(scrollback.all());
+            return;
+          }
+          // Show the invocation the user typed, not the expanded template body.
+          scrollback.addUserMessage(raw);
+          scrollback.suppressUserMessageMatching(expanded);
+          setEntries(scrollback.all());
+          void sendUserMessage(expanded);
+          return;
+        }
+        const suggestion = findClosestCommand(name!, props.commands);
         scrollback.addError(
           suggestion
             ? `unknown command: ${name} — did you mean ${suggestion}?`
@@ -263,14 +467,51 @@ export function App(props: AppProps): React.ReactElement {
 
   const shortId = props.sessionId.slice(-8);
 
-  // Reserve rows for header(1) + input(≥1, grows with wrap) + footer(1) +
-  // permission modal (~7 when active). Tail the scrollback so input + footer
-  // stay visible.
-  const inputLineRows = Math.max(1, Math.ceil((input.length + 3) / Math.max(10, columns)));
-  const modalRows = pending ? 7 : 0;
-  const reserved = 1 + modalRows + inputLineRows + 1;
-  const scrollRows = Math.max(3, rows - reserved);
-  const visibleEntries = entries.slice(Math.max(0, entries.length - scrollRows));
+  // Flatten all scrollback entries to a single stream of rendered lines.
+  // The scroll viewport is a line-level window over this stream, so tall
+  // messages can be clipped mid-body and the user always sees *something*.
+  const allLines = useMemo(
+    () => entries.flatMap((e) => renderEntryLines(e, columns, theme)),
+    [entries, columns, theme],
+  );
+
+  // scrollOffset is measured in lines back from the live tail. We defensively
+  // clamp again in the render memo so a momentarily over-large state (e.g.
+  // between a wheel burst and the normalization effect) never produces
+  // negative `end` — which would silently drop lines from the *bottom* via
+  // `slice(0, -N)`.
+  const visibleLines = useMemo(() => {
+    const maxOffset = Math.max(0, allLines.length - scrollRows);
+    const effectiveOffset = Math.max(0, Math.min(maxOffset, scrollOffset));
+    const end = allLines.length - effectiveOffset;
+    const start = Math.max(0, end - scrollRows);
+    return allLines.slice(start, end);
+  }, [allLines, scrollOffset, scrollRows]);
+
+  // Normalize scrollOffset state to a sane range when the buffer shrinks
+  // (e.g. /clear) or the viewport grows. Max is "top of the buffer", which
+  // leaves the first viewport-full fully visible.
+  useEffect(() => {
+    const maxOffset = Math.max(0, allLines.length - scrollRows);
+    if (scrollOffset > maxOffset) setScrollOffset(maxOffset);
+  }, [allLines.length, scrollRows, scrollOffset]);
+
+  // When the line stream grows while the user is scrolled back, keep the
+  // absolute viewport anchored on the same content by bumping scrollOffset by
+  // the number of new lines. Also syncs linesLenRef and scrollRowsRef (used
+  // by the wheel handler) here so both are current without a second effect.
+  const prevLinesLenRef = useRef(0);
+  useEffect(() => {
+    const prev = prevLinesLenRef.current;
+    prevLinesLenRef.current = allLines.length;
+    linesLenRef.current = allLines.length;
+    scrollRowsRef.current = scrollRows;
+    if (allLines.length > prev && scrollOffset > 0) {
+      const delta = allLines.length - prev;
+      setScrollOffset((o) => (o > 0 ? o + delta : o));
+    }
+  }, [allLines.length, scrollOffset, scrollRows]);
+
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -280,9 +521,7 @@ export function App(props: AppProps): React.ReactElement {
         </Text>
       </Box>
       <Box flexDirection="column" height={scrollRows} overflow="hidden">
-        {visibleEntries.map((e) => (
-          <ScrollbackRow key={e.id} entry={e} theme={theme} />
-        ))}
+        {visibleLines}
       </Box>
       {pending && (
         <PermissionModal
@@ -293,6 +532,9 @@ export function App(props: AppProps): React.ReactElement {
           onResolve={onResolve}
         />
       )}
+      {menuOpen && (
+        <SlashMenu items={menuItems} highlightIdx={menuHighlight} theme={theme} />
+      )}
       <Box>
         <Text color={theme.primary}>{'> '}</Text>
         <Text>
@@ -302,8 +544,13 @@ export function App(props: AppProps): React.ReactElement {
       </Box>
       <Box>
         <Text color={theme.muted}>
-          Ctrl+C interrupt · Ctrl+D exit · / commands
+          Ctrl+C interrupt · Ctrl+D exit · / commands · wheel or PgUp/PgDn to scroll
         </Text>
+        {scrollOffset > 0 && (
+          <Text color={theme.accent}>
+            {'  '}[scrolled back {scrollOffset}]
+          </Text>
+        )}
         {running && (
           <Text color={theme.accent}>
             {'  '}
@@ -315,38 +562,115 @@ export function App(props: AppProps): React.ReactElement {
   );
 }
 
-function ScrollbackRow({
-  entry,
-  theme,
-}: {
-  entry: ScrollbackEntry;
-  theme: Theme;
-}): React.ReactElement {
+/**
+ * Wrap plain text into hard lines sized to the terminal. Splits on explicit
+ * `\n` first, then breaks each segment at `width` characters. The first
+ * segment's available width is reduced by `firstOffset` so prefixes like
+ * "you: " or "[host] " line up.
+ */
+function wrapToLines(text: string, width: number, firstOffset: number): string[] {
+  if (text.length === 0) return [''];
+  const available = Math.max(1, width);
+  const segments = text.split('\n');
+  const out: string[] = [];
+  segments.forEach((seg, segIdx) => {
+    let remaining = seg;
+    let budget = available - (segIdx === 0 ? firstOffset : 0);
+    if (budget < 1) budget = 1;
+    if (remaining.length === 0) {
+      out.push('');
+      return;
+    }
+    while (remaining.length > budget) {
+      out.push(remaining.slice(0, budget));
+      remaining = remaining.slice(budget);
+      budget = available;
+    }
+    out.push(remaining);
+  });
+  return out;
+}
+
+/**
+ * Render a scrollback entry as an array of one-line `<Text>` elements. The
+ * entry's styling (kind-based color, bold prefix, tool badge, etc.) applies
+ * to the first line; continuation lines get the entry's base color only.
+ */
+function renderEntryLines(
+  entry: ScrollbackEntry,
+  columns: number,
+  theme: Theme,
+): React.ReactElement[] {
+  const width = Math.max(10, columns);
+
   if (entry.kind === 'user') {
-    return (
-      <Text>
-        <Text color={theme.accent} bold>
-          you
-        </Text>
-        : {entry.text}
+    const prefix = 'you: ';
+    const lines = wrapToLines(entry.text, width, prefix.length);
+    return lines.map((line, i) => (
+      <Text key={`${entry.id}:${i}`}>
+        {i === 0 ? (
+          <>
+            <Text color={theme.accent} bold>
+              you
+            </Text>
+            {`: ${line}`}
+          </>
+        ) : (
+          line
+        )}
       </Text>
-    );
+    ));
   }
+
   if (entry.kind === 'assistant') {
-    return <Text>{entry.text}</Text>;
+    const lines = wrapToLines(entry.text, width, 0);
+    return lines.map((line, i) => <Text key={`${entry.id}:${i}`}>{line}</Text>);
   }
+
   if (entry.kind === 'tool') {
     const badge = entry.toolTarget === 'host' ? '[host]' : '[sandbox]';
-    return (
-      <Text>
-        <Text color={theme.badge}>{badge}</Text>{' '}
-        <Text color={theme.secondary}>{entry.text}</Text>
-        {entry.toolError ? <Text color={theme.danger}> — error: {entry.toolError}</Text> : null}
+    const prefixLen = badge.length + 1;
+    const textLines = wrapToLines(entry.text, width, prefixLen);
+    const out: React.ReactElement[] = textLines.map((line, i) => (
+      <Text key={`${entry.id}:t:${i}`}>
+        {i === 0 ? (
+          <>
+            <Text color={theme.badge}>{badge}</Text>
+            {' '}
+            <Text color={theme.secondary}>{line}</Text>
+          </>
+        ) : (
+          <Text color={theme.secondary}>{line}</Text>
+        )}
       </Text>
-    );
+    ));
+    if (entry.toolError) {
+      const errLines = wrapToLines(` — error: ${entry.toolError}`, width, 0);
+      for (let i = 0; i < errLines.length; i += 1) {
+        out.push(
+          <Text key={`${entry.id}:e:${i}`} color={theme.danger}>
+            {errLines[i]}
+          </Text>,
+        );
+      }
+    }
+    return out;
   }
+
   if (entry.kind === 'info') {
-    return <Text color={theme.muted}>{entry.text}</Text>;
+    const lines = wrapToLines(entry.text, width, 0);
+    return lines.map((line, i) => (
+      <Text key={`${entry.id}:${i}`} color={theme.muted}>
+        {line}
+      </Text>
+    ));
   }
-  return <Text color={theme.danger}>{entry.text}</Text>;
+
+  // error
+  const lines = wrapToLines(entry.text, width, 0);
+  return lines.map((line, i) => (
+    <Text key={`${entry.id}:${i}`} color={theme.danger}>
+      {line}
+    </Text>
+  ));
 }

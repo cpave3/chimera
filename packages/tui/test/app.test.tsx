@@ -6,7 +6,7 @@ import { App } from '../src/App';
 import { PermissionModal } from '../src/PermissionModal';
 import { buildTheme } from '../src/theme';
 
-function stubClient(): ChimeraClient {
+function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
   return {
     subscribe: async function* () {
       // no events
@@ -17,6 +17,7 @@ function stubClient(): ChimeraClient {
     addRule: async () => {},
     removeRule: async () => {},
     resolvePermission: async () => {},
+    ...overrides,
   } as unknown as ChimeraClient;
 }
 
@@ -45,6 +46,45 @@ describe('App', () => {
     );
     expect(lastFrame()).toContain('Ctrl+C interrupt');
     expect(lastFrame()).toContain('/ commands');
+    unmount();
+  });
+
+  it('Ctrl+C during a run calls interrupt(sessionId) instead of exiting', async () => {
+    let sendResolve: (() => void) | null = null;
+    const interrupts: string[] = [];
+    const client = stubClient({
+      // send() stays pending so `running` remains true while Ctrl+C fires.
+      send: async function* (id: string) {
+        void id;
+        await new Promise<void>((r) => {
+          sendResolve = r;
+        });
+      } as unknown as ChimeraClient['send'],
+      interrupt: (async (id: string) => {
+        interrupts.push(id);
+      }) as ChimeraClient['interrupt'],
+    });
+
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    // Submit a normal message so `running` flips to true.
+    for (const ch of 'hello\r') {
+      (stdin as unknown as { write: (s: string) => void }).write(ch);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Ctrl+C while running.
+    (stdin as unknown as { write: (s: string) => void }).write('\x03');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(interrupts).toEqual(['01ABCDEFGH']);
+    expect(lastFrame()).toContain('interrupt sent');
+
+    // Release the pending send promise so the render loop can unmount.
+    sendResolve?.();
     unmount();
   });
 });

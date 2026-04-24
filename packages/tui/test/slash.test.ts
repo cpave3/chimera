@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_COMMANDS, findClosestCommand } from '../src/slash-commands';
 
 describe('slash commands', () => {
-  it('contains /help, /clear, /new, /sessions, /exit, /model, /rules', () => {
+  it('contains /help, /clear, /new, /sessions, /exit, /model, /rules, /reload', () => {
     const names = BUILTIN_COMMANDS.map((c) => c.name).sort();
     expect(names).toEqual(
-      ['/clear', '/exit', '/help', '/model', '/new', '/rules', '/sessions'].sort(),
+      ['/clear', '/exit', '/help', '/model', '/new', '/reload', '/rules', '/sessions'].sort(),
     );
   });
 

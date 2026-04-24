@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@chimera/client": "workspace:*",
+    "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
     "ink": "^7.0.1",
     "react": "^19.2.5"

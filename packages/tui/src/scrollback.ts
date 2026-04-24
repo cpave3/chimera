@@ -15,6 +15,7 @@ export class Scrollback {
   private assistantBuf: string | null = null;
   private toolsByCallId = new Map<CallId, ScrollbackEntry>();
   private idSeq = 0;
+  private suppressUserContent: string | null = null;
 
   private newId(): string {
     this.idSeq += 1;
@@ -29,6 +30,16 @@ export class Scrollback {
     this.entries.push({ id: this.newId(), kind: 'user', text: content });
   }
 
+  /**
+   * Arm a one-shot filter that drops the next `user_message` event whose
+   * content matches `content` exactly. Used when the TUI has already rendered
+   * its own local representation of what the user sent (e.g. a `/command`
+   * invocation displayed instead of the expanded template body).
+   */
+  suppressUserMessageMatching(content: string): void {
+    this.suppressUserContent = content;
+  }
+
   addInfo(text: string): void {
     this.entries.push({ id: this.newId(), kind: 'info', text });
   }
@@ -41,6 +52,7 @@ export class Scrollback {
     this.entries = [];
     this.assistantBuf = null;
     this.toolsByCallId.clear();
+    this.suppressUserContent = null;
   }
 
   apply(ev: AgentEvent): void {
@@ -67,6 +79,11 @@ export class Scrollback {
       return;
     }
     if (ev.type === 'user_message') {
+      if (this.suppressUserContent !== null) {
+        const expected = this.suppressUserContent;
+        this.suppressUserContent = null;
+        if (expected === ev.content) return;
+      }
       this.addUserMessage(ev.content);
       return;
     }

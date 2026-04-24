@@ -1,3 +1,5 @@
+import type { CommandRegistry } from '@chimera/commands';
+
 export interface SlashCommand {
   name: string;
   description: string;
@@ -11,12 +13,27 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/exit', description: 'Exit the TUI' },
   { name: '/model', description: 'Show or change the active model' },
   { name: '/rules', description: 'List permission rules (/rules rm <n> to delete)' },
+  { name: '/reload', description: 'Re-read user command files from disk' },
 ];
 
-export function findClosestCommand(input: string): string | null {
-  const names = BUILTIN_COMMANDS.map((c) => c.name);
+export function isBuiltin(name: string): boolean {
+  return BUILTIN_COMMANDS.some((c) => c.name === name);
+}
+
+/**
+ * Return the fuzzy-match hint for an unknown `/name` input, considering both
+ * built-ins and (optionally) loaded user templates. Returns null if nothing is
+ * close enough.
+ */
+export function findClosestCommand(
+  input: string,
+  registry?: CommandRegistry,
+): string | null {
+  const names = [
+    ...BUILTIN_COMMANDS.map((c) => c.name),
+    ...(registry ? registry.list().map((c) => `/${c.name}`) : []),
+  ];
   if (names.includes(input)) return input;
-  // Simple Levenshtein-based "did you mean".
   let best: string | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const n of names) {
