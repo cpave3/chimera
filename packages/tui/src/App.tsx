@@ -4,6 +4,7 @@ import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
 import type { AgentEvent, SessionId } from '@chimera/core';
 import { Header } from './Header';
+import { renderMarkdown } from './markdown';
 import { PermissionModal } from './PermissionModal';
 import { Scrollback, type ScrollbackEntry } from './scrollback';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
@@ -516,7 +517,7 @@ export function App(props: AppProps): React.ReactElement {
             );
           }
           return (
-            <Box key={item.id} flexDirection="column">
+            <Box key={item.id} flexDirection="column" marginTop={1}>
               {renderEntryLines(item.entry, columns, theme)}
             </Box>
           );
@@ -524,7 +525,7 @@ export function App(props: AppProps): React.ReactElement {
       </Static>
       <Box flexDirection="column" width={columns}>
         {inFlightEntry && (
-          <Box flexDirection="column">
+          <Box flexDirection="column" marginTop={1}>
             {renderEntryLines(inFlightEntry, columns, theme)}
           </Box>
         )}
@@ -603,49 +604,54 @@ function renderEntryLines(
   if (entry.kind === 'user') {
     const prefix = 'you: ';
     const lines = wrapToLines(entry.text, width, prefix.length);
-    return lines.map((line, i) => (
-      <Text key={`${entry.id}:${i}`}>
-        {i === 0 ? (
-          <>
-            <Text color={theme.accent} bold>you</Text>
-            {`: ${line}`}
-          </>
-        ) : (
-          line
-        )}
-      </Text>
-    ));
+    return [
+      <Box key={`${entry.id}:u`} flexDirection="column">
+        <Text>
+          <Text color={theme.accent} bold>you</Text>
+          {`: ${lines[0] ?? ''}`}
+        </Text>
+        {lines.slice(1).map((line, i) => (
+          <Box key={i} paddingLeft={prefix.length}>
+            <Text>{line}</Text>
+          </Box>
+        ))}
+      </Box>,
+    ];
   }
   if (entry.kind === 'assistant') {
-    const lines = wrapToLines(entry.text, width, 0);
-    return lines.map((line, i) => <Text key={`${entry.id}:${i}`}>{line}</Text>);
+    return [
+      <Box key={`${entry.id}:a`} flexDirection="column" paddingLeft={2}>
+        {renderMarkdown(entry.text, theme)}
+      </Box>,
+    ];
   }
   if (entry.kind === 'tool') {
     const badge = entry.toolTarget === 'host' ? '[host]' : '[sandbox]';
     const prefixLen = badge.length + 1;
     const textLines = wrapToLines(entry.text, width, prefixLen);
-    const out: React.ReactElement[] = textLines.map((line, i) => (
-      <Text key={`${entry.id}:t:${i}`}>
-        {i === 0 ? (
-          <>
-            <Text color={theme.badge}>{badge}</Text>
-            {' '}
+    const out: React.ReactElement[] = [
+      <Box key={`${entry.id}:t`} flexDirection="column">
+        <Text>
+          <Text color={theme.badge}>{badge}</Text>
+          {' '}
+          <Text color={theme.secondary}>{textLines[0] ?? ''}</Text>
+        </Text>
+        {textLines.slice(1).map((line, i) => (
+          <Box key={i} paddingLeft={prefixLen}>
             <Text color={theme.secondary}>{line}</Text>
-          </>
-        ) : (
-          <Text color={theme.secondary}>{line}</Text>
-        )}
-      </Text>
-    ));
+          </Box>
+        ))}
+      </Box>,
+    ];
     if (entry.toolError) {
-      const errLines = wrapToLines(` — error: ${entry.toolError}`, width, 0);
-      for (let i = 0; i < errLines.length; i += 1) {
-        out.push(
-          <Text key={`${entry.id}:e:${i}`} color={theme.danger}>
-            {errLines[i]}
-          </Text>,
-        );
-      }
+      const errLines = wrapToLines(`error: ${entry.toolError}`, width, prefixLen);
+      out.push(
+        <Box key={`${entry.id}:e`} flexDirection="column" paddingLeft={prefixLen}>
+          {errLines.map((line, i) => (
+            <Text key={i} color={theme.danger}>{line}</Text>
+          ))}
+        </Box>,
+      );
     }
     return out;
   }

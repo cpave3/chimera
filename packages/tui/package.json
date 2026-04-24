@@ -13,7 +13,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
@@ -24,6 +26,7 @@
     "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
     "ink": "npm:@jrichman/ink@6.6.9",
+    "marked": "^18.0.2",
     "react": "^19.2.5"
   },
   "devDependencies": {
