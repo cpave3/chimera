@@ -80,6 +80,44 @@ describe('loadCommands discovery', () => {
     expect(reg.list()).toEqual([]);
   });
 
+  it('loads a namespaced command from a .chimera/commands subdirectory', async () => {
+    const cwd = join(home, 'nested-chimera');
+    await mkdir(join(cwd, '.chimera', 'commands', 'ops'), { recursive: true });
+    await writeFile(
+      join(cwd, '.chimera', 'commands', 'ops', 'deploy.md'),
+      '---\ndescription: Ship it\n---\nrolling deploy',
+    );
+
+    const reg = loadCommands({ cwd, userHome: home });
+    const cmd = reg.find('ops:deploy');
+    expect(cmd).toBeDefined();
+    expect(cmd?.body).toBe('rolling deploy');
+    expect(cmd?.description).toBe('Ship it');
+    expect(cmd?.source).toBe('project');
+  });
+
+  it('loads a namespaced command from a .claude/commands subdirectory', async () => {
+    const cwd = join(home, 'nested-claude');
+    await mkdir(join(cwd, '.claude', 'commands', 'opsx'), { recursive: true });
+    await writeFile(
+      join(cwd, '.claude', 'commands', 'opsx', 'explore.md'),
+      'explore template',
+    );
+
+    const reg = loadCommands({ cwd, userHome: home });
+    const cmd = reg.find('opsx:explore');
+    expect(cmd?.body).toBe('explore template');
+    expect(cmd?.source).toBe('claude-project');
+  });
+
+  it('joins deeper nesting with colons', async () => {
+    const cwd = join(home, 'deep');
+    await mkdir(join(cwd, '.chimera', 'commands', 'a', 'b'), { recursive: true });
+    await writeFile(join(cwd, '.chimera', 'commands', 'a', 'b', 'c.md'), 'deep');
+    const reg = loadCommands({ cwd, userHome: home });
+    expect(reg.find('a:b:c')?.body).toBe('deep');
+  });
+
   it('ancestor walk terminates at a .git root', async () => {
     const repo = join(home, 'repo');
     const sub = join(repo, 'pkg', 'nested');

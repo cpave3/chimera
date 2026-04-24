@@ -146,6 +146,24 @@ describe('ReloadingCommandRegistry', () => {
     }
   });
 
+  it('picks up a file added inside a nested namespace directory', async () => {
+    await mkdir(join(cwd, '.chimera', 'commands', 'ops'), { recursive: true });
+    const reg = new ReloadingCommandRegistry({
+      cwd,
+      userHome: home,
+      debounceMs: DEBOUNCE,
+    });
+    try {
+      expect(reg.find('ops:deploy')).toBeUndefined();
+      const changed = waitForChange(reg);
+      await writeFile(join(cwd, '.chimera', 'commands', 'ops', 'deploy.md'), 'ship it');
+      await changed;
+      expect(reg.find('ops:deploy')?.body).toBe('ship it');
+    } finally {
+      reg.close();
+    }
+  });
+
   it('close() stops firing events on subsequent writes', async () => {
     const reg = new ReloadingCommandRegistry({
       cwd,

@@ -90,7 +90,7 @@ export class ReloadingCommandRegistry implements CommandRegistry {
     const tiers = buildTiers(this.opts);
     for (const tier of tiers) {
       try {
-        const w = watch(tier.dir, (_event, filename) => {
+        const w = watch(tier.dir, { recursive: true }, (_event, filename) => {
           this.onFsEvent(filename);
         });
         w.on('error', () => {
@@ -108,7 +108,7 @@ export class ReloadingCommandRegistry implements CommandRegistry {
     const name = typeof filename === 'string' ? filename : filename?.toString() ?? '';
     // Only react to markdown files. `fs.watch` sometimes fires with empty
     // names on macOS or when a dir itself changes; reload in that case too so
-    // we don't miss moves.
+    // we don't miss moves. Nested paths (e.g. `ops/deploy.md`) still match.
     if (name && !name.endsWith('.md')) return;
     this.scheduleReload();
   }

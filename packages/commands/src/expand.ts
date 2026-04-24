@@ -49,6 +49,7 @@ export interface ExpandArgs {
 export function expandBody(body: string, opts: ExpandArgs): string {
   const positionals = splitArgs(opts.args);
   const date = opts.date ?? new Date();
+  const consumesArgs = /\$ARGUMENTS\b|\$[1-9](?!\d)/.test(body);
 
   let out = body;
   // 1. $ARGUMENTS — use a regex with a boundary that doesn't consume trailing
@@ -63,6 +64,12 @@ export function expandBody(body: string, opts: ExpandArgs): string {
     const idx = Number.parseInt(d, 10) - 1;
     return positionals[idx] ?? '';
   });
+  // Fallback: if the caller supplied args but the template has no placeholder
+  // that would consume them, append the raw args so a Claude-Code-style
+  // template that was authored without `$ARGUMENTS` still receives the input.
+  if (!consumesArgs && opts.args.trim().length > 0) {
+    out = `${out}\n\n${opts.args}`;
+  }
   return out;
 }
 

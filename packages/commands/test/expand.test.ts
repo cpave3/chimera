@@ -59,7 +59,44 @@ describe('expandBody', () => {
   it('$1 does not match $10 digits', () => {
     // There is no $10 in the grammar, but ensure we don't falsely consume trailing digits.
     // "$12" should remain literal (no $12 in grammar, no $1 substitution with trailing 2).
-    expect(expandBody('x=$12', { args: 'a b', cwd: '/' })).toBe('x=$12');
+    // Use `$1` elsewhere in the body so the template counts as arg-consuming and
+    // the fallback append stays out of the frame.
+    expect(expandBody('x=$12 first=$1', { args: 'a b', cwd: '/' })).toBe(
+      'x=$12 first=a',
+    );
+  });
+
+  it('appends args when the template consumes no arg placeholder', () => {
+    const body = 'Run the propose workflow.';
+    expect(expandBody(body, { args: 'add a color theme', cwd: '/' })).toBe(
+      'Run the propose workflow.\n\nadd a color theme',
+    );
+  });
+
+  it('does not append when args is empty', () => {
+    expect(expandBody('Standalone template.', { args: '', cwd: '/' })).toBe(
+      'Standalone template.',
+    );
+    expect(expandBody('Standalone template.', { args: '   ', cwd: '/' })).toBe(
+      'Standalone template.',
+    );
+  });
+
+  it('does not append when template uses $ARGUMENTS', () => {
+    expect(
+      expandBody('body: $ARGUMENTS', { args: 'hello', cwd: '/' }),
+    ).toBe('body: hello');
+  });
+
+  it('does not append when template uses any $1-$9 positional', () => {
+    expect(expandBody('first=$1', { args: 'hi', cwd: '/' })).toBe('first=hi');
+  });
+
+  it('$CWD/$DATE alone do not suppress the arg append', () => {
+    // Template references env-ish scalars but not args — so extra args should still land.
+    expect(expandBody('at $CWD:', { args: 'extra', cwd: '/tmp' })).toBe(
+      'at /tmp:\n\nextra',
+    );
   });
 
   it('$ARGUMENTS runs before positionals so template can use both', () => {

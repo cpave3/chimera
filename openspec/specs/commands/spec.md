@@ -8,7 +8,7 @@ The `commands` capability defines user-authored slash commands for Chimera: Mark
 
 ### Requirement: Command file format
 
-A command is a file `<root>/<name>.md` where `<name>` is its invocation name (`/<name>` in the TUI). The file SHALL begin with optional YAML frontmatter delimited by `---` lines. Frontmatter MAY contain a `description` field; other fields are preserved but not interpreted. The body after the frontmatter is the prompt template.
+A command is a Markdown file under a tier's `commands/` root. Its invocation name is derived from its path relative to that root: the file stem, with any intermediate directory segments joined by `:` (so `opsx/explore.md` is invoked as `/opsx:explore`). The file SHALL begin with optional YAML frontmatter delimited by `---` lines. Frontmatter MAY contain a `description` field; other fields are preserved but not interpreted. The body after the frontmatter is the prompt template.
 
 #### Scenario: Command with frontmatter
 
@@ -20,19 +20,24 @@ A command is a file `<root>/<name>.md` where `<name>` is its invocation name (`/
 - **WHEN** `.chimera/commands/say-hi.md` contains only `Hello!` with no `---` fence
 - **THEN** `find("say-hi").body` SHALL equal `"Hello!"` and `description` SHALL be `undefined`
 
+#### Scenario: Namespaced command in a subdirectory
+
+- **WHEN** `.claude/commands/opsx/explore.md` exists
+- **THEN** `find("opsx:explore")` SHALL resolve it and its `source` SHALL equal `"claude-project"`
+
 ### Requirement: Discovery paths
 
-`loadCommands({ cwd, userHome, includeClaudeCompat })` SHALL search tiers in this priority order:
+`loadCommands({ cwd, userHome, includeClaudeCompat })` SHALL search tiers in this priority order. Within each tier, discovery SHALL recurse into subdirectories; nested `<sub>/<name>.md` paths resolve to the command name `<sub>:<name>` (multiple nesting levels join with additional colons).
 
-1. `<cwd>/.chimera/commands/<name>.md`
-2. Ancestor walk from `cwd` toward the nearest `.git/` (or `userHome` if no git root): `<ancestor>/.chimera/commands/<name>.md`
-3. `<userHome>/.chimera/commands/<name>.md`
+1. `<cwd>/.chimera/commands/**/*.md`
+2. Ancestor walk from `cwd` toward the nearest `.git/` (or `userHome` if no git root): `<ancestor>/.chimera/commands/**/*.md`
+3. `<userHome>/.chimera/commands/**/*.md`
 
 When `includeClaudeCompat !== false`:
 
-4. `<cwd>/.claude/commands/<name>.md`
-5. Ancestor walk for `.claude/commands/<name>.md`
-6. `<userHome>/.claude/commands/<name>.md`
+4. `<cwd>/.claude/commands/**/*.md`
+5. Ancestor walk for `.claude/commands/**/*.md`
+6. `<userHome>/.claude/commands/**/*.md`
 
 Name collisions SHALL resolve higher-tier-wins with one log warning per collision.
 
@@ -40,6 +45,11 @@ Name collisions SHALL resolve higher-tier-wins with one log warning per collisio
 
 - **WHEN** `.chimera/commands/review.md` and `.claude/commands/review.md` both exist in cwd
 - **THEN** `find("review").source` SHALL equal `"project"` and its `path` SHALL be the Chimera-path copy
+
+#### Scenario: Nested namespace discovery across tiers
+
+- **WHEN** `.chimera/commands/ops/deploy.md` exists in cwd
+- **THEN** `find("ops:deploy").source` SHALL equal `"project"` and `path` SHALL point at the nested file
 
 ### Requirement: Placeholder expansion
 
@@ -51,6 +61,8 @@ Name collisions SHALL resolve higher-tier-wins with one log warning per collisio
 4. `$DATE` → the current date in ISO `YYYY-MM-DD` form, local timezone.
 
 Any `$`-prefixed token not listed above SHALL be left literally in the output.
+
+If `args` contains any non-whitespace characters AND the template body contains none of the arg-consuming placeholders (`$ARGUMENTS` or `$1`–`$9`), `expand()` SHALL append the raw `args` to the result, separated by a blank line (`\n\n`). This preserves user input for templates (commonly imported Claude-Code templates) authored without an explicit placeholder.
 
 The result SHALL be a string that the consumer uses as a user message. `expand()` SHALL NOT make any network call, invoke the model, or touch the server.
 
@@ -68,6 +80,16 @@ The result SHALL be a string that the consumer uses as a user message. `expand()
 
 - **WHEN** `expand("nope", "")` is called and no command named `nope` is in the registry
 - **THEN** the method SHALL throw an Error naming the missing command
+
+#### Scenario: Args appended when template has no placeholder
+
+- **WHEN** `expand("propose", "add a color theme")` is called on a template body `Run the propose workflow.` that references no `$ARGUMENTS`/`$1`–`$9`
+- **THEN** the returned string SHALL equal `Run the propose workflow.\n\nadd a color theme`
+
+#### Scenario: Append suppressed when a placeholder consumed args
+
+- **WHEN** `expand("review", "hello")` is called on a body `body: $ARGUMENTS`
+- **THEN** the returned string SHALL equal `body: hello` with no trailing append
 
 ### Requirement: TUI dispatch of slash input
 

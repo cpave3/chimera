@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseFrontmatter } from './frontmatter';
@@ -96,22 +96,12 @@ export function discover(opts: LoadCommandsOptions): DiscoverResult {
   const collisions: CommandCollision[] = [];
 
   for (const tier of tiers) {
-    let entries: string[];
-    try {
-      entries = readdirSync(tier.dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.endsWith('.md')) continue;
-      const name = entry.slice(0, -'.md'.length);
+    for (const file of walkMarkdownFiles(tier.dir)) {
+      const name = toCommandName(file.relPath);
       if (!name) continue;
-      const path = join(tier.dir, entry);
       let body: string;
       try {
-        const st = statSync(path);
-        if (!st.isFile()) continue;
-        body = readFileSync(path, 'utf8');
+        body = readFileSync(file.absPath, 'utf8');
       } catch {
         continue;
       }
@@ -120,7 +110,7 @@ export function discover(opts: LoadCommandsOptions): DiscoverResult {
         name,
         description: parsed.frontmatter['description'],
         body: parsed.body,
-        path,
+        path: file.absPath,
         source: tier.source,
       };
       const existing = byName.get(name);
@@ -139,4 +129,63 @@ export function discover(opts: LoadCommandsOptions): DiscoverResult {
   }
 
   return { commands: [...byName.values()], collisions };
+}
+
+interface DiscoveredFile {
+  absPath: string;
+  /** Path relative to the tier root, using forward slashes. */
+  relPath: string;
+}
+
+/**
+ * Yield every `.md` file under `root`, recursing into subdirectories. Symlinks
+ * are followed via `statSync` so namespace dirs created as symlinks still
+ * resolve. Missing or unreadable dirs are silently skipped (consistent with
+ * the single-tier semantics of the old flat scan).
+ */
+function* walkMarkdownFiles(root: string): Generator<DiscoveredFile> {
+  const stack: Array<{ dir: string; rel: string }> = [{ dir: root, rel: '' }];
+  while (stack.length > 0) {
+    const { dir, rel } = stack.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      const abs = join(dir, ent.name);
+      const nextRel = rel ? `${rel}/${ent.name}` : ent.name;
+      let isDir = ent.isDirectory();
+      let isFile = ent.isFile();
+      if (ent.isSymbolicLink()) {
+        try {
+          const st = statSync(abs);
+          isDir = st.isDirectory();
+          isFile = st.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        stack.push({ dir: abs, rel: nextRel });
+        continue;
+      }
+      if (isFile && ent.name.endsWith('.md')) {
+        yield { absPath: abs, relPath: nextRel };
+      }
+    }
+  }
+}
+
+/**
+ * Convert a tier-relative `.md` path into a command name. Subdirectories
+ * become colon-separated namespace prefixes (matching Claude Code's
+ * convention): `opsx/explore.md` → `opsx:explore`.
+ */
+function toCommandName(relPath: string): string {
+  if (!relPath.endsWith('.md')) return '';
+  const stem = relPath.slice(0, -'.md'.length);
+  if (!stem) return '';
+  return stem.split('/').join(':');
 }
