@@ -148,6 +148,13 @@ export function App(props: AppProps): React.ReactElement {
     if (!input.startsWith('/')) setMenuDismissed(false);
   }, [input]);
 
+  // Any change to the input buffer snaps the view back to the live tail — the
+  // prompt is part of the stream, so typing while scrolled-back would
+  // otherwise route characters into a hidden input.
+  useEffect(() => {
+    setScrollOffset(0);
+  }, [input]);
+
   // Tick the spinner while waiting for a response.
   useEffect(() => {
     if (!running) return;
@@ -175,11 +182,20 @@ export function App(props: AppProps): React.ReactElement {
     return () => controller.abort();
   }, [props.client, props.sessionId]);
 
-  // Reserved row calc happens before useInput so the key handler can consult it.
+  // Layout (top → bottom):  header(1) + topHR(1) + content(scrollRows) +
+  //   when at tail:  bottomHR(1) + modal(0|7) + menu(0|Nrows+border) + input(>=1)
+  //   always:        flex spacer absorbing leftover rows + footer(1)
+  //
+  // When the user scrolls back, the prompt and its chrome are hidden (the
+  // prompt is part of the content stream, not pinned chrome). We reclaim those
+  // rows for the content area so the visible content grows to meet the
+  // footer — otherwise the spacer inflates and shows as a gap.
   const inputLineRows = Math.max(1, Math.ceil((input.length + 3) / Math.max(10, columns)));
   const modalRows = pending ? 7 : 0;
   const menuRows = menuOpen ? Math.min(menuItems.length, SLASH_MENU_MAX_ROWS) + 2 : 0;
-  const reserved = 1 + modalRows + menuRows + inputLineRows + 1;
+  const atTail = scrollOffset === 0;
+  const tailChrome = atTail ? 1 + modalRows + menuRows + inputLineRows : 0;
+  const reserved = 1 + 1 + 1 + tailChrome;
   const scrollRows = Math.max(3, rows - reserved);
 
   function apply(ev: AgentEvent | { type: 'permission_timeout'; requestId: string }): void {
@@ -267,10 +283,11 @@ export function App(props: AppProps): React.ReactElement {
     }
 
     if (key.return) {
+      // Always snap back to the tail on Enter, even if the input is empty.
+      setScrollOffset(0);
       if (input.trim().length === 0) return;
       const text = input;
       setInput('');
-      setScrollOffset(0); // always return to live tail on submit
       historyRef.current.push(text);
       historyIdxRef.current = historyRef.current.length;
       void handleSubmit(text);
@@ -513,37 +530,55 @@ export function App(props: AppProps): React.ReactElement {
   }, [allLines.length, scrollOffset, scrollRows]);
 
 
+  const hrLine = '─'.repeat(Math.max(1, columns));
+
   return (
     <Box flexDirection="column" width={columns} height={rows}>
       <Box>
-        <Text color={theme.primary}>
+        <Text color={theme.primary} wrap="truncate-end">
           Chimera · {shortId} · {props.cwd} · {props.modelRef} · [sandbox:off]
         </Text>
       </Box>
-      <Box flexDirection="column" height={scrollRows} overflow="hidden">
+      <Box>
+        <Text color={theme.muted}>{hrLine}</Text>
+      </Box>
+      <Box flexDirection="column" flexShrink={0} overflow="hidden">
         {visibleLines}
       </Box>
-      {pending && (
-        <PermissionModal
-          command={pending.command}
-          reason={pending.reason}
-          target="host"
-          theme={theme}
-          onResolve={onResolve}
-        />
+      {atTail && (
+        <>
+          {pending && (
+            <PermissionModal
+              command={pending.command}
+              reason={pending.reason}
+              target="host"
+              theme={theme}
+              onResolve={onResolve}
+            />
+          )}
+          <Box>
+            <Text color={theme.muted}>{hrLine}</Text>
+          </Box>
+          <Box>
+            <Text color={theme.primary}>{'> '}</Text>
+            <Text>
+              {input}
+              <Text inverse> </Text>
+            </Text>
+          </Box>
+          {menuOpen && (
+            <SlashMenu items={menuItems} highlightIdx={menuHighlight} theme={theme} />
+          )}
+        </>
       )}
-      {menuOpen && (
-        <SlashMenu items={menuItems} highlightIdx={menuHighlight} theme={theme} />
-      )}
+      {/* Absorb any leftover vertical space so the footer sits at the bottom
+          of the terminal. This is the only stretchy element; the gap lives
+          between the prompt and the footer with no framing elements around
+          it, so it reads as plain terminal space rather than an in-UI gap. */}
+      <Box flexGrow={1} />
+
       <Box>
-        <Text color={theme.primary}>{'> '}</Text>
-        <Text>
-          {input}
-          <Text inverse> </Text>
-        </Text>
-      </Box>
-      <Box>
-        <Text color={theme.muted}>
+        <Text color={theme.muted} wrap="truncate-end">
           Ctrl+C interrupt · Ctrl+D exit · / commands · wheel or PgUp/PgDn to scroll
         </Text>
         {scrollOffset > 0 && (
