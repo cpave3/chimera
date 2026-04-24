@@ -1,0 +1,31 @@
+{
+  "name": "chimera",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Terminal-native AI coding agent with SDK-first architecture",
+  "type": "module",
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b",
+    "fmt": "biome format --write .",
+    "fmt:check": "biome format .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "link": "pnpm --filter @chimera/cli link --global",
+    "unlink": "pnpm --filter @chimera/cli unlink --global"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.13",
+    "@types/node": "^25.6.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  }
+}
