@@ -1,12 +1,14 @@
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
 import type { AgentEvent, SessionId } from '@chimera/core';
+import { Header } from './Header';
 import { PermissionModal } from './PermissionModal';
 import { Scrollback, type ScrollbackEntry } from './scrollback';
-import { SLASH_MENU_MAX_ROWS, SlashMenu, type SlashMenuItem } from './SlashMenu';
+import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import { BUILTIN_COMMANDS, findClosestCommand, isBuiltin } from './slash-commands';
+import { StatusBar, type StatusBarWidget } from './StatusBar';
 import { buildTheme, type Theme } from './theme';
 
 export interface AppProps {
@@ -15,12 +17,6 @@ export interface AppProps {
   modelRef: string;
   cwd: string;
   commands?: CommandRegistry;
-  /**
-   * Subscribe to mouse wheel events. Returns unsubscribe. When the harness
-   * doesn't support mouse reporting (e.g. non-TTY), this may be omitted or
-   * return a no-op unsubscribe.
-   */
-  subscribeWheel?: (handler: (dir: 'up' | 'down') => void) => () => void;
 }
 
 interface PendingPermission {
@@ -30,6 +26,11 @@ interface PendingPermission {
 }
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const CHIMERA_VERSION = '0.1.0';
+
+type StaticItem =
+  | { kind: 'header'; id: '__header__' }
+  | { kind: 'entry'; id: string; entry: ScrollbackEntry };
 
 export function App(props: AppProps): React.ReactElement {
   const theme = useMemo(() => buildTheme(), []);
@@ -37,16 +38,41 @@ export function App(props: AppProps): React.ReactElement {
   const { stdout } = useStdout();
   const scrollback = useMemo(() => new Scrollback(), []);
   const [entries, setEntries] = useState<ScrollbackEntry[]>([]);
-  const [input, setInput] = useState('');
+  const [input, setInputState] = useState('');
   const [pending, setPending] = useState<PendingPermission | null>(null);
   const [running, setRunning] = useState(false);
-  const [rows, setRows] = useState<number>(stdout?.rows ?? 30);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
+  const [lastCtrlC, setLastCtrlC] = useState<number>(0);
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  const [streaming, setStreaming] = useState(false);
+  // Id of the assistant entry currently receiving text deltas. Held out of
+  // <Static> so its text can keep updating; committed once text_done fires.
+  const [streamingEntryId, setStreamingEntryId] = useState<string | null>(null);
+  const [menuHighlight, setMenuHighlight] = useState(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
+  // Bumped on /clear to remount <Static> so its internal append-cursor resets.
+  const [staticEpoch, setStaticEpoch] = useState(0);
+  // The welcome header is included in Static's items on the first mount and
+  // omitted after /clear so it doesn't reappear mid-session.
+  const [showHeader, setShowHeader] = useState(true);
+  // Sync mirror of `input` so the useInput handler can see the latest value
+  // even before React has flushed a render (happens when keys arrive in a
+  // burst).
+  const inputRef = useRef('');
+  function setInput(next: string | ((old: string) => string)): void {
+    setInputState((prev) => {
+      const value = typeof next === 'function' ? next(prev) : next;
+      inputRef.current = value;
+      return value;
+    });
+  }
+  const [registryVersion, setRegistryVersion] = useState(0);
+  const historyRef = useRef<string[]>([]);
+  const historyIdxRef = useRef<number>(-1);
 
   useEffect(() => {
     if (!stdout) return;
     const onResize = () => {
-      setRows(stdout.rows ?? 30);
       setColumns(stdout.columns ?? 80);
     };
     stdout.on('resize', onResize);
@@ -54,18 +80,8 @@ export function App(props: AppProps): React.ReactElement {
       stdout.off('resize', onResize);
     };
   }, [stdout]);
-  const [lastCtrlC, setLastCtrlC] = useState<number>(0);
-  const [spinnerFrame, setSpinnerFrame] = useState(0);
-  const [streaming, setStreaming] = useState(false);
-  const [menuHighlight, setMenuHighlight] = useState(0);
-  const [menuDismissed, setMenuDismissed] = useState(false);
-  const [scrollOffset, setScrollOffset] = useState(0);
-  // Bumped when the commands registry reloads so useMemos re-derive.
-  const [registryVersion, setRegistryVersion] = useState(0);
-  const historyRef = useRef<string[]>([]);
-  const historyIdxRef = useRef<number>(-1);
 
-  // On first mount, surface commands-registry warnings (one per collision).
+  // Surface commands-registry warnings once on mount.
   useEffect(() => {
     const reg = props.commands;
     if (!reg) return;
@@ -82,26 +98,8 @@ export function App(props: AppProps): React.ReactElement {
       }
     }
     setEntries(scrollback.all());
-    // Only once per mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Subscribe to wheel events for scrollback paging. We read the current line
-  // count and viewport size via refs so the subscription itself never churns
-  // on content updates.
-  const linesLenRef = useRef(0);
-  const scrollRowsRef = useRef(0);
-  useEffect(() => {
-    if (!props.subscribeWheel) return;
-    return props.subscribeWheel((dir) => {
-      if (dir === 'up') {
-        const max = Math.max(0, linesLenRef.current - scrollRowsRef.current);
-        setScrollOffset((o) => Math.min(max, o + 3));
-      } else {
-        setScrollOffset((o) => Math.max(0, o - 3));
-      }
-    });
-  }, [props.subscribeWheel]);
 
   // Subscribe to registry reloads so disk changes show up live.
   useEffect(() => {
@@ -140,19 +138,11 @@ export function App(props: AppProps): React.ReactElement {
 
   const menuOpen = menuItems.length > 0;
 
-  // Reset menu highlight + dismissal when input changes.
   useEffect(() => {
     setMenuHighlight(0);
   }, [input]);
   useEffect(() => {
     if (!input.startsWith('/')) setMenuDismissed(false);
-  }, [input]);
-
-  // Any change to the input buffer snaps the view back to the live tail — the
-  // prompt is part of the stream, so typing while scrolled-back would
-  // otherwise route characters into a hidden input.
-  useEffect(() => {
-    setScrollOffset(0);
   }, [input]);
 
   // Tick the spinner while waiting for a response.
@@ -180,29 +170,21 @@ export function App(props: AppProps): React.ReactElement {
       }
     })();
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.client, props.sessionId]);
-
-  // Layout (top → bottom):  header(1) + topHR(1) + content(scrollRows) +
-  //   when at tail:  bottomHR(1) + modal(0|7) + menu(0|Nrows+border) + input(>=1)
-  //   always:        flex spacer absorbing leftover rows + footer(1)
-  //
-  // When the user scrolls back, the prompt and its chrome are hidden (the
-  // prompt is part of the content stream, not pinned chrome). We reclaim those
-  // rows for the content area so the visible content grows to meet the
-  // footer — otherwise the spacer inflates and shows as a gap.
-  const inputLineRows = Math.max(1, Math.ceil((input.length + 3) / Math.max(10, columns)));
-  const modalRows = pending ? 7 : 0;
-  const menuRows = menuOpen ? Math.min(menuItems.length, SLASH_MENU_MAX_ROWS) + 2 : 0;
-  const atTail = scrollOffset === 0;
-  const tailChrome = atTail ? 1 + modalRows + menuRows + inputLineRows : 0;
-  const reserved = 1 + 1 + 1 + tailChrome;
-  const scrollRows = Math.max(3, rows - reserved);
 
   function apply(ev: AgentEvent | { type: 'permission_timeout'; requestId: string }): void {
     scrollback.apply(ev as AgentEvent);
-    setEntries(scrollback.all());
+    const all = scrollback.all();
+    setEntries(all);
     if (ev.type === 'assistant_text_delta') {
       setStreaming(true);
+      const last = all[all.length - 1];
+      if (last?.kind === 'assistant') {
+        setStreamingEntryId((prev) => (prev === last.id ? prev : last.id));
+      }
+    } else if (ev.type === 'assistant_text_done') {
+      setStreamingEntryId(null);
     } else if (ev.type === 'permission_request') {
       setPending({ requestId: ev.requestId, command: ev.command, reason: ev.reason });
     } else if (ev.type === 'permission_resolved' || ev.type === 'permission_timeout') {
@@ -210,6 +192,7 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'run_finished') {
       setRunning(false);
       setStreaming(false);
+      setStreamingEntryId(null);
     }
   }
 
@@ -238,20 +221,8 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
 
-    // Scrollback paging (always available).
-    if (key.pageUp) {
-      const step = Math.max(1, Math.floor(scrollRows / 2));
-      const maxOffset = Math.max(0, entries.length - 1);
-      setScrollOffset((o) => Math.min(maxOffset, o + step));
-      return;
-    }
-    if (key.pageDown) {
-      const step = Math.max(1, Math.floor(scrollRows / 2));
-      setScrollOffset((o) => Math.max(0, o - step));
-      return;
-    }
+    const latestInput = inputRef.current;
 
-    // Slash-menu key handling.
     if (menuOpen) {
       if (key.escape) {
         setMenuDismissed(true);
@@ -272,8 +243,7 @@ export function App(props: AppProps): React.ReactElement {
       }
       if (key.return) {
         const sel = menuItems[menuHighlight];
-        // If input already matches the highlighted command exactly, submit.
-        if (!sel || input === `/${sel.name}`) {
+        if (!sel || latestInput === `/${sel.name}`) {
           // fall through to submit below
         } else {
           setInput(`/${sel.name} `);
@@ -283,23 +253,21 @@ export function App(props: AppProps): React.ReactElement {
     }
 
     if (key.return) {
-      // Always snap back to the tail on Enter, even if the input is empty.
-      setScrollOffset(0);
-      if (input.trim().length === 0) return;
-      const text = input;
+      if (latestInput.trim().length === 0) return;
+      const text = latestInput;
       setInput('');
       historyRef.current.push(text);
       historyIdxRef.current = historyRef.current.length;
       void handleSubmit(text);
       return;
     }
-    if (key.upArrow && input.length === 0) {
+    if (key.upArrow && latestInput.length === 0) {
       if (historyRef.current.length === 0) return;
       historyIdxRef.current = Math.max(0, historyIdxRef.current - 1);
       setInput(historyRef.current[historyIdxRef.current] ?? '');
       return;
     }
-    if (key.downArrow && input.length === 0) {
+    if (key.downArrow && latestInput.length === 0) {
       historyIdxRef.current = Math.min(
         historyRef.current.length,
         historyIdxRef.current + 1,
@@ -307,16 +275,14 @@ export function App(props: AppProps): React.ReactElement {
       setInput(historyRef.current[historyIdxRef.current] ?? '');
       return;
     }
-    if (key.tab && input.startsWith('/')) {
-      // Menu-closed Tab fallback: if the user dismissed the menu but still
-      // wants prefix completion, do a best-effort single-match fill.
-      const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(input));
+    if (key.tab && latestInput.startsWith('/')) {
+      const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(latestInput));
       if (match) {
         setInput(match.name);
       } else if (props.commands) {
         const userMatch = props.commands
           .list()
-          .find((c) => `/${c.name}`.startsWith(input));
+          .find((c) => `/${c.name}`.startsWith(latestInput));
         if (userMatch) setInput(`/${userMatch.name}`);
       }
       return;
@@ -369,8 +335,15 @@ export function App(props: AppProps): React.ReactElement {
         return;
       }
       case '/clear':
+        // \x1b[2J clears the visible screen, \x1b[3J clears the scrollback
+        // buffer (xterm extension honored by most modern terminals), \x1b[H
+        // parks the cursor at home so Ink's next frame draws from the top.
+        stdout?.write('\x1b[2J\x1b[3J\x1b[H');
         scrollback.clear();
         setEntries([]);
+        setStreamingEntryId(null);
+        setShowHeader(false);
+        setStaticEpoch((n) => n + 1);
         return;
       case '/exit':
         app.exit();
@@ -435,7 +408,6 @@ export function App(props: AppProps): React.ReactElement {
         return;
       }
       default: {
-        // Fall through to the user-template registry.
         const templateName = name!.startsWith('/') ? name!.slice(1) : name!;
         const template = props.commands?.find(templateName);
         if (template) {
@@ -443,13 +415,10 @@ export function App(props: AppProps): React.ReactElement {
           try {
             expanded = props.commands!.expand(templateName, arg, { cwd: props.cwd });
           } catch (err) {
-            scrollback.addError(
-              `/${templateName}: ${(err as Error).message}`,
-            );
+            scrollback.addError(`/${templateName}: ${(err as Error).message}`);
             setEntries(scrollback.all());
             return;
           }
-          // Show the invocation the user typed, not the expanded template body.
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(expanded);
           setEntries(scrollback.all());
@@ -483,125 +452,123 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   const shortId = props.sessionId.slice(-8);
-
-  // Flatten all scrollback entries to a single stream of rendered lines.
-  // The scroll viewport is a line-level window over this stream, so tall
-  // messages can be clipped mid-body and the user always sees *something*.
-  const allLines = useMemo(
-    () => entries.flatMap((e) => renderEntryLines(e, columns, theme)),
-    [entries, columns, theme],
-  );
-
-  // scrollOffset is measured in lines back from the live tail. We defensively
-  // clamp again in the render memo so a momentarily over-large state (e.g.
-  // between a wheel burst and the normalization effect) never produces
-  // negative `end` — which would silently drop lines from the *bottom* via
-  // `slice(0, -N)`.
-  const visibleLines = useMemo(() => {
-    const maxOffset = Math.max(0, allLines.length - scrollRows);
-    const effectiveOffset = Math.max(0, Math.min(maxOffset, scrollOffset));
-    const end = allLines.length - effectiveOffset;
-    const start = Math.max(0, end - scrollRows);
-    return allLines.slice(start, end);
-  }, [allLines, scrollOffset, scrollRows]);
-
-  // Normalize scrollOffset state to a sane range when the buffer shrinks
-  // (e.g. /clear) or the viewport grows. Max is "top of the buffer", which
-  // leaves the first viewport-full fully visible.
-  useEffect(() => {
-    const maxOffset = Math.max(0, allLines.length - scrollRows);
-    if (scrollOffset > maxOffset) setScrollOffset(maxOffset);
-  }, [allLines.length, scrollRows, scrollOffset]);
-
-  // When the line stream grows while the user is scrolled back, keep the
-  // absolute viewport anchored on the same content by bumping scrollOffset by
-  // the number of new lines. Also syncs linesLenRef and scrollRowsRef (used
-  // by the wheel handler) here so both are current without a second effect.
-  const prevLinesLenRef = useRef(0);
-  useEffect(() => {
-    const prev = prevLinesLenRef.current;
-    prevLinesLenRef.current = allLines.length;
-    linesLenRef.current = allLines.length;
-    scrollRowsRef.current = scrollRows;
-    if (allLines.length > prev && scrollOffset > 0) {
-      const delta = allLines.length - prev;
-      setScrollOffset((o) => (o > 0 ? o + delta : o));
-    }
-  }, [allLines.length, scrollOffset, scrollRows]);
-
-
   const hrLine = '─'.repeat(Math.max(1, columns));
 
-  return (
-    <Box flexDirection="column" width={columns} height={rows}>
-      <Box>
-        <Text color={theme.primary} wrap="truncate-end">
-          Chimera · {shortId} · {props.cwd} · {props.modelRef} · [sandbox:off]
-        </Text>
-      </Box>
-      <Box>
-        <Text color={theme.muted}>{hrLine}</Text>
-      </Box>
-      <Box flexDirection="column" flexShrink={0} overflow="hidden">
-        {visibleLines}
-      </Box>
-      {atTail && (
-        <>
-          {pending && (
-            <PermissionModal
-              command={pending.command}
-              reason={pending.reason}
-              target="host"
-              theme={theme}
-              onResolve={onResolve}
-            />
-          )}
-          <Box>
-            <Text color={theme.muted}>{hrLine}</Text>
-          </Box>
-          <Box>
-            <Text color={theme.primary}>{'> '}</Text>
-            <Text>
-              {input}
-              <Text inverse> </Text>
-            </Text>
-          </Box>
-          {menuOpen && (
-            <SlashMenu items={menuItems} highlightIdx={menuHighlight} theme={theme} />
-          )}
-        </>
-      )}
-      {/* Absorb any leftover vertical space so the footer sits at the bottom
-          of the terminal. This is the only stretchy element; the gap lives
-          between the prompt and the footer with no framing elements around
-          it, so it reads as plain terminal space rather than an in-UI gap. */}
-      <Box flexGrow={1} />
+  // Split entries: the in-flight assistant entry renders inline below
+  // <Static> so its text can keep updating on every delta. Everything else
+  // is committed to the terminal's native scrollback via <Static>.
+  const { committedEntries, inFlightEntry } = useMemo<{
+    committedEntries: ScrollbackEntry[];
+    inFlightEntry: ScrollbackEntry | null;
+  }>(() => {
+    if (!streamingEntryId) return { committedEntries: entries, inFlightEntry: null };
+    const idx = entries.findIndex((e) => e.id === streamingEntryId);
+    if (idx < 0) return { committedEntries: entries, inFlightEntry: null };
+    const before = entries.slice(0, idx);
+    const after = entries.slice(idx + 1);
+    return {
+      committedEntries: [...before, ...after],
+      inFlightEntry: entries[idx] ?? null,
+    };
+  }, [entries, streamingEntryId]);
 
-      <Box>
-        <Text color={theme.muted} wrap="truncate-end">
-          Ctrl+C interrupt · Ctrl+D exit · / commands · wheel or PgUp/PgDn to scroll
-        </Text>
-        {scrollOffset > 0 && (
-          <Text color={theme.accent}>
-            {'  '}[scrolled back {scrollOffset}]
-          </Text>
+  const staticItems = useMemo<StaticItem[]>(() => {
+    const entryItems: StaticItem[] = committedEntries.map((e) => ({
+      kind: 'entry',
+      id: e.id,
+      entry: e,
+    }));
+    return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
+  }, [committedEntries, showHeader]);
+
+  const sessionLeft: StatusBarWidget[] = [
+    <Text color={theme.primary} bold>
+      Chimera
+    </Text>,
+    <Text color={theme.primary}>{shortId}</Text>,
+    <Text color={theme.primary}>{props.cwd}</Text>,
+    <Text color={theme.primary}>{props.modelRef}</Text>,
+  ];
+  const sessionRight: StatusBarWidget[] = [
+    <Text color={theme.muted}>[sandbox:off]</Text>,
+  ];
+  const hintsLeft: StatusBarWidget[] = [
+    <Text color={theme.muted}>Ctrl+C interrupt</Text>,
+    <Text color={theme.muted}>Ctrl+D exit</Text>,
+    <Text color={theme.muted}>/ commands</Text>,
+  ];
+
+  return (
+    <>
+      <Static key={`static-${staticEpoch}`} items={staticItems}>
+        {(item) => {
+          if (item.kind === 'header') {
+            return (
+              <Box key={item.id}>
+                <Header
+                  version={CHIMERA_VERSION}
+                  modelRef={props.modelRef}
+                  cwd={props.cwd}
+                  sessionId={props.sessionId}
+                  theme={theme}
+                />
+              </Box>
+            );
+          }
+          return (
+            <Box key={item.id} flexDirection="column">
+              {renderEntryLines(item.entry, columns, theme)}
+            </Box>
+          );
+        }}
+      </Static>
+      <Box flexDirection="column" width={columns}>
+        {inFlightEntry && (
+          <Box flexDirection="column">
+            {renderEntryLines(inFlightEntry, columns, theme)}
+          </Box>
         )}
         {running && (
-          <Text color={theme.accent}>
-            {'  '}
-            {SPINNER_FRAMES[spinnerFrame]} {streaming ? 'streaming…' : 'waiting for model…'}
-          </Text>
+          <Box>
+            <Text color={theme.accent}>
+              {SPINNER_FRAMES[spinnerFrame]} {streaming ? 'streaming…' : 'waiting…'}
+            </Text>
+          </Box>
         )}
+        {pending && (
+          <PermissionModal
+            command={pending.command}
+            reason={pending.reason}
+            target="host"
+            theme={theme}
+            onResolve={onResolve}
+          />
+        )}
+        {menuOpen && (
+          <SlashMenu items={menuItems} highlightIdx={menuHighlight} theme={theme} />
+        )}
+        <Box height={1}>
+          <Text color={theme.muted}>{hrLine}</Text>
+        </Box>
+        <Box>
+          <Text color={theme.primary}>{'> '}</Text>
+          <Text>
+            {input}
+            <Text inverse> </Text>
+          </Text>
+        </Box>
+        <StatusBar left={sessionLeft} right={sessionRight} separatorColor={theme.muted} />
+        <StatusBar left={hintsLeft} separatorColor={theme.muted} />
       </Box>
-    </Box>
+    </>
   );
 }
 
 /**
- * Wrap plain text into hard lines sized to the terminal. Splits on explicit
- * `\n` first, then breaks each segment at `width` characters. The first
- * segment's available width is reduced by `firstOffset` so prefixes like
- * "you: " or "[host] " line up.
+ * Hard-wrap `text` into one string per visual line. Splits on explicit `\n`
+ * first, then breaks each segment at `width` characters. The first segment's
+ * available width is reduced by `firstOffset` to leave room for a prefix
+ * like `you: ` or `[host] `.
  */
 function wrapToLines(text: string, width: number, firstOffset: number): string[] {
   if (text.length === 0) return [''];
@@ -626,11 +593,6 @@ function wrapToLines(text: string, width: number, firstOffset: number): string[]
   return out;
 }
 
-/**
- * Render a scrollback entry as an array of one-line `<Text>` elements. The
- * entry's styling (kind-based color, bold prefix, tool badge, etc.) applies
- * to the first line; continuation lines get the entry's base color only.
- */
 function renderEntryLines(
   entry: ScrollbackEntry,
   columns: number,
@@ -645,9 +607,7 @@ function renderEntryLines(
       <Text key={`${entry.id}:${i}`}>
         {i === 0 ? (
           <>
-            <Text color={theme.accent} bold>
-              you
-            </Text>
+            <Text color={theme.accent} bold>you</Text>
             {`: ${line}`}
           </>
         ) : (
@@ -656,12 +616,10 @@ function renderEntryLines(
       </Text>
     ));
   }
-
   if (entry.kind === 'assistant') {
     const lines = wrapToLines(entry.text, width, 0);
     return lines.map((line, i) => <Text key={`${entry.id}:${i}`}>{line}</Text>);
   }
-
   if (entry.kind === 'tool') {
     const badge = entry.toolTarget === 'host' ? '[host]' : '[sandbox]';
     const prefixLen = badge.length + 1;
@@ -691,7 +649,6 @@ function renderEntryLines(
     }
     return out;
   }
-
   if (entry.kind === 'info') {
     const lines = wrapToLines(entry.text, width, 0);
     return lines.map((line, i) => (
@@ -700,8 +657,6 @@ function renderEntryLines(
       </Text>
     ));
   }
-
-  // error
   const lines = wrapToLines(entry.text, width, 0);
   return lines.map((line, i) => (
     <Text key={`${entry.id}:${i}`} color={theme.danger}>

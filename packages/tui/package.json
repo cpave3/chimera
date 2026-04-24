@@ -23,7 +23,7 @@
     "@chimera/client": "workspace:*",
     "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
-    "ink": "^7.0.1",
+    "ink": "npm:@jrichman/ink@6.6.9",
     "react": "^19.2.5"
   },
   "devDependencies": {

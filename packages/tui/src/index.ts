@@ -2,6 +2,8 @@ export * from './theme';
 export * from './scrollback';
 export * from './slash-commands';
 export * from './App';
+export * from './Header';
 export * from './PermissionModal';
 export * from './SlashMenu';
+export * from './StatusBar';
 export * from './mount';
