@@ -50,7 +50,7 @@ The tool MUST be registered only when `--no-subagents` is not set.
 When `in_process !== true`, `spawn_agent` SHALL:
 
 1. Spawn `chimera serve --machine-handshake --cwd <cwd> --auto-approve <inherited> --parent <parentSessionId> [--sandbox ...]` via `child_process.spawn`.
-2. Read exactly one newline-terminated JSON line from the child's stdout; parse it as `{ ready: true, url, sessionId, pid }`.
+2. Read exactly one newline-terminated JSON line from the child's stdout; parse it as `{ ready: true, url, sessionId, pid }`. The parent SHALL pass the parsed `sessionId` to its `subagent_spawned` event as `childSessionId` (renamed from `sessionId` to avoid collision with the envelope's parent-scoped `sessionId`).
 3. Construct `new ChimeraClient({ baseUrl: url })`, emit a `subagent_spawned` event on the parent.
 4. Call `client.send(sessionId, prompt)` and consume its `AsyncIterable<AgentEvent>`.
 5. Re-emit every child event as a parent `subagent_event { subagentId, event }`.
@@ -137,3 +137,9 @@ Every successfully spawned child-process subagent SHALL:
 
 - **WHEN** a child is mid-run and a user in a second terminal runs `chimera attach <childSessionId>`
 - **THEN** the user SHALL see the child's live event stream rendered identically to a top-level session, including any currently pending permission prompt
+
+#### Scenario: Subagent id is discoverable from the parent TUI
+
+- **WHEN** a parent has one or more active child subagents and the user types `/subagents`
+- **THEN** the parent's TUI SHALL display each active child's full `subagentId` alongside its `purpose`, `status`, and server `url`, so the user can copy the id and run `chimera attach <subagentId>` from another terminal
+- **AND** every rendered `subagent_event` block in the parent's transcript SHALL include the subagent's id in its header label

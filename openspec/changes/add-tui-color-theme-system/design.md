@@ -31,9 +31,9 @@ Tokens are organized by purpose: `base.*` (foundational), `accent.*` (interactiv
 - **Why**: Groups make themes scannable and provide clear extension points.
 
 ### Storage: Config file with fallback
-Themes loaded from `~/.config/chimera/theme.json` with deep merge against defaults.
-- **Why**: JSON is simple, portable, and sufficient for key-value color definitions.
-- **Alternatives considered**: TypeScript module (rejected - requires build step), embedded in main config (rejected - themes are separate concern)
+Themes loaded from `~/.chimera/theme.json` with deep merge against defaults.
+- **Why**: JSON is simple, portable, and sufficient for key-value color definitions. Co-locating with `~/.chimera/sessions`, `~/.chimera/config.json`, `~/.chimera/logs`, and `~/.chimera/instances` keeps all user-level state under a single Chimera directory.
+- **Alternatives considered**: TypeScript module (rejected - requires build step); embedded in main config (rejected - themes are separate concern); XDG path `~/.config/chimera/theme.json` (rejected - inconsistent with the rest of the app's `~/.chimera/` convention).
 
 ### Provider pattern: React context
 Theme provider wraps the TUI app, exposing `useTheme()` hook for components.

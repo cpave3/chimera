@@ -1,11 +1,22 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ChimeraClient } from '@chimera/client';
 import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands';
 import type { AgentEvent } from '@chimera/core';
 import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App } from '../src/App';
+
+interface SubagentStub {
+  subagentId: string;
+  sessionId: string;
+  url: string;
+  purpose: string;
+  status: 'running' | 'finished';
+}
 
 interface StubClientOpts {
   sendSpy?: (msg: string) => void;
@@ -15,6 +26,8 @@ interface StubClientOpts {
    * user_message (and optionally more) after it processes the POST.
    */
   echoOnSend?: (content: string) => AgentEvent[];
+  /** Active subagents returned by `listSubagents`. */
+  subagents?: SubagentStub[];
 }
 
 function stubClient(opts: StubClientOpts = {}): ChimeraClient {
@@ -45,6 +58,7 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient {
     addRule: async () => {},
     removeRule: async () => {},
     resolvePermission: async () => {},
+    listSubagents: async () => opts.subagents ?? [],
   } as unknown as ChimeraClient;
 }
 
@@ -424,4 +438,194 @@ describe('TUI overlay slash dispatch', () => {
     unmount();
   });
 
+});
+
+// /theme reads/writes ~/.chimera/{theme.json,themes/}, so we redirect HOME to
+// a tempdir for the duration of each test rather than touching the user's real
+// state. os.homedir() honours $HOME on POSIX, which is enough for these tests.
+describe('TUI /theme slash dispatch', () => {
+  let tmpHome: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    tmpHome = mkdtempSync(join(tmpdir(), 'chimera-tui-theme-'));
+    mkdirSync(join(tmpHome, '.chimera'), { recursive: true });
+    originalHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it('lists bundled presets when no theme is active', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/theme\r');
+    const frame = lastFrame()!;
+    expect(frame).toContain('themes:');
+    expect(frame).toContain('cyberpunk');
+    expect(frame).toContain('tokyo-night-moon');
+    expect(frame).toContain('default');
+    expect(frame).toContain('Use /theme <name> to apply.');
+    unmount();
+  });
+
+  it('marks the active theme with a leading * after /theme <name>', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/theme cyberpunk\r');
+    await type(stdin, '/theme\r');
+    const frame = lastFrame()!;
+    expect(frame).toMatch(/\*\s+cyberpunk/);
+    unmount();
+  });
+
+  it('applying a builtin writes theme.json with a _themeName marker and confirms in scrollback', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/theme cyberpunk\r');
+    expect(lastFrame()).toContain("theme: applied 'cyberpunk' (builtin)");
+    const written = JSON.parse(
+      readFileSync(join(tmpHome, '.chimera', 'theme.json'), 'utf-8'),
+    );
+    expect(written._themeName).toBe('cyberpunk');
+    expect(written.accent.primary).toBeDefined();
+    unmount();
+  });
+
+  it('reports an error for an unknown theme name', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/theme not-a-real-theme\r');
+    const frame = lastFrame()!;
+    expect(frame).toMatch(/\/theme:.*unknown theme/);
+    expect(frame).toContain('not-a-real-theme');
+    unmount();
+  });
+
+  it('user-dir presets shadow builtins of the same name in the listing', async () => {
+    const themesDir = join(tmpHome, '.chimera', 'themes');
+    mkdirSync(themesDir, { recursive: true });
+    writeFileSync(join(themesDir, 'cyberpunk.json'), '{}');
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/theme\r');
+    const frame = lastFrame()!;
+    // The shadowed cyberpunk entry shows the (user) tag.
+    expect(frame).toMatch(/cyberpunk\s+\(user\)/);
+    unmount();
+  });
+
+  it('/subagents reports an empty list when no children are active', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/subagents\r');
+    expect(lastFrame()!).toContain('no active subagents');
+    unmount();
+  });
+
+  it('/subagents lists active children with id, purpose, status, and url', async () => {
+    const sub: SubagentStub = {
+      subagentId: 'sub-aaaaaaaaaa-bbbbbbbbbb',
+      sessionId: 'child-sess',
+      url: 'http://127.0.0.1:9999',
+      purpose: 'investigate logs',
+      status: 'running',
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ subagents: [sub] })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/subagents\r');
+    const frame = lastFrame()!;
+    expect(frame).toContain(sub.subagentId);
+    expect(frame).toContain(sub.purpose);
+    expect(frame).toContain('running');
+    expect(frame).toContain(sub.url);
+    unmount();
+  });
+
+  it('/attach with no argument prints usage', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/attach\r');
+    expect(lastFrame()!).toContain('usage: /attach <subagentId>');
+    unmount();
+  });
+
+  it('/attach rejects an unknown subagent id', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({ subagents: [] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/attach nothere\r');
+    expect(lastFrame()!).toMatch(/no subagent matching "nothere"/);
+    unmount();
+  });
+
+  it('/attach rejects in-process subagents (empty url)', async () => {
+    const sub: SubagentStub = {
+      subagentId: 'sub-inproc',
+      sessionId: 'child-sess',
+      url: '',
+      purpose: 'parallel research',
+      status: 'running',
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ subagents: [sub] })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/attach sub-inproc\r');
+    expect(lastFrame()!).toMatch(/in-process and not attachable/);
+    unmount();
+  });
+
+  it('/attach matches by trailing-id substring and reports the swap', async () => {
+    const sub: SubagentStub = {
+      subagentId: 'sub-prefix-tail-1234',
+      sessionId: 'child-sess',
+      // Point at a port that won't accept connections so the swapped subscribe
+      // fails fast — we only assert the dispatch line, not the live stream.
+      url: 'http://127.0.0.1:1',
+      purpose: 'sandbox child',
+      status: 'running',
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ subagents: [sub] })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/attach tail-1234\r');
+    expect(lastFrame()!).toContain(`attaching to subagent ${sub.subagentId}`);
+    unmount();
+  });
+
+  it('/detach is a no-op when already on the parent session', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    await type(stdin, '/detach\r');
+    expect(lastFrame()!).toContain('already attached to the parent session');
+    unmount();
+  });
 });

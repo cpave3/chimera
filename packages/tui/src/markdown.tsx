@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import { marked, type Tokens } from 'marked';
 import React from 'react';
-import type { Theme } from './theme';
+import type { Theme } from './theme/types';
 
 export function renderMarkdown(text: string, theme: Theme): React.ReactElement[] {
   const tokens = marked.lexer(text).filter((t) => t.type !== 'space');
@@ -32,7 +32,7 @@ function renderBlock(
           const marker = l.ordered ? `${start + i}.` : '•';
           return (
             <Box key={i}>
-              <Text color={theme.muted}>{marker} </Text>
+              <Text color={theme.text.muted}>{marker} </Text>
               <Text>{renderInline(itemInlineTokens(item), theme)}</Text>
             </Box>
           );
@@ -46,7 +46,7 @@ function renderBlock(
     return (
       <Box key={key} flexDirection="column" paddingLeft={2} marginTop={gap}>
         {lines.map((line, i) => (
-          <Text key={i} color={theme.secondary} dimColor>
+          <Text key={i} color={theme.accent.secondary} dimColor>
             {line.length === 0 ? ' ' : line}
           </Text>
         ))}
@@ -57,7 +57,7 @@ function renderBlock(
     const h = tok as Tokens.Heading;
     return (
       <Box key={key} marginTop={gap}>
-        <Text bold color={theme.accent}>
+        <Text bold color={theme.ui.accent}>
           {renderInline(h.tokens ?? [], theme)}
         </Text>
       </Box>
@@ -111,7 +111,7 @@ function renderInlineToken(
   }
   if (tok.type === 'codespan') {
     return (
-      <Text key={key} color={theme.secondary}>
+      <Text key={key} color={theme.accent.secondary}>
         {(tok as Tokens.Codespan).text}
       </Text>
     );

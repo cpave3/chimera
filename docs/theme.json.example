@@ -1,0 +1,13 @@
+{
+  "_comment": "Partial override example. Drop into ~/.chimera/theme.json. Unknown top-level keys (like this _comment) are stripped at load. Omitted tokens fall back to the default theme; see packages/tui/src/theme/tokens.ts for the full default.",
+  "accent": {
+    "primary": "greenBright",
+    "secondary": "cyanBright"
+  },
+  "status": {
+    "error": "redBright"
+  },
+  "text": {
+    "muted": "blackBright"
+  }
+}

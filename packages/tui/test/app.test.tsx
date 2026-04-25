@@ -1,10 +1,9 @@
-import type { ChimeraClient } from '@chimera/client';
+import { ChimeraClient } from '@chimera/client';
 import { render } from 'ink-testing-library';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { PermissionModal } from '../src/PermissionModal';
-import { buildTheme } from '../src/theme';
 
 function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
   return {
@@ -17,6 +16,7 @@ function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
     addRule: async () => {},
     removeRule: async () => {},
     resolvePermission: async () => {},
+    listSubagents: async () => [],
     ...overrides,
   } as unknown as ChimeraClient;
 }
@@ -271,6 +271,88 @@ describe('App', () => {
     sendResolve?.();
     unmount();
   });
+
+  it('routes a subagent_event permission_request to the child via a fresh client', async () => {
+    // Spy on ChimeraClient.prototype.resolvePermission so calls made by the
+    // child client (constructed inside App.tsx from `pending.subagent.url`)
+    // are intercepted. The parent's stub has its own resolvePermission and
+    // is not a real ChimeraClient instance, so the spy isolates the child path.
+    const childResolveSpy = vi
+      .spyOn(ChimeraClient.prototype, 'resolvePermission')
+      .mockImplementation(async () => {});
+    const parentResolveSpy = vi.fn(async () => {});
+
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      resolvePermission: parentResolveSpy as unknown as ChimeraClient['resolvePermission'],
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((r) => {
+            waiters.push(r as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    pushEvent!({
+      type: 'subagent_spawned',
+      subagentId: 'sub-9999999999',
+      parentCallId: 'pc1',
+      childSessionId: 'child-sess-A',
+      url: 'http://127.0.0.1:1',
+      purpose: 'investigate',
+    });
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'sub-9999999999',
+      event: {
+        type: 'permission_request',
+        requestId: 'req-1',
+        tool: 'bash',
+        target: 'host',
+        command: 'rm -rf /tmp/x',
+        reason: 'cleanup',
+      },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    const frame = lastFrame()!;
+    expect(frame).toContain('rm -rf /tmp/x');
+    // Header includes both the subagent id (last 8 chars) and purpose.
+    expect(frame).toMatch(/\[subagent .*: investigate\]/);
+
+    // Resolve with 'a' (allow once).
+    (stdin as unknown as { write: (s: string) => void }).write('a');
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(parentResolveSpy).not.toHaveBeenCalled();
+    expect(childResolveSpy).toHaveBeenCalledTimes(1);
+    expect(childResolveSpy.mock.calls[0]?.[0]).toBe('child-sess-A');
+    expect(childResolveSpy.mock.calls[0]?.[1]).toBe('req-1');
+    expect(childResolveSpy.mock.calls[0]?.[2]).toBe('allow');
+
+    childResolveSpy.mockRestore();
+    unmount();
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('PermissionModal', () => {
@@ -279,7 +361,6 @@ describe('PermissionModal', () => {
       <PermissionModal
         command="pnpm test"
         target="host"
-        theme={buildTheme()}
         onResolve={() => {}}
       />,
     );
@@ -297,7 +378,6 @@ describe('PermissionModal', () => {
         command="echo x"
         reason="integration tests"
         target="host"
-        theme={buildTheme()}
         onResolve={() => {}}
       />,
     );

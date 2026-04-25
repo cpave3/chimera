@@ -11,20 +11,14 @@ import { runSkillsList } from './commands/skills';
 
 export const CHIMERA_CLI_VERSION = '0.1.0';
 
-const BANNED_FLAGS = ['--max-subagent-depth', '--no-subagents'];
-
-function guardDeferredFlags(argv: string[]): void {
-  for (const arg of argv) {
-    for (const flag of BANNED_FLAGS) {
-      if (arg === flag || arg.startsWith(`${flag}=`)) {
-        process.stderr.write(
-          `error: flag '${flag}' is not yet supported in this release ` +
-            '(subagent features land in a follow-on change).\n',
-        );
-        process.exit(1);
-      }
-    }
-  }
+function applySubagentOptions(cmd: Command): Command {
+  return cmd
+    .option(
+      '--max-subagent-depth <n>',
+      'Maximum subagent nesting depth (default 3)',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option('--no-subagents', 'Disable the spawn_agent tool');
 }
 
 function applySandboxOptions(cmd: Command): Command {
@@ -58,23 +52,25 @@ export function buildProgram(): Command {
   // https://github.com/tj/commander.js#parsing-and-positional-options.
   program.enablePositionalOptions();
 
-  applySandboxOptions(
-    program
-      .command('run [prompt...]', { isDefault: false })
-      .description('Run a one-shot prompt non-interactively.')
-      .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-      .option('--cwd <path>', 'Working directory', process.cwd())
-      .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-      .option('--auto-approve <level>', 'none|sandbox|host|all')
-      .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
-      .option('--session <id>', 'Resume a persisted session')
-      .option('--stdin', 'Read prompt from stdin', false)
-      .option('--command <name>', 'Run a user command template by name')
-      .option('--args <args>', 'Arguments for --command (quoted string)')
-      .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-      .option('--no-skills', 'Skip skill discovery and system-prompt injection')
-      .option('-v, --verbose', 'Verbose logging', false)
-      .option('-q, --quiet', 'Suppress non-essential logging', false),
+  applySubagentOptions(
+    applySandboxOptions(
+      program
+        .command('run [prompt...]', { isDefault: false })
+        .description('Run a one-shot prompt non-interactively.')
+        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+        .option('--cwd <path>', 'Working directory', process.cwd())
+        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+        .option('--auto-approve <level>', 'none|sandbox|host|all')
+        .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
+        .option('--session <id>', 'Resume a persisted session')
+        .option('--stdin', 'Read prompt from stdin', false)
+        .option('--command <name>', 'Run a user command template by name')
+        .option('--args <args>', 'Arguments for --command (quoted string)')
+        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+        .option('--no-skills', 'Skip skill discovery and system-prompt injection')
+        .option('-v, --verbose', 'Verbose logging', false)
+        .option('-q, --quiet', 'Suppress non-essential logging', false),
+    ),
   ).action(async (promptArgs: string[], opts) => {
     let prompt = promptArgs.join(' ');
     if (opts.stdin) {
@@ -103,6 +99,8 @@ export function buildProgram(): Command {
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
       sandboxFlags: opts,
+      subagents: opts.subagents,
+      maxSubagentDepth: opts.maxSubagentDepth,
     });
     process.exit(exitCode);
   });
@@ -135,18 +133,30 @@ export function buildProgram(): Command {
       });
     });
 
-  applySandboxOptions(
-    program
-      .command('serve')
-      .description('Start only the HTTP/SSE server.')
-      .option('-m, --model <modelRef>', 'Default model')
-      .option('--cwd <path>', 'Working directory', process.cwd())
-      .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
-      .option('--host <addr>', 'Bind address', '127.0.0.1')
-      .option('--machine-handshake', 'Emit a single JSON line on ready', false)
-      .option('--parent <sessionId>', 'Parent session id (for subagents)')
-      .option('--auto-approve <level>', 'none|sandbox|host|all')
-      .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+  applySubagentOptions(
+    applySandboxOptions(
+      program
+        .command('serve')
+        .description('Start only the HTTP/SSE server.')
+        .option('-m, --model <modelRef>', 'Default model')
+        .option('--cwd <path>', 'Working directory', process.cwd())
+        .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
+        .option('--host <addr>', 'Bind address', '127.0.0.1')
+        .option('--machine-handshake', 'Emit a single JSON line on ready', false)
+        .option('--parent <sessionId>', 'Parent session id (for subagents)')
+        .option(
+          '--current-subagent-depth <n>',
+          'Internal: nesting depth of this child agent',
+          (v) => Number.parseInt(v, 10),
+        )
+        .option(
+          '--headless-permission-auto-deny',
+          'Internal: auto-deny host-target permission requests instead of prompting',
+          false,
+        )
+        .option('--auto-approve <level>', 'none|sandbox|host|all')
+        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+    ),
   ).action(async (opts) => {
     await runServe({
       port: opts.port,
@@ -158,6 +168,10 @@ export function buildProgram(): Command {
       maxSteps: opts.maxSteps,
       autoApprove: opts.autoApprove,
       sandboxFlags: opts,
+      subagents: opts.subagents,
+      maxSubagentDepth: opts.maxSubagentDepth,
+      currentSubagentDepth: opts.currentSubagentDepth,
+      headlessPermissionAutoDeny: opts.headlessPermissionAutoDeny,
     });
   });
 
@@ -200,15 +214,17 @@ export function buildProgram(): Command {
     });
 
   // Default (no subcommand): interactive TUI session.
-  applySandboxOptions(
-    program
-      .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-      .option('--cwd <path>', 'Working directory', process.cwd())
-      .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-      .option('--auto-approve <level>', 'none|sandbox|host|all')
-      .option('--session <id>', 'Resume a persisted session')
-      .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-      .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applySubagentOptions(
+    applySandboxOptions(
+      program
+        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+        .option('--cwd <path>', 'Working directory', process.cwd())
+        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+        .option('--auto-approve <level>', 'none|sandbox|host|all')
+        .option('--session <id>', 'Resume a persisted session')
+        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+        .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+    ),
   ).action(async (opts) => {
     await runInteractive({
       cwd: opts.cwd ?? process.cwd(),
@@ -219,6 +235,8 @@ export function buildProgram(): Command {
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
       sandboxFlags: opts,
+      subagents: opts.subagents,
+      maxSubagentDepth: opts.maxSubagentDepth,
     });
   });
 
@@ -238,7 +256,6 @@ async function readStdin(): Promise<string> {
 }
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {
-  guardDeferredFlags(argv.slice(2));
   const program = buildProgram();
   try {
     await program.parseAsync(argv);

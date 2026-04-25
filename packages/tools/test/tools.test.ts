@@ -25,7 +25,7 @@ describe('buildTools', () => {
       sandboxExecutor: executor,
       hostExecutor: executor,
       sandboxMode: 'off',
-    }) as unknown as Record<string, AnyTool>;
+    }).tools as unknown as Record<string, AnyTool>;
   }
 
   it('returns exactly bash, read, write, edit', () => {

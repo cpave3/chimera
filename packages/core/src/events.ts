@@ -1,6 +1,17 @@
 import type { CallId, SessionId } from './ids';
 import type { ExecutionTarget } from './types';
 
+/**
+ * Per-tool human-readable display payload, computed by a tool's
+ * `formatScrollback` hook and emitted alongside `tool_call_start` and
+ * `tool_call_result` so the TUI (or any client) can render a concise summary
+ * instead of the raw JSON args.
+ */
+export type ToolDisplay = {
+  summary: string;
+  detail?: string;
+};
+
 export type AgentEvent =
   | { type: 'session_started'; sessionId: SessionId }
   | { type: 'user_message'; content: string }
@@ -12,12 +23,14 @@ export type AgentEvent =
       name: string;
       args: unknown;
       target: ExecutionTarget;
+      display?: ToolDisplay;
     }
   | {
       type: 'tool_call_result';
       callId: CallId;
       result: unknown;
       durationMs: number;
+      display?: ToolDisplay;
     }
   | { type: 'tool_call_error'; callId: CallId; error: string }
   | {
@@ -45,8 +58,14 @@ export type AgentEvent =
       type: 'subagent_spawned';
       subagentId: string;
       parentCallId: CallId;
-      sessionId: SessionId;
+      /**
+       * The child's session id. Named `childSessionId` (rather than `sessionId`)
+       * to avoid collision with the envelope's `sessionId` field, which is
+       * unconditionally set to the *parent's* session id by `EventBus.publish`.
+       */
+      childSessionId: SessionId;
       url: string;
+      purpose: string;
     }
   | { type: 'subagent_event'; subagentId: string; event: AgentEvent }
   | {

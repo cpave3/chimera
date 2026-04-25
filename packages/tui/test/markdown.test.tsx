@@ -3,12 +3,11 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderMarkdown } from '../src/markdown';
-import { buildTheme } from '../src/theme';
+import { defaultTheme } from '../src/theme/tokens';
 
 function frame(text: string): string {
-  const theme = buildTheme();
   const { lastFrame, unmount } = render(
-    <Box flexDirection="column">{renderMarkdown(text, theme)}</Box>,
+    <Box flexDirection="column">{renderMarkdown(text, defaultTheme)}</Box>,
   );
   const out = lastFrame() ?? '';
   unmount();

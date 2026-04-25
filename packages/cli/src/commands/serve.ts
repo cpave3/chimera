@@ -18,6 +18,13 @@ export interface ServeOptions {
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   home?: string;
   sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
+  /** Default true; commander populates `false` when `--no-subagents` is passed. */
+  subagents?: boolean;
+  maxSubagentDepth?: number;
+  /** Internal: forwarded by parents to children. */
+  currentSubagentDepth?: number;
+  /** Internal: parent had no TTY; child auto-denies prompts. */
+  headlessPermissionAutoDeny?: boolean;
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
@@ -46,6 +53,12 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     home: opts.home,
     skills,
     sandbox: sandboxOpts ?? undefined,
+    subagents: {
+      enabled: opts.subagents !== false,
+      maxDepth: opts.maxSubagentDepth,
+      currentDepth: opts.currentSubagentDepth,
+      headlessAutoDeny: opts.headlessPermissionAutoDeny,
+    },
   });
 
   const registry = new AgentRegistry({

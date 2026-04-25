@@ -22,6 +22,8 @@ export interface InteractiveOptions {
   /** False → skip skill discovery + injection (from `--no-skills`). */
   skills?: boolean;
   sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
+  subagents?: boolean;
+  maxSubagentDepth?: number;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -54,6 +56,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     home: opts.home,
     skills,
     sandbox: sandboxOpts ?? undefined,
+    subagents: {
+      enabled: opts.subagents !== false,
+      maxDepth: opts.maxSubagentDepth,
+    },
   });
 
   const commands = loadReloadingCommandsFromConfig({

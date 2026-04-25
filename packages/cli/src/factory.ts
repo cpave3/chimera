@@ -6,6 +6,7 @@ import { loadProviders, type ProvidersConfig } from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
+import { buildSpawnAgentTool } from '@chimera/subagents';
 import { buildTools, LocalExecutor } from '@chimera/tools';
 import type { CliSandboxOptions } from './sandbox-config';
 
@@ -21,6 +22,23 @@ export interface CliAgentFactoryOptions {
   skills?: SkillRegistry;
   /** When set, sandbox-target tools route through a DockerExecutor. */
   sandbox?: CliSandboxOptions;
+  /** Subagent configuration. When omitted, `spawn_agent` is registered with defaults. */
+  subagents?: {
+    /** When false, the `spawn_agent` tool is NOT registered. Default true. */
+    enabled?: boolean;
+    /** Default 3. */
+    maxDepth?: number;
+    /** Default 0. Children pass their incremented depth via CLI flag. */
+    currentDepth?: number;
+    /** When true (auto-set in headless parent runs), child gates auto-deny prompts. */
+    headlessAutoDeny?: boolean;
+    /** Path to the chimera executable used to spawn child processes. */
+    chimeraBin?: string;
+    /** Default model ref to forward to children. */
+    defaultModelRef?: string;
+    /** Whether the parent process has a TTY. Defaults to `process.stdin.isTTY`. */
+    parentHasTty?: boolean;
+  };
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -29,6 +47,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly home: string | undefined;
   private readonly skills: SkillRegistry | undefined;
   private readonly sandbox: CliSandboxOptions | undefined;
+  private readonly subagents: NonNullable<CliAgentFactoryOptions['subagents']>;
   private readonly warn: (msg: string) => void;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
 
@@ -38,6 +57,7 @@ export class CliAgentFactory implements AgentFactory {
     this.home = opts.home;
     this.skills = opts.skills;
     this.sandbox = opts.sandbox;
+    this.subagents = opts.subagents ?? {};
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
   }
 
@@ -85,6 +105,7 @@ export class CliAgentFactory implements AgentFactory {
       cwd: init.cwd,
       autoApprove: this.autoApprove,
       raiseRequest: (req) => agent.raisePermissionRequest(req),
+      headlessAutoDeny: this.subagents.headlessAutoDeny,
     });
 
     // Wire remember handler so resolvePermission's `remember` arg persists a rule.
@@ -117,14 +138,43 @@ export class CliAgentFactory implements AgentFactory {
       sandboxExecutor = docker;
     }
 
-    const tools = buildTools({
+    const built = buildTools({
       sandboxExecutor,
       hostExecutor,
       permissionGate: gate,
       sandboxMode: init.sandboxMode,
     });
+    const tools = built.tools;
+    const formatters = { ...built.formatters };
+
+    if (this.subagents.enabled !== false) {
+      const invocation = resolveChimeraInvocation();
+      const spawn = buildSpawnAgentTool({
+        emit: (ev) => agent.pushEvent(ev),
+        resolveCallId: (id) => agent.resolveCallId(id),
+        get parentAbortSignal() {
+          return agent.signal;
+        },
+        parentSessionId: agent.session.id,
+        cwd: init.cwd,
+        defaultModelRef:
+          this.subagents.defaultModelRef ??
+          `${init.model.providerId}/${init.model.modelId}`,
+        sandboxMode: init.sandboxMode,
+        autoApprove: this.autoApprove,
+        currentDepth: this.subagents.currentDepth ?? 0,
+        maxDepth: this.subagents.maxDepth ?? 3,
+        chimeraBin: this.subagents.chimeraBin ?? invocation.bin,
+        chimeraBinArgs: invocation.preArgs,
+        parentHasTty:
+          this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
+      });
+      tools.spawn_agent = spawn.tool;
+      if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
+    }
 
     agent.setTools(tools);
+    agent.setToolFormatters(formatters);
 
     return { agent, gate };
   }
@@ -152,4 +202,23 @@ async function tryLoadSession(sessionId: string, home?: string) {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Resolve the chimera invocation tuple. Honors `CHIMERA_BIN` if set; otherwise
+ * uses `process.execPath` plus the current entrypoint script (so subagents
+ * spawn through the same node binary as the parent).
+ */
+export function resolveChimeraInvocation(): { bin: string; preArgs: string[] } {
+  const fromEnv = process.env.CHIMERA_BIN;
+  if (fromEnv) return { bin: fromEnv, preArgs: [] };
+  const entry = process.argv[1];
+  if (entry && entry.length > 0) {
+    return { bin: process.execPath, preArgs: [entry] };
+  }
+  return { bin: 'chimera', preArgs: [] };
+}
+
+function resolveChimeraBin(): string {
+  return resolveChimeraInvocation().bin;
 }

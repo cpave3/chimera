@@ -1,7 +1,8 @@
 import { newRequestId } from '@chimera/core';
-import { tool } from 'ai';
 import { z } from 'zod';
 import type { ToolContext } from './context';
+import { defineTool } from './define';
+import { clip, stripCdPrefix } from './format';
 
 const DESTRUCTIVE_PATTERNS: { match: RegExp; label: string }[] = [
   { match: /^\s*rm\s+(-[rRf]+\s+)*\/\s*(\*)?\s*(;.*)?$/, label: 'rm -rf /' },
@@ -18,22 +19,31 @@ function checkDestructive(cmd: string): string | null {
   return null;
 }
 
+const BASH_SCHEMA = z.object({
+  command: z.string().describe('The shell command to run.'),
+  timeout_ms: z.number().int().positive().optional().describe('Timeout in ms. Default 120000.'),
+  target: z.enum(['sandbox', 'host']).optional().describe(
+    "Which executor to use. Defaults to 'host' when sandbox is off.",
+  ),
+  reason: z.string().optional().describe(
+    "Short justification for running on the host (required when sandbox is on and target='host').",
+  ),
+});
+type BashArgs = z.infer<typeof BASH_SCHEMA>;
+type BashResult = {
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  timed_out: boolean;
+};
+
 export function buildBashTool(ctx: ToolContext) {
-  return tool({
+  return defineTool<BashArgs, BashResult>({
     description:
       'Execute a shell command and return its stdout, stderr, exit code, and whether it timed out. ' +
       'Use for builds, tests, git, inspecting the environment. ' +
       "In sandbox mode, set target='host' (with a 'reason') to run on the host instead of the sandbox.",
-    inputSchema: z.object({
-      command: z.string().describe('The shell command to run.'),
-      timeout_ms: z.number().int().positive().optional().describe('Timeout in ms. Default 120000.'),
-      target: z.enum(['sandbox', 'host']).optional().describe(
-        "Which executor to use. Defaults to 'host' when sandbox is off.",
-      ),
-      reason: z.string().optional().describe(
-        "Short justification for running on the host (required when sandbox is on and target='host').",
-      ),
-    }),
+    inputSchema: BASH_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const command = args.command;
       const destructive = checkDestructive(command);
@@ -90,6 +100,12 @@ export function buildBashTool(ctx: ToolContext) {
         exit_code: result.exitCode,
         timed_out: result.timedOut,
       };
+    },
+    formatScrollback: (args, result) => {
+      const head = clip(stripCdPrefix(args.command), 60);
+      if (!result) return { summary: head };
+      if (result.timed_out) return { summary: `${head} (timed out)` };
+      return { summary: `${head} (exit ${result.exit_code})` };
     },
   });
 }

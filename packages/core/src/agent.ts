@@ -1,6 +1,8 @@
 import { stepCountIs, streamText, type ModelMessage, type LanguageModel, type ToolSet } from 'ai';
 import { EventQueue } from './event-queue';
-import { type AgentEvent } from './events';
+import { type AgentEvent, type ToolDisplay } from './events';
+
+export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
 import {
   type CallId,
   type SessionId,
@@ -59,6 +61,15 @@ export class Agent {
   >();
   private currentQueue: EventQueue<AgentEvent> | null = null;
   private running = false;
+  private toolFormatters: Record<string, ToolFormatter> = {};
+  /**
+   * Maps the AI SDK's per-call `toolCallId` (a short string the SDK generates)
+   * to the agent's own `CallId` for the same tool invocation. Tools that emit
+   * out-of-band events (notably `spawn_agent`, which fires `subagent_spawned`)
+   * use `resolveCallId(toolCallId)` to attribute their events to the parent
+   * tool call so the TUI can nest sub-events under the right entry.
+   */
+  private callIdByToolCallId = new Map<string, CallId>();
 
   constructor(opts: AgentOptions) {
     this.opts = opts;
@@ -149,6 +160,24 @@ export class Agent {
   }
 
   /**
+   * The parent's AbortSignal for the current run. Tools that want to react to
+   * `interrupt()` (e.g. `spawn_agent` cascading SIGTERM to its child) read it
+   * via this getter rather than holding a reference to a stale controller.
+   */
+  get signal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
+  /**
+   * Push an arbitrary event onto the current run's stream. Used by tools that
+   * need to emit out-of-band events (subagent spawn/finish, sub-stream
+   * forwarding). No-op if no run is active.
+   */
+  pushEvent(event: AgentEvent): void {
+    this.currentQueue?.push(event);
+  }
+
+  /**
    * Replace the tool set. Useful for breaking the tools ↔ permission-gate
    * construction cycle: build the Agent first, then the gate (which captures
    * `raisePermissionRequest`), then the tools that use the gate, then
@@ -156,6 +185,42 @@ export class Agent {
    */
   setTools(tools: ToolSet): void {
     this.opts = { ...this.opts, tools };
+  }
+
+  /**
+   * Register optional per-tool scrollback formatters keyed by tool name.
+   * Called by the agent on tool_call_start/result to compute the `display`
+   * payload that ships with each event. Errors thrown from a formatter are
+   * caught and the event simply omits `display` — falling back to the
+   * generic JSON-args rendering on the client.
+   */
+  setToolFormatters(formatters: Record<string, ToolFormatter>): void {
+    this.toolFormatters = { ...formatters };
+  }
+
+  /**
+   * Translate an AI SDK `toolCallId` into the agent's `CallId` for the same
+   * in-flight tool invocation. Returns `undefined` when no mapping exists
+   * (e.g. the tool call has already produced its result/error and been
+   * cleaned up). Used by tools that emit out-of-band events and need to
+   * cite their parent tool call.
+   */
+  resolveCallId(toolCallId: string): CallId | undefined {
+    return this.callIdByToolCallId.get(toolCallId);
+  }
+
+  private safeFormat(
+    name: string,
+    args: unknown,
+    result?: unknown,
+  ): ToolDisplay | undefined {
+    const fmt = this.toolFormatters[name];
+    if (!fmt) return undefined;
+    try {
+      return fmt(args, result);
+    } catch {
+      return undefined;
+    }
   }
 
   snapshot(): Session {
@@ -254,12 +319,14 @@ export class Agent {
               target,
               startedAt: record.startedAt,
             });
+            this.callIdByToolCallId.set(part.toolCallId, callId);
             queue.push({
               type: 'tool_call_start',
               callId,
               name: part.toolName,
               args,
               target,
+              display: this.safeFormat(part.toolName, args),
             });
             break;
           }
@@ -277,6 +344,7 @@ export class Agent {
               callId: info.callId,
               result,
               durationMs: Date.now() - info.startedAt,
+              display: this.safeFormat(info.name, rec?.args, result),
             });
             if (info.name === 'read' && this.opts.skillActivation) {
               const readPath = extractReadPath(rec?.args);
@@ -292,6 +360,7 @@ export class Agent {
               }
             }
             callInfo.delete(part.toolCallId);
+            this.callIdByToolCallId.delete(part.toolCallId);
             break;
           }
           case 'tool-error': {
@@ -306,6 +375,7 @@ export class Agent {
             }
             queue.push({ type: 'tool_call_error', callId: info.callId, error: msg });
             callInfo.delete(part.toolCallId);
+            this.callIdByToolCallId.delete(part.toolCallId);
             break;
           }
           case 'finish-step': {

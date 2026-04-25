@@ -16,17 +16,25 @@ export interface GateOptions {
   autoApprove: AutoApproveLevel;
   raiseRequest: RaiseRequestFn;
   sandboxMode?: 'off';
+  /**
+   * When true, host-target requests that would otherwise prompt the user are
+   * auto-denied. Used by subagent children whose parent has no TTY — the
+   * parent can't interactively resolve the prompt, so the child denies.
+   */
+  headlessAutoDeny?: boolean;
 }
 
 export class DefaultPermissionGate implements PermissionGate {
   private readonly store: RuleStore;
   private readonly autoApprove: AutoApproveLevel;
   private readonly raise: RaiseRequestFn;
+  private readonly headlessAutoDeny: boolean;
 
   constructor(opts: GateOptions) {
     this.store = new RuleStore(opts.cwd);
     this.autoApprove = opts.autoApprove;
     this.raise = opts.raiseRequest;
+    this.headlessAutoDeny = opts.headlessAutoDeny ?? false;
   }
 
   check(req: PermissionRequest): PermissionResolution | null {
@@ -50,6 +58,9 @@ export class DefaultPermissionGate implements PermissionGate {
     }
     const byRule = this.check(req);
     if (byRule) return byRule;
+    if (this.headlessAutoDeny && req.target === 'host') {
+      return { decision: 'deny', remembered: false };
+    }
     return this.raise(req);
   }
 

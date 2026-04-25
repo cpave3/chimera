@@ -23,6 +23,14 @@ export interface BuildResult {
   gate?: PermissionGate;
 }
 
+export interface SubagentInfo {
+  subagentId: string;
+  sessionId: SessionId;
+  url: string;
+  purpose: string;
+  status: 'running' | 'finished';
+}
+
 export interface AgentEntry {
   agent: Agent;
   gate?: PermissionGate;
@@ -36,6 +44,8 @@ export interface AgentEntry {
   commands: Command[];
   /** Skills bound to this session at creation time. Same snapshot discipline. */
   skills: Skill[];
+  /** Live subagents spawned by this session. Updated from the event bus. */
+  subagents: Map<string, SubagentInfo>;
 }
 
 export interface InstanceInfo {
@@ -90,6 +100,7 @@ export class AgentRegistry {
     const bus = new EventBus(agent.session.id);
     const commands = this.loadCommands ? this.loadCommands({ cwd: init.cwd }) : [];
     const skills = this.loadSkills ? this.loadSkills({ cwd: init.cwd }) : [];
+    const subagents = new Map<string, SubagentInfo>();
     const entry: AgentEntry = {
       agent,
       gate,
@@ -98,7 +109,22 @@ export class AgentRegistry {
       resolvedPermissionIds: new Set(),
       commands,
       skills,
+      subagents,
     };
+    bus.subscribe((env) => {
+      if (env.type === 'subagent_spawned') {
+        subagents.set(env.subagentId, {
+          subagentId: env.subagentId,
+          sessionId: env.childSessionId,
+          url: env.url,
+          purpose: env.purpose,
+          status: 'running',
+        });
+      } else if (env.type === 'subagent_finished') {
+        // Drop on finish — `listSubagents` returns active children only.
+        subagents.delete(env.subagentId);
+      }
+    });
     this.entries.set(agent.session.id, entry);
     bus.publish({ type: 'session_started', sessionId: agent.session.id });
     return { sessionId: agent.session.id, entry };

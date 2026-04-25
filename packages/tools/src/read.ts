@@ -1,20 +1,26 @@
-import { tool } from 'ai';
 import { z } from 'zod';
 import type { ToolContext } from './context';
+import { defineTool } from './define';
+import { relPath } from './format';
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 100 * 1024;
 
+const READ_SCHEMA = z.object({
+  path: z.string(),
+  start_line: z.number().int().positive().optional(),
+  end_line: z.number().int().positive().optional(),
+});
+type ReadArgs = z.infer<typeof READ_SCHEMA>;
+type ReadResult = { content: string; total_lines: number; truncated: boolean };
+
 export function buildReadTool(ctx: ToolContext) {
-  return tool({
+  const cwd = ctx.sandboxExecutor.cwd();
+  return defineTool<ReadArgs, ReadResult>({
     description:
       'Read a file from the working directory. Returns line-number-prefixed content. ' +
       'Limited to 2000 lines or 100 KB (whichever is smaller); specify start_line/end_line to read a slice.',
-    inputSchema: z.object({
-      path: z.string(),
-      start_line: z.number().int().positive().optional(),
-      end_line: z.number().int().positive().optional(),
-    }),
+    inputSchema: READ_SCHEMA,
     execute: async (args) => {
       const raw = await ctx.sandboxExecutor.readFile(args.path);
       const allLines = raw.split('\n');
@@ -50,6 +56,17 @@ export function buildReadTool(ctx: ToolContext) {
         total_lines: total,
         truncated,
       };
+    },
+    formatScrollback: (args, result) => {
+      const range = args.start_line
+        ? `:${args.start_line}-${args.end_line ?? ''}`
+        : '';
+      const head = `${relPath(args.path, cwd)}${range}`;
+      if (!result) return { summary: head };
+      const tail = result.truncated
+        ? ` (${result.total_lines} lines, truncated)`
+        : ` (${result.total_lines} lines)`;
+      return { summary: `${head}${tail}` };
     },
   });
 }

@@ -34,6 +34,14 @@ export interface InstanceInfo {
   parentId?: string;
 }
 
+export interface SubagentInfo {
+  subagentId: string;
+  sessionId: SessionId;
+  url: string;
+  purpose: string;
+  status: 'running' | 'finished';
+}
+
 export interface CreateSessionOpts {
   cwd: string;
   model: ModelConfig;
@@ -147,6 +155,10 @@ export class ChimeraClient {
 
   async listSkills(sessionId: SessionId): Promise<Skill[]> {
     return this.json<Skill[]>(`/v1/sessions/${sessionId}/skills`);
+  }
+
+  async listSubagents(sessionId: SessionId): Promise<SubagentInfo[]> {
+    return this.json<SubagentInfo[]>(`/v1/sessions/${sessionId}/subagents`);
   }
 
   /**

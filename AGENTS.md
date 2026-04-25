@@ -38,6 +38,10 @@ skip otherwise. They live in `packages/cli/test/e2e-sandbox.test.ts` and
 `CHIMERA_TEST_SANDBOX_IMAGE` to override the default `chimera-sandbox:dev`)
 to run them.
 
+Subagent E2E tests are gated on `CHIMERA_TEST_E2E=1` and live in
+`packages/subagents/test/e2e-spawn.test.ts`. They spawn real `chimera serve`
+processes; no provider credentials needed.
+
 ## `pnpm typecheck` has known noise
 
 `tsc -b` is run from the root for typechecking, but:

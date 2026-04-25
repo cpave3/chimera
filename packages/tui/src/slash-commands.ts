@@ -15,6 +15,10 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'Show or change the active model' },
   { name: '/rules', description: 'List permission rules (/rules rm <n> to delete)' },
   { name: '/reload', description: 'Re-read user command files from disk' },
+  { name: '/theme', description: 'List or apply a colour theme (/theme <name>)' },
+  { name: '/subagents', description: 'List active subagents of the current session' },
+  { name: '/attach', description: 'Attach the TUI to a subagent by id (/attach <id>)' },
+  { name: '/detach', description: "Detach from a subagent and return to the parent session" },
 ];
 
 export const OVERLAY_COMMANDS: SlashCommand[] = [

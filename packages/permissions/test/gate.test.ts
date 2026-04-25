@@ -99,4 +99,43 @@ describe('DefaultPermissionGate', () => {
     expect(rules).toHaveLength(1);
     expect(rules[0]!.pattern).toBe('git push *');
   });
+
+  it('headlessAutoDeny denies host-target requests without raising', async () => {
+    let raised = 0;
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'none',
+      headlessAutoDeny: true,
+      raiseRequest: async () => {
+        raised += 1;
+        return { decision: 'allow', remembered: false };
+      },
+    });
+    const res = await gate.request(req({ target: 'host', command: 'rm -rf /' }));
+    expect(res.decision).toBe('deny');
+    expect(res.remembered).toBe(false);
+    expect(raised).toBe(0);
+  });
+
+  it('headlessAutoDeny respects existing allow rules instead of denying', async () => {
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'none',
+      headlessAutoDeny: true,
+      raiseRequest: async () => ({ decision: 'deny', remembered: false }),
+    });
+    gate.addRule(
+      {
+        tool: 'bash',
+        target: 'host',
+        pattern: 'pnpm test',
+        patternKind: 'exact',
+        decision: 'allow',
+        createdAt: Date.now(),
+      },
+      'project',
+    );
+    const res = await gate.request(req({ command: 'pnpm test' }));
+    expect(res.decision).toBe('allow');
+  });
 });

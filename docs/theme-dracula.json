@@ -1,0 +1,26 @@
+{
+  "_comment": "Dracula-inspired theme for Chimera TUI (using ANSI color names)",
+  "base": {
+    "foreground": "white"
+  },
+  "accent": {
+    "primary": "magenta",
+    "secondary": "magentaBright",
+    "tertiary": "cyan"
+  },
+  "status": {
+    "success": "greenBright",
+    "warning": "yellow",
+    "error": "red",
+    "info": "cyan"
+  },
+  "text": {
+    "primary": "white",
+    "secondary": "whiteBright",
+    "muted": "gray"
+  },
+  "ui": {
+    "badge": "yellowBright",
+    "accent": "magenta"
+  }
+}

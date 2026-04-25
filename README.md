@@ -7,7 +7,7 @@ Chimera is a terminal-native AI coding agent:
 - **Permission-aware**: every shell call that would leave the agent's controlled scope is gated. Rules can be remembered session- or project-wide.
 - **Shape-based providers**: any OpenAI-compatible or Anthropic-compatible endpoint works via `baseUrl` + `apiKey`.
 
-Subagents and MCP are intentionally **not** in this release; each is a self-contained follow-on change. Docker sandbox, skills, and user-defined slash commands are in.
+MCP is intentionally **not** in this release; it's a self-contained follow-on change. Docker sandbox, skills, user-defined slash commands, and subagents (`spawn_agent`) are in.
 
 ## Install
 
@@ -132,11 +132,65 @@ See `docs/gitignore-template.md` for recommended `.gitignore` entries.
 | max_steps      | 2    |
 | interrupted    | 130  |
 
+## Subagents
+
+The `spawn_agent` tool lets a parent agent delegate a focused task to a fresh
+Chimera instance. By default subagents run as a separate `chimera serve`
+process so they show up in `chimera ls` and are observable from another
+terminal — see [SUBAGENTS.md](./SUBAGENTS.md) for the full debugging workflow.
+
+```
+# Cap nesting at 5 levels (default 3).
+chimera --max-subagent-depth 5
+
+# Disable the spawn_agent tool entirely for a session.
+chimera --no-subagents
+```
+
 ## What's not here (yet)
 
-- No `spawn_agent` / subagents. The `--machine-handshake` flag on `chimera serve` is implemented for future subagent use but has no caller in MVP.
 - No MCP.
 - No bearer-token auth on the HTTP server. Bind is `127.0.0.1` only by default.
+
+## Theme Customization
+
+The TUI loads a user theme from `~/.chimera/theme.json`, alongside the rest of Chimera's user state (sessions, config, logs). Create the file to override any subset of the default colour tokens:
+
+```json
+{
+  "accent": {
+    "primary": "green",
+    "secondary": "cyanBright"
+  },
+  "status": {
+    "error": "redBright"
+  },
+  "text": {
+    "muted": "gray"
+  }
+}
+```
+
+Only specify the tokens you want to override; the rest inherit from the default theme. Available token groups:
+
+- `base` — `foreground`, `background`
+- `accent` — `primary`, `secondary`, `tertiary`
+- `status` — `success`, `warning`, `error`, `info`
+- `text` — `primary`, `secondary`, `muted`
+- `ui` — `badge`, `accent`
+
+JSON has no native comments, so the loader strips unknown top-level keys — you can leave a `_comment` field in the file as a note. If the JSON is malformed, the TUI prints `theme: ...` on stderr at startup and falls back to the default theme.
+
+See `docs/theme.json.example` for an annotated partial-override sample, or `docs/theme-dracula.json` for a full re-skin.
+
+### Switching between themes
+
+The TUI ships a few bundled presets: `default`, `tokyo-night-moon`, and `cyberpunk`. From inside the TUI:
+
+- `/theme` — list available themes; the active one is marked with a leading `*`.
+- `/theme <name>` — write the chosen preset into `~/.chimera/theme.json` (with a `_themeName` marker so `/theme` can show which is active) and live-reload without restarting.
+
+Drop additional partial themes into `~/.chimera/themes/<name>.json` to extend the list; user files shadow bundled presets of the same name. Hand-edits to `~/.chimera/theme.json` always take effect on next start, but running `/theme <name>` overwrites them.
 
 ## Packages
 

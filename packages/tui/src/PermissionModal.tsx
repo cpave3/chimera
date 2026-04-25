@@ -1,12 +1,13 @@
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
-import type { Theme } from './theme';
+import { useTheme } from './theme/ThemeProvider';
 
 export interface PermissionModalProps {
   command: string;
   reason?: string;
   target: 'host';
-  theme: Theme;
+  /** Optional banner shown above the prompt (e.g. for subagent-routed prompts). */
+  header?: string;
   onResolve: (
     decision: 'allow' | 'deny',
     remember?:
@@ -70,11 +71,16 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
     }
   });
 
-  const t = props.theme;
+  const theme = useTheme();
+  const badge = theme.ui.badge;
+  const danger = theme.status.error;
+  const success = theme.status.success;
+  const muted = theme.text.muted;
+
   if (mode.kind === 'pattern') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={t.badge} padding={1}>
-        <Text color={t.badge}>Edit pattern (Enter to confirm):</Text>
+      <Box flexDirection="column" borderStyle="round" borderColor={badge} padding={1}>
+        <Text color={badge}>Edit pattern (Enter to confirm):</Text>
         <Text>{pattern}</Text>
       </Box>
     );
@@ -82,35 +88,36 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
 
   if (mode.kind === 'scope') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={t.badge} padding={1}>
-        <Text color={t.badge}>Remember for [s]ession or [p]roject?</Text>
+      <Box flexDirection="column" borderStyle="round" borderColor={badge} padding={1}>
+        <Text color={badge}>Remember for [s]ession or [p]roject?</Text>
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={t.danger} padding={1}>
-      <Text color={t.danger} bold>
+    <Box flexDirection="column" borderStyle="round" borderColor={danger} padding={1}>
+      <Text color={danger} bold>
         Permission required
       </Text>
+      {props.header && <Text color={badge}>{props.header}</Text>}
       <Text>
         Run on the <Text bold>HOST</Text>:
       </Text>
       <Text>  $ {props.command}</Text>
       {props.reason && (
-        <Text color={t.muted}>Reason: {props.reason}</Text>
+        <Text color={muted}>Reason: {props.reason}</Text>
       )}
       <Box marginTop={1} flexDirection="column">
         <Text>
-          <Text color={t.success}>[a]</Text> Allow once  {' '}
-          <Text color={t.success}>[A]</Text> Allow &amp; remember this command
+          <Text color={success}>[a]</Text> Allow once  {' '}
+          <Text color={success}>[A]</Text> Allow &amp; remember this command
         </Text>
         <Text>
-          <Text color={t.success}>[g]</Text> Allow pattern... {' '}
-          <Text color={t.danger}>[d]</Text> Deny once
+          <Text color={success}>[g]</Text> Allow pattern... {' '}
+          <Text color={danger}>[d]</Text> Deny once
         </Text>
         <Text>
-          <Text color={t.danger}>[D]</Text> Deny &amp; remember
+          <Text color={danger}>[D]</Text> Deny &amp; remember
         </Text>
       </Box>
     </Box>

@@ -27,7 +27,7 @@ The system SHALL load user-defined themes from configuration files and merge the
 
 #### Scenario: Theme loads from default config path
 - **WHEN** the TUI starts without a custom theme path
-- **THEN** it SHALL look for theme configuration at `~/.config/chimera/theme.json`
+- **THEN** it SHALL look for theme configuration at `~/.chimera/theme.json` (alongside `sessions/`, `config.json`, `logs/`, and `instances/`).
 
 #### Scenario: User theme deep-merges with defaults
 - **WHEN** a user theme defines a subset of tokens

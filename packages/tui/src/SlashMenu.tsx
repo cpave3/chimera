@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink';
 import React from 'react';
-import type { Theme } from './theme';
+import { useTheme } from './theme/ThemeProvider';
 
 export interface SlashMenuItem {
   /** Command name without the leading slash. */
@@ -12,12 +12,12 @@ export interface SlashMenuItem {
 export interface SlashMenuProps {
   items: SlashMenuItem[];
   highlightIdx: number;
-  theme: Theme;
 }
 
 export const SLASH_MENU_MAX_ROWS = 8;
 
-export function SlashMenu({ items, highlightIdx, theme }: SlashMenuProps): React.ReactElement {
+export function SlashMenu({ items, highlightIdx }: SlashMenuProps): React.ReactElement {
+  const theme = useTheme();
   const start = Math.max(
     0,
     Math.min(
@@ -28,7 +28,7 @@ export function SlashMenu({ items, highlightIdx, theme }: SlashMenuProps): React
   const visible = items.slice(start, start + SLASH_MENU_MAX_ROWS);
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.muted}>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.text.muted}>
       {visible.map((item, i) => {
         const idx = start + i;
         const selected = idx === highlightIdx;
@@ -36,8 +36,8 @@ export function SlashMenu({ items, highlightIdx, theme }: SlashMenuProps): React
           item.kind === 'builtin' ? 'built-in' : item.kind === 'skill' ? 'skill' : 'user';
         return (
           <Text key={item.name} inverse={selected}>
-            <Text color={selected ? undefined : theme.primary}>/{item.name}</Text>
-            <Text color={selected ? undefined : theme.muted}>
+            <Text color={selected ? undefined : theme.accent.primary}>/{item.name}</Text>
+            <Text color={selected ? undefined : theme.text.muted}>
               {`  ${badge.padEnd(8)} `}
               {item.description ?? ''}
             </Text>

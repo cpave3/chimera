@@ -2,6 +2,8 @@ export * from './errors';
 export * from './local-executor';
 export * from './context';
 export * from './build';
+export * from './define';
+export * from './types';
 export { buildBashTool } from './bash';
 export { buildReadTool } from './read';
 export { buildWriteTool } from './write';

@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
-import type { Theme } from './theme';
+import { useTheme } from './theme/ThemeProvider';
 
 export interface OverlayDiffEntry {
   kind: 'modified' | 'added' | 'deleted';
@@ -9,14 +9,14 @@ export interface OverlayDiffEntry {
 
 export interface OverlayPickerProps {
   entries: OverlayDiffEntry[];
-  theme: Theme;
   /** Called once with the user's selection, or null for cancel/discard. */
   onResolve(selection: { paths: string[] } | null): void;
 }
 
 const HINT = 'space toggle · a all · n none · enter apply · esc cancel';
 
-export function OverlayPicker({ entries, theme, onResolve }: OverlayPickerProps): React.ReactElement {
+export function OverlayPicker({ entries, onResolve }: OverlayPickerProps): React.ReactElement {
+  const theme = useTheme();
   const [selected, setSelected] = useState<Set<number>>(
     () => new Set(entries.map((_, i) => i)),
   );
@@ -62,11 +62,11 @@ export function OverlayPicker({ entries, theme, onResolve }: OverlayPickerProps)
   });
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.primary} paddingX={1}>
-      <Text color={theme.primary} bold>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.accent.primary} paddingX={1}>
+      <Text color={theme.accent.primary} bold>
         Overlay changes — choose which to apply
       </Text>
-      {entries.length === 0 && <Text color={theme.muted}>(no changes)</Text>}
+      {entries.length === 0 && <Text color={theme.text.muted}>(no changes)</Text>}
       {entries.map((e, i) => {
         const checked = selected.has(i);
         const here = i === cursor;
@@ -74,13 +74,13 @@ export function OverlayPicker({ entries, theme, onResolve }: OverlayPickerProps)
         const tag =
           e.kind === 'added' ? '+' : e.kind === 'deleted' ? '-' : '~';
         return (
-          <Text key={`${e.kind}:${e.path}`} color={here ? theme.accent : undefined}>
+          <Text key={`${e.kind}:${e.path}`} color={here ? theme.ui.accent : undefined}>
             {`${here ? '>' : ' '} ${marker} ${tag} ${e.path}`}
           </Text>
         );
       })}
       <Box marginTop={1}>
-        <Text color={theme.muted}>{HINT}</Text>
+        <Text color={theme.text.muted}>{HINT}</Text>
       </Box>
     </Box>
   );

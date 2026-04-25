@@ -28,14 +28,33 @@ describe('composeSystemPrompt', () => {
     expect(out).toMatch(/Read a file before editing/i);
     // Trust-internal / validate-at-boundaries rule
     expect(out).toMatch(/Validate only at system boundaries/i);
-    // Verify-before-claim-done rule
-    expect(out).toMatch(/verify it works/i);
+    // Done = user gets the promised value (not just local edit)
+    expect(out).toMatch(/Done means the user gets the promised value/i);
+    expect(out).toMatch(/end-to-end/i);
     // Risky-actions section
     expect(out).toContain('## Risky actions');
     // Parallel-tools rule
     expect(out).toMatch(/Call independent tools in parallel/i);
+    // Working-updates / narration rule
+    expect(out).toContain('## Working updates');
+    expect(out).toMatch(/anchors a watcher can follow/i);
+    // Off-cwd / sandbox host-target escape hatch
+    expect(out).toMatch(/use bash with an absolute path/i);
+    expect(out).toMatch(/target='host'/);
     // file:line output convention
     expect(out).toMatch(/path\/to\/file\.ts:42/);
+    // Project conventions: read AGENTS.md / CLAUDE.md before editing
+    expect(out).toContain('## Project conventions');
+    expect(out).toMatch(/AGENTS\.md.*CLAUDE\.md|CLAUDE\.md.*AGENTS\.md/);
+    // Migration completion rule
+    expect(out).toMatch(/Finish migrations/i);
+    expect(out).toMatch(/compat shim/i);
+    // Errors-reach-user mirror rule (paired with validate-at-boundaries)
+    expect(out).toMatch(/errors the user can fix must reach the user/i);
+    // Tests-follow-call-path section
+    expect(out).toContain('## Tests');
+    expect(out).toMatch(/exercise the same code a real caller hits/i);
+    expect(out).toMatch(/not implemented/i); // smell-check phrase
   });
 
   it('walks up to a git root and concatenates AGENTS.md files with closer files last', async () => {

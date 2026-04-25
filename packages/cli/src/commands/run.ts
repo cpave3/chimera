@@ -32,6 +32,9 @@ export interface RunOptions {
   modelOverride?: { providerId: string; modelId: string; maxSteps: number };
   /** Raw sandbox flags from commander. */
   sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
+  /** Default true; commander populates `false` when `--no-subagents` is passed. */
+  subagents?: boolean;
+  maxSubagentDepth?: number;
 }
 
 export interface RunResult {
@@ -72,6 +75,10 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       home: opts.home,
       skills,
       sandbox: sandboxOpts ?? undefined,
+      subagents: {
+        enabled: opts.subagents !== false,
+        maxDepth: opts.maxSubagentDepth,
+      },
     });
     factory = cliFactory;
   }
