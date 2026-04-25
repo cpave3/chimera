@@ -17,6 +17,7 @@ import {
   OVERLAY_COMMANDS,
 } from './slash-commands';
 import { StatusBar, type StatusBarWidget } from './StatusBar';
+import { renderToolBody } from './ToolBody';
 import { UsageWidget } from './UsageWidget';
 import { applyThemeByName, listThemes } from './theme/loader';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
@@ -1137,6 +1138,7 @@ function renderEntryLines(
               <Text color={theme.text.muted}>{line}</Text>
             </Box>
           ))}
+        {renderToolBody(entry, { width, prefixLen, theme })}
         {entry.skillName && (
           <Box paddingLeft={prefixLen}>
             <Text color={theme.ui.accent}>📚 skill: {entry.skillName}</Text>

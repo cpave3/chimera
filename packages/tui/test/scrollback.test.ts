@@ -66,6 +66,35 @@ describe('Scrollback', () => {
     expect(sb.all()[0]!.text).toBe('src/foo.ts (3 replacements)');
   });
 
+  it('does not record toolArgs on subagent inner tool entries', () => {
+    const sb = new Scrollback();
+    sb.apply({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cc1',
+        name: 'bash',
+        args: { command: 'ls' },
+        target: 'sandbox',
+      },
+    });
+    expect(sb.all().some((e) => e.toolArgs !== undefined)).toBe(false);
+  });
+
+  it('records the raw tool args on the entry for rich body rendering', () => {
+    const sb = new Scrollback();
+    const args = { path: '/work/a.ts', old_string: 'foo', new_string: 'bar' };
+    sb.apply({
+      type: 'tool_call_start',
+      callId: 'c1',
+      name: 'edit',
+      args,
+      target: 'sandbox',
+    });
+    expect(sb.all()[0]!.toolArgs).toEqual(args);
+  });
+
   it('falls back to JSON args when no display is provided', () => {
     const sb = new Scrollback();
     sb.apply({

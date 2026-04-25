@@ -6,6 +6,8 @@ export interface ScrollbackEntry {
   text: string;
   toolName?: string;
   toolTarget?: 'sandbox' | 'host';
+  /** Raw `tool_call_start` args; consumed by `ToolBody` renderers. Not set for subagent inner tool calls. */
+  toolArgs?: unknown;
   toolResult?: unknown;
   toolError?: string;
   /** Optional follow-on lines from a tool's formatScrollback hook. */
@@ -120,6 +122,7 @@ export class Scrollback {
         text: ev.display?.summary ?? formatArgs(ev.args),
         toolName: ev.name,
         toolTarget: ev.target,
+        toolArgs: ev.args,
         detail: ev.display?.detail,
       };
       this.toolsByCallId.set(ev.callId, entry);
