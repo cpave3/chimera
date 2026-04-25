@@ -3,7 +3,7 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { emptyUsage, type Usage } from '@chimera/core';
-import { formatTokens, UsageWidget } from '../src/UsageWidget';
+import { formatTokens, pickUsageColor, UsageWidget } from '../src/UsageWidget';
 import { defaultTheme } from '../src/theme/tokens';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 
@@ -37,6 +37,25 @@ describe('formatTokens', () => {
   it('trims trailing zeros', () => {
     expect(formatTokens(1_000)).toBe('1k');
     expect(formatTokens(1_500_000)).toBe('1.5M');
+  });
+});
+
+describe('pickUsageColor', () => {
+  it('returns muted under the warning threshold', () => {
+    expect(pickUsageColor(0, defaultTheme)).toBe(defaultTheme.text.muted);
+    expect(pickUsageColor(50, defaultTheme)).toBe(defaultTheme.text.muted);
+    expect(pickUsageColor(79, defaultTheme)).toBe(defaultTheme.text.muted);
+  });
+  it('returns warning between 80 and 95', () => {
+    expect(pickUsageColor(80, defaultTheme)).toBe(defaultTheme.status.warning);
+    expect(pickUsageColor(94, defaultTheme)).toBe(defaultTheme.status.warning);
+  });
+  it('returns error at 95 or above', () => {
+    expect(pickUsageColor(95, defaultTheme)).toBe(defaultTheme.status.error);
+    expect(pickUsageColor(100, defaultTheme)).toBe(defaultTheme.status.error);
+  });
+  it('returns muted when pct is null (unknown window)', () => {
+    expect(pickUsageColor(null, defaultTheme)).toBe(defaultTheme.text.muted);
   });
 });
 

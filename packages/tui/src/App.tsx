@@ -103,6 +103,7 @@ export function App(props: AppProps): React.ReactElement {
     usage: Usage;
     contextWindow: number;
     usedContextTokens: number;
+    unknownWindow: boolean;
   } | null>(null);
   const wasRunningRef = useRef(false);
   // Id of the assistant entry currently receiving text deltas. Held out of
@@ -322,6 +323,7 @@ export function App(props: AppProps): React.ReactElement {
         usage: ev.usage,
         contextWindow: ev.contextWindow,
         usedContextTokens: ev.usedContextTokens,
+        unknownWindow: ev.unknownWindow,
       });
     }
   }
@@ -896,6 +898,7 @@ export function App(props: AppProps): React.ReactElement {
         usage={usageState.usage}
         contextWindow={usageState.contextWindow}
         usedContextTokens={usageState.usedContextTokens}
+        unknownWindow={usageState.unknownWindow}
       />
     ),
   ];

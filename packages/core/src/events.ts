@@ -81,6 +81,7 @@ export type AgentEvent =
       usage: Usage;
       contextWindow: number;
       usedContextTokens: number;
+      unknownWindow: boolean;
     }
   | {
       type: 'run_finished';

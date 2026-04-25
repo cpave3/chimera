@@ -42,11 +42,16 @@ export interface AgentOptions {
   home?: string;
   /**
    * Resolved context window for the session's model, used to compute
-   * "remaining budget" on `usage_updated` events. Required so the agent has a
-   * single source of truth — the factory resolves this once via the
-   * provider/config table and passes it through.
+   * "remaining budget" on `usage_updated` events. The factory resolves this
+   * once via the provider/config table and passes it through.
    */
   contextWindow: number;
+  /**
+   * `true` when `contextWindow` came from the unknown-model fallback rather
+   * than a config override or the built-in table. Surfaced on `usage_updated`
+   * so the TUI can flag the value as approximate.
+   */
+  contextWindowIsApproximate?: boolean;
   /**
    * Optional hook: if a `read` tool call resolves to a known SKILL.md, returns
    * `{ skillName, source }` so the agent can emit `skill_activated`. Purely
@@ -208,6 +213,14 @@ export class Agent {
   }
 
   /**
+   * Replace the system prompt. Called by the server when the user runs
+   * `/reload` to pick up changes to AGENTS.md/CLAUDE.md files.
+   */
+  setSystemPrompt(systemPrompt: string): void {
+    this.opts = { ...this.opts, systemPrompt };
+  }
+
+  /**
    * Register optional per-tool scrollback formatters keyed by tool name.
    * Called by the agent on tool_call_start/result to compute the `display`
    * payload that ships with each event. Errors thrown from a formatter are
@@ -286,6 +299,7 @@ export class Agent {
         usage: cloneUsage(this.session.usage),
         contextWindow: this.opts.contextWindow,
         usedContextTokens: this.session.usage.lastStep?.inputTokens ?? 0,
+        unknownWindow: this.opts.contextWindowIsApproximate ?? false,
       });
     }
 
@@ -441,6 +455,7 @@ export class Agent {
                 usage: cloneUsage(this.session.usage),
                 contextWindow: this.opts.contextWindow,
                 usedContextTokens: stepUsage.inputTokens,
+                unknownWindow: this.opts.contextWindowIsApproximate ?? false,
               });
             } else if (!usageMissingLogged) {
               usageMissingLogged = true;
@@ -468,8 +483,8 @@ export class Agent {
                 type: 'usage_updated',
                 usage: cloneUsage(this.session.usage),
                 contextWindow: this.opts.contextWindow,
-                usedContextTokens:
-                  this.session.usage.lastStep?.inputTokens ?? 0,
+                usedContextTokens: this.session.usage.inputTokens,
+                unknownWindow: this.opts.contextWindowIsApproximate ?? false,
               });
             }
             if (part.finishReason === 'length') {

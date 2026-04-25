@@ -117,7 +117,31 @@ describe('Agent usage tracking', () => {
     expect(first.usage.lastStep?.totalTokens).toBe(1200);
     expect(first.contextWindow).toBe(200_000);
     expect(first.usedContextTokens).toBe(1000);
+    expect(first.unknownWindow).toBe(false);
     expect(agent.session.usage.totalTokens).toBe(1200);
+  });
+
+  it('marks usage_updated.unknownWindow when contextWindowIsApproximate is set', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: singleStepModel({
+        step: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      }),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 128_000,
+      contextWindowIsApproximate: true,
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('hi')) events.push(ev);
+    const usageEvent = events.find(
+      (e): e is Extract<AgentEvent, { type: 'usage_updated' }> =>
+        e.type === 'usage_updated',
+    );
+    expect(usageEvent?.unknownWindow).toBe(true);
   });
 
   it('accumulates cached input tokens when reported', async () => {

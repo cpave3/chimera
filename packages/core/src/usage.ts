@@ -1,10 +1,5 @@
 import type { Usage, UsageStep } from './types';
 
-/**
- * Read a `LanguageModelUsage`-shaped value from a stream part. Returns
- * `undefined` when none of the numeric fields are present (provider didn't
- * report). A step that explicitly reports zeros is still a step.
- */
 export function readStepUsage(raw: unknown): UsageStep | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const r = raw as {
@@ -14,10 +9,13 @@ export function readStepUsage(raw: unknown): UsageStep | undefined {
     totalTokens?: unknown;
     inputTokenDetails?: { cacheReadTokens?: unknown };
   };
+  // A step counts as "no usage" only when no numeric field is present at all —
+  // explicit zeros and cached-only payloads still count as a real step.
   if (
     typeof r.inputTokens !== 'number' &&
     typeof r.outputTokens !== 'number' &&
-    typeof r.totalTokens !== 'number'
+    typeof r.totalTokens !== 'number' &&
+    typeof r.inputTokenDetails?.cacheReadTokens !== 'number'
   ) {
     return undefined;
   }
@@ -50,10 +48,7 @@ export function cloneUsage(u: Usage): Usage {
   };
 }
 
-/**
- * Apply a step's usage to a running session aggregate, in place. Returns the
- * updated aggregate (same reference) for chaining.
- */
+// Mutates `usage` in place; returns the same reference for chaining.
 export function applyStepUsage(usage: Usage, step: UsageStep): Usage {
   usage.inputTokens += step.inputTokens;
   usage.outputTokens += step.outputTokens;
@@ -64,15 +59,8 @@ export function applyStepUsage(usage: Usage, step: UsageStep): Usage {
   return usage;
 }
 
-/**
- * Reconcile a session aggregate against the AI SDK's terminal `totalUsage`
- * for the run. If `totalUsage.totalTokens` differs from `runDelta.totalTokens`
- * (the per-step accumulation for *this* run), adjust `usage` in place to
- * make the run's contribution match `totalUsage` and return `true`.
- *
- * Returns `false` when the two agree (or when `totalUsage` is missing), in
- * which case `usage` is untouched.
- */
+// AI SDK's terminal `totalUsage` can disagree with per-step accumulation due
+// to provider-side rounding; trust `totalUsage` when they diverge.
 export function reconcileFinalUsage(
   usage: Usage,
   runDelta: UsageStep,

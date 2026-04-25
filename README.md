@@ -176,7 +176,9 @@ Color escalates as the prompt fills the window: gray under 80%, amber from
 80–95%, red at 95% or above. The window itself is resolved from a built-in
 table for known Claude / GPT / o-series models. To override (or add a model
 we don't know about yet), set a `models` block in `~/.chimera/config.json` —
-see `PROVIDERS.md`.
+see `PROVIDERS.md`. When the model isn't in the table and you haven't set
+an override, the window falls back to 128k and the widget shows a `?` next
+to the size to flag the value as approximate.
 
 ## What's not here (yet)
 

@@ -33,6 +33,17 @@ describe('readStepUsage', () => {
     });
   });
 
+  it('treats a cached-only payload as a real step', () => {
+    expect(
+      readStepUsage({ inputTokenDetails: { cacheReadTokens: 800 } }),
+    ).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 800,
+      totalTokens: 0,
+    });
+  });
+
   it('reads cachedInputTokens from inputTokenDetails.cacheReadTokens when present', () => {
     expect(
       readStepUsage({

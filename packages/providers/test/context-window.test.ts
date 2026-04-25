@@ -16,7 +16,7 @@ describe('resolveContextWindow', () => {
       override: 1_000_000,
       warn: (m) => warnings.push(m),
     });
-    expect(result).toBe(1_000_000);
+    expect(result).toEqual({ value: 1_000_000, source: 'override' });
     expect(warnings).toEqual([]);
   });
 
@@ -27,8 +27,9 @@ describe('resolveContextWindow', () => {
       providerId: 'anthropic',
       modelId: 'claude-sonnet-4-5',
     });
-    expect(result).toBeGreaterThan(0);
-    expect(result).not.toBe(CONTEXT_WINDOW_FALLBACK);
+    expect(result.value).toBeGreaterThan(0);
+    expect(result.value).not.toBe(CONTEXT_WINDOW_FALLBACK);
+    expect(result.source).toBe('table');
   });
 
   it('falls back to the conservative default and warns once for unknown models', () => {
@@ -46,8 +47,8 @@ describe('resolveContextWindow', () => {
       modelId: 'some-experimental',
       warn: (m) => warnings.push(m),
     });
-    expect(a).toBe(CONTEXT_WINDOW_FALLBACK);
-    expect(b).toBe(CONTEXT_WINDOW_FALLBACK);
+    expect(a).toEqual({ value: CONTEXT_WINDOW_FALLBACK, source: 'fallback' });
+    expect(b).toEqual({ value: CONTEXT_WINDOW_FALLBACK, source: 'fallback' });
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toContain('local/some-experimental');
   });
@@ -78,7 +79,7 @@ describe('resolveContextWindow', () => {
       modelId: 'unknown',
       override: 500_000,
     });
-    expect(result).toBe(500_000);
+    expect(result).toEqual({ value: 500_000, source: 'override' });
   });
 
   it('rejects non-positive overrides and ignores them', () => {
@@ -89,7 +90,7 @@ describe('resolveContextWindow', () => {
       modelId: 'claude-sonnet-4-5',
       override: 0,
     });
-    // Override is invalid, so falls through to table.
-    expect(result).toBeGreaterThan(0);
+    expect(result.source).toBe('table');
+    expect(result.value).toBeGreaterThan(0);
   });
 });

@@ -98,7 +98,10 @@ async function type(stdin: NodeJS.WritableStream, text: string): Promise<void> {
     (stdin as any).write(ch);
     await new Promise((r) => setTimeout(r, 1));
   }
-  await new Promise((r) => setTimeout(r, 20));
+  // Settle window after typing. The default 20ms was flaky on loaded
+  // machines — post-Enter the App commits scrollback through <Static> and
+  // the next assertion needs to see that commit.
+  await new Promise((r) => setTimeout(r, 100));
 }
 
 describe('TUI slash dispatch', () => {

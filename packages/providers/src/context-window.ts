@@ -63,16 +63,24 @@ export interface ResolveContextWindowOptions {
   warn?: (msg: string) => void;
 }
 
-export function resolveContextWindow(opts: ResolveContextWindowOptions): number {
+export type ContextWindowSource = 'override' | 'table' | 'fallback';
+
+export interface ResolvedContextWindow {
+  value: number;
+  source: ContextWindowSource;
+}
+
+export function resolveContextWindow(
+  opts: ResolveContextWindowOptions,
+): ResolvedContextWindow {
   if (typeof opts.override === 'number' && opts.override > 0) {
-    return opts.override;
+    return { value: opts.override, source: 'override' };
   }
   const shapeTable = TABLE[opts.providerShape];
   const exact = shapeTable[opts.modelId];
-  if (typeof exact === 'number') return exact;
-  // Longest-prefix match for dated/versioned model ids.
+  if (typeof exact === 'number') return { value: exact, source: 'table' };
   const prefixHit = longestPrefixMatch(shapeTable, opts.modelId);
-  if (prefixHit !== undefined) return prefixHit;
+  if (prefixHit !== undefined) return { value: prefixHit, source: 'table' };
 
   const ref = `${opts.providerId}/${opts.modelId}`;
   if (!warnedRefs.has(ref)) {
@@ -84,7 +92,7 @@ export function resolveContextWindow(opts: ResolveContextWindowOptions): number 
       process.stderr.write(`${msg}\n`);
     }
   }
-  return CONTEXT_WINDOW_FALLBACK;
+  return { value: CONTEXT_WINDOW_FALLBACK, source: 'fallback' };
 }
 
 function longestPrefixMatch(

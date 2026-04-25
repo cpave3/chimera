@@ -58,6 +58,6 @@
 
 ## 9. End-to-end validation
 
-- [ ] 9.1 Run a real session against a configured provider; confirm the TUI widget appears after the first step and updates on subsequent steps. **(manual; covered at the integration level by `packages/server/test/app.test.ts` "full session lifecycle" + `usage_updated` SSE assertion.)**
+- [ ] 9.1 Run a real session against a configured provider; confirm the TUI widget appears after the first step and updates on subsequent steps. **(manual; covered at the integration level by `packages/server/test/app.test.ts` "SSE events endpoint replays buffered events with ?since" — drives a real run, asserts `usage_updated` rides the bus, and verifies `GET /v1/sessions/:id` reflects post-run cumulative usage.)**
 - [ ] 9.2 Persist mid-run, restart, and confirm the widget reflects the resumed totals immediately on the next prompt. **(manual; covered at the unit level by `packages/core/test/usage.test.ts` "snapshot usage_updated immediately after session_started for resumed sessions".)**
 - [ ] 9.3 Configure an unknown model ref and verify the once-per-process warning + fallback window + `?` glyph in the widget. **(manual; covered at the unit level by `packages/providers/test/context-window.test.ts` and `packages/tui/test/UsageWidget.test.tsx` unknown-window case.)**

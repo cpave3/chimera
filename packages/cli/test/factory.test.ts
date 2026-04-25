@@ -64,8 +64,43 @@ describe('CliAgentFactory', () => {
       sandboxMode: 'off',
     });
 
-    const opts = (agent as unknown as { opts: { contextWindow: number } }).opts;
+    const opts = (
+      agent as unknown as {
+        opts: { contextWindow: number; contextWindowIsApproximate?: boolean };
+      }
+    ).opts;
     expect(opts.contextWindow).toBe(200_000);
+    expect(opts.contextWindowIsApproximate).toBe(false);
+  });
+
+  it('marks contextWindowIsApproximate when the model falls back', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      warn: () => {},
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'totally-made-up-model', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+
+    const opts = (
+      agent as unknown as {
+        opts: { contextWindow: number; contextWindowIsApproximate?: boolean };
+      }
+    ).opts;
+    expect(opts.contextWindowIsApproximate).toBe(true);
   });
 
   it('honors a per-model contextWindow override from config', async () => {

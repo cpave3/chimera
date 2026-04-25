@@ -4,6 +4,8 @@ Operational notes for agents working on this codebase. User-facing docs are in
 `README.md` and `docs/`. This file targets things that aren't obvious from
 reading the code.
 
+[readme](./README.md)
+
 ## Package model
 
 Workspace packages are consumed via their **built `dist/`**, not their `src/`.
@@ -83,6 +85,19 @@ Uses `ink-testing-library` + `vitest`. Two things catch people:
   `\x1b[A/B/C/D` = arrows, `\x1b[5~`/`\x1b[6~` = PageUp/PageDown,
   `\x1b[<64;x;yM` = wheel-up (SGR mouse). Tab = `\t`, Enter = `\r`.
 
+## Agent construction in tests
+
+`AgentOptions.contextWindow` is required (no default). Tests that build an
+`Agent` directly must pass it — `200_000` is the conventional value for
+fixtures. To exercise the unknown-model branch, also pass
+`contextWindowIsApproximate: true`; that surfaces on `usage_updated` events
+so the TUI can flag the window value as approximate.
+
+`packages/providers`'s `resolveContextWindow` deduplicates unknown-model
+warnings in module-level state. Tests asserting on warning counts must call
+`__resetContextWindowWarnings()` (imported from `../src/context-window`,
+not the package barrel) at the start of each case.
+
 ## Ink (v7) specifics
 
 - `render()` options we rely on: `exitOnCtrlC: false` (so our handler
@@ -133,7 +148,7 @@ lineWidth 100. `organizeImports: true`. `noExplicitAny: warn`,
 
 Inherited from user rules:
 
-- **No comments that restate code.** Only explain non-obvious *why*.
+- **No comments that restate code.** Only explain non-obvious _why_.
 - **No emojis** unless explicitly requested.
 - **No backwards-compat shims** for deleted code — just delete it.
 - **Don't add error handling / validation for impossible cases.**

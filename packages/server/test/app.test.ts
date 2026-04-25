@@ -204,6 +204,12 @@ describe('server app', () => {
       expect(usageEnv.contextWindow).toBe(200_000);
       expect(usageEnv.usage.totalTokens).toBeGreaterThan(0);
     }
+
+    // GET /v1/sessions/:id should reflect the post-run cumulative usage,
+    // not the zero state observed before the run.
+    const getR = await app.request(`/v1/sessions/${sessionId}`);
+    const sessionAfter = await getR.json();
+    expect(sessionAfter.usage.totalTokens).toBeGreaterThan(0);
   });
 
   it('rule CRUD via /permissions/rules', async () => {

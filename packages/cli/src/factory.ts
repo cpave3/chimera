@@ -79,7 +79,7 @@ export class CliAgentFactory implements AgentFactory {
     const { provider, modelId } = this.registry.resolve(ref);
     const languageModel = provider.getModel(modelId);
     const providerSpec = this.providersConfig.providers[init.model.providerId];
-    const contextWindow = resolveContextWindow({
+    const resolvedWindow = resolveContextWindow({
       providerShape: providerSpec?.shape ?? provider.shape,
       providerId: init.model.providerId,
       modelId,
@@ -120,7 +120,8 @@ export class CliAgentFactory implements AgentFactory {
       session,
       home: this.home,
       skillActivation,
-      contextWindow,
+      contextWindow: resolvedWindow.value,
+      contextWindowIsApproximate: resolvedWindow.source === 'fallback',
     });
 
     const gate = new DefaultPermissionGate({
