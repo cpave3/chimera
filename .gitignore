@@ -7,5 +7,5 @@ coverage/
 .env.local
 pnpm-debug.log*
 .vitest-cache/
-.tsbuildinfo
-**/.tsbuildinfo
+*.tsbuildinfo
+**/*.tsbuildinfo
