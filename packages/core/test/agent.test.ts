@@ -51,6 +51,7 @@ describe('Agent', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
     expect(agent.session.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(agent.session.status).toBe('idle');
@@ -65,6 +66,7 @@ describe('Agent', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
 
     const events: string[] = [];
@@ -114,6 +116,7 @@ describe('Agent', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
 
     const events: { type: string; reason?: string }[] = [];
@@ -135,6 +138,7 @@ describe('Agent', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
 
     // Start a run in the background so currentQueue is attached.
@@ -202,6 +206,7 @@ describe('Agent', () => {
         readPath === '.chimera/skills/pdf/SKILL.md'
           ? { skillName: 'pdf', source: 'project' }
           : undefined,
+      contextWindow: 200_000,
     });
 
     for await (const ev of agent.run('go')) {
@@ -248,6 +253,7 @@ describe('Agent', () => {
       sandboxMode: 'off',
       home,
       skillActivation: () => undefined,
+      contextWindow: 200_000,
     });
     for await (const ev of agent.run('go')) events.push(ev.type);
     expect(events).not.toContain('skill_activated');
@@ -261,6 +267,7 @@ describe('Agent', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
 
     let rememberedScope: unknown = null;
@@ -361,6 +368,7 @@ describe('Agent.pushEvent', () => {
       tools: { inject } as unknown as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
 
     const events: import('../src/events').AgentEvent[] = [];
@@ -382,6 +390,7 @@ describe('Agent.pushEvent', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
     expect(() =>
       agent.pushEvent({ type: 'assistant_text_done', text: 'lost' }),
@@ -406,6 +415,7 @@ describe('Agent.signal', () => {
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
     const drained: import('../src/events').AgentEvent[] = [];
     const drain = (async () => {

@@ -98,6 +98,7 @@ describe('chimera run E2E (stub provider)', () => {
           tools: {},
           sandboxMode: init.sandboxMode,
           home,
+          contextWindow: 200_000,
         }),
       }),
     };
@@ -133,6 +134,7 @@ describe('chimera run E2E (stub provider)', () => {
           tools,
           sandboxMode: init.sandboxMode,
           home,
+          contextWindow: 200_000,
         });
         return { agent };
       },

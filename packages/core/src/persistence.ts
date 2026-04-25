@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { SessionId } from './ids';
-import type { Session } from './types';
+import { emptyUsage, type Session } from './types';
 
 export function sessionsDir(home = homedir()): string {
   return join(home, '.chimera', 'sessions');
@@ -33,6 +33,9 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
   }
   if (!Array.isArray(parsed.messages)) parsed.messages = [];
   if (!Array.isArray(parsed.toolCalls)) parsed.toolCalls = [];
+  if (!parsed.usage || typeof parsed.usage !== 'object') {
+    parsed.usage = emptyUsage();
+  }
   parsed.status = 'idle';
   return parsed;
 }

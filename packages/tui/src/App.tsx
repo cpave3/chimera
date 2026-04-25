@@ -2,7 +2,7 @@ import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { AgentEvent, SandboxMode, SessionId } from '@chimera/core';
+import type { AgentEvent, SandboxMode, SessionId, Usage } from '@chimera/core';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import { renderMarkdown } from './markdown';
@@ -17,6 +17,7 @@ import {
   OVERLAY_COMMANDS,
 } from './slash-commands';
 import { StatusBar, type StatusBarWidget } from './StatusBar';
+import { UsageWidget } from './UsageWidget';
 import { applyThemeByName, listThemes } from './theme/loader';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
@@ -98,6 +99,11 @@ export function App(props: AppProps): React.ReactElement {
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
+  const [usageState, setUsageState] = useState<{
+    usage: Usage;
+    contextWindow: number;
+    usedContextTokens: number;
+  } | null>(null);
   const wasRunningRef = useRef(false);
   // Id of the assistant entry currently receiving text deltas. Held out of
   // <Static> so its text can keep updating; committed once text_done fires.
@@ -128,6 +134,12 @@ export function App(props: AppProps): React.ReactElement {
     if (!stdout) return;
     const onResize = () => {
       setColumns(stdout.columns ?? 80);
+      // Clear the terminal (screen + scrollback) and home the cursor, then
+      // bump the Static epoch so Ink re-emits the historical entries at the
+      // new width. Without this, full-width content from previous renders
+      // wraps at the old width and leaves stranded rows in scrollback.
+      stdout.write('\x1b[2J\x1b[3J\x1b[H');
+      setStaticEpoch((n) => n + 1);
     };
     stdout.on('resize', onResize);
     return () => {
@@ -305,6 +317,12 @@ export function App(props: AppProps): React.ReactElement {
       setRunning(false);
       setStreaming(false);
       setStreamingEntryId(null);
+    } else if (ev.type === 'usage_updated') {
+      setUsageState({
+        usage: ev.usage,
+        contextWindow: ev.contextWindow,
+        usedContextTokens: ev.usedContextTokens,
+      });
     }
   }
 
@@ -810,8 +828,6 @@ export function App(props: AppProps): React.ReactElement {
       });
   }
 
-  const shortId = props.sessionId.slice(-8);
-  const hrLine = '─'.repeat(Math.max(1, columns));
 
   // Split entries: the in-flight assistant entry and any tool entries that
   // haven't yet seen their `tool_call_result` render inline below <Static>
@@ -865,16 +881,23 @@ export function App(props: AppProps): React.ReactElement {
     return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
   }, [committedEntries, childrenByParent, showHeader]);
 
-  const sessionLeft: StatusBarWidget[] = [
-    <Text color={theme.accent.primary} bold>
-      Chimera
-    </Text>,
-    <Text color={theme.accent.primary}>{shortId}</Text>,
+  const cwdLeft: StatusBarWidget[] = [
     <Text color={theme.accent.primary}>{props.cwd}</Text>,
+  ];
+  const cwdRight: StatusBarWidget[] = [
+    <Text color={theme.text.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
+  ];
+  const modelLeft: StatusBarWidget[] = [
     <Text color={theme.accent.primary}>{props.modelRef}</Text>,
   ];
-  const sessionRight: StatusBarWidget[] = [
-    <Text color={theme.text.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
+  const modelRight: StatusBarWidget[] = [
+    usageState && (
+      <UsageWidget
+        usage={usageState.usage}
+        contextWindow={usageState.contextWindow}
+        usedContextTokens={usageState.usedContextTokens}
+      />
+    ),
   ];
   const hintsLeft: StatusBarWidget[] = [
     <Text color={theme.text.muted}>Esc/Ctrl+C interrupt</Text>,
@@ -966,17 +989,22 @@ export function App(props: AppProps): React.ReactElement {
         {menuOpen && (
           <SlashMenu items={menuItems} highlightIdx={menuHighlight} />
         )}
-        <Box height={1}>
-          <Text color={theme.text.muted}>{hrLine}</Text>
-        </Box>
-        <Box>
+        <Box
+          borderStyle="single"
+          borderTop
+          borderBottom={false}
+          borderLeft={false}
+          borderRight={false}
+          borderColor={theme.text.muted}
+        >
           <Text color={theme.accent.primary}>{'> '}</Text>
           <Text>
             {input}
             <Text inverse> </Text>
           </Text>
         </Box>
-        <StatusBar left={sessionLeft} right={sessionRight} separatorColor={theme.text.muted} />
+        <StatusBar left={cwdLeft} right={cwdRight} separatorColor={theme.text.muted} />
+        <StatusBar left={modelLeft} right={modelRight} separatorColor={theme.text.muted} />
         <StatusBar left={hintsLeft} separatorColor={theme.text.muted} />
       </Box>
     </>

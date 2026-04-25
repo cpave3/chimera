@@ -40,6 +40,7 @@ function makeFactory(home: string): AgentFactory {
         tools: {} as ToolSet,
         sandboxMode: 'off',
         home,
+        contextWindow: 200_000,
       }),
     }),
   };

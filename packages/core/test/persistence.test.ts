@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { newSessionId } from '../src/ids';
 import { loadSession, persistSession, sessionPath } from '../src/persistence';
-import type { Session } from '../src/types';
+import { emptyUsage, type Session } from '../src/types';
 
 describe('persistence', () => {
   let home: string;
@@ -27,6 +27,7 @@ describe('persistence', () => {
       status: 'running',
       model: { providerId: 'p', modelId: 'm', maxSteps: 100 },
       sandboxMode: 'off',
+      usage: emptyUsage(),
     };
   }
 
@@ -52,5 +53,45 @@ describe('persistence', () => {
     expect(sessionPath(s.id, home)).toEqual(
       join(home, '.chimera', 'sessions', `${s.id}.json`),
     );
+  });
+
+  it('round-trips a session with non-zero usage', async () => {
+    const s = makeSession();
+    s.usage = {
+      inputTokens: 4000,
+      outputTokens: 1200,
+      cachedInputTokens: 800,
+      totalTokens: 5200,
+      stepCount: 3,
+      lastStep: {
+        inputTokens: 1500,
+        outputTokens: 250,
+        cachedInputTokens: 400,
+        totalTokens: 1750,
+      },
+    };
+    await persistSession(s, home);
+    const loaded = await loadSession(s.id, home);
+    expect(loaded.usage).toEqual(s.usage);
+  });
+
+  it('loads a legacy snapshot lacking `usage` with zero-initialized usage', async () => {
+    const id = newSessionId();
+    const path = sessionPath(id, home);
+    await mkdir(join(home, '.chimera', 'sessions'), { recursive: true });
+    const legacy = {
+      id,
+      cwd: '/tmp',
+      createdAt: 1,
+      messages: [],
+      toolCalls: [],
+      status: 'idle',
+      model: { providerId: 'p', modelId: 'm', maxSteps: 100 },
+      sandboxMode: 'off',
+    };
+    await writeFile(path, JSON.stringify(legacy), 'utf8');
+
+    const loaded = await loadSession(id, home);
+    expect(loaded.usage).toEqual(emptyUsage());
   });
 });

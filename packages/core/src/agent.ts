@@ -19,7 +19,15 @@ import {
   type SandboxMode,
   type Session,
   type ToolCallRecord,
+  type UsageStep,
+  emptyUsage,
 } from './types';
+import {
+  applyStepUsage,
+  cloneUsage,
+  readStepUsage,
+  reconcileFinalUsage,
+} from './usage';
 
 export interface AgentOptions {
   cwd: string;
@@ -32,6 +40,13 @@ export interface AgentOptions {
   session?: Session;
   /** Home directory for session persistence. Defaults to os.homedir(). */
   home?: string;
+  /**
+   * Resolved context window for the session's model, used to compute
+   * "remaining budget" on `usage_updated` events. Required so the agent has a
+   * single source of truth — the factory resolves this once via the
+   * provider/config table and passes it through.
+   */
+  contextWindow: number;
   /**
    * Optional hook: if a `read` tool call resolves to a known SKILL.md, returns
    * `{ skillName, source }` so the agent can emit `skill_activated`. Purely
@@ -76,7 +91,11 @@ export class Agent {
     this.abortController = new AbortController();
 
     if (opts.session) {
-      this.session = { ...opts.session, status: 'idle' };
+      this.session = {
+        ...opts.session,
+        status: 'idle',
+        usage: opts.session.usage ?? emptyUsage(),
+      };
     } else {
       this.session = {
         id: opts.sessionId ?? newSessionId(),
@@ -87,6 +106,7 @@ export class Agent {
         status: 'idle',
         model: opts.model,
         sandboxMode: opts.sandboxMode,
+        usage: emptyUsage(),
       };
     }
   }
@@ -256,6 +276,19 @@ export class Agent {
     this.session.messages.push({ role: 'user', content: userMessage });
 
     queue.push({ type: 'session_started', sessionId: this.session.id });
+
+    // Resumed-session snapshot: if prior usage is non-zero, emit one
+    // usage_updated immediately so consumers see the persisted totals before
+    // any new step finishes.
+    if (this.session.usage.totalTokens > 0) {
+      queue.push({
+        type: 'usage_updated',
+        usage: cloneUsage(this.session.usage),
+        contextWindow: this.opts.contextWindow,
+        usedContextTokens: this.session.usage.lastStep?.inputTokens ?? 0,
+      });
+    }
+
     queue.push({ type: 'user_message', content: userMessage });
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
@@ -269,6 +302,15 @@ export class Agent {
     let stepNumber = 0;
     let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' = 'stop';
     let errorMessage: string | undefined;
+    // Run-local accumulator of step deltas, used to reconcile against the
+    // terminal `finish.totalUsage` if the two disagree.
+    const runDelta: UsageStep = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      totalTokens: 0,
+    };
+    let usageMissingLogged = false;
 
     try {
       const stream = streamText({
@@ -385,6 +427,31 @@ export class Agent {
               stepNumber,
               finishReason: part.finishReason,
             });
+            const stepUsage = readStepUsage(
+              (part as { usage?: unknown }).usage,
+            );
+            if (stepUsage) {
+              applyStepUsage(this.session.usage, stepUsage);
+              runDelta.inputTokens += stepUsage.inputTokens;
+              runDelta.outputTokens += stepUsage.outputTokens;
+              runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
+              runDelta.totalTokens += stepUsage.totalTokens;
+              queue.push({
+                type: 'usage_updated',
+                usage: cloneUsage(this.session.usage),
+                contextWindow: this.opts.contextWindow,
+                usedContextTokens: stepUsage.inputTokens,
+              });
+            } else if (!usageMissingLogged) {
+              usageMissingLogged = true;
+              // Provider does not report usage on this step. Log once per
+              // session at debug level; the loop continues with stale totals.
+              if (typeof process !== 'undefined' && process.env?.DEBUG) {
+                process.stderr.write(
+                  `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
+                );
+              }
+            }
             try {
               await persistSession(this.session, this.opts.home);
             } catch (_e) {
@@ -393,7 +460,18 @@ export class Agent {
             break;
           }
           case 'finish': {
-            // Handled by exiting the loop.
+            const total = readStepUsage(
+              (part as { totalUsage?: unknown }).totalUsage,
+            );
+            if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+              queue.push({
+                type: 'usage_updated',
+                usage: cloneUsage(this.session.usage),
+                contextWindow: this.opts.contextWindow,
+                usedContextTokens:
+                  this.session.usage.lastStep?.inputTokens ?? 0,
+              });
+            }
             if (part.finishReason === 'length') {
               // not treated specially; finish-step already mapped
             }

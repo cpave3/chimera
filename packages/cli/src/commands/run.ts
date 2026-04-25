@@ -79,6 +79,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         enabled: opts.subagents !== false,
         maxDepth: opts.maxSubagentDepth,
       },
+      models: config.models,
     });
     factory = cliFactory;
   }

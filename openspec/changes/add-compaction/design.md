@@ -28,6 +28,8 @@ Compaction is the difference between an agent that politely dies at 200K tokens 
 
 **Estimator:** start with a conservative char/4 heuristic; swap in per-provider token counters later (no spec change).
 
+**Note:** the `track-session-token-usage` change exposes `session.usage.totalTokens` (the provider-reported cumulative count) on every `usage_updated` event. Once that change lands, the trigger MAY prefer `session.usage.lastStep.inputTokens` (the just-sent prompt size) over the heuristic for the threshold check, falling back to the heuristic only when usage is absent. This is a follow-up tightening, not a prerequisite.
+
 ### D2. Structured summary with stable section headers
 
 **Decision:** The summary is a single synthetic assistant message whose body has exactly these sections, in this order, with these literal headers:

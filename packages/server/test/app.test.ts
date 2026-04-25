@@ -20,7 +20,10 @@ function textOnlyModel(text: string): LanguageModel {
           {
             type: 'finish',
             finishReason: 'stop',
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            usage: {
+              inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
           },
         ],
       }),
@@ -40,6 +43,7 @@ function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
         tools: {} as ToolSet,
         sandboxMode: 'off',
         home,
+        contextWindow: 200_000,
       }),
     }),
   };
@@ -100,6 +104,9 @@ describe('server app', () => {
     expect(getR.status).toBe(200);
     const session = await getR.json();
     expect(session.id).toBe(sessionId);
+    expect(session.usage).toBeDefined();
+    expect(session.usage.totalTokens).toBe(0);
+    expect(session.usage.stepCount).toBe(0);
 
     const listR = await app.request('/v1/sessions');
     const list = await listR.json();
@@ -188,6 +195,15 @@ describe('server app', () => {
     const replayed = entry!.bus.replay(firstId);
     expect(replayed[0]!.eventId).toBe(snap[1]!.eventId);
     expect(replayed[replayed.length - 1]!.eventId).toBe(lastId);
+
+    // The bus should have forwarded a usage_updated event with cumulative
+    // usage and the resolved contextWindow alongside the other agent events.
+    const usageEnv = snap.find((e) => e.type === 'usage_updated');
+    expect(usageEnv).toBeDefined();
+    if (usageEnv && usageEnv.type === 'usage_updated') {
+      expect(usageEnv.contextWindow).toBe(200_000);
+      expect(usageEnv.usage.totalTokens).toBeGreaterThan(0);
+    }
   });
 
   it('rule CRUD via /permissions/rules', async () => {
@@ -202,6 +218,7 @@ describe('server app', () => {
           tools: {} as ToolSet,
           sandboxMode: init.sandboxMode,
           home,
+          contextWindow: 200_000,
         });
         const gate = new DefaultPermissionGate({
           cwd: init.cwd,

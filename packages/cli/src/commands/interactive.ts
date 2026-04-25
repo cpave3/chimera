@@ -60,6 +60,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       enabled: opts.subagents !== false,
       maxDepth: opts.maxSubagentDepth,
     },
+    models: config.models,
   });
 
   const commands = loadReloadingCommandsFromConfig({

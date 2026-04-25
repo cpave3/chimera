@@ -1,5 +1,5 @@
 import type { CallId, SessionId } from './ids';
-import type { ExecutionTarget } from './types';
+import type { ExecutionTarget, Usage } from './types';
 
 /**
  * Per-tool human-readable display payload, computed by a tool's
@@ -76,6 +76,12 @@ export type AgentEvent =
       reason: string;
     }
   | { type: 'step_finished'; stepNumber: number; finishReason: string }
+  | {
+      type: 'usage_updated';
+      usage: Usage;
+      contextWindow: number;
+      usedContextTokens: number;
+    }
   | {
       type: 'run_finished';
       reason: 'stop' | 'max_steps' | 'error' | 'interrupted';

@@ -164,6 +164,20 @@ once the tool returns. Plugin tools authored via `defineTool` from
 `@chimera/tools` opt in by passing `formatScrollback`; tools without one
 fall back to the original `<name> <truncated-JSON>` rendering.
 
+## Token usage
+
+The TUI's status bar shows live token usage and the percentage of the model's
+context window consumed by the latest step. The number comes from the AI SDK's
+`usage` payload — no estimation, no extra calls. Cumulative totals persist
+with the session, so resuming an old session shows the same running counter
+on the next prompt.
+
+Color escalates as the prompt fills the window: gray under 80%, amber from
+80–95%, red at 95% or above. The window itself is resolved from a built-in
+table for known Claude / GPT / o-series models. To override (or add a model
+we don't know about yet), set a `models` block in `~/.chimera/config.json` —
+see `PROVIDERS.md`.
+
 ## What's not here (yet)
 
 - No MCP.

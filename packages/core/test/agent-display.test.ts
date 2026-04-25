@@ -53,6 +53,7 @@ describe('Agent — tool formatters', () => {
       tools: { echo } as unknown as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
     agent.setToolFormatters({
       echo: (args: { msg: string }, result?: { echoed: string }) => ({
@@ -86,6 +87,7 @@ describe('Agent — tool formatters', () => {
       tools: { echo } as unknown as ToolSet,
       sandboxMode: 'off',
       home,
+      contextWindow: 200_000,
     });
     agent.setToolFormatters({
       echo: () => {

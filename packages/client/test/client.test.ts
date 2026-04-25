@@ -46,6 +46,7 @@ describe('ChimeraClient end-to-end', () => {
             tools: {} as ToolSet,
             sandboxMode: init.sandboxMode,
             home,
+            contextWindow: 200_000,
           }),
         }),
       },

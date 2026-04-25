@@ -59,6 +59,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       currentDepth: opts.currentSubagentDepth,
       headlessAutoDeny: opts.headlessPermissionAutoDeny,
     },
+    models: config.models,
   });
 
   const registry = new AgentRegistry({

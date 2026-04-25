@@ -17,6 +17,11 @@ export interface ChimeraConfig {
     enabled?: boolean;
     claudeCompat?: boolean;
   };
+  /**
+   * Per-model overrides. Keyed by `<providerId>/<modelId>`. Currently only
+   * `contextWindow` is honored — see `resolveContextWindow`.
+   */
+  models?: Record<string, { contextWindow?: number }>;
 }
 
 export function configPath(home = homedir()): string {

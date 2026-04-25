@@ -43,6 +43,25 @@ Add providers to `~/.chimera/config.json`:
 | AWS Bedrock proxy | `anthropic` | Configure via a proxy that speaks Anthropic's wire format. |
 | GCP Vertex proxy | `anthropic` | Same. |
 
+## Per-model overrides
+
+The TUI's token-usage indicator computes "remaining budget" against a known
+context window. Chimera ships a built-in table covering the current Claude
+and OpenAI families. For models we don't know about (or to override the
+default), add a `models` block keyed by `<providerId>/<modelId>`:
+
+```json
+{
+  "models": {
+    "openrouter/anthropic/claude-opus-4-7": { "contextWindow": 1000000 },
+    "local/some-experimental-2026": { "contextWindow": 256000 }
+  }
+}
+```
+
+Resolution order: config override → built-in table → `128000` fallback (with
+a one-shot stderr warning so unknown models are visible).
+
 ## Nested model IDs
 
 `providerId/modelId` splits on the first `/` only, so OpenRouter-style model IDs like `openrouter/anthropic/claude-opus-4` resolve to `provider=openrouter`, `modelId=anthropic/claude-opus-4`.

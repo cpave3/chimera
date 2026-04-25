@@ -85,6 +85,7 @@ describe('chimera run --command E2E', () => {
             tools: {},
             sandboxMode: init.sandboxMode,
             home,
+            contextWindow: 200_000,
           }),
         }),
       };

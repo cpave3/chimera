@@ -57,6 +57,7 @@ describe('server HTTP + SSE round-trip', () => {
             tools: {} as ToolSet,
             sandboxMode: 'off',
             home,
+            contextWindow: 200_000,
           }),
         }),
       },

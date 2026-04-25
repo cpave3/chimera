@@ -24,6 +24,32 @@ export interface ToolCallRecord {
   endedAt?: number;
 }
 
+export interface UsageStep {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  totalTokens: number;
+}
+
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  totalTokens: number;
+  stepCount: number;
+  lastStep?: UsageStep;
+}
+
+export function emptyUsage(): Usage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    totalTokens: 0,
+    stepCount: 0,
+  };
+}
+
 export type SessionStatus =
   | 'idle'
   | 'running'
@@ -40,6 +66,7 @@ export interface Session {
   status: SessionStatus;
   model: ModelConfig;
   sandboxMode: SandboxMode;
+  usage: Usage;
 }
 
 export type RememberScope =

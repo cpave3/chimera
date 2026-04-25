@@ -2,7 +2,11 @@ import { dirname } from 'node:path';
 import { Agent, composeSystemPrompt, loadSession } from '@chimera/core';
 import type { Executor, SessionId } from '@chimera/core';
 import { DefaultPermissionGate, GatedExecutor, type AutoApproveLevel } from '@chimera/permissions';
-import { loadProviders, type ProvidersConfig } from '@chimera/providers';
+import {
+  loadProviders,
+  resolveContextWindow,
+  type ProvidersConfig,
+} from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
@@ -15,6 +19,11 @@ export interface CliAgentFactoryOptions {
   autoApprove: AutoApproveLevel;
   warn?: (msg: string) => void;
   home?: string;
+  /**
+   * Per-model overrides keyed by `<providerId>/<modelId>`. Currently only
+   * `contextWindow` is honored.
+   */
+  models?: Record<string, { contextWindow?: number }>;
   /**
    * Optional skill registry. When present, the factory wires its index into
    * the system prompt and registers activation detection on the Agent.
@@ -49,6 +58,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly sandbox: CliSandboxOptions | undefined;
   private readonly subagents: NonNullable<CliAgentFactoryOptions['subagents']>;
   private readonly warn: (msg: string) => void;
+  private readonly providersConfig: ProvidersConfig;
+  private readonly modelsConfig: Record<string, { contextWindow?: number }>;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
 
   constructor(opts: CliAgentFactoryOptions) {
@@ -59,12 +70,22 @@ export class CliAgentFactory implements AgentFactory {
     this.sandbox = opts.sandbox;
     this.subagents = opts.subagents ?? {};
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
+    this.providersConfig = opts.providersConfig;
+    this.modelsConfig = opts.models ?? {};
   }
 
   async build(init: SessionInit): Promise<BuildResult> {
     const ref = `${init.model.providerId}/${init.model.modelId}`;
     const { provider, modelId } = this.registry.resolve(ref);
     const languageModel = provider.getModel(modelId);
+    const providerSpec = this.providersConfig.providers[init.model.providerId];
+    const contextWindow = resolveContextWindow({
+      providerShape: providerSpec?.shape ?? provider.shape,
+      providerId: init.model.providerId,
+      modelId,
+      override: this.modelsConfig[ref]?.contextWindow,
+      warn: this.warn,
+    });
 
     const skillsReg = this.skills;
     const extensions = skillsReg
@@ -99,6 +120,7 @@ export class CliAgentFactory implements AgentFactory {
       session,
       home: this.home,
       skillActivation,
+      contextWindow,
     });
 
     const gate = new DefaultPermissionGate({
