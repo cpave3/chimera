@@ -73,10 +73,12 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       const { abortSignal } = opts;
       const aiSdkToolCallId = (opts as { toolCallId?: string }).toolCallId;
       const subagentId = newCallId();
-      // Use the parent agent's CallId for the in-flight `spawn_agent` tool
-      // invocation if available — the TUI nests subagent rows under the
-      // matching parent. Falls back to a fresh id when the resolver isn't
-      // wired (e.g. in unit tests that build the tool standalone).
+      // AI SDK invokes `execute` from inside the same transformer tick that
+      // emits the `tool-call` stream event, so the agent's for-await consumer
+      // hasn't yet populated `callIdByToolCallId` for this call. Yield one
+      // microtask so the consumer's tool-call branch runs first; only then is
+      // the resolver guaranteed to find our entry.
+      await Promise.resolve();
       const parentCallId =
         (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ??
         newCallId();

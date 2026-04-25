@@ -147,6 +147,23 @@ chimera --max-subagent-depth 5
 chimera --no-subagents
 ```
 
+## Tool scrollback formatting
+
+Tools render in the scrollback as concise summaries instead of raw JSON args:
+
+```
+[host] read: src/foo.ts:12-40 (87 lines)
+[host] edit: src/foo.ts (3 replacements)
+[host] bash: pnpm build (exit 0)
+[host] write: next.config.ts (created, 412 bytes)
+```
+
+Each built-in tool ships with a `formatScrollback` hook in its definition
+that produces an args-only summary at call start and a result-aware summary
+once the tool returns. Plugin tools authored via `defineTool` from
+`@chimera/tools` opt in by passing `formatScrollback`; tools without one
+fall back to the original `<name> <truncated-JSON>` rendering.
+
 ## What's not here (yet)
 
 - No MCP.

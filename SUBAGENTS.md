@@ -105,9 +105,21 @@ You have three options, ordered by ergonomics:
 
 ### 1. Watch in the parent's scrollback (always on)
 
-Every `subagent_event` from a child surfaces in the parent's transcript with a
-`[subagent <id>: <purpose>]` label, including its tool calls and any errors.
-This is usually enough to understand what a misbehaving child is up to.
+Subagent activity is rendered nested under the parent's `spawn_agent` tool
+entry, with tree connectors (`├ `, `└ `) for each forwarded event:
+
+```
+[host] spawn_agent: investigate auth bug (done)
+       ├ read: src/auth.ts (200 lines)
+       ├ bash: pnpm test (exit 0)
+       └ ## Auth review …
+```
+
+The whole group commits atomically when the parent's `tool_call_result` lands.
+Parallel `spawn_agent` calls each get their own indented block, so events
+from different children don't interleave visually. (Subagents whose parent
+can't be matched — e.g. forwarded events arriving without a corresponding
+spawn — fall back to a top-level `[subagent <id>: <purpose>]` row.)
 
 ### 2. List, then attach from another terminal
 
