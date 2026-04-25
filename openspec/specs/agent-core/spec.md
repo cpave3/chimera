@@ -78,7 +78,7 @@ On every `step_finished`, `@chimera/core` SHALL serialize the current `Session` 
 
 ### Requirement: System prompt composition
 
-`@chimera/core` SHALL compose the system prompt from: (a) a fixed ~300–500-word role prompt covering tool usage, brevity, and the `target` parameter; (b) any `AGENTS.md` contents discovered by walking from `cwd` up to the nearest git root (or `$HOME` if none), concatenated with closer files last (higher priority).
+`@chimera/core` SHALL compose the system prompt from: (a) a fixed role prompt covering tool usage, style, risky-action handling, and end-of-turn behavior; (b) any `AGENTS.md` contents discovered by walking from `cwd` up to the nearest git root (or `$HOME` if none), concatenated with closer files last (higher priority); (c) a `# Chimera Session` block listing `cwd`, `platform`, `os`, `date`, optionally `model` as `<providerId>/<modelId>` (when `ComposeOptions.model` is provided), and optionally `sandbox` as `<mode> — <mode-specific hint>` (when `ComposeOptions.sandboxMode` is provided), inserted between the role prompt and AGENTS.md content so the model cannot mistake it for an AGENTS.md file.
 
 The composition SHALL expose an extension point (a pure function) so that later changes introducing skills can append a skill index without modifying `@chimera/core` internals.
 
@@ -86,6 +86,11 @@ The composition SHALL expose an extension point (a pure function) so that later 
 
 - **WHEN** the session `cwd` is inside a git repository that contains `AGENTS.md` at its root and another `AGENTS.md` in a subdirectory equal to `cwd`
 - **THEN** the composed system prompt SHALL contain both files' contents with the subdirectory file appearing after (i.e., overriding) the repo-root file
+
+#### Scenario: Chimera Session block placement
+
+- **WHEN** the system prompt is composed with both AGENTS.md content and extensions that emit content
+- **THEN** the `# Chimera Session` block SHALL appear after the role prompt and before any AGENTS.md content, with extension-emitted content following all AGENTS.md content
 
 ### Requirement: AgentEvent stream is the sole observable surface
 

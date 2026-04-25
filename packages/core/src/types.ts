@@ -1,7 +1,7 @@
 import type { ModelMessage } from 'ai';
 import type { CallId, SessionId } from './ids';
 
-export type SandboxMode = 'off';
+export type SandboxMode = 'off' | 'bind' | 'overlay' | 'ephemeral';
 
 export type ExecutionTarget = 'sandbox' | 'host';
 
