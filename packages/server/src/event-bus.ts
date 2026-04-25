@@ -40,11 +40,15 @@ export class EventBus {
     return () => this.subscribers.delete(sub);
   }
 
-  /** Events strictly after the given eventId, or all recent events if no id supplied. */
+  // Events strictly after the given eventId. When `sinceEventId` is
+  // unknown (evicted from the ring, or from a different server), return []
+  // rather than the whole ring — re-delivering events the client already
+  // has would duplicate them in scrollback. The cost is forfeiting the
+  // window of evicted events; the alternative duplicate-flood is worse.
   replay(sinceEventId?: string): AgentEventEnvelope[] {
     if (!sinceEventId) return [];
     const idx = this.ring.findIndex((e) => e.eventId === sinceEventId);
-    if (idx === -1) return [...this.ring];
+    if (idx === -1) return [];
     return this.ring.slice(idx + 1);
   }
 
