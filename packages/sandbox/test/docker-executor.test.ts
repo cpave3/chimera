@@ -367,6 +367,81 @@ describe('DockerExecutor file ops', () => {
   });
 });
 
+describe('DockerExecutor host user mapping', () => {
+  it('passes CHIMERA_HOST_UID/GID env vars on docker run when hostUid/hostGid are set', async () => {
+    const runner = new FakeRunner();
+    const exec = new DockerExecutor({
+      runner,
+      image: 'chimera-sandbox:test',
+      mode: 'bind',
+      sessionId: SESSION,
+      hostCwd: cwd,
+      hostUid: 1234,
+      hostGid: 5678,
+    });
+    await exec.start();
+    const runCall = runner.calls.find((c) => c.args[0] === 'run')!;
+    expect(runCall.args).toContain('CHIMERA_HOST_UID=1234');
+    expect(runCall.args).toContain('CHIMERA_HOST_GID=5678');
+  });
+
+  it('passes --user UID:GID on docker exec for exec/readFile/writeFile/stat', async () => {
+    const runner = new FakeRunner();
+    runner.on(
+      (a) => a[0] === 'exec' && a.includes('cat'),
+      { stdout: Buffer.from('payload', 'utf8') },
+    );
+    runner.on(
+      (a) => a[0] === 'exec' && a.includes('stat'),
+      { stdout: 'regular file|0\n' },
+    );
+    const exec = new DockerExecutor({
+      runner,
+      image: 'chimera-sandbox:test',
+      mode: 'bind',
+      sessionId: SESSION,
+      hostCwd: cwd,
+      hostUid: 1234,
+      hostGid: 5678,
+    });
+    await exec.start();
+    await exec.exec('echo hi');
+    await exec.readFile('foo.txt');
+    await exec.writeFile('bar.txt', 'data');
+    await exec.stat('foo.txt');
+
+    const execCalls = runner.calls.filter((c) => c.args[0] === 'exec');
+    expect(execCalls.length).toBeGreaterThan(0);
+    for (const call of execCalls) {
+      const idx = call.args.indexOf('--user');
+      expect(idx).toBeGreaterThan(0);
+      expect(call.args[idx + 1]).toBe('1234:5678');
+    }
+  });
+
+  it('omits --user and host-uid env vars when hostUid is null', async () => {
+    const runner = new FakeRunner();
+    const exec = new DockerExecutor({
+      runner,
+      image: 'chimera-sandbox:test',
+      mode: 'bind',
+      sessionId: SESSION,
+      hostCwd: cwd,
+      hostUid: null,
+      hostGid: null,
+    });
+    await exec.start();
+    await exec.exec('echo hi');
+    const runCall = runner.calls.find((c) => c.args[0] === 'run')!;
+    expect(runCall.args.some((a) => a.startsWith('CHIMERA_HOST_UID='))).toBe(false);
+    expect(runCall.args.some((a) => a.startsWith('CHIMERA_HOST_GID='))).toBe(false);
+    const execCall = runner.calls.find(
+      (c) => c.args[0] === 'exec' && c.args.includes('sh'),
+    )!;
+    expect(execCall.args).not.toContain('--user');
+  });
+});
+
 describe('DockerExecutor.ensureImage', () => {
   it('errors when the image is missing and dockerfileDir is not set', async () => {
     const runner = new FakeRunner();

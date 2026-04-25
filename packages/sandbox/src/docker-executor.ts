@@ -20,6 +20,13 @@ export interface DockerExecutorOptions extends SandboxConfig {
    * silently turn a typo into a 5-minute build.
    */
   dockerfileDir?: string;
+  /**
+   * Host UID/GID to map into the container so files written by the agent
+   * land on the host owned by the invoking user, not root. Default is
+   * `process.getuid()` / `process.getgid()`. Pass `null` to opt out.
+   */
+  hostUid?: number | null;
+  hostGid?: number | null;
 }
 
 export interface FallbackEvent {
@@ -34,6 +41,8 @@ export class DockerExecutor implements Executor {
   private readonly warn: (message: string) => void;
   private readonly containerName: string;
   private readonly dockerfileDir: string | undefined;
+  private readonly hostUid: number | null;
+  private readonly hostGid: number | null;
   private effectiveMode: SandboxRunMode;
   private started = false;
   private stopped = false;
@@ -45,6 +54,8 @@ export class DockerExecutor implements Executor {
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
     this.containerName = `chimera-${opts.sessionId}`;
     this.dockerfileDir = opts.dockerfileDir;
+    this.hostUid = resolveHostId(opts.hostUid, process.getuid?.bind(process));
+    this.hostGid = resolveHostId(opts.hostGid, process.getgid?.bind(process));
     this.effectiveMode = opts.mode;
   }
 
@@ -186,6 +197,12 @@ export class DockerExecutor implements Executor {
       '-e',
       `CHIMERA_MODE=${mode}`,
     ];
+    if (this.hostUid !== null) {
+      args.push('-e', `CHIMERA_HOST_UID=${this.hostUid}`);
+    }
+    if (this.hostGid !== null) {
+      args.push('-e', `CHIMERA_HOST_GID=${this.hostGid}`);
+    }
 
     const network = this.config.network ?? 'host';
     args.push('--network', network === 'none' ? 'none' : 'bridge');
@@ -252,10 +269,23 @@ export class DockerExecutor implements Executor {
     return { ok: false, reason: 'container failed to enter Running state' };
   }
 
+  /**
+   * Common `docker exec -i [--user UID:GID]` prefix used by every exec-path
+   * helper. The `--user` flag is what makes files written by the agent land
+   * on the host owned by the invoking user instead of root.
+   */
+  private execPrefix(): string[] {
+    const prefix = ['exec', '-i'];
+    if (this.hostUid !== null && this.hostGid !== null) {
+      prefix.push('--user', `${this.hostUid}:${this.hostGid}`);
+    }
+    return prefix;
+  }
+
   async exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     this.assertStarted();
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const dockerArgs = ['exec', '-i'];
+    const dockerArgs = this.execPrefix();
     if (opts.cwd) dockerArgs.push('-w', this.toContainerPath(opts.cwd));
     if (opts.env) {
       for (const [k, v] of Object.entries(opts.env)) {
@@ -287,8 +317,7 @@ export class DockerExecutor implements Executor {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);
     const r = await this.runner.runRaw([
-      'exec',
-      '-i',
+      ...this.execPrefix(),
       this.containerName,
       'cat',
       containerPath,
@@ -306,7 +335,7 @@ export class DockerExecutor implements Executor {
     const tmp = `${containerPath}.${process.pid}.${Date.now()}.tmp`;
     const cmd = `mkdir -p ${shellQuote(dir)} && cat > ${shellQuote(tmp)} && mv ${shellQuote(tmp)} ${shellQuote(containerPath)}`;
     const r = await this.runner.run(
-      ['exec', '-i', this.containerName, 'sh', '-c', cmd],
+      [...this.execPrefix(), this.containerName, 'sh', '-c', cmd],
       { stdin: content },
     );
     if (r.exitCode !== 0) {
@@ -318,8 +347,7 @@ export class DockerExecutor implements Executor {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);
     const r = await this.runner.run([
-      'exec',
-      '-i',
+      ...this.execPrefix(),
       this.containerName,
       'stat',
       '-c',
@@ -386,4 +414,14 @@ function shellQuote(s: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function resolveHostId(
+  override: number | null | undefined,
+  detect: (() => number) | undefined,
+): number | null {
+  if (override === null) return null;
+  if (typeof override === 'number') return override;
+  // process.getuid/getgid are POSIX-only; absent on Windows.
+  return typeof detect === 'function' ? detect() : null;
 }
