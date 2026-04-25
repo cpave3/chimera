@@ -1,6 +1,6 @@
 import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
-import type { SandboxMode } from '@chimera/core';
+import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
 import { applyOverlay, diffOverlay, discardOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
@@ -103,6 +103,11 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         }
       : undefined;
 
+  // Build extensions array matching the factory's logic for skills.
+  const extensions = skills
+    ? [() => skills.buildIndex() || null]
+    : undefined;
+
   const handle = mountTui({
     client,
     sessionId,
@@ -112,6 +117,14 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     skills,
     sandboxMode,
     overlay,
+    reloadSystemPrompt: ({ cwd }) =>
+      composeSystemPrompt({
+        cwd,
+        home: opts.home,
+        model,
+        sandboxMode,
+        extensions,
+      }),
   });
   try {
     await handle.waitUntilExit();

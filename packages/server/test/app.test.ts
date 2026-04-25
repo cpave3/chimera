@@ -277,4 +277,44 @@ describe('server app', () => {
 
     await rm(projectCwd, { recursive: true, force: true });
   });
+
+  it('POST /v1/sessions/:id/reload updates system prompt', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry });
+
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+
+    const r = await app.request(`/v1/sessions/${sessionId}/reload`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ systemPrompt: 'updated prompt' }),
+    });
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.ok).toBe(true);
+  });
+
+  it('POST /v1/sessions/:id/reload returns 404 for unknown session', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry });
+
+    const r = await app.request('/v1/sessions/unknown-session-id/reload', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ systemPrompt: 'updated prompt' }),
+    });
+    expect(r.status).toBe(404);
+  });
 });

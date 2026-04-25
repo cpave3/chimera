@@ -77,6 +77,18 @@ export function buildApp(opts: AppOptions): Hono {
     return c.body(null, 204);
   });
 
+  // --- Reload (AGENTS.md/CLAUDE.md, etc.) ----------------------------------
+  app.post('/v1/sessions/:id/reload', async (c) => {
+    const e = registry.get(c.req.param('id'));
+    if (!e) return c.json({ error: 'not found' }, 404);
+    const body = await c.req.json();
+    const systemPrompt = body.systemPrompt;
+    if (typeof systemPrompt === 'string') {
+      e.agent.setSystemPrompt(systemPrompt);
+    }
+    return c.json({ ok: true });
+  });
+
   // --- Permissions -------------------------------------------------------
   // NOTE: /permissions/rules must be registered BEFORE /permissions/:requestId
   // so Hono matches the specific static segment instead of the parametric one.

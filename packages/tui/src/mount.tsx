@@ -22,6 +22,12 @@ export interface MountOptions {
   skills?: SkillRegistry;
   sandboxMode?: SandboxMode;
   overlay?: OverlayHandlers;
+  /**
+   * When provided, called by `/reload` to re-compose the system prompt
+   * (e.g., after AGENTS.md/CLAUDE.md changes). Returns the new prompt
+   * to send to the server.
+   */
+  reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
 }
 
 export interface TuiHandle {
@@ -55,6 +61,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         skills={opts.skills}
         sandboxMode={opts.sandboxMode}
         overlay={opts.overlay}
+        reloadSystemPrompt={opts.reloadSystemPrompt}
       />
     </ThemeProvider>,
     {

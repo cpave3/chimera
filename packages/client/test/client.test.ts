@@ -114,4 +114,23 @@ describe('ChimeraClient end-to-end', () => {
       status: 404,
     });
   });
+
+  it('reloadSession updates system prompt', async () => {
+    const client = new ChimeraClient({ baseUrl: server.url });
+    const { sessionId } = await client.createSession({
+      cwd: '/tmp',
+      model,
+      sandboxMode: 'off',
+    });
+
+    await client.reloadSession(sessionId, 'new system prompt');
+
+    // Session should still work after reload.
+    const types: string[] = [];
+    for await (const ev of client.send(sessionId, 'hi')) {
+      types.push(ev.type);
+      if (ev.type === 'run_finished') break;
+    }
+    expect(types[types.length - 1]).toBe('run_finished');
+  });
 });

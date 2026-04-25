@@ -37,6 +37,12 @@ export interface AppProps {
   skills?: SkillRegistry;
   sandboxMode?: SandboxMode;
   overlay?: OverlayHandlers;
+  /**
+   * When provided, called by `/reload` to re-compose the system prompt
+   * (e.g., after AGENTS.md/CLAUDE.md changes). Returns the new prompt
+   * to send to the server.
+   */
+  reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
 }
 
 interface PendingPermission {
@@ -643,15 +649,31 @@ export function App(props: AppProps): React.ReactElement {
       }
       case '/reload': {
         const reg = props.commands;
-        if (!reg?.reload) {
+        const reloadFn = reg?.reload;
+        if (!reloadFn) {
           scrollback.addInfo('commands: reload not supported in this session.');
           setEntries(scrollback.all());
           return;
         }
-        void reg.reload().catch((err) => {
-          scrollback.addError(`reload failed: ${(err as Error).message}`);
-          setEntries(scrollback.all());
-        });
+        void (async () => {
+          try {
+            // Reload user commands.
+            await reloadFn.call(reg);
+            // Reload AGENTS.md/CLAUDE.md if the hook is provided.
+            if (props.reloadSystemPrompt) {
+              const newPrompt = await props.reloadSystemPrompt({ cwd: props.cwd });
+              await props.client.reloadSession(props.sessionId, newPrompt);
+              scrollback.addInfo('system prompt reloaded.');
+              setEntries(scrollback.all());
+            } else {
+              scrollback.addInfo('commands reloaded.');
+              setEntries(scrollback.all());
+            }
+          } catch (err) {
+            scrollback.addError(`reload failed: ${(err as Error).message}`);
+            setEntries(scrollback.all());
+          }
+        })();
         return;
       }
       case '/theme': {

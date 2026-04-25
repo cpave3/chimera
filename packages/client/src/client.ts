@@ -105,6 +105,20 @@ export class ChimeraClient {
     await this.json<void>(`/v1/sessions/${id}/interrupt`, { method: 'POST' });
   }
 
+  /**
+   * Reload session configuration (e.g., AGENTS.md/CLAUDE.md changes).
+   * The server composes the new system prompt; this method accepts it
+   * as an argument because the server may need additional context
+   * (cwd, extensions) to compose it correctly.
+   */
+  async reloadSession(id: SessionId, systemPrompt: string): Promise<void> {
+    await this.json<void>(`/v1/sessions/${id}/reload`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ systemPrompt }),
+    });
+  }
+
   async resolvePermission(
     sessionId: SessionId,
     requestId: string,
