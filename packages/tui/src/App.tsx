@@ -17,7 +17,14 @@ import {
   OVERLAY_COMMANDS,
 } from './slash-commands';
 import { StatusBar, type StatusBarWidget } from './StatusBar';
-import { buildTheme, type Theme } from './theme';
+import {
+  buildTheme,
+  defaultTheme,
+  getDefaultThemePath,
+  plainTheme,
+  themeToLegacy,
+  type Theme,
+} from './theme';
 
 export interface OverlayHandlers {
   diff(): Promise<{ modified: string[]; added: string[]; deleted: string[] }>;
@@ -45,12 +52,20 @@ interface PendingPermission {
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const CHIMERA_VERSION = '0.1.0';
 
+// Build theme respecting NO_COLOR and convert to legacy format for backward compatibility
+function getTheme(): Theme {
+  const noColor = process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== '';
+  const baseTheme = noColor ? plainTheme : defaultTheme;
+  const newTheme = buildTheme(baseTheme, getDefaultThemePath());
+  return themeToLegacy(newTheme);
+}
+
 type StaticItem =
   | { kind: 'header'; id: '__header__' }
   | { kind: 'entry'; id: string; entry: ScrollbackEntry };
 
 export function App(props: AppProps): React.ReactElement {
-  const theme = useMemo(() => buildTheme(), []);
+  const theme = useMemo(() => getTheme(), []);
   const app = useApp();
   const { stdout } = useStdout();
   const scrollback = useMemo(() => new Scrollback(), []);
@@ -63,6 +78,8 @@ export function App(props: AppProps): React.ReactElement {
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
+  const [queue, setQueue] = useState<string[]>([]);
+  const wasRunningRef = useRef(false);
   // Id of the assistant entry currently receiving text deltas. Held out of
   // <Static> so its text can keep updating; committed once text_done fires.
   const [streamingEntryId, setStreamingEntryId] = useState<string | null>(null);
@@ -186,6 +203,18 @@ export function App(props: AppProps): React.ReactElement {
     return () => clearInterval(id);
   }, [running]);
 
+  // When a run ends with queued messages, concatenate and send as one turn.
+  useEffect(() => {
+    if (wasRunningRef.current && !running && queue.length > 0) {
+      const combined = queue.join('\n\n');
+      setQueue([]);
+      void sendUserMessage(combined);
+    }
+    wasRunningRef.current = running;
+    // sendUserMessage is a stable closure for this purpose; intentional deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, queue]);
+
   // Subscribe to events.
   useEffect(() => {
     const controller = new AbortController();
@@ -230,15 +259,19 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
+  function interruptRun(): void {
+    void props.client.interrupt(props.sessionId);
+    scrollback.addInfo('interrupt sent');
+    setEntries(scrollback.all());
+  }
+
   useInput((char, key) => {
     if (pending) return; // handled by modal
     if (overlayPicker) return; // handled by picker
 
     if (key.ctrl && char === 'c') {
       if (running) {
-        void props.client.interrupt(props.sessionId);
-        scrollback.addInfo('interrupt sent');
-        setEntries(scrollback.all());
+        interruptRun();
         return;
       }
       const now = Date.now();
@@ -249,6 +282,10 @@ export function App(props: AppProps): React.ReactElement {
       setLastCtrlC(now);
       scrollback.addInfo('press Ctrl+C again to exit');
       setEntries(scrollback.all());
+      return;
+    }
+    if (key.escape && running && !menuOpen) {
+      interruptRun();
       return;
     }
     if (key.ctrl && char === 'd') {
@@ -341,6 +378,12 @@ export function App(props: AppProps): React.ReactElement {
   async function handleSubmit(text: string): Promise<void> {
     if (text.startsWith('/')) {
       handleSlash(text.trim());
+      return;
+    }
+    if (running) {
+      setQueue((q) => [...q, text]);
+      scrollback.addInfo(`queued: ${previewLine(text)}`);
+      setEntries(scrollback.all());
       return;
     }
     await sendUserMessage(text);
@@ -534,6 +577,12 @@ export function App(props: AppProps): React.ReactElement {
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(expanded);
           setEntries(scrollback.all());
+          if (running) {
+            setQueue((q) => [...q, expanded]);
+            scrollback.addInfo(`queued: ${previewLine(raw)}`);
+            setEntries(scrollback.all());
+            return;
+          }
           void sendUserMessage(expanded);
           return;
         }
@@ -543,6 +592,12 @@ export function App(props: AppProps): React.ReactElement {
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(body);
           setEntries(scrollback.all());
+          if (running) {
+            setQueue((q) => [...q, body]);
+            scrollback.addInfo(`queued: ${previewLine(raw)}`);
+            setEntries(scrollback.all());
+            return;
+          }
           void sendUserMessage(body);
           return;
         }
@@ -614,7 +669,7 @@ export function App(props: AppProps): React.ReactElement {
     <Text color={theme.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
   ];
   const hintsLeft: StatusBarWidget[] = [
-    <Text color={theme.muted}>Ctrl+C interrupt</Text>,
+    <Text color={theme.muted}>Esc/Ctrl+C interrupt</Text>,
     <Text color={theme.muted}>Ctrl+D exit</Text>,
     <Text color={theme.muted}>/ commands</Text>,
   ];
@@ -653,6 +708,13 @@ export function App(props: AppProps): React.ReactElement {
           <Box>
             <Text color={theme.accent}>
               {SPINNER_FRAMES[spinnerFrame]} {streaming ? 'streaming…' : 'waiting…'}
+            </Text>
+          </Box>
+        )}
+        {queue.length > 0 && (
+          <Box>
+            <Text color={theme.muted}>
+              {`queued (${queue.length}): ${previewLine(queue[0]!)}${queue.length > 1 ? ` (+${queue.length - 1} more)` : ''}`}
             </Text>
           </Box>
         )}
@@ -717,6 +779,11 @@ export function App(props: AppProps): React.ReactElement {
  * the model reads it (firing `skill_activated`), and appends any args as the
  * user's request.
  */
+function previewLine(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine;
+}
+
 function expandSkillInvocation(name: string, path: string, args: string): string {
   const trimmed = args.trim();
   const head = `Use the "${name}" skill from ${path}.`;
