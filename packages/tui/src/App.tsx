@@ -2,16 +2,28 @@ import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { AgentEvent, SessionId } from '@chimera/core';
+import type { AgentEvent, SandboxMode, SessionId } from '@chimera/core';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import { renderMarkdown } from './markdown';
+import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
 import { Scrollback, type ScrollbackEntry } from './scrollback';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
-import { BUILTIN_COMMANDS, findClosestCommand, isBuiltin } from './slash-commands';
+import {
+  BUILTIN_COMMANDS,
+  findClosestCommand,
+  isBuiltin,
+  OVERLAY_COMMANDS,
+} from './slash-commands';
 import { StatusBar, type StatusBarWidget } from './StatusBar';
 import { buildTheme, type Theme } from './theme';
+
+export interface OverlayHandlers {
+  diff(): Promise<{ modified: string[]; added: string[]; deleted: string[] }>;
+  apply(paths?: string[]): Promise<void>;
+  discard(): Promise<void>;
+}
 
 export interface AppProps {
   client: ChimeraClient;
@@ -20,6 +32,8 @@ export interface AppProps {
   cwd: string;
   commands?: CommandRegistry;
   skills?: SkillRegistry;
+  sandboxMode?: SandboxMode;
+  overlay?: OverlayHandlers;
 }
 
 interface PendingPermission {
@@ -43,6 +57,7 @@ export function App(props: AppProps): React.ReactElement {
   const [entries, setEntries] = useState<ScrollbackEntry[]>([]);
   const [input, setInputState] = useState('');
   const [pending, setPending] = useState<PendingPermission | null>(null);
+  const [overlayPicker, setOverlayPicker] = useState<OverlayDiffEntry[] | null>(null);
   const [running, setRunning] = useState(false);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
@@ -116,18 +131,24 @@ export function App(props: AppProps): React.ReactElement {
     return unsub;
   }, [props.commands, scrollback]);
 
+  const sandboxMode = props.sandboxMode ?? 'off';
+  const overlayMode = sandboxMode === 'overlay';
+
   // Filtered slash-menu items derived from input + registry.
   const menuItems = useMemo<SlashMenuItem[]>(() => {
     if (!input.startsWith('/') || input.includes(' ') || menuDismissed) return [];
     const partial = input.slice(1).toLowerCase();
-    const builtins: SlashMenuItem[] = BUILTIN_COMMANDS
+    const visibleBuiltins = overlayMode
+      ? [...BUILTIN_COMMANDS, ...OVERLAY_COMMANDS]
+      : BUILTIN_COMMANDS;
+    const builtins: SlashMenuItem[] = visibleBuiltins
       .filter((c) => c.name.toLowerCase().slice(1).startsWith(partial))
       .map((c) => ({
         name: c.name.slice(1),
         description: c.description,
         kind: 'builtin' as const,
       }));
-    const builtinNames = new Set(BUILTIN_COMMANDS.map((c) => c.name));
+    const builtinNames = new Set(visibleBuiltins.map((c) => c.name));
     const users: SlashMenuItem[] = (props.commands?.list() ?? [])
       .filter((c) => !builtinNames.has(`/${c.name}`))
       .filter((c) => c.name.toLowerCase().startsWith(partial))
@@ -147,7 +168,7 @@ export function App(props: AppProps): React.ReactElement {
         kind: 'skill' as const,
       }));
     return [...builtins, ...users, ...skills];
-  }, [input, props.commands, props.skills, menuDismissed, registryVersion]);
+  }, [input, props.commands, props.skills, menuDismissed, registryVersion, overlayMode]);
 
   const menuOpen = menuItems.length > 0;
 
@@ -211,6 +232,7 @@ export function App(props: AppProps): React.ReactElement {
 
   useInput((char, key) => {
     if (pending) return; // handled by modal
+    if (overlayPicker) return; // handled by picker
 
     if (key.ctrl && char === 'c') {
       if (running) {
@@ -427,6 +449,76 @@ export function App(props: AppProps): React.ReactElement {
         });
         return;
       }
+      case '/overlay':
+      case '/apply':
+      case '/discard': {
+        if (!overlayMode || !props.overlay) {
+          scrollback.addError(`${name} requires --sandbox-mode overlay`);
+          setEntries(scrollback.all());
+          return;
+        }
+        if (name === '/overlay') {
+          void (async () => {
+            try {
+              const diff = await props.overlay!.diff();
+              const total =
+                diff.added.length + diff.modified.length + diff.deleted.length;
+              if (total === 0) {
+                scrollback.addInfo('overlay: no pending changes');
+              } else {
+                const lines: string[] = [];
+                for (const p of diff.added) lines.push(`  + ${p}`);
+                for (const p of diff.modified) lines.push(`  ~ ${p}`);
+                for (const p of diff.deleted) lines.push(`  - ${p}`);
+                scrollback.addInfo(`overlay diff (${total}):\n${lines.join('\n')}`);
+              }
+            } catch (err) {
+              scrollback.addError(`overlay: ${(err as Error).message}`);
+            }
+            setEntries(scrollback.all());
+          })();
+          return;
+        }
+        if (name === '/apply') {
+          void (async () => {
+            try {
+              const diff = await props.overlay!.diff();
+              const entries: OverlayDiffEntry[] = [
+                ...diff.added.map<OverlayDiffEntry>((path) => ({ kind: 'added', path })),
+                ...diff.modified.map<OverlayDiffEntry>((path) => ({
+                  kind: 'modified',
+                  path,
+                })),
+                ...diff.deleted.map<OverlayDiffEntry>((path) => ({
+                  kind: 'deleted',
+                  path,
+                })),
+              ];
+              if (entries.length === 0) {
+                scrollback.addInfo('overlay: no pending changes');
+                setEntries(scrollback.all());
+                return;
+              }
+              setOverlayPicker(entries);
+            } catch (err) {
+              scrollback.addError(`overlay: ${(err as Error).message}`);
+              setEntries(scrollback.all());
+            }
+          })();
+          return;
+        }
+        // /discard
+        void (async () => {
+          try {
+            await props.overlay!.discard();
+            scrollback.addInfo('overlay discarded');
+          } catch (err) {
+            scrollback.addError(`discard: ${(err as Error).message}`);
+          }
+          setEntries(scrollback.all());
+        })();
+        return;
+      }
       default: {
         const templateName = name!.startsWith('/') ? name!.slice(1) : name!;
         const template = props.commands?.find(templateName);
@@ -519,7 +611,7 @@ export function App(props: AppProps): React.ReactElement {
     <Text color={theme.primary}>{props.modelRef}</Text>,
   ];
   const sessionRight: StatusBarWidget[] = [
-    <Text color={theme.muted}>[sandbox:off]</Text>,
+    <Text color={theme.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
   ];
   const hintsLeft: StatusBarWidget[] = [
     <Text color={theme.muted}>Ctrl+C interrupt</Text>,
@@ -571,6 +663,32 @@ export function App(props: AppProps): React.ReactElement {
             target="host"
             theme={theme}
             onResolve={onResolve}
+          />
+        )}
+        {overlayPicker && (
+          <OverlayPicker
+            entries={overlayPicker}
+            theme={theme}
+            onResolve={(selection) => {
+              const entries = overlayPicker;
+              setOverlayPicker(null);
+              if (!selection) {
+                scrollback.addInfo('apply cancelled');
+                setEntries(scrollback.all());
+                return;
+              }
+              void (async () => {
+                try {
+                  await props.overlay!.apply(selection.paths);
+                  scrollback.addInfo(
+                    `applied ${selection.paths.length}/${entries.length} overlay paths`,
+                  );
+                } catch (err) {
+                  scrollback.addError(`apply: ${(err as Error).message}`);
+                }
+                setEntries(scrollback.all());
+              })();
+            }}
           />
         )}
         {menuOpen && (

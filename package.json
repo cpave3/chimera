@@ -18,7 +18,8 @@
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "link": "pnpm --filter @chimera/cli link --global",
-    "unlink": "pnpm --filter @chimera/cli unlink --global"
+    "unlink": "pnpm --filter @chimera/cli unlink --global",
+    "sandbox:build": "docker build -t chimera-sandbox:dev packages/sandbox/docker"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",

@@ -347,3 +347,81 @@ describe('TUI slash dispatch', () => {
     unmount();
   });
 });
+
+describe('TUI overlay slash dispatch', () => {
+  it('/overlay lists pending changes from overlay.diff()', async () => {
+    let diffCalls = 0;
+    const overlay = {
+      diff: async () => {
+        diffCalls += 1;
+        return { added: ['new.ts'], modified: ['changed.ts'], deleted: ['gone.ts'] };
+      },
+      apply: async () => {},
+      discard: async () => {},
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({})}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+        sandboxMode="overlay"
+        overlay={overlay}
+      />,
+    );
+    await type(stdin, '/overlay\r');
+    const frame = lastFrame()!;
+    expect(diffCalls).toBe(1);
+    expect(frame).toContain('+ new.ts');
+    expect(frame).toContain('~ changed.ts');
+    expect(frame).toContain('- gone.ts');
+    unmount();
+  });
+
+  it('/overlay reports "no pending changes" when the diff is empty', async () => {
+    const overlay = {
+      diff: async () => ({ added: [], modified: [], deleted: [] }),
+      apply: async () => {},
+      discard: async () => {},
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({})}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+        sandboxMode="overlay"
+        overlay={overlay}
+      />,
+    );
+    await type(stdin, '/overlay\r');
+    expect(lastFrame()).toContain('no pending changes');
+    unmount();
+  });
+
+  it('/discard calls overlay.discard() once', async () => {
+    let discardCalls = 0;
+    const overlay = {
+      diff: async () => ({ added: [], modified: [], deleted: [] }),
+      apply: async () => {},
+      discard: async () => {
+        discardCalls += 1;
+      },
+    };
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({})}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+        sandboxMode="overlay"
+        overlay={overlay}
+      />,
+    );
+    await type(stdin, '/discard\r');
+    expect(discardCalls).toBe(1);
+    expect(lastFrame()).toContain('overlay discarded');
+    unmount();
+  });
+
+});

@@ -17,8 +17,17 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/reload', description: 'Re-read user command files from disk' },
 ];
 
+export const OVERLAY_COMMANDS: SlashCommand[] = [
+  { name: '/overlay', description: 'List pending overlay changes' },
+  { name: '/apply', description: 'Apply overlay changes (interactive picker)' },
+  { name: '/discard', description: 'Discard the overlay upperdir' },
+];
+
 export function isBuiltin(name: string): boolean {
-  return BUILTIN_COMMANDS.some((c) => c.name === name);
+  return (
+    BUILTIN_COMMANDS.some((c) => c.name === name) ||
+    OVERLAY_COMMANDS.some((c) => c.name === name)
+  );
 }
 
 /**

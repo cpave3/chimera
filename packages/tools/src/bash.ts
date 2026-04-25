@@ -1,3 +1,4 @@
+import { newRequestId } from '@chimera/core';
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { ToolContext } from './context';
@@ -60,11 +61,8 @@ export function buildBashTool(ctx: ToolContext) {
           };
         }
         if (ctx.permissionGate) {
-          // In MVP sandboxMode is always 'off', so this path is unreachable.
-          // Left in place so the sandbox change can drop in directly.
-          const { requestId } = { requestId: Math.random().toString(36).slice(2) };
           const res = await ctx.permissionGate.request({
-            requestId,
+            requestId: newRequestId(),
             tool: 'bash',
             target: 'host',
             command,

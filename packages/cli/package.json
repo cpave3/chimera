@@ -29,6 +29,7 @@
     "@chimera/core": "workspace:*",
     "@chimera/permissions": "workspace:*",
     "@chimera/providers": "workspace:*",
+    "@chimera/sandbox": "workspace:*",
     "@chimera/server": "workspace:*",
     "@chimera/skills": "workspace:*",
     "@chimera/tools": "workspace:*",

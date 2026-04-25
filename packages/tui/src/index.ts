@@ -7,3 +7,4 @@ export * from './PermissionModal';
 export * from './SlashMenu';
 export * from './StatusBar';
 export * from './mount';
+export { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';

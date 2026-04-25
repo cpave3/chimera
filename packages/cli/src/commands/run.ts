@@ -1,8 +1,12 @@
 import { ChimeraClient } from '@chimera/client';
+import type { SandboxMode } from '@chimera/core';
+import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimera/server';
 import { loadCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { CHIMERA_CLI_VERSION } from '../program';
+import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface RunOptions {
@@ -26,6 +30,8 @@ export interface RunOptions {
   factoryOverride?: AgentFactory;
   /** Test hook: override model config when `factoryOverride` is supplied. */
   modelOverride?: { providerId: string; modelId: string; maxSteps: number };
+  /** Raw sandbox flags from commander. */
+  sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
 }
 
 export interface RunResult {
@@ -33,8 +39,14 @@ export interface RunResult {
 }
 
 export async function runOneShot(opts: RunOptions): Promise<RunResult> {
+  const sandboxOpts = opts.sandboxFlags
+    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: CHIMERA_CLI_VERSION })
+    : null;
+  const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
+
   let model: { providerId: string; modelId: string; maxSteps: number };
   let factory: AgentFactory;
+  let cliFactory: CliAgentFactory | undefined;
   const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);
   const skills = loadSkillsFromConfig({
     cwd: opts.cwd,
@@ -54,12 +66,14 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       config,
     });
     model = resolved.model;
-    factory = new CliAgentFactory({
+    cliFactory = new CliAgentFactory({
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       home: opts.home,
       skills,
+      sandbox: sandboxOpts ?? undefined,
     });
+    factory = cliFactory;
   }
 
   // Load the commands registry for both server introspection and client-side
@@ -86,7 +100,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 
   const registry = new AgentRegistry({
     factory,
-    instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode: 'off' },
+    instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode },
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
   });
@@ -98,7 +112,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     const { sessionId } = await client.createSession({
       cwd: opts.cwd,
       model,
-      sandboxMode: 'off',
+      sandboxMode,
       sessionId: opts.session,
     });
 
@@ -136,10 +150,50 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       if (errorMessage) process.stderr.write(`${errorMessage}\n`);
     }
 
+    if (sandboxOpts?.enabled && cliFactory) {
+      const docker = cliFactory.getSandbox(sessionId);
+      if (docker && docker.mode() === 'overlay') {
+        try {
+          await finalizeOverlay({
+            sessionId,
+            cwd: opts.cwd,
+            exitReason,
+            applyOnSuccess: sandboxOpts.applyOnSuccess,
+          });
+        } catch (err) {
+          process.stderr.write(
+            `overlay finalization failed: ${(err as Error).message}\n`,
+          );
+        }
+      }
+    }
+
     return { exitCode: exitCodeFor(exitReason) };
   } finally {
+    if (cliFactory) {
+      await cliFactory.dispose();
+    }
     await server.close();
   }
+}
+
+export interface FinalizeOverlayInput {
+  sessionId: string;
+  cwd: string;
+  exitReason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout';
+  applyOnSuccess: boolean;
+}
+
+/**
+ * Apply the upperdir to the host iff the run finished cleanly and the user
+ * asked for it; in every other case, discard. Exposed for direct testing —
+ * the inline call site in `runOneShot` is unreachable under `factoryOverride`.
+ */
+export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void> {
+  if (input.applyOnSuccess && input.exitReason === 'stop') {
+    await applyOverlay(input.sessionId, input.cwd);
+  }
+  await discardOverlay(input.sessionId);
 }
 
 function exitCodeFor(reason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout'): number {

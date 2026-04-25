@@ -1,7 +1,10 @@
+import type { SandboxMode } from '@chimera/core';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
+import { CHIMERA_CLI_VERSION } from '../program';
+import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface ServeOptions {
@@ -14,9 +17,15 @@ export interface ServeOptions {
   maxSteps?: number;
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   home?: string;
+  sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
+  const sandboxOpts = opts.sandboxFlags
+    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: CHIMERA_CLI_VERSION })
+    : null;
+  const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
+
   const config = loadConfig(opts.home);
   const { model, providersConfig } = resolveModel({
     cliModel: opts.model,
@@ -36,6 +45,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
     skills,
+    sandbox: sandboxOpts ?? undefined,
   });
 
   const registry = new AgentRegistry({
@@ -44,7 +54,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       pid: process.pid,
       cwd: opts.cwd,
       version: '0.1.0',
-      sandboxMode: 'off',
+      sandboxMode,
       parentId: opts.parent,
     },
     loadSkills: () => skills.all(),
@@ -57,7 +67,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const { sessionId } = await registry.create({
     cwd: opts.cwd,
     model,
-    sandboxMode: 'off',
+    sandboxMode,
   });
 
   writeLockfile(
@@ -75,6 +85,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
 
   const shutdown = async () => {
     removeLockfile(process.pid, opts.home);
+    await factory.dispose();
     await server.close();
     process.exit(0);
   };

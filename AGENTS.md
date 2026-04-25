@@ -20,7 +20,7 @@ rebuilding, vitest errors with `Failed to resolve entry for package
 "@chimera/commands"`. This is expected; just build.
 
 Dependency DAG (no back-edges): `cli → tui, server, client, permissions,
-tools, providers, commands, core`.
+sandbox, tools, providers, commands, skills, core`.
 
 ## Scripts
 
@@ -29,7 +29,14 @@ pnpm -r test                      # run every package's vitest suite
 pnpm --filter @chimera/<pkg> test [name-pattern]
 pnpm -r build                     # tsup build everywhere
 pnpm fmt / pnpm lint              # biome
+pnpm sandbox:build                # docker build chimera-sandbox:dev
 ```
+
+Docker-backed E2E tests are gated on `CHIMERA_TEST_DOCKER=1` and silently
+skip otherwise. They live in `packages/cli/test/e2e-sandbox.test.ts` and
+`packages/sandbox/test/`. Set the env var (and optionally
+`CHIMERA_TEST_SANDBOX_IMAGE` to override the default `chimera-sandbox:dev`)
+to run them.
 
 ## `pnpm typecheck` has known noise
 

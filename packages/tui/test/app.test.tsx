@@ -49,6 +49,36 @@ describe('App', () => {
     unmount();
   });
 
+  it.each([
+    ['sandbox', '[sandbox]'],
+    ['host', '[host]'],
+  ] as const)('renders %s tool calls with the %s badge', async (target, badge) => {
+    const events = [
+      {
+        type: 'tool_call_start' as const,
+        callId: 'c1',
+        name: 'bash',
+        args: { command: 'echo hi' },
+        target,
+      },
+    ];
+    const client = stubClient({
+      subscribe: async function* () {
+        for (const ev of events) yield ev;
+        // Stay open so the App can keep rendering.
+        await new Promise(() => undefined);
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" sandboxMode={target === 'sandbox' ? 'bind' : 'off'} />,
+    );
+    // Wait one tick so the subscribe generator yields and React flushes.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()).toContain(badge);
+    unmount();
+  });
+
   it('Ctrl+C during a run calls interrupt(sessionId) instead of exiting', async () => {
     let sendResolve: (() => void) | null = null;
     const interrupts: string[] = [];

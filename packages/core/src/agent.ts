@@ -239,7 +239,7 @@ export class Agent {
           case 'tool-call': {
             const callId = newCallId();
             const args = (part as { input?: unknown }).input;
-            const target = extractTarget(args);
+            const target = extractTarget(args, this.session.sandboxMode);
             const record: ToolCallRecord = {
               callId,
               name: part.toolName,
@@ -392,12 +392,15 @@ function extractReadPath(args: unknown): string | undefined {
   return undefined;
 }
 
-function extractTarget(args: unknown): ExecutionTarget {
+function extractTarget(args: unknown, sandboxMode: SandboxMode): ExecutionTarget {
   if (args && typeof args === 'object' && 'target' in args) {
     const t = (args as { target?: unknown }).target;
     if (t === 'sandbox' || t === 'host') return t;
   }
-  return 'host';
+  // No explicit `target` in the tool args — match the bash tool's default
+  // and the routing of file tools (read/write/edit always use the sandbox
+  // executor when sandbox is on).
+  return sandboxMode === 'off' ? 'host' : 'sandbox';
 }
 
 export function buildPermissionRequest(args: {

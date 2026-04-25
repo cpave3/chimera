@@ -1,10 +1,14 @@
 import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
+import type { SandboxMode } from '@chimera/core';
+import { applyOverlay, diffOverlay, discardOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
-import { mountTui } from '@chimera/tui';
+import { mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { CHIMERA_CLI_VERSION } from '../program';
+import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface InteractiveOptions {
@@ -17,9 +21,15 @@ export interface InteractiveOptions {
   claudeCompat?: boolean;
   /** False → skip skill discovery + injection (from `--no-skills`). */
   skills?: boolean;
+  sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
+  const sandboxOpts = opts.sandboxFlags
+    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: CHIMERA_CLI_VERSION })
+    : null;
+  const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
+
   const config = loadConfig(opts.home);
   const { model, ref, providersConfig } = resolveModel({
     cliModel: opts.model,
@@ -43,6 +53,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
     skills,
+    sandbox: sandboxOpts ?? undefined,
   });
 
   const commands = loadReloadingCommandsFromConfig({
@@ -58,7 +69,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       pid: process.pid,
       cwd: opts.cwd,
       version: '0.1.0',
-      sandboxMode: 'off',
+      sandboxMode,
     },
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
@@ -70,9 +81,20 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const { sessionId } = await client.createSession({
     cwd: opts.cwd,
     model,
-    sandboxMode: 'off',
+    sandboxMode,
     sessionId: opts.session,
   });
+
+  const overlay: OverlayHandlers | undefined =
+    sandboxMode === 'overlay'
+      ? {
+          diff: () => diffOverlay(sessionId, opts.cwd),
+          apply: async (paths) => {
+            await applyOverlay(sessionId, opts.cwd, paths ? { paths } : {});
+          },
+          discard: () => discardOverlay(sessionId),
+        }
+      : undefined;
 
   const handle = mountTui({
     client,
@@ -81,11 +103,14 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     cwd: opts.cwd,
     commands,
     skills,
+    sandboxMode,
+    overlay,
   });
   try {
     await handle.waitUntilExit();
   } finally {
     (commands as Partial<ReloadingCommandRegistry>).close?.();
+    await factory.dispose();
     await server.close();
   }
 }

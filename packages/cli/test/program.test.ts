@@ -11,11 +11,12 @@ describe('chimera CLI smoke', () => {
     expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it('rejects --sandbox with a helpful message and nonzero exit', () => {
-    const r = spawnSync('node', [BIN, '--sandbox', 'run', 'hi'], { encoding: 'utf8' });
+  it('rejects --sandbox-mode without --sandbox', () => {
+    const r = spawnSync('node', [BIN, 'run', '--sandbox-mode', 'overlay', 'hi'], {
+      encoding: 'utf8',
+    });
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toMatch(/sandbox/i);
-    expect(r.stderr).toMatch(/not yet supported/i);
+    expect(r.stderr).toMatch(/sandbox flags require --sandbox/i);
   });
 
   it('rejects --max-subagent-depth', () => {

@@ -1,10 +1,10 @@
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { SessionId } from '@chimera/core';
+import type { SandboxMode, SessionId } from '@chimera/core';
 import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import React from 'react';
-import { App } from './App';
+import { App, type OverlayHandlers } from './App';
 
 export interface MountOptions {
   client: ChimeraClient;
@@ -13,6 +13,8 @@ export interface MountOptions {
   cwd: string;
   commands?: CommandRegistry;
   skills?: SkillRegistry;
+  sandboxMode?: SandboxMode;
+  overlay?: OverlayHandlers;
 }
 
 export interface TuiHandle {
@@ -34,6 +36,8 @@ export function mountTui(opts: MountOptions): TuiHandle {
       cwd={opts.cwd}
       commands={opts.commands}
       skills={opts.skills}
+      sandboxMode={opts.sandboxMode}
+      overlay={opts.overlay}
     />,
     {
       exitOnCtrlC: false,

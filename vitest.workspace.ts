@@ -5,6 +5,7 @@ export default defineWorkspace([
   'packages/providers',
   'packages/tools',
   'packages/permissions',
+  'packages/sandbox',
   'packages/server',
   'packages/client',
   'packages/tui',
