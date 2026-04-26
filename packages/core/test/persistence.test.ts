@@ -43,65 +43,65 @@ describe('persistence', () => {
   }
 
   it('writes session.json without messages or toolCalls and appends event line', async () => {
-    const s = makeSession();
+    const session = makeSession();
     await persistSession(
-      s,
+      session,
       {
         type: 'step_finished',
         stepNumber: 1,
         finishReason: 'stop',
-        messages: s.messages,
-        toolCalls: s.toolCalls,
-        usage: s.usage,
+        messages: session.messages,
+        toolCalls: session.toolCalls,
+        usage: session.usage,
       },
       home,
     );
     const meta = JSON.parse(
-      await readFile(sessionMetadataPath(s.id, home), 'utf8'),
+      await readFile(sessionMetadataPath(session.id, home), 'utf8'),
     );
-    expect(meta.id).toEqual(s.id);
+    expect(meta.id).toEqual(session.id);
     expect(meta).not.toHaveProperty('messages');
     expect(meta).not.toHaveProperty('toolCalls');
     expect(meta.parentId).toBeNull();
     expect(meta.children).toEqual([]);
 
-    const events = (await readFile(sessionEventsPath(s.id, home), 'utf8'))
+    const events = (await readFile(sessionEventsPath(session.id, home), 'utf8'))
       .split('\n')
       .filter(Boolean);
     expect(events).toHaveLength(1);
-    const ev = JSON.parse(events[0]);
-    expect(ev.type).toBe('step_finished');
-    expect(ev.messages).toEqual(s.messages);
+    const eventEntry = JSON.parse(events[0]);
+    expect(eventEntry.type).toBe('step_finished');
+    expect(eventEntry.messages).toEqual(session.messages);
   });
 
   it('round-trips messages and toolCalls via the latest step_finished', async () => {
-    const s = makeSession();
-    s.messages = [
+    const session = makeSession();
+    session.messages = [
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'hello' },
     ];
     await persistSession(
-      s,
+      session,
       {
         type: 'step_finished',
         stepNumber: 1,
         finishReason: 'stop',
-        messages: s.messages,
-        toolCalls: s.toolCalls,
-        usage: s.usage,
+        messages: session.messages,
+        toolCalls: session.toolCalls,
+        usage: session.usage,
       },
       home,
     );
-    const loaded = await loadSession(s.id, home);
-    expect(loaded.id).toEqual(s.id);
-    expect(loaded.messages).toEqual(s.messages);
+    const loaded = await loadSession(session.id, home);
+    expect(loaded.id).toEqual(session.id);
+    expect(loaded.messages).toEqual(session.messages);
     expect(loaded.status).toEqual('idle');
   });
 
   it('uses the most recent step_finished for messages on resume', async () => {
-    const s = makeSession();
+    const session = makeSession();
     await persistSession(
-      s,
+      session,
       {
         type: 'step_finished',
         stepNumber: 1,
@@ -113,7 +113,7 @@ describe('persistence', () => {
       home,
     );
     await persistSession(
-      s,
+      session,
       {
         type: 'step_finished',
         stepNumber: 2,
@@ -127,14 +127,14 @@ describe('persistence', () => {
       },
       home,
     );
-    const loaded = await loadSession(s.id, home);
+    const loaded = await loadSession(session.id, home);
     expect(loaded.messages).toHaveLength(2);
   });
 
   it('skips a malformed trailing line on resume', async () => {
-    const s = makeSession();
+    const session = makeSession();
     await persistSession(
-      s,
+      session,
       {
         type: 'step_finished',
         stepNumber: 1,
@@ -145,29 +145,29 @@ describe('persistence', () => {
       },
       home,
     );
-    const eventsPath = sessionEventsPath(s.id, home);
+    const eventsPath = sessionEventsPath(session.id, home);
     const existing = await readFile(eventsPath, 'utf8');
     await writeFile(eventsPath, existing + '{ this is not json', 'utf8');
 
-    const loaded = await loadSession(s.id, home);
+    const loaded = await loadSession(session.id, home);
     expect(loaded.messages).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
   it('resets status to idle on load', async () => {
-    const s = makeSession({ status: 'error' });
+    const session = makeSession({ status: 'error' });
     await persistSession(
-      s,
+      session,
       {
         type: 'step_finished',
         stepNumber: 1,
         finishReason: 'stop',
-        messages: s.messages,
-        toolCalls: s.toolCalls,
-        usage: s.usage,
+        messages: session.messages,
+        toolCalls: session.toolCalls,
+        usage: session.usage,
       },
       home,
     );
-    const loaded = await loadSession(s.id, home);
+    const loaded = await loadSession(session.id, home);
     expect(loaded.status).toEqual('idle');
   });
 
@@ -263,12 +263,12 @@ describe('persistence', () => {
 
   describe('concurrent writers', () => {
     it('interleaved appends to events.jsonl yield valid lines', async () => {
-      const s = makeSession();
+      const session = makeSession();
       // Two concurrent appendSessionEvent calls; each writes one line.
       // POSIX append semantics guarantee atomicity for typical line sizes.
       await Promise.all([
         persistSession(
-          s,
+          session,
           {
             type: 'step_finished',
             stepNumber: 1,
@@ -280,7 +280,7 @@ describe('persistence', () => {
           home,
         ),
         persistSession(
-          s,
+          session,
           {
             type: 'step_finished',
             stepNumber: 2,
@@ -293,7 +293,7 @@ describe('persistence', () => {
         ),
       ]);
       // Resume must succeed and pick *some* well-formed step_finished snapshot.
-      const loaded = await loadSession(s.id, home);
+      const loaded = await loadSession(session.id, home);
       expect(loaded.messages).toHaveLength(1);
       expect(['a', 'b']).toContain(loaded.messages[0]!.content);
     });
@@ -301,10 +301,10 @@ describe('persistence', () => {
 
   describe('listSessionsOnDisk', () => {
     it('returns persisted sessions with metadata', async () => {
-      const a = makeSession();
-      const b = makeSession();
+      const firstSession = makeSession();
+      const secondSession = makeSession();
       await persistSession(
-        a,
+        firstSession,
         {
           type: 'step_finished',
           stepNumber: 1,
@@ -316,7 +316,7 @@ describe('persistence', () => {
         home,
       );
       await persistSession(
-        b,
+        secondSession,
         {
           type: 'step_finished',
           stepNumber: 1,
@@ -333,15 +333,15 @@ describe('persistence', () => {
 
       const list = await listSessionsOnDisk(home);
       const ids = list.map((s) => s.id).sort();
-      expect(ids).toEqual([a.id, b.id].sort());
-      const bInfo = list.find((s) => s.id === b.id)!;
-      expect(bInfo.messageCount).toEqual(2);
+      expect(ids).toEqual([firstSession.id, secondSession.id].sort());
+      const secondInfo = list.find((s) => s.id === secondSession.id)!;
+      expect(secondInfo.messageCount).toEqual(2);
     });
 
     it('ignores pre-change flat <id>.json files', async () => {
-      const a = makeSession();
+      const persistedSession = makeSession();
       await persistSession(
-        a,
+        persistedSession,
         {
           type: 'step_finished',
           stepNumber: 1,
@@ -362,7 +362,7 @@ describe('persistence', () => {
       );
 
       const list = await listSessionsOnDisk(home);
-      expect(list.map((s) => s.id)).toEqual([a.id]);
+      expect(list.map((s) => s.id)).toEqual([persistedSession.id]);
     });
 
     it('reports lastActivityAt that advances when new events are appended', async () => {

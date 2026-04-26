@@ -41,8 +41,8 @@ function renderBlock(
     );
   }
   if (tok.type === 'code') {
-    const c = tok as Tokens.Code;
-    const lines = c.text.split('\n');
+    const codeToken = tok as Tokens.Code;
+    const lines = codeToken.text.split('\n');
     return (
       <Box key={key} flexDirection="column" paddingLeft={2} marginTop={gap}>
         {lines.map((line, i) => (

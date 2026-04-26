@@ -23,8 +23,8 @@ describe('loadSkills discovery', () => {
       '---\nname: pdf\ndescription: Manipulate PDF files\n---\nbody',
     );
 
-    const reg = loadSkills({ cwd, userHome: home });
-    const skill = reg.find('pdf');
+    const registry = loadSkills({ cwd, userHome: home });
+    const skill = registry.find('pdf');
     expect(skill).toBeDefined();
     expect(skill?.name).toBe('pdf');
     expect(skill?.description).toBe('Manipulate PDF files');
@@ -38,10 +38,10 @@ describe('loadSkills discovery', () => {
       join(cwd, '.chimera', 'skills', 'pdf', 'SKILL.md'),
       '---\nname: pdf\ndescription: Manipulate PDF files\nversion: 1.2.3\nlicense: MIT\n---\nbody',
     );
-    const reg = loadSkills({ cwd, userHome: home });
-    const s = reg.find('pdf');
-    expect(s?.frontmatter['version']).toBe('1.2.3');
-    expect(s?.frontmatter['license']).toBe('MIT');
+    const registry = loadSkills({ cwd, userHome: home });
+    const skill = registry.find('pdf');
+    expect(skill?.frontmatter['version']).toBe('1.2.3');
+    expect(skill?.frontmatter['license']).toBe('MIT');
   });
 
   it('skips a SKILL.md whose frontmatter name does not match directory', async () => {
@@ -52,9 +52,9 @@ describe('loadSkills discovery', () => {
       '---\nname: wrong\ndescription: nope\n---',
     );
     const warnings: string[] = [];
-    const reg = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
-    expect(reg.find('real')).toBeUndefined();
-    expect(reg.find('wrong')).toBeUndefined();
+    const registry = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
+    expect(registry.find('real')).toBeUndefined();
+    expect(registry.find('wrong')).toBeUndefined();
     expect(warnings.some((w) => /name.*missing|does not match/i.test(w))).toBe(true);
   });
 
@@ -66,8 +66,8 @@ describe('loadSkills discovery', () => {
       '---\nname: broken\n---\nno description',
     );
     const warnings: string[] = [];
-    const reg = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
-    expect(reg.find('broken')).toBeUndefined();
+    const registry = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
+    expect(registry.find('broken')).toBeUndefined();
     expect(warnings.some((w) => /description/.test(w))).toBe(true);
   });
 
@@ -84,11 +84,11 @@ describe('loadSkills discovery', () => {
       '---\nname: git\ndescription: claude-compat git\n---',
     );
     const warnings: string[] = [];
-    const reg = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
-    const g = reg.find('git');
-    expect(g?.source).toBe('project');
-    expect(g?.description).toBe('chimera-native git');
-    expect(reg.collisions().length).toBe(1);
+    const registry = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
+    const gitSkill = registry.find('git');
+    expect(gitSkill?.source).toBe('project');
+    expect(gitSkill?.description).toBe('chimera-native git');
+    expect(registry.collisions().length).toBe(1);
     expect(warnings.some((w) => /shadowed/.test(w))).toBe(true);
   });
 
@@ -99,8 +99,8 @@ describe('loadSkills discovery', () => {
       join(cwd, '.claude', 'skills', 'git', 'SKILL.md'),
       '---\nname: git\ndescription: only-claude\n---',
     );
-    const reg = loadSkills({ cwd, userHome: home, includeClaudeCompat: false });
-    expect(reg.find('git')).toBeUndefined();
+    const registry = loadSkills({ cwd, userHome: home, includeClaudeCompat: false });
+    expect(registry.find('git')).toBeUndefined();
   });
 
   it('discovers user-home skills when nothing in cwd', async () => {
@@ -111,8 +111,8 @@ describe('loadSkills discovery', () => {
     );
     const cwd = join(home, 'somewhere');
     await mkdir(cwd, { recursive: true });
-    const reg = loadSkills({ cwd, userHome: home });
-    expect(reg.find('pdf')?.source).toBe('user');
+    const registry = loadSkills({ cwd, userHome: home });
+    expect(registry.find('pdf')?.source).toBe('user');
   });
 
   it('ancestor walk stops at a .git root', async () => {
@@ -125,14 +125,14 @@ describe('loadSkills discovery', () => {
       join(repo, '.chimera', 'skills', 'team', 'SKILL.md'),
       '---\nname: team\ndescription: repo-root skill\n---',
     );
-    const reg = loadSkills({ cwd: nested, userHome: home });
-    expect(reg.find('team')?.source).toBe('ancestor');
+    const registry = loadSkills({ cwd: nested, userHome: home });
+    expect(registry.find('team')?.source).toBe('ancestor');
   });
 
   it('returns an empty registry when nothing exists', () => {
-    const reg = loadSkills({ cwd: home, userHome: home });
-    expect(reg.all()).toEqual([]);
-    expect(reg.paths().size).toBe(0);
+    const registry = loadSkills({ cwd: home, userHome: home });
+    expect(registry.all()).toEqual([]);
+    expect(registry.paths().size).toBe(0);
   });
 
   it('all() is stable-sorted by name', async () => {
@@ -147,8 +147,8 @@ describe('loadSkills discovery', () => {
       join(cwd, '.chimera', 'skills', 'alpha', 'SKILL.md'),
       '---\nname: alpha\ndescription: a\n---',
     );
-    const reg = loadSkills({ cwd, userHome: home });
-    expect(reg.all().map((s) => s.name)).toEqual(['alpha', 'bravo']);
+    const registry = loadSkills({ cwd, userHome: home });
+    expect(registry.all().map((s) => s.name)).toEqual(['alpha', 'bravo']);
   });
 
   it('paths() returns the absolute SKILL.md locations', async () => {
@@ -158,8 +158,8 @@ describe('loadSkills discovery', () => {
       join(cwd, '.chimera', 'skills', 'pdf', 'SKILL.md'),
       '---\nname: pdf\ndescription: pdf\n---',
     );
-    const reg = loadSkills({ cwd, userHome: home });
-    const paths = reg.paths();
+    const registry = loadSkills({ cwd, userHome: home });
+    const paths = registry.paths();
     expect(paths.size).toBe(1);
     expect([...paths][0]).toMatch(/\.chimera\/skills\/pdf\/SKILL\.md$/);
   });

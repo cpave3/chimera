@@ -46,6 +46,6 @@ export function formatTokens(n: number): string {
 }
 
 function trim(n: number): string {
-  const s = n.toFixed(2);
-  return s.replace(/\.?0+$/, '');
+  const fixed = n.toFixed(2);
+  return fixed.replace(/\.?0+$/, '');
 }

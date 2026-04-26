@@ -6,15 +6,19 @@ import { ReloadingCommandRegistry } from '../src/reloading';
 
 const DEBOUNCE = 20;
 
-async function waitForChange(reg: ReloadingCommandRegistry, ms = 500): Promise<void> {
+async function waitForChange(
+  registry: ReloadingCommandRegistry,
+  ms = 500,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    let unsubscribe: (() => void) | undefined;
     const timer = setTimeout(() => {
-      unsub();
+      unsubscribe?.();
       reject(new Error(`timed out waiting for registry change (${ms}ms)`));
     }, ms);
-    const unsub = reg.onChange(() => {
+    unsubscribe = registry.onChange(() => {
       clearTimeout(timer);
-      unsub();
+      unsubscribe?.();
       resolve();
     });
   });
@@ -36,80 +40,80 @@ describe('ReloadingCommandRegistry', () => {
 
   it('loads initial commands at construction', async () => {
     await writeFile(join(cwd, '.chimera', 'commands', 'hi.md'), 'Hello!');
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: DEBOUNCE,
     });
     try {
-      expect(reg.find('hi')?.body).toBe('Hello!');
+      expect(registry.find('hi')?.body).toBe('Hello!');
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('picks up a new .md file and fires onChange once', async () => {
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: DEBOUNCE,
     });
     try {
-      expect(reg.list()).toEqual([]);
-      const changed = waitForChange(reg);
+      expect(registry.list()).toEqual([]);
+      const changed = waitForChange(registry);
       await writeFile(join(cwd, '.chimera', 'commands', 'new.md'), 'Body');
       await changed;
-      expect(reg.find('new')?.body).toBe('Body');
+      expect(registry.find('new')?.body).toBe('Body');
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('reflects modifications to an existing command', async () => {
     await writeFile(join(cwd, '.chimera', 'commands', 'hi.md'), 'v1');
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: DEBOUNCE,
     });
     try {
-      expect(reg.find('hi')?.body).toBe('v1');
-      const changed = waitForChange(reg);
+      expect(registry.find('hi')?.body).toBe('v1');
+      const changed = waitForChange(registry);
       await writeFile(join(cwd, '.chimera', 'commands', 'hi.md'), 'v2');
       await changed;
-      expect(reg.find('hi')?.body).toBe('v2');
+      expect(registry.find('hi')?.body).toBe('v2');
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('drops a deleted command', async () => {
     await writeFile(join(cwd, '.chimera', 'commands', 'gone.md'), 'bye');
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: DEBOUNCE,
     });
     try {
-      expect(reg.find('gone')).toBeDefined();
-      const changed = waitForChange(reg);
+      expect(registry.find('gone')).toBeDefined();
+      const changed = waitForChange(registry);
       await unlink(join(cwd, '.chimera', 'commands', 'gone.md'));
       await changed;
-      expect(reg.find('gone')).toBeUndefined();
+      expect(registry.find('gone')).toBeUndefined();
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('coalesces a burst of writes into a single onChange', async () => {
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: 60,
     });
     try {
       let notifications = 0;
-      reg.onChange(() => {
+      registry.onChange(() => {
         notifications += 1;
       });
       // Five rapid writes to five different files.
@@ -119,62 +123,62 @@ describe('ReloadingCommandRegistry', () => {
       // Wait for debounce + slack.
       await new Promise((r) => setTimeout(r, 150));
       expect(notifications).toBe(1);
-      expect(reg.list()).toHaveLength(5);
+      expect(registry.list()).toHaveLength(5);
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('manual reload() re-reads disk and fires onChange', async () => {
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: 10_000, // effectively disable file-watch side for this test
     });
     try {
       let notifications = 0;
-      reg.onChange(() => {
+      registry.onChange(() => {
         notifications += 1;
       });
       // Write the file but do NOT wait for fs.watch to fire — use reload().
       await writeFile(join(cwd, '.chimera', 'commands', 'only-manual.md'), 'ok');
-      await reg.reload();
+      await registry.reload();
       expect(notifications).toBe(1);
-      expect(reg.find('only-manual')?.body).toBe('ok');
+      expect(registry.find('only-manual')?.body).toBe('ok');
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('picks up a file added inside a nested namespace directory', async () => {
     await mkdir(join(cwd, '.chimera', 'commands', 'ops'), { recursive: true });
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: DEBOUNCE,
     });
     try {
-      expect(reg.find('ops:deploy')).toBeUndefined();
-      const changed = waitForChange(reg);
+      expect(registry.find('ops:deploy')).toBeUndefined();
+      const changed = waitForChange(registry);
       await writeFile(join(cwd, '.chimera', 'commands', 'ops', 'deploy.md'), 'ship it');
       await changed;
-      expect(reg.find('ops:deploy')?.body).toBe('ship it');
+      expect(registry.find('ops:deploy')?.body).toBe('ship it');
     } finally {
-      reg.close();
+      registry.close();
     }
   });
 
   it('close() stops firing events on subsequent writes', async () => {
-    const reg = new ReloadingCommandRegistry({
+    const registry = new ReloadingCommandRegistry({
       cwd,
       userHome: home,
       debounceMs: DEBOUNCE,
     });
     let notifications = 0;
-    reg.onChange(() => {
+    registry.onChange(() => {
       notifications += 1;
     });
-    reg.close();
+    registry.close();
     await writeFile(join(cwd, '.chimera', 'commands', 'after.md'), 'x');
     await new Promise((r) => setTimeout(r, 150));
     expect(notifications).toBe(0);

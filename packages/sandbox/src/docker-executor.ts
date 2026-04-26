@@ -91,9 +91,12 @@ export class DockerExecutor implements Executor {
       await this.runner.run(['rm', '-f', this.containerName]).catch(() => undefined);
 
       const args = this.buildRunArgs(mode);
-      const r = await this.runner.run(args);
-      if (r.exitCode !== 0) {
-        return { ok: false, reason: `docker run failed: ${(r.stderr || r.stdout).trim()}` };
+      const runResult = await this.runner.run(args);
+      if (runResult.exitCode !== 0) {
+        return {
+          ok: false,
+          reason: `docker run failed: ${(runResult.stderr || runResult.stdout).trim()}`,
+        };
       }
 
       // Probe: in overlay/ephemeral, the entrypoint may exit with 78 if
@@ -245,14 +248,14 @@ export class DockerExecutor implements Executor {
     // Wait up to ~3s for the container to settle; entrypoint exits fast on
     // overlay failure.
     for (let i = 0; i < 30; i += 1) {
-      const r = await this.runner.run([
+      const inspectResult = await this.runner.run([
         'inspect',
         '-f',
         '{{.State.Running}}|{{.State.ExitCode}}|{{.State.Status}}',
         this.containerName,
       ]);
-      if (r.exitCode === 0) {
-        const [running, exitCode, status] = r.stdout.trim().split('|');
+      if (inspectResult.exitCode === 0) {
+        const [running, exitCode, status] = inspectResult.stdout.trim().split('|');
         if (running === 'true') return { ok: true };
         if (status === 'exited' || status === 'dead') {
           // Capture entrypoint logs for the warning text.
@@ -294,17 +297,17 @@ export class DockerExecutor implements Executor {
     }
     dockerArgs.push(this.containerName, 'sh', '-c', cmd);
 
-    const r = await this.runner.run(dockerArgs, {
+    const execResult = await this.runner.run(dockerArgs, {
       stdin: opts.stdin,
       signal: opts.signal,
       timeoutMs,
     });
 
     return {
-      stdout: r.stdout,
-      stderr: r.stderr,
-      exitCode: r.exitCode,
-      timedOut: r.timedOut,
+      stdout: execResult.stdout,
+      stderr: execResult.stderr,
+      exitCode: execResult.exitCode,
+      timedOut: execResult.timedOut,
     };
   }
 
@@ -316,16 +319,18 @@ export class DockerExecutor implements Executor {
   async readFileBytes(path: string): Promise<Uint8Array> {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);
-    const r = await this.runner.runRaw([
+    const readResult = await this.runner.runRaw([
       ...this.execPrefix(),
       this.containerName,
       'cat',
       containerPath,
     ]);
-    if (r.exitCode !== 0) {
-      throw new Error(`readFile(${path}) failed: ${r.stderr.trim() || `exit ${r.exitCode}`}`);
+    if (readResult.exitCode !== 0) {
+      throw new Error(
+        `readFile(${path}) failed: ${readResult.stderr.trim() || `exit ${readResult.exitCode}`}`,
+      );
     }
-    return r.stdout;
+    return readResult.stdout;
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -334,19 +339,21 @@ export class DockerExecutor implements Executor {
     const dir = posixDirname(containerPath);
     const tmp = `${containerPath}.${process.pid}.${Date.now()}.tmp`;
     const cmd = `mkdir -p ${shellQuote(dir)} && cat > ${shellQuote(tmp)} && mv ${shellQuote(tmp)} ${shellQuote(containerPath)}`;
-    const r = await this.runner.run(
+    const writeResult = await this.runner.run(
       [...this.execPrefix(), this.containerName, 'sh', '-c', cmd],
       { stdin: content },
     );
-    if (r.exitCode !== 0) {
-      throw new Error(`writeFile(${path}) failed: ${r.stderr.trim() || `exit ${r.exitCode}`}`);
+    if (writeResult.exitCode !== 0) {
+      throw new Error(
+        `writeFile(${path}) failed: ${writeResult.stderr.trim() || `exit ${writeResult.exitCode}`}`,
+      );
     }
   }
 
   async stat(path: string): Promise<StatResult | null> {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);
-    const r = await this.runner.run([
+    const statResult = await this.runner.run([
       ...this.execPrefix(),
       this.containerName,
       'stat',
@@ -354,15 +361,15 @@ export class DockerExecutor implements Executor {
       '%F|%s',
       containerPath,
     ]);
-    if (r.exitCode !== 0) {
+    if (statResult.exitCode !== 0) {
       // Distinguish missing from other errors: stat prints "No such file" to stderr.
-      if (/No such file/i.test(r.stderr)) return null;
+      if (/No such file/i.test(statResult.stderr)) return null;
       // Treat any other error as not-found rather than throwing — the local
       // executor's contract returns null on ENOENT and throws otherwise, but
       // the only realistic failure mode here is missing path.
       return null;
     }
-    const [kind, sizeStr] = r.stdout.trim().split('|');
+    const [kind, sizeStr] = statResult.stdout.trim().split('|');
     const size = Number.parseInt(sizeStr ?? '0', 10) || 0;
     return {
       exists: true,

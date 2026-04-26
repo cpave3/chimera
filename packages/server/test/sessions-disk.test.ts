@@ -352,7 +352,10 @@ describe('disk-aware session routes', () => {
       sessionId: string;
     };
 
-    // Kick off a run, then immediately DELETE.
+    // Kick off a run, capture the registry entry + active-run promise BEFORE
+    // DELETE so we can verify post-DELETE that `registry.delete` actually
+    // awaited the run (its `finally` block nulls `activeRun` only after the
+    // run settles).
     const sendResponse = await app.request(
       `/v1/sessions/${sessionId}/messages`,
       {
@@ -362,13 +365,25 @@ describe('disk-aware session routes', () => {
       },
     );
     expect(sendResponse.status).toBe(202);
+    const entry = registry.get(sessionId)!;
+    expect(entry).not.toBeNull();
+    expect(entry.activeRun).not.toBeNull();
+    const capturedRun = entry.activeRun;
 
     const deleteResponse = await app.request(`/v1/sessions/${sessionId}`, {
       method: 'DELETE',
     });
     expect(deleteResponse.status).toBe(204);
 
-    // Once DELETE returns, the run's persistSession must already have run
+    // If DELETE truly awaited the in-flight run, `entry.activeRun` is now
+    // null (set by the run loop's `finally` after persistSession completed).
+    // If DELETE had short-circuited the await, this would still be the
+    // pending Promise we captured.
+    expect(entry.activeRun).toBeNull();
+    // The captured promise resolves immediately — it has already settled.
+    await capturedRun;
+
+    // Once DELETE returns, the run's persistSession has already happened
     // and the directory must already be gone — there's no way for a stray
     // appendFile to recreate it after this point.
     const { existsSync } = await import('node:fs');

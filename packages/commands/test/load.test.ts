@@ -23,22 +23,22 @@ describe('loadCommands discovery', () => {
       '---\ndescription: Review diff\n---\nReview: $ARGUMENTS',
     );
 
-    const reg = loadCommands({ cwd, userHome: home });
-    const cmd = reg.find('review');
-    expect(cmd).toBeDefined();
-    expect(cmd?.description).toBe('Review diff');
-    expect(cmd?.body).toBe('Review: $ARGUMENTS');
-    expect(cmd?.source).toBe('project');
+    const registry = loadCommands({ cwd, userHome: home });
+    const command = registry.find('review');
+    expect(command).toBeDefined();
+    expect(command?.description).toBe('Review diff');
+    expect(command?.body).toBe('Review: $ARGUMENTS');
+    expect(command?.source).toBe('project');
   });
 
   it('loads a command without frontmatter (description undefined)', async () => {
     const cwd = join(home, 'p2');
     await mkdir(join(cwd, '.chimera', 'commands'), { recursive: true });
     await writeFile(join(cwd, '.chimera', 'commands', 'say-hi.md'), 'Hello!');
-    const reg = loadCommands({ cwd, userHome: home });
-    const cmd = reg.find('say-hi');
-    expect(cmd?.body).toBe('Hello!');
-    expect(cmd?.description).toBeUndefined();
+    const registry = loadCommands({ cwd, userHome: home });
+    const command = registry.find('say-hi');
+    expect(command?.body).toBe('Hello!');
+    expect(command?.description).toBeUndefined();
   });
 
   it('project tier shadows claude-compat tier, one warning logged', async () => {
@@ -49,14 +49,14 @@ describe('loadCommands discovery', () => {
     await writeFile(join(cwd, '.claude', 'commands', 'review.md'), 'claude');
 
     const warnings: string[] = [];
-    const reg = loadCommands({
+    const registry = loadCommands({
       cwd,
       userHome: home,
       onWarning: (m) => warnings.push(m),
     });
 
-    expect(reg.find('review')?.body).toBe('chimera');
-    expect(reg.find('review')?.source).toBe('project');
+    expect(registry.find('review')?.body).toBe('chimera');
+    expect(registry.find('review')?.source).toBe('project');
     expect(warnings.length).toBe(1);
     expect(warnings[0]).toMatch(/review/);
     expect(warnings[0]).toMatch(/shadowed/);
@@ -67,17 +67,17 @@ describe('loadCommands discovery', () => {
     await mkdir(join(cwd, '.claude', 'commands'), { recursive: true });
     await writeFile(join(cwd, '.claude', 'commands', 'only-claude.md'), 'x');
 
-    const reg = loadCommands({
+    const registry = loadCommands({
       cwd,
       userHome: home,
       includeClaudeCompat: false,
     });
-    expect(reg.find('only-claude')).toBeUndefined();
+    expect(registry.find('only-claude')).toBeUndefined();
   });
 
   it('returns empty registry when nothing exists', () => {
-    const reg = loadCommands({ cwd: home, userHome: home });
-    expect(reg.list()).toEqual([]);
+    const registry = loadCommands({ cwd: home, userHome: home });
+    expect(registry.list()).toEqual([]);
   });
 
   it('loads a namespaced command from a .chimera/commands subdirectory', async () => {
@@ -88,12 +88,12 @@ describe('loadCommands discovery', () => {
       '---\ndescription: Ship it\n---\nrolling deploy',
     );
 
-    const reg = loadCommands({ cwd, userHome: home });
-    const cmd = reg.find('ops:deploy');
-    expect(cmd).toBeDefined();
-    expect(cmd?.body).toBe('rolling deploy');
-    expect(cmd?.description).toBe('Ship it');
-    expect(cmd?.source).toBe('project');
+    const registry = loadCommands({ cwd, userHome: home });
+    const command = registry.find('ops:deploy');
+    expect(command).toBeDefined();
+    expect(command?.body).toBe('rolling deploy');
+    expect(command?.description).toBe('Ship it');
+    expect(command?.source).toBe('project');
   });
 
   it('loads a namespaced command from a .claude/commands subdirectory', async () => {
@@ -104,18 +104,18 @@ describe('loadCommands discovery', () => {
       'explore template',
     );
 
-    const reg = loadCommands({ cwd, userHome: home });
-    const cmd = reg.find('opsx:explore');
-    expect(cmd?.body).toBe('explore template');
-    expect(cmd?.source).toBe('claude-project');
+    const registry = loadCommands({ cwd, userHome: home });
+    const command = registry.find('opsx:explore');
+    expect(command?.body).toBe('explore template');
+    expect(command?.source).toBe('claude-project');
   });
 
   it('joins deeper nesting with colons', async () => {
     const cwd = join(home, 'deep');
     await mkdir(join(cwd, '.chimera', 'commands', 'a', 'b'), { recursive: true });
     await writeFile(join(cwd, '.chimera', 'commands', 'a', 'b', 'c.md'), 'deep');
-    const reg = loadCommands({ cwd, userHome: home });
-    expect(reg.find('a:b:c')?.body).toBe('deep');
+    const registry = loadCommands({ cwd, userHome: home });
+    expect(registry.find('a:b:c')?.body).toBe('deep');
   });
 
   it('ancestor walk terminates at a .git root', async () => {
@@ -126,7 +126,7 @@ describe('loadCommands discovery', () => {
     await mkdir(join(repo, '.chimera', 'commands'), { recursive: true });
     await writeFile(join(repo, '.chimera', 'commands', 'root-cmd.md'), 'root');
 
-    const reg = loadCommands({ cwd: sub, userHome: home });
-    expect(reg.find('root-cmd')?.body).toBe('root');
+    const registry = loadCommands({ cwd: sub, userHome: home });
+    expect(registry.find('root-cmd')?.body).toBe('root');
   });
 });

@@ -71,7 +71,7 @@ export function buildBashTool(ctx: ToolContext) {
           };
         }
         if (ctx.permissionGate) {
-          const res = await ctx.permissionGate.request({
+          const resolution = await ctx.permissionGate.request({
             requestId: newRequestId(),
             tool: 'bash',
             target: 'host',
@@ -79,7 +79,7 @@ export function buildBashTool(ctx: ToolContext) {
             cwd: executor.cwd(),
             reason: args.reason,
           });
-          if (res.decision === 'deny') {
+          if (resolution.decision === 'deny') {
             return {
               stdout: '',
               stderr: 'denied by user',

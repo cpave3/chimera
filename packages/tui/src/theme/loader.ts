@@ -154,11 +154,13 @@ export function applyThemeByName(
   let source: string;
 
   if (existsSync(userPath)) {
-    const r = loadUserTheme(userPath);
-    if (r.kind !== 'ok') {
-      throw new Error(`theme '${name}' at ${userPath}: ${describeLoadFailure(r)}`);
+    const loadResult = loadUserTheme(userPath);
+    if (loadResult.kind !== 'ok') {
+      throw new Error(
+        `theme '${name}' at ${userPath}: ${describeLoadFailure(loadResult)}`,
+      );
     }
-    partial = r.theme;
+    partial = loadResult.theme;
     origin = 'user';
     source = userPath;
   } else if (Object.prototype.hasOwnProperty.call(BUILTIN_PRESETS, name)) {

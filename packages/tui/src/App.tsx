@@ -879,10 +879,10 @@ export function App(props: AppProps): React.ReactElement {
           return;
         }
         try {
-          const r = applyThemeByName(target);
+          const applyResult = applyThemeByName(target);
           themeCtx.reload();
           scrollback.addInfo(
-            `theme: applied '${target}' (${r.origin === 'user' ? 'user' : 'builtin'}).`,
+            `theme: applied '${target}' (${applyResult.origin === 'user' ? 'user' : 'builtin'}).`,
           );
         } catch (err) {
           scrollback.addError(`/theme: ${(err as Error).message}`);

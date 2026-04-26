@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { Agent, type ModelConfig, writeSessionMetadata } from '@chimera/core';
+import {
+  Agent,
+  loadSession,
+  type ModelConfig,
+  writeSessionMetadata,
+} from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry, type AgentFactory } from '../src/agent-registry';
 import { buildApp } from '../src/app';
@@ -36,6 +41,11 @@ const model: ModelConfig = { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
   return {
     build: async (init) => {
+      // Honor the SessionInit contract: when a sessionId is provided and
+      // already exists on disk, load it so messages/toolCalls round-trip.
+      const session = init.sessionId
+        ? await loadSession(init.sessionId, home).catch(() => undefined)
+        : undefined;
       const agent = new Agent({
         cwd: '/tmp',
         model,
@@ -45,6 +55,7 @@ function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
         home,
         contextWindow: 200_000,
         sessionId: init.sessionId,
+        session,
       });
       await writeSessionMetadata(agent.session, home);
       return { agent };
@@ -69,9 +80,9 @@ describe('server app', () => {
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
     const app = buildApp({ registry, home });
-    const r = await app.request('/healthz');
-    expect(r.status).toBe(200);
-    expect(await r.text()).toBe('ok');
+    const healthResponse = await app.request('/healthz');
+    expect(healthResponse.status).toBe(200);
+    expect(await healthResponse.text()).toBe('ok');
   });
 
   it('instance endpoint returns metadata', async () => {
@@ -80,11 +91,11 @@ describe('server app', () => {
       instance: { pid: 42, cwd: '/tmp/x', version: '0.1.0', sandboxMode: 'off' },
     });
     const app = buildApp({ registry, home });
-    const r = await app.request('/v1/instance');
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(j.pid).toBe(42);
-    expect(j.sandboxMode).toBe('off');
+    const instanceResponse = await app.request('/v1/instance');
+    expect(instanceResponse.status).toBe(200);
+    const instanceBody = await instanceResponse.json();
+    expect(instanceBody.pid).toBe(42);
+    expect(instanceBody.sandboxMode).toBe('off');
   });
 
   it('full session lifecycle: create, fetch, message, delete', async () => {
@@ -94,49 +105,57 @@ describe('server app', () => {
     });
     const app = buildApp({ registry, home });
 
-    const cr = await app.request('/v1/sessions', {
+    const createResponse = await app.request('/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
     });
-    expect(cr.status).toBe(201);
-    const { sessionId } = await cr.json();
+    expect(createResponse.status).toBe(201);
+    const { sessionId } = await createResponse.json();
     expect(typeof sessionId).toBe('string');
 
-    const getR = await app.request(`/v1/sessions/${sessionId}`);
-    expect(getR.status).toBe(200);
-    const session = await getR.json();
+    const getResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(getResponse.status).toBe(200);
+    const session = await getResponse.json();
     expect(session.id).toBe(sessionId);
     expect(session.usage).toBeDefined();
     expect(session.usage.totalTokens).toBe(0);
     expect(session.usage.stepCount).toBe(0);
 
-    const listR = await app.request('/v1/sessions');
-    const list = await listR.json();
+    const listResponse = await app.request('/v1/sessions');
+    const list = await listResponse.json();
     expect(list).toHaveLength(1);
 
-    const msgR = await app.request(`/v1/sessions/${sessionId}/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'hi' }),
-    });
-    expect(msgR.status).toBe(202);
+    const firstMessageResponse = await app.request(
+      `/v1/sessions/${sessionId}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'hi' }),
+      },
+    );
+    expect(firstMessageResponse.status).toBe(202);
 
     // Second message while first is running → 409
-    const msg2 = await app.request(`/v1/sessions/${sessionId}/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: 'hi again' }),
-    });
+    const secondMessageResponse = await app.request(
+      `/v1/sessions/${sessionId}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'hi again' }),
+      },
+    );
     // May race: if run completed fast, it becomes another 202. Accept both but
     // assert at least one of the two queuings succeeded.
-    expect([202, 409]).toContain(msg2.status);
+    expect([202, 409]).toContain(secondMessageResponse.status);
 
-    const delR = await app.request(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
-    expect(delR.status).toBe(204);
+    const deleteResponse = await app.request(`/v1/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
+    expect(deleteResponse.status).toBe(204);
 
-    const gone = await app.request(`/v1/sessions/${sessionId}`);
-    expect(gone.status).toBe(404);
+    const goneResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(goneResponse.status).toBe(404);
   });
 
   it('interrupt responds 204 whether or not a run is active', async () => {
@@ -153,8 +172,11 @@ describe('server app', () => {
       })
     ).json();
 
-    const r = await app.request(`/v1/sessions/${sessionId}/interrupt`, { method: 'POST' });
-    expect(r.status).toBe(204);
+    const interruptResponse = await app.request(
+      `/v1/sessions/${sessionId}/interrupt`,
+      { method: 'POST' },
+    );
+    expect(interruptResponse.status).toBe(204);
   });
 
   it('SSE events endpoint replays buffered events with ?since', async () => {
@@ -180,38 +202,40 @@ describe('server app', () => {
     });
     // Wait for the run to settle.
     const entry = registry.get(sessionId);
-    await new Promise<void>((r) => {
-      const t = setInterval(() => {
+    await new Promise<void>((resolveSettle) => {
+      const ticker = setInterval(() => {
         if (!entry!.runActive) {
-          clearInterval(t);
-          r();
+          clearInterval(ticker);
+          resolveSettle();
         }
       }, 10);
     });
 
-    const snap = entry!.bus.snapshot();
-    expect(snap.length).toBeGreaterThan(0);
-    const lastId = snap[snap.length - 1]!.eventId;
+    const snapshot = entry!.bus.snapshot();
+    expect(snapshot.length).toBeGreaterThan(0);
+    const lastEventId = snapshot[snapshot.length - 1]!.eventId;
 
     // Replay with since=<first event id> should yield everything after the first.
-    const firstId = snap[0]!.eventId;
-    const replayed = entry!.bus.replay(firstId);
-    expect(replayed[0]!.eventId).toBe(snap[1]!.eventId);
-    expect(replayed[replayed.length - 1]!.eventId).toBe(lastId);
+    const firstEventId = snapshot[0]!.eventId;
+    const replayed = entry!.bus.replay(firstEventId);
+    expect(replayed[0]!.eventId).toBe(snapshot[1]!.eventId);
+    expect(replayed[replayed.length - 1]!.eventId).toBe(lastEventId);
 
     // The bus should have forwarded a usage_updated event with cumulative
     // usage and the resolved contextWindow alongside the other agent events.
-    const usageEnv = snap.find((e) => e.type === 'usage_updated');
-    expect(usageEnv).toBeDefined();
-    if (usageEnv && usageEnv.type === 'usage_updated') {
-      expect(usageEnv.contextWindow).toBe(200_000);
-      expect(usageEnv.usage.totalTokens).toBeGreaterThan(0);
+    const usageEnvelope = snapshot.find(
+      (envelope) => envelope.type === 'usage_updated',
+    );
+    expect(usageEnvelope).toBeDefined();
+    if (usageEnvelope && usageEnvelope.type === 'usage_updated') {
+      expect(usageEnvelope.contextWindow).toBe(200_000);
+      expect(usageEnvelope.usage.totalTokens).toBeGreaterThan(0);
     }
 
     // GET /v1/sessions/:id should reflect the post-run cumulative usage,
     // not the zero state observed before the run.
-    const getR = await app.request(`/v1/sessions/${sessionId}`);
-    const sessionAfter = await getR.json();
+    const sessionResponse = await app.request(`/v1/sessions/${sessionId}`);
+    const sessionAfter = await sessionResponse.json();
     expect(sessionAfter.usage.totalTokens).toBeGreaterThan(0);
   });
 
@@ -252,31 +276,37 @@ describe('server app', () => {
       })
     ).json();
 
-    const addR = await app.request(`/v1/sessions/${sessionId}/permissions/rules`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        rule: {
-          tool: 'bash',
-          target: 'host',
-          pattern: 'pnpm *',
-          patternKind: 'glob',
-          decision: 'allow',
-          createdAt: Date.now(),
-        },
-        scope: 'session',
-      }),
-    });
-    expect(addR.status).toBe(201);
+    const addRuleResponse = await app.request(
+      `/v1/sessions/${sessionId}/permissions/rules`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          rule: {
+            tool: 'bash',
+            target: 'host',
+            pattern: 'pnpm *',
+            patternKind: 'glob',
+            decision: 'allow',
+            createdAt: Date.now(),
+          },
+          scope: 'session',
+        }),
+      },
+    );
+    expect(addRuleResponse.status).toBe(201);
 
-    const listR = await app.request(`/v1/sessions/${sessionId}/permissions/rules`);
-    const rules = await listR.json();
+    const listRulesResponse = await app.request(
+      `/v1/sessions/${sessionId}/permissions/rules`,
+    );
+    const rules = await listRulesResponse.json();
     expect(rules).toHaveLength(1);
 
-    const rmR = await app.request(`/v1/sessions/${sessionId}/permissions/rules/0`, {
-      method: 'DELETE',
-    });
-    expect(rmR.status).toBe(204);
+    const removeRuleResponse = await app.request(
+      `/v1/sessions/${sessionId}/permissions/rules/0`,
+      { method: 'DELETE' },
+    );
+    expect(removeRuleResponse.status).toBe(204);
 
     await rm(projectCwd, { recursive: true, force: true });
   });
@@ -296,14 +326,17 @@ describe('server app', () => {
       })
     ).json();
 
-    const r = await app.request(`/v1/sessions/${sessionId}/reload`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ systemPrompt: 'updated prompt' }),
-    });
-    expect(r.status).toBe(200);
-    const j = await r.json();
-    expect(j.ok).toBe(true);
+    const reloadResponse = await app.request(
+      `/v1/sessions/${sessionId}/reload`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ systemPrompt: 'updated prompt' }),
+      },
+    );
+    expect(reloadResponse.status).toBe(200);
+    const reloadBody = await reloadResponse.json();
+    expect(reloadBody.ok).toBe(true);
   });
 
   it('POST /v1/sessions/:id/reload returns 404 for unknown session', async () => {
@@ -313,11 +346,14 @@ describe('server app', () => {
     });
     const app = buildApp({ registry, home });
 
-    const r = await app.request('/v1/sessions/unknown-session-id/reload', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ systemPrompt: 'updated prompt' }),
-    });
-    expect(r.status).toBe(404);
+    const reloadResponse = await app.request(
+      '/v1/sessions/unknown-session-id/reload',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ systemPrompt: 'updated prompt' }),
+      },
+    );
+    expect(reloadResponse.status).toBe(404);
   });
 });

@@ -64,16 +64,18 @@ describe('GET /v1/sessions/:id/subagents', () => {
     });
     const app = buildApp({ registry });
 
-    const cr = await app.request('/v1/sessions', {
+    const createResponse = await app.request('/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
     });
-    const { sessionId } = await cr.json();
+    const { sessionId } = await createResponse.json();
 
-    const r = await app.request(`/v1/sessions/${sessionId}/subagents`);
-    expect(r.status).toBe(200);
-    expect(await r.json()).toEqual([]);
+    const subagentsResponse = await app.request(
+      `/v1/sessions/${sessionId}/subagents`,
+    );
+    expect(subagentsResponse.status).toBe(200);
+    expect(await subagentsResponse.json()).toEqual([]);
   });
 
   it('reflects subagent_spawned and subagent_finished events from the bus', async () => {
@@ -83,12 +85,12 @@ describe('GET /v1/sessions/:id/subagents', () => {
     });
     const app = buildApp({ registry });
 
-    const cr = await app.request('/v1/sessions', {
+    const createResponse = await app.request('/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
     });
-    const { sessionId } = await cr.json();
+    const { sessionId } = await createResponse.json();
 
     const entry = registry.get(sessionId)!;
     entry.bus.publish({
@@ -100,10 +102,12 @@ describe('GET /v1/sessions/:id/subagents', () => {
       purpose: 'investigate logs',
     });
 
-    let r = await app.request(`/v1/sessions/${sessionId}/subagents`);
-    let body = await r.json();
-    expect(body).toHaveLength(1);
-    expect(body[0]).toMatchObject({
+    let subagentsResponse = await app.request(
+      `/v1/sessions/${sessionId}/subagents`,
+    );
+    let subagentsBody = await subagentsResponse.json();
+    expect(subagentsBody).toHaveLength(1);
+    expect(subagentsBody[0]).toMatchObject({
       subagentId: 'sa1',
       sessionId: 'child-sess-1',
       url: 'http://127.0.0.1:9999',
@@ -119,9 +123,11 @@ describe('GET /v1/sessions/:id/subagents', () => {
       reason: 'stop',
     });
 
-    r = await app.request(`/v1/sessions/${sessionId}/subagents`);
-    body = await r.json();
-    expect(body).toEqual([]);
+    subagentsResponse = await app.request(
+      `/v1/sessions/${sessionId}/subagents`,
+    );
+    subagentsBody = await subagentsResponse.json();
+    expect(subagentsBody).toEqual([]);
   });
 
   it('returns 404 for unknown sessions', async () => {
@@ -130,7 +136,9 @@ describe('GET /v1/sessions/:id/subagents', () => {
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
     const app = buildApp({ registry });
-    const r = await app.request('/v1/sessions/no-such/subagents');
-    expect(r.status).toBe(404);
+    const unknownResponse = await app.request(
+      '/v1/sessions/no-such/subagents',
+    );
+    expect(unknownResponse.status).toBe(404);
   });
 });

@@ -19,7 +19,7 @@ function stub(): ChimeraClient {
   } as unknown as ChimeraClient;
 }
 
-function registry(
+function buildCommandRegistry(
   cmds: { name: string; body: string; description?: string }[],
 ): CommandRegistry {
   return new InMemoryCommandRegistry(
@@ -45,9 +45,9 @@ async function type(stdin: NodeJS.WritableStream, text: string): Promise<void> {
 
 describe('slash menu', () => {
   it('opens when you type "/s" and lists matching built-ins + user commands', async () => {
-    const reg = registry([{ name: 'summarize', body: 'S $ARGUMENTS', description: 'sum' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'summarize', body: 'S $ARGUMENTS', description: 'sum' }]);
     const { lastFrame, stdin, unmount } = render(
-      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={reg} />,
+      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );
     await type(stdin, '/s');
     const frame = lastFrame()!;
@@ -59,12 +59,12 @@ describe('slash menu', () => {
   });
 
   it('filters by case-insensitive prefix as the user types', async () => {
-    const reg = registry([
+    const commandRegistry = buildCommandRegistry([
       { name: 'summarize', body: 'x' },
       { name: 'refactor', body: 'y' },
     ]);
     const { lastFrame, stdin, unmount } = render(
-      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={reg} />,
+      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );
     await type(stdin, '/Sum');
     const frame = lastFrame()!;
@@ -75,9 +75,9 @@ describe('slash menu', () => {
   });
 
   it('closes once the input contains a space (args phase)', async () => {
-    const reg = registry([{ name: 'summarize', body: 'x' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'summarize', body: 'x' }]);
     const { lastFrame, stdin, unmount } = render(
-      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={reg} />,
+      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );
     await type(stdin, '/summarize ');
     const frame = lastFrame()!;
@@ -90,9 +90,9 @@ describe('slash menu', () => {
   });
 
   it('Tab completes the highlighted item with a trailing space (closes menu)', async () => {
-    const reg = registry([{ name: 'summarize', body: 'x' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'summarize', body: 'x' }]);
     const { lastFrame, stdin, unmount } = render(
-      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={reg} />,
+      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );
     await type(stdin, '/sum');
     // Press Tab
@@ -106,12 +106,12 @@ describe('slash menu', () => {
   });
 
   it('Down arrow moves the highlight; Tab then completes the new selection', async () => {
-    const reg = registry([
+    const commandRegistry = buildCommandRegistry([
       { name: 'summarize', body: 'x' },
       { name: 'sumthing', body: 'y' },
     ]);
     const { lastFrame, stdin, unmount } = render(
-      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={reg} />,
+      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );
     await type(stdin, '/sum');
     // Down, then Tab.
@@ -126,9 +126,9 @@ describe('slash menu', () => {
   });
 
   it('Esc dismisses the menu until the user starts over', async () => {
-    const reg = registry([{ name: 'summarize', body: 'x' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'summarize', body: 'x' }]);
     const { lastFrame, stdin, unmount } = render(
-      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={reg} />,
+      <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );
     await type(stdin, '/sum');
     expect(lastFrame()).toContain('/summarize');

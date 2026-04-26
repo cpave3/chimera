@@ -67,9 +67,9 @@ export function buildApp(opts: AppOptions): Hono {
   app.get('/v1/sessions/:id', (c) => {
     const id = c.req.param('id');
     if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
-    const e = registry.get(id);
-    if (!e) return c.json({ error: 'not found' }, 404);
-    return c.json(e.agent.session);
+    const entry = registry.get(id);
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(entry.agent.session);
   });
 
   app.delete('/v1/sessions/:id', async (c) => {
@@ -163,21 +163,21 @@ export function buildApp(opts: AppOptions): Hono {
   });
 
   app.get('/v1/sessions/:id/commands', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
-    return c.json(e.commands);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(entry.commands);
   });
 
   app.get('/v1/sessions/:id/skills', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
-    return c.json(e.skills);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(entry.skills);
   });
 
   app.get('/v1/sessions/:id/subagents', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
-    return c.json(Array.from(e.subagents.values()));
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(Array.from(entry.subagents.values()));
   });
 
   // --- Messages / interrupt ---------------------------------------------
@@ -193,20 +193,20 @@ export function buildApp(opts: AppOptions): Hono {
   });
 
   app.post('/v1/sessions/:id/interrupt', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.body(null, 204);
-    e.agent.interrupt();
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.body(null, 204);
+    entry.agent.interrupt();
     return c.body(null, 204);
   });
 
   // --- Reload (AGENTS.md/CLAUDE.md, etc.) ----------------------------------
   app.post('/v1/sessions/:id/reload', async (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
     const body = await c.req.json();
     const systemPrompt = body.systemPrompt;
     if (typeof systemPrompt === 'string') {
-      e.agent.setSystemPrompt(systemPrompt);
+      entry.agent.setSystemPrompt(systemPrompt);
     }
     return c.json({ ok: true });
   });
@@ -215,46 +215,46 @@ export function buildApp(opts: AppOptions): Hono {
   // NOTE: /permissions/rules must be registered BEFORE /permissions/:requestId
   // so Hono matches the specific static segment instead of the parametric one.
   app.post('/v1/sessions/:id/permissions/rules', async (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
-    if (!e.gate) return c.json({ error: 'no permission gate configured' }, 501);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    if (!entry.gate) return c.json({ error: 'no permission gate configured' }, 501);
     const body = await c.req.json();
-    e.gate.addRule(body.rule, body.scope);
+    entry.gate.addRule(body.rule, body.scope);
     return c.json({ ok: true }, 201);
   });
 
   app.get('/v1/sessions/:id/permissions/rules', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
-    if (!e.gate) return c.json([]);
-    return c.json(e.gate.listRules());
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    if (!entry.gate) return c.json([]);
+    return c.json(entry.gate.listRules());
   });
 
   app.delete('/v1/sessions/:id/permissions/rules/:idx', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
-    if (!e.gate) return c.json({ error: 'no permission gate configured' }, 501);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    if (!entry.gate) return c.json({ error: 'no permission gate configured' }, 501);
     const idx = Number(c.req.param('idx'));
     if (!Number.isInteger(idx)) return c.json({ error: 'bad index' }, 400);
-    const rules = e.gate.listRules();
+    const rules = entry.gate.listRules();
     if (idx < 0 || idx >= rules.length) return c.json({ error: 'out of range' }, 404);
-    e.gate.removeRule(idx);
+    entry.gate.removeRule(idx);
     return c.body(null, 204);
   });
 
   app.post('/v1/sessions/:id/permissions/:requestId', async (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
     const requestId = c.req.param('requestId');
-    if (e.resolvedPermissionIds.has(requestId) || !e.agent.hasPendingPermission(requestId)) {
+    if (entry.resolvedPermissionIds.has(requestId) || !entry.agent.hasPendingPermission(requestId)) {
       return c.json({ error: 'already resolved' }, 409);
     }
     const body = await c.req.json();
     const decision: 'allow' | 'deny' = body.decision;
     const remember = body.remember as RememberScope | undefined;
     try {
-      e.agent.resolvePermission(requestId, decision, remember);
-      e.resolvedPermissionIds.add(requestId);
+      entry.agent.resolvePermission(requestId, decision, remember);
+      entry.resolvedPermissionIds.add(requestId);
       return c.body(null, 204);
     } catch {
       return c.json({ error: 'already resolved' }, 409);
@@ -263,13 +263,13 @@ export function buildApp(opts: AppOptions): Hono {
 
   // --- Events (SSE) ------------------------------------------------------
   app.get('/v1/sessions/:id/events', (c) => {
-    const e = registry.get(c.req.param('id'));
-    if (!e) return c.json({ error: 'not found' }, 404);
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
     const since = c.req.query('since');
 
     return streamSSE(c, async (stream) => {
       // Replay buffered events first.
-      for (const env of e.bus.replay(since)) {
+      for (const env of entry.bus.replay(since)) {
         await stream.writeSSE({
           event: 'agent_event',
           id: env.eventId,
@@ -277,7 +277,7 @@ export function buildApp(opts: AppOptions): Hono {
         });
       }
 
-      const unsubscribe = e.bus.subscribe((env) => {
+      const unsubscribe = entry.bus.subscribe((env) => {
         // Best-effort; the stream may be closing.
         void stream.writeSSE({
           event: 'agent_event',

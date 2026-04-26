@@ -91,7 +91,7 @@ describe('SessionPicker', () => {
     ];
     const onSelect = vi.fn();
     const onCancel = vi.fn();
-    const r = render(
+    const rendered = render(
       withTheme(
         <SessionPicker
           sessions={sessions}
@@ -102,12 +102,12 @@ describe('SessionPicker', () => {
       ),
     );
     await tick();
-    const out = r.lastFrame() ?? '';
+    const out = rendered.lastFrame() ?? '';
     expect(out).toContain('Sessions (2)');
     expect(out).toContain('AAAAAAAA');
     expect(out).toContain('BBBBBBBB');
     expect(out).toContain('←'); // current session marker
-    r.unmount();
+    rendered.unmount();
   });
 
   it('Enter calls onSelect with the highlighted session id', async () => {
@@ -116,7 +116,7 @@ describe('SessionPicker', () => {
       info({ id: '01BBBBBBBBBBBBBBBBBBBBBBBB', createdAt: 1 }),
     ];
     const onSelect = vi.fn();
-    const r = render(
+    const rendered = render(
       withTheme(
         <SessionPicker
           sessions={sessions}
@@ -128,10 +128,10 @@ describe('SessionPicker', () => {
     );
     await tick();
     // Highlighted should default to current session (index 0); press Enter
-    r.stdin.write('\r');
+    rendered.stdin.write('\r');
     await tick();
     expect(onSelect).toHaveBeenCalledWith('01AAAAAAAAAAAAAAAAAAAAAAAA');
-    r.unmount();
+    rendered.unmount();
   });
 
   it('arrow-down then Enter selects the next row', async () => {
@@ -140,7 +140,7 @@ describe('SessionPicker', () => {
       info({ id: '01BBBBBBBBBBBBBBBBBBBBBBBB', createdAt: 1 }),
     ];
     const onSelect = vi.fn();
-    const r = render(
+    const rendered = render(
       withTheme(
         <SessionPicker
           sessions={sessions}
@@ -151,17 +151,17 @@ describe('SessionPicker', () => {
       ),
     );
     await tick();
-    r.stdin.write('[B'); // ArrowDown
+    rendered.stdin.write('[B'); // ArrowDown
     await tick();
-    r.stdin.write('\r'); // Enter
+    rendered.stdin.write('\r'); // Enter
     await tick();
     expect(onSelect).toHaveBeenCalledWith('01BBBBBBBBBBBBBBBBBBBBBBBB');
-    r.unmount();
+    rendered.unmount();
   });
 
   it('Escape calls onCancel', async () => {
     const onCancel = vi.fn();
-    const r = render(
+    const rendered = render(
       withTheme(
         <SessionPicker
           sessions={[info({ id: '01AAAAAAAAAAAAAAAAAAAAAAAA', createdAt: 1 })]}
@@ -172,14 +172,14 @@ describe('SessionPicker', () => {
       ),
     );
     await tick();
-    r.stdin.write(''); // Escape
+    rendered.stdin.write(''); // Escape
     await tick();
     expect(onCancel).toHaveBeenCalled();
-    r.unmount();
+    rendered.unmount();
   });
 
   it('shows empty state when no sessions', async () => {
-    const r = render(
+    const rendered = render(
       withTheme(
         <SessionPicker
           sessions={[]}
@@ -190,8 +190,8 @@ describe('SessionPicker', () => {
       ),
     );
     await tick();
-    const out = r.lastFrame() ?? '';
+    const out = rendered.lastFrame() ?? '';
     expect(out).toContain('No persisted sessions');
-    r.unmount();
+    rendered.unmount();
   });
 });

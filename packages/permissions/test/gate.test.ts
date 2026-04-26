@@ -37,8 +37,8 @@ describe('DefaultPermissionGate', () => {
         return { decision: 'allow', remembered: false };
       },
     });
-    const res = await gate.request(req());
-    expect(res.decision).toBe('allow');
+    const resolution = await gate.request(req());
+    expect(resolution.decision).toBe('allow');
     expect(raised).toBe(0);
   });
 
@@ -52,9 +52,9 @@ describe('DefaultPermissionGate', () => {
         return { decision: 'deny', remembered: false };
       },
     });
-    const res = await gate.request(req({ command: 'pnpm i' }));
+    const resolution = await gate.request(req({ command: 'pnpm i' }));
     expect(receivedCommand).toBe('pnpm i');
-    expect(res.decision).toBe('deny');
+    expect(resolution.decision).toBe('deny');
   });
 
   it('matching allow rule bypasses prompt', async () => {
@@ -78,9 +78,9 @@ describe('DefaultPermissionGate', () => {
       },
       'project',
     );
-    const res = await gate.request(req({ command: 'pnpm test' }));
-    expect(res.decision).toBe('allow');
-    expect(res.remembered).toBe(true);
+    const resolution = await gate.request(req({ command: 'pnpm test' }));
+    expect(resolution.decision).toBe('allow');
+    expect(resolution.remembered).toBe(true);
     expect(raised).toBe(0);
   });
 
@@ -111,9 +111,9 @@ describe('DefaultPermissionGate', () => {
         return { decision: 'allow', remembered: false };
       },
     });
-    const res = await gate.request(req({ target: 'host', command: 'rm -rf /' }));
-    expect(res.decision).toBe('deny');
-    expect(res.remembered).toBe(false);
+    const resolution = await gate.request(req({ target: 'host', command: 'rm -rf /' }));
+    expect(resolution.decision).toBe('deny');
+    expect(resolution.remembered).toBe(false);
     expect(raised).toBe(0);
   });
 
@@ -135,7 +135,7 @@ describe('DefaultPermissionGate', () => {
       },
       'project',
     );
-    const res = await gate.request(req({ command: 'pnpm test' }));
-    expect(res.decision).toBe('allow');
+    const resolution = await gate.request(req({ command: 'pnpm test' }));
+    expect(resolution.decision).toBe('allow');
   });
 });

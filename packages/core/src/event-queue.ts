@@ -9,9 +9,9 @@ export class EventQueue<T> {
 
   push(value: T): void {
     if (this.closed) return;
-    const r = this.resolvers.shift();
-    if (r) {
-      r({ value, done: false });
+    const resolver = this.resolvers.shift();
+    if (resolver) {
+      resolver({ value, done: false });
     } else {
       this.buffer.push(value);
     }
@@ -20,8 +20,8 @@ export class EventQueue<T> {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    for (const r of this.resolvers) {
-      r({ value: undefined as unknown as T, done: true });
+    for (const resolver of this.resolvers) {
+      resolver({ value: undefined as unknown as T, done: true });
     }
     this.resolvers = [];
   }
@@ -39,9 +39,9 @@ export class EventQueue<T> {
 
   async *drain(): AsyncIterable<T> {
     while (true) {
-      const r = await this.next();
-      if (r.done) return;
-      yield r.value;
+      const item = await this.next();
+      if (item.done) return;
+      yield item.value;
     }
   }
 }

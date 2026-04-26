@@ -473,14 +473,17 @@ export class Agent {
           case 'tool-error': {
             const info = callInfo.get(part.toolCallId);
             if (!info) break;
-            const err = (part as { error?: unknown }).error;
-            const msg = err instanceof Error ? err.message : String(err);
-            const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
-            if (rec) {
-              rec.error = msg;
-              rec.endedAt = Date.now();
+            const errorValue = (part as { error?: unknown }).error;
+            const message =
+              errorValue instanceof Error ? errorValue.message : String(errorValue);
+            const record = this.session.toolCalls.find(
+              (toolCall) => toolCall.callId === info.callId,
+            );
+            if (record) {
+              record.error = message;
+              record.endedAt = Date.now();
             }
-            queue.push({ type: 'tool_call_error', callId: info.callId, error: msg });
+            queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
             callInfo.delete(part.toolCallId);
             this.callIdByToolCallId.delete(part.toolCallId);
             break;
@@ -642,16 +645,16 @@ export class Agent {
 
 function extractReadPath(args: unknown): string | undefined {
   if (args && typeof args === 'object' && 'path' in args) {
-    const p = (args as { path?: unknown }).path;
-    if (typeof p === 'string' && p.length > 0) return p;
+    const pathValue = (args as { path?: unknown }).path;
+    if (typeof pathValue === 'string' && pathValue.length > 0) return pathValue;
   }
   return undefined;
 }
 
 function extractTarget(args: unknown, sandboxMode: SandboxMode): ExecutionTarget {
   if (args && typeof args === 'object' && 'target' in args) {
-    const t = (args as { target?: unknown }).target;
-    if (t === 'sandbox' || t === 'host') return t;
+    const targetValue = (args as { target?: unknown }).target;
+    if (targetValue === 'sandbox' || targetValue === 'host') return targetValue;
   }
   // No explicit `target` in the tool args — match the bash tool's default
   // and the routing of file tools (read/write/edit always use the sandbox

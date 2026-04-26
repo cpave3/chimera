@@ -239,10 +239,10 @@ export class Scrollback {
       // triggered activation. Walk backwards — there's usually only one
       // entry between the read and this event.
       for (let i = this.entries.length - 1; i >= 0; i -= 1) {
-        const e = this.entries[i]!;
-        if (e.kind === 'tool' && e.toolName === 'read') {
-          e.skillName = ev.skillName;
-          e.skillSource = ev.source;
+        const candidate = this.entries[i]!;
+        if (candidate.kind === 'tool' && candidate.toolName === 'read') {
+          candidate.skillName = ev.skillName;
+          candidate.skillSource = ev.source;
           return;
         }
       }

@@ -120,7 +120,7 @@ const TEST_MODEL: ModelConfig = {
   maxSteps: 10,
 };
 
-function registry(
+function buildCommandRegistry(
   cmds: { name: string; body: string; description?: string }[],
 ): CommandRegistry {
   return new InMemoryCommandRegistry(
@@ -136,7 +136,7 @@ function registry(
   );
 }
 
-function skillRegistry(
+function buildSkillRegistry(
   skills: { name: string; description: string; path?: string }[],
 ): SkillRegistry {
   return new InMemorySkillRegistry(
@@ -164,7 +164,7 @@ async function type(stdin: NodeJS.WritableStream, text: string): Promise<void> {
 
 describe('TUI slash dispatch', () => {
   it('/help lists user commands with descriptions', async () => {
-    const reg = registry([
+    const commandRegistry = buildCommandRegistry([
       { name: 'summarize', body: 'Summarize $ARGUMENTS', description: 'Summarize stuff' },
     ]);
     const { lastFrame, stdin, unmount } = render(
@@ -173,7 +173,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
       />,
     );
     await type(stdin, '/help\r');
@@ -186,7 +186,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('built-in wins over a user template with the same name', async () => {
-    const reg = registry([{ name: 'help', body: 'Help template!' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'help', body: 'Help template!' }]);
     const sent: string[] = [];
     const { lastFrame, stdin, unmount } = render(
       <App
@@ -194,7 +194,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
       />,
     );
     await type(stdin, '/help\r');
@@ -209,7 +209,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('user template dispatches and sends expanded message', async () => {
-    const reg = registry([
+    const commandRegistry = buildCommandRegistry([
       { name: 'summarize', body: 'Summarize: $ARGUMENTS' },
     ]);
     const sent: string[] = [];
@@ -219,7 +219,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
       />,
     );
     await type(stdin, '/summarize the current branch\r');
@@ -229,7 +229,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('shows the raw /<name> invocation in scrollback and suppresses the echoed expanded body', async () => {
-    const reg = registry([
+    const commandRegistry = buildCommandRegistry([
       { name: 'summarize', body: 'Summarize: $ARGUMENTS' },
     ]);
     const sent: string[] = [];
@@ -244,7 +244,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
       />,
     );
     await type(stdin, '/summarize the current branch\r');
@@ -266,7 +266,7 @@ describe('TUI slash dispatch', () => {
       { name: 'before', body: 'b' },
     ];
     const listeners = new Set<() => void>();
-    const reg: CommandRegistry = {
+    const commandRegistry: CommandRegistry = {
       list: () =>
         items.map((c) => ({
           name: c.name,
@@ -307,7 +307,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
       />,
     );
     await type(stdin, '/reload\r');
@@ -324,7 +324,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={registry([])}
+        commands={buildCommandRegistry([])}
       />,
     );
     await type(stdin, '/help\r');
@@ -333,7 +333,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('/<skill> with args dispatches as a synthesized user message', async () => {
-    const skills = skillRegistry([
+    const skills = buildSkillRegistry([
       {
         name: 'pdf',
         description: 'PDF things',
@@ -347,7 +347,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={registry([])}
+        commands={buildCommandRegistry([])}
         skills={skills}
       />,
     );
@@ -361,7 +361,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('/<skill> with no args still dispatches (no appended body)', async () => {
-    const skills = skillRegistry([
+    const skills = buildSkillRegistry([
       { name: 'pdf', description: 'PDF things' },
     ]);
     const sent: string[] = [];
@@ -371,7 +371,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={registry([])}
+        commands={buildCommandRegistry([])}
         skills={skills}
       />,
     );
@@ -382,8 +382,8 @@ describe('TUI slash dispatch', () => {
   });
 
   it('user command shadows a skill of the same name', async () => {
-    const reg = registry([{ name: 'pdf', body: 'Command body $ARGUMENTS' }]);
-    const skills = skillRegistry([{ name: 'pdf', description: 'PDF things' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'pdf', body: 'Command body $ARGUMENTS' }]);
+    const skills = buildSkillRegistry([{ name: 'pdf', description: 'PDF things' }]);
     const sent: string[] = [];
     const { stdin, unmount } = render(
       <App
@@ -391,7 +391,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
         skills={skills}
       />,
     );
@@ -402,7 +402,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('unknown /<name> shows a fuzzy hint and does not send a message', async () => {
-    const reg = registry([{ name: 'summarize', body: 'S $ARGUMENTS' }]);
+    const commandRegistry = buildCommandRegistry([{ name: 'summarize', body: 'S $ARGUMENTS' }]);
     const sent: string[] = [];
     const { lastFrame, stdin, unmount } = render(
       <App
@@ -410,7 +410,7 @@ describe('TUI slash dispatch', () => {
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
-        commands={reg}
+        commands={commandRegistry}
       />,
     );
     await type(stdin, '/summarze foo\r');

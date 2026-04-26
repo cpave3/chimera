@@ -2,7 +2,7 @@ import type { Usage, UsageStep } from './types';
 
 export function readStepUsage(raw: unknown): UsageStep | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
-  const r = raw as {
+  const usageObject = raw as {
     inputTokens?: unknown;
     outputTokens?: unknown;
     cachedInputTokens?: unknown;
@@ -12,39 +12,41 @@ export function readStepUsage(raw: unknown): UsageStep | undefined {
   // A step counts as "no usage" only when no numeric field is present at all —
   // explicit zeros and cached-only payloads still count as a real step.
   if (
-    typeof r.inputTokens !== 'number' &&
-    typeof r.outputTokens !== 'number' &&
-    typeof r.totalTokens !== 'number' &&
-    typeof r.inputTokenDetails?.cacheReadTokens !== 'number'
+    typeof usageObject.inputTokens !== 'number' &&
+    typeof usageObject.outputTokens !== 'number' &&
+    typeof usageObject.totalTokens !== 'number' &&
+    typeof usageObject.inputTokenDetails?.cacheReadTokens !== 'number'
   ) {
     return undefined;
   }
-  const inputTokens = typeof r.inputTokens === 'number' ? r.inputTokens : 0;
-  const outputTokens = typeof r.outputTokens === 'number' ? r.outputTokens : 0;
+  const inputTokens =
+    typeof usageObject.inputTokens === 'number' ? usageObject.inputTokens : 0;
+  const outputTokens =
+    typeof usageObject.outputTokens === 'number' ? usageObject.outputTokens : 0;
   // Prefer the canonical inputTokenDetails.cacheReadTokens; fall back to the
   // deprecated top-level cachedInputTokens for older provider shapes.
-  const detailCacheRead = r.inputTokenDetails?.cacheReadTokens;
+  const detailCacheRead = usageObject.inputTokenDetails?.cacheReadTokens;
   const cachedInputTokens =
     typeof detailCacheRead === 'number'
       ? detailCacheRead
-      : typeof r.cachedInputTokens === 'number'
-        ? r.cachedInputTokens
+      : typeof usageObject.cachedInputTokens === 'number'
+        ? usageObject.cachedInputTokens
         : 0;
   const totalTokens =
-    typeof r.totalTokens === 'number'
-      ? r.totalTokens
+    typeof usageObject.totalTokens === 'number'
+      ? usageObject.totalTokens
       : inputTokens + outputTokens;
   return { inputTokens, outputTokens, cachedInputTokens, totalTokens };
 }
 
-export function cloneUsage(u: Usage): Usage {
+export function cloneUsage(usage: Usage): Usage {
   return {
-    inputTokens: u.inputTokens,
-    outputTokens: u.outputTokens,
-    cachedInputTokens: u.cachedInputTokens,
-    totalTokens: u.totalTokens,
-    stepCount: u.stepCount,
-    lastStep: u.lastStep ? { ...u.lastStep } : undefined,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    totalTokens: usage.totalTokens,
+    stepCount: usage.stepCount,
+    lastStep: usage.lastStep ? { ...usage.lastStep } : undefined,
   };
 }
 

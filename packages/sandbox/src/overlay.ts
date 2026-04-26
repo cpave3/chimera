@@ -20,14 +20,14 @@ export function overlayPaths(sessionId: string, overlaysHome?: string) {
 }
 
 export async function ensureOverlayDirs(sessionId: string, overlaysHome?: string): Promise<void> {
-  const p = overlayPaths(sessionId, overlaysHome);
-  await mkdir(p.upperData, { recursive: true });
-  await mkdir(p.work, { recursive: true });
+  const paths = overlayPaths(sessionId, overlaysHome);
+  await mkdir(paths.upperData, { recursive: true });
+  await mkdir(paths.work, { recursive: true });
 }
 
 export async function removeOverlayDirs(sessionId: string, overlaysHome?: string): Promise<void> {
-  const p = overlayPaths(sessionId, overlaysHome);
-  await rm(p.root, { recursive: true, force: true });
+  const paths = overlayPaths(sessionId, overlaysHome);
+  await rm(paths.root, { recursive: true, force: true });
 }
 
 /**
@@ -145,7 +145,7 @@ export async function diffOverlay(
 ): Promise<OverlayDiff> {
   const { upperData } = overlayPaths(sessionId, opts.overlaysHome);
   const runner = opts.runner ?? new SpawnRsync();
-  const r = await runner.run([
+  const diffResult = await runner.run([
     '--dry-run',
     '-rln',
     '--delete',
@@ -153,10 +153,12 @@ export async function diffOverlay(
     `${upperData}/`,
     `${hostCwd}/`,
   ]);
-  if (r.exitCode !== 0) {
-    throw new Error(`rsync diff failed (exit ${r.exitCode}): ${r.stderr.trim()}`);
+  if (diffResult.exitCode !== 0) {
+    throw new Error(
+      `rsync diff failed (exit ${diffResult.exitCode}): ${diffResult.stderr.trim()}`,
+    );
   }
-  return parseRsyncItemize(r.stdout);
+  return parseRsyncItemize(diffResult.stdout);
 }
 
 export async function applyOverlay(
@@ -187,9 +189,11 @@ export async function applyOverlay(
   }
 
   args.push(`${upperData}/`, `${hostCwd}/`);
-  const r = await runner.run(args);
-  if (r.exitCode !== 0) {
-    throw new Error(`rsync apply failed (exit ${r.exitCode}): ${r.stderr.trim()}`);
+  const applyResult = await runner.run(args);
+  if (applyResult.exitCode !== 0) {
+    throw new Error(
+      `rsync apply failed (exit ${applyResult.exitCode}): ${applyResult.stderr.trim()}`,
+    );
   }
 }
 

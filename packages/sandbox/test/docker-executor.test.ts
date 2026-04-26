@@ -27,13 +27,15 @@ class FakeRunner implements DockerRunner {
   }
 
   async run(args: string[], opts?: RunOptions) {
-    const r = await this.runRaw(args, opts);
+    const runResult = await this.runRaw(args, opts);
     return {
       stdout:
-        typeof r.stdout === 'string' ? r.stdout : Buffer.from(r.stdout).toString('utf8'),
-      stderr: r.stderr,
-      exitCode: r.exitCode,
-      timedOut: r.timedOut,
+        typeof runResult.stdout === 'string'
+          ? runResult.stdout
+          : Buffer.from(runResult.stdout).toString('utf8'),
+      stderr: runResult.stderr,
+      exitCode: runResult.exitCode,
+      timedOut: runResult.timedOut,
     };
   }
 
@@ -262,10 +264,10 @@ describe('DockerExecutor file ops', () => {
     expect(writeCall).toBeDefined();
     expect(writeCall!.opts?.stdin).toBe('hello');
     const cmdIdx = writeCall!.args.indexOf('-c');
-    const cmd = writeCall!.args[cmdIdx + 1]!;
-    expect(cmd).toContain('mkdir -p');
-    expect(cmd).toContain('/workspace/a');
-    expect(cmd).toContain('mv');
+    const writeCommand = writeCall!.args[cmdIdx + 1]!;
+    expect(writeCommand).toContain('mkdir -p');
+    expect(writeCommand).toContain('/workspace/a');
+    expect(writeCommand).toContain('mv');
   });
 
   it('readFile cat returns stdout bytes', async () => {
@@ -334,14 +336,14 @@ describe('DockerExecutor file ops', () => {
       hostCwd: cwd,
     });
     await exec.start();
-    const r = await exec.exec('echo hello');
-    expect(r.stdout).toBe('hello\n');
-    expect(r.exitCode).toBe(0);
-    const call = runner.calls.find(
+    const execResult = await exec.exec('echo hello');
+    expect(execResult.stdout).toBe('hello\n');
+    expect(execResult.exitCode).toBe(0);
+    const execCall = runner.calls.find(
       (c) => c.args[0] === 'exec' && c.args.includes('sh'),
     )!;
-    expect(call.args[1]).toBe('-i');
-    expect(call.args[call.args.indexOf('-c') + 1]).toBe('echo hello');
+    expect(execCall.args[1]).toBe('-i');
+    expect(execCall.args[execCall.args.indexOf('-c') + 1]).toBe('echo hello');
   });
 
   it('exec forwards timeoutMs to the runner', async () => {
@@ -358,8 +360,8 @@ describe('DockerExecutor file ops', () => {
       hostCwd: cwd,
     });
     await exec.start();
-    const r = await exec.exec('sleep 60', { timeoutMs: 100 });
-    expect(r.timedOut).toBe(true);
+    const timeoutResult = await exec.exec('sleep 60', { timeoutMs: 100 });
+    expect(timeoutResult.timedOut).toBe(true);
     const execCall = runner.calls.find(
       (c) => c.args[0] === 'exec' && c.args.includes('sh'),
     )!;

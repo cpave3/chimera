@@ -41,12 +41,12 @@ export class SpawnDockerRunner implements DockerRunner {
   }
 
   async run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
-    const r = await this.runRaw(args, opts);
+    const runResult = await this.runRaw(args, opts);
     return {
-      stdout: r.stdout.toString('utf8'),
-      stderr: r.stderr,
-      exitCode: r.exitCode,
-      timedOut: r.timedOut,
+      stdout: runResult.stdout.toString('utf8'),
+      stderr: runResult.stderr,
+      exitCode: runResult.exitCode,
+      timedOut: runResult.timedOut,
     };
   }
 

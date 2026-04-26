@@ -50,14 +50,14 @@ export class GatedExecutor implements Executor {
   }
 
   async exec(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
-    const res = await this.gate.request({
+    const resolution = await this.gate.request({
       requestId: newRequestId(),
       tool: 'bash',
       target: 'host',
       command: cmd,
       cwd: this.inner.cwd(),
     });
-    if (res.decision === 'deny') {
+    if (resolution.decision === 'deny') {
       return {
         stdout: '',
         stderr: 'denied by user',

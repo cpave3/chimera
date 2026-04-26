@@ -76,13 +76,17 @@ export class ChimeraClient {
   }
 
   private async json<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, init);
-    if (!res.ok) {
-      const body = await safeBody(res);
-      throw new ChimeraHttpError(res.status, body, `${init?.method ?? 'GET'} ${path} → ${res.status}`);
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, init);
+    if (!response.ok) {
+      const body = await safeBody(response);
+      throw new ChimeraHttpError(
+        response.status,
+        body,
+        `${init?.method ?? 'GET'} ${path} → ${response.status}`,
+      );
     }
-    if (res.status === 204) return undefined as unknown as T;
-    return (await res.json()) as T;
+    if (response.status === 204) return undefined as unknown as T;
+    return (await response.json()) as T;
   }
 
   async getInstance(): Promise<InstanceInfo> {
@@ -149,7 +153,7 @@ export class ChimeraClient {
     decision: 'allow' | 'deny',
     remember?: RememberScope,
   ): Promise<void> {
-    const res = await this.fetchImpl(
+    const response = await this.fetchImpl(
       `${this.baseUrl}/v1/sessions/${sessionId}/permissions/${requestId}`,
       {
         method: 'POST',
@@ -157,11 +161,11 @@ export class ChimeraClient {
         body: JSON.stringify({ decision, remember }),
       },
     );
-    if (res.status === 409) {
+    if (response.status === 409) {
       throw new PermissionAlreadyResolvedError(requestId);
     }
-    if (!res.ok) {
-      throw new ChimeraHttpError(res.status, await safeBody(res));
+    if (!response.ok) {
+      throw new ChimeraHttpError(response.status, await safeBody(response));
     }
   }
 
@@ -210,36 +214,45 @@ export class ChimeraClient {
     opts: { signal?: AbortSignal } = {},
   ): AsyncGenerator<AgentEvent | { type: 'permission_timeout'; requestId: string }, void, void> {
     // Open SSE connection up front.
-    const res = await this.fetchImpl(
+    const eventsResponse = await this.fetchImpl(
       `${this.baseUrl}/v1/sessions/${sessionId}/events`,
       { headers: { accept: 'text/event-stream' }, signal: opts.signal },
     );
-    if (!res.ok) {
-      throw new ChimeraHttpError(res.status, await safeBody(res));
+    if (!eventsResponse.ok) {
+      throw new ChimeraHttpError(
+        eventsResponse.status,
+        await safeBody(eventsResponse),
+      );
     }
 
     // Give the server a microtask to register the subscriber before we POST.
     await new Promise((r) => setTimeout(r, 0));
 
     // POST the message.
-    const postRes = await this.fetchImpl(`${this.baseUrl}/v1/sessions/${sessionId}/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: message }),
-      signal: opts.signal,
-    });
-    if (!postRes.ok && postRes.status !== 202) {
-      throw new ChimeraHttpError(postRes.status, await safeBody(postRes));
+    const postResponse = await this.fetchImpl(
+      `${this.baseUrl}/v1/sessions/${sessionId}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: message }),
+        signal: opts.signal,
+      },
+    );
+    if (!postResponse.ok && postResponse.status !== 202) {
+      throw new ChimeraHttpError(
+        postResponse.status,
+        await safeBody(postResponse),
+      );
     }
 
     // Iterate the already-open SSE.
     let lastEventId: string | undefined;
     try {
-      for await (const env of parseSSE(res.body, (id) => {
+      for await (const envelope of parseSSE(eventsResponse.body, (id) => {
         lastEventId = id;
       })) {
-        yield stripEnvelopeMeta(env);
-        if (env.type === 'run_finished') return;
+        yield stripEnvelopeMeta(envelope);
+        if (envelope.type === 'run_finished') return;
       }
     } finally {
       // lastEventId unused here; kept in case future logic wants to resume.
@@ -269,9 +282,9 @@ export class ChimeraClient {
         const url = lastEventId
           ? `${this.baseUrl}/v1/sessions/${sessionId}/events?since=${encodeURIComponent(lastEventId)}`
           : `${this.baseUrl}/v1/sessions/${sessionId}/events`;
-        let res: Response;
+        let streamResponse: Response;
         try {
-          res = await this.fetchImpl(url, {
+          streamResponse = await this.fetchImpl(url, {
             headers: { accept: 'text/event-stream' },
             signal: opts.signal,
           });
@@ -281,37 +294,46 @@ export class ChimeraClient {
           await delay(Math.min(1000 * 2 ** (retries - 1), 5000));
           continue;
         }
-        if (!res.ok) {
-          throw new ChimeraHttpError(res.status, await safeBody(res));
+        if (!streamResponse.ok) {
+          throw new ChimeraHttpError(
+            streamResponse.status,
+            await safeBody(streamResponse),
+          );
         }
 
         try {
-          for await (const env of parseSSE(res.body, (id) => {
+          for await (const envelope of parseSSE(streamResponse.body, (id) => {
             lastEventId = id;
           })) {
             // Permission tracking.
-            if (env.type === 'permission_request') {
-              pendingPermissionIds.add(env.requestId);
-              const t = setTimeout(() => {
-                if (pendingPermissionIds.has(env.requestId)) {
-                  timeoutQueue.push({ requestId: env.requestId });
+            if (envelope.type === 'permission_request') {
+              pendingPermissionIds.add(envelope.requestId);
+              const timer = setTimeout(() => {
+                if (pendingPermissionIds.has(envelope.requestId)) {
+                  timeoutQueue.push({ requestId: envelope.requestId });
                 }
               }, this.permissionTimeoutMs);
-              pendingTimers.set(env.requestId, t);
-            } else if (env.type === 'permission_resolved' || env.type === 'permission_timeout') {
-              pendingPermissionIds.delete(env.requestId);
-              const t = pendingTimers.get(env.requestId);
-              if (t) clearTimeout(t);
-              pendingTimers.delete(env.requestId);
+              pendingTimers.set(envelope.requestId, timer);
+            } else if (
+              envelope.type === 'permission_resolved' ||
+              envelope.type === 'permission_timeout'
+            ) {
+              pendingPermissionIds.delete(envelope.requestId);
+              const timer = pendingTimers.get(envelope.requestId);
+              if (timer) clearTimeout(timer);
+              pendingTimers.delete(envelope.requestId);
             }
-            yield stripEnvelopeMeta(env);
+            yield stripEnvelopeMeta(envelope);
 
             // Drain any timeouts.
             while (timeoutQueue.length > 0) {
-              const to = timeoutQueue.shift()!;
-              if (pendingPermissionIds.has(to.requestId)) {
-                pendingPermissionIds.delete(to.requestId);
-                yield { type: 'permission_timeout', requestId: to.requestId };
+              const timeout = timeoutQueue.shift()!;
+              if (pendingPermissionIds.has(timeout.requestId)) {
+                pendingPermissionIds.delete(timeout.requestId);
+                yield {
+                  type: 'permission_timeout',
+                  requestId: timeout.requestId,
+                };
               }
             }
 
@@ -332,22 +354,22 @@ export class ChimeraClient {
         }
       }
     } finally {
-      for (const t of pendingTimers.values()) clearTimeout(t);
+      for (const timer of pendingTimers.values()) clearTimeout(timer);
     }
   }
 }
 
-function stripEnvelopeMeta(env: AgentEventEnvelope): AgentEvent {
-  const { eventId: _e, sessionId: _s, ts: _t, ...rest } = env;
+function stripEnvelopeMeta(envelope: AgentEventEnvelope): AgentEvent {
+  const { eventId: _e, sessionId: _s, ts: _t, ...rest } = envelope;
   return rest as AgentEvent;
 }
 
-async function safeBody(res: Response): Promise<unknown> {
+async function safeBody(response: Response): Promise<unknown> {
   try {
-    return await res.json();
+    return await response.json();
   } catch {
     try {
-      return await res.text();
+      return await response.text();
     } catch {
       return null;
     }

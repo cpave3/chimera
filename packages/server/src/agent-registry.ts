@@ -152,14 +152,14 @@ export class AgentRegistry {
   }
 
   async delete(id: SessionId): Promise<boolean> {
-    const e = this.entries.get(id);
-    if (!e) return false;
-    e.agent.interrupt();
+    const entry = this.entries.get(id);
+    if (!entry) return false;
+    entry.agent.interrupt();
     // Wait for any in-flight run (and its final persistSession) to settle so
     // the caller can safely tear down the session directory afterwards.
-    if (e.activeRun) {
+    if (entry.activeRun) {
       try {
-        await e.activeRun;
+        await entry.activeRun;
       } catch {
         // run errors already surfaced via the event bus; we only need it done
       }
@@ -173,23 +173,27 @@ export class AgentRegistry {
    * is already active.
    */
   async run(id: SessionId, content: string): Promise<'queued' | 'already-running' | 'missing'> {
-    const e = this.entries.get(id);
-    if (!e) return 'missing';
-    if (e.runActive) return 'already-running';
-    e.runActive = true;
-    e.activeRun = (async () => {
+    const entry = this.entries.get(id);
+    if (!entry) return 'missing';
+    if (entry.runActive) return 'already-running';
+    entry.runActive = true;
+    entry.activeRun = (async () => {
       try {
-        for await (const ev of e.agent.run(content)) {
-          e.bus.publish(ev);
-          if (ev.type === 'run_finished') break;
+        for await (const event of entry.agent.run(content)) {
+          entry.bus.publish(event);
+          if (event.type === 'run_finished') break;
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const finished: AgentEvent = { type: 'run_finished', reason: 'error', error: msg };
-        e.bus.publish(finished);
+        const message = err instanceof Error ? err.message : String(err);
+        const finished: AgentEvent = {
+          type: 'run_finished',
+          reason: 'error',
+          error: message,
+        };
+        entry.bus.publish(finished);
       } finally {
-        e.runActive = false;
-        e.activeRun = null;
+        entry.runActive = false;
+        entry.activeRun = null;
       }
     })();
     return 'queued';

@@ -153,13 +153,17 @@ Inherited from user rules:
 - **No backwards-compat shims** for deleted code — just delete it.
 - **Don't add error handling / validation for impossible cases.**
 - **Descriptive variable names.** Avoid one- and two-letter throwaways
-  (`r`, `cr`, `ra`, `rb`, `fr`) for response objects, results, and other
-  values that survive more than one statement. Prefer `createResponse`,
-  `forkResponse`, `errorBody`, etc. Loop indices (`i`), well-known math
-  vars, and immediately-destructured tuple elements are still fine.
-  Some older test files (e.g. `packages/server/test/app.test.ts`) use
-  the short-name style — leave those alone unless touching them, but
-  don't add new code in that style.
+  (`r`, `cr`, `ra`, `rb`, `fr`, `e` for entries, `sb` for scrollback)
+  for values that survive more than one statement. Prefer
+  `createResponse`, `forkResponse`, `errorBody`, `entry`, `scrollback`,
+  etc. Exceptions: short-scope loop indices (`i`, `j`), arrow-callback
+  parameters (`.filter((s) => ...)`, `.map((c) => ...)`), single-use
+  Promise-executor parameters (`new Promise((r) => setTimeout(r, 1))`,
+  `(resolve) => ...`), caught-error bindings (`err` / `error`),
+  well-known math vars (`x`, `y`, `dx`), and immediately-destructured
+  tuple / discard-alias elements (`const { id: _id, ...rest } = …`)
+  remain idiomatic. All existing source and test files in this repo
+  have been swept to match this rule as of this commit.
 
 ## Commit conventions
 
