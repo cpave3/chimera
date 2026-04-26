@@ -1,8 +1,6 @@
 const ENV_PREFIX = 'env:';
 
-export interface KeyResolver {
-  (): string;
-}
+export type KeyResolver = () => string;
 
 /**
  * Build a resolver for an apiKey spec. `env:VAR` references process.env at call

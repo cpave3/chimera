@@ -27,15 +27,17 @@ function makeEntry(over: Partial<ScrollbackEntry>): ScrollbackEntry {
 
 describe('renderToolBody', () => {
   it('returns nothing for unknown tools', () => {
-    expect(
-      renderToolBody(makeEntry({ toolName: 'mystery' }), ctx),
-    ).toEqual([]);
+    expect(renderToolBody(makeEntry({ toolName: 'mystery' }), ctx)).toEqual([]);
   });
 
   it('returns nothing when the tool errored (the error is rendered separately)', () => {
     expect(
       renderToolBody(
-        makeEntry({ toolName: 'bash', toolError: 'boom', toolResult: { stdout: 'x', stderr: '', exit_code: 1, timed_out: false } }),
+        makeEntry({
+          toolName: 'bash',
+          toolError: 'boom',
+          toolResult: { stdout: 'x', stderr: '', exit_code: 1, timed_out: false },
+        }),
         ctx,
       ),
     ).toEqual([]);
@@ -107,9 +109,7 @@ describe('renderToolBody', () => {
     });
 
     it('returns nothing when toolArgs is missing', () => {
-      expect(
-        renderToolBody(makeEntry({ toolName: 'edit' }), ctx),
-      ).toEqual([]);
+      expect(renderToolBody(makeEntry({ toolName: 'edit' }), ctx)).toEqual([]);
     });
   });
 
@@ -138,9 +138,7 @@ describe('renderToolBody', () => {
     });
 
     it('returns nothing when toolArgs is missing', () => {
-      expect(
-        renderToolBody(makeEntry({ toolName: 'write' }), ctx),
-      ).toEqual([]);
+      expect(renderToolBody(makeEntry({ toolName: 'write' }), ctx)).toEqual([]);
     });
 
     it('strips a single trailing newline so the last row is not a blank line', () => {
@@ -198,9 +196,7 @@ describe('renderToolBody', () => {
     });
 
     it('returns nothing while result is still pending', () => {
-      expect(
-        renderToolBody(makeEntry({ toolName: 'bash' }), ctx),
-      ).toEqual([]);
+      expect(renderToolBody(makeEntry({ toolName: 'bash' }), ctx)).toEqual([]);
     });
 
     it('truncates long stdout with a more-lines hint', () => {

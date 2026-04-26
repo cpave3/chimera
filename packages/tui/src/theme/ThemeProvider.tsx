@@ -1,10 +1,5 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import {
-  deepMerge,
-  getDefaultThemePath,
-  loadUserTheme,
-  pickBaseTheme,
-} from './loader';
+import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './loader';
 import { defaultTheme } from './tokens';
 import type { Theme, ThemeContextValue } from './types';
 
@@ -58,10 +53,7 @@ export function ThemeProvider({
     }
   }, [themePath]);
 
-  const value = useMemo<ThemeContextValue>(
-    () => ({ ...state, reload }),
-    [state, reload],
-  );
+  const value = useMemo<ThemeContextValue>(() => ({ ...state, reload }), [state, reload]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 

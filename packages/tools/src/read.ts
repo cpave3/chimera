@@ -58,9 +58,7 @@ export function buildReadTool(ctx: ToolContext) {
       };
     },
     formatScrollback: (args, result) => {
-      const range = args.start_line
-        ? `:${args.start_line}-${args.end_line ?? ''}`
-        : '';
+      const range = args.start_line ? `:${args.start_line}-${args.end_line ?? ''}` : '';
       const head = `${relPath(args.path, cwd)}${range}`;
       if (!result) return { summary: head };
       const tail = result.truncated

@@ -3,12 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import {
-  Agent,
-  loadSession,
-  type ModelConfig,
-  writeSessionMetadata,
-} from '@chimera/core';
+import { Agent, loadSession, type ModelConfig, writeSessionMetadata } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry, type AgentFactory } from '../src/agent-registry';
 import { buildApp } from '../src/app';
@@ -126,25 +121,19 @@ describe('server app', () => {
     const list = await listResponse.json();
     expect(list).toHaveLength(1);
 
-    const firstMessageResponse = await app.request(
-      `/v1/sessions/${sessionId}/messages`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'hi' }),
-      },
-    );
+    const firstMessageResponse = await app.request(`/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'hi' }),
+    });
     expect(firstMessageResponse.status).toBe(202);
 
     // Second message while first is running → 409
-    const secondMessageResponse = await app.request(
-      `/v1/sessions/${sessionId}/messages`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'hi again' }),
-      },
-    );
+    const secondMessageResponse = await app.request(`/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'hi again' }),
+    });
     // May race: if run completed fast, it becomes another 202. Accept both but
     // assert at least one of the two queuings succeeded.
     expect([202, 409]).toContain(secondMessageResponse.status);
@@ -172,10 +161,9 @@ describe('server app', () => {
       })
     ).json();
 
-    const interruptResponse = await app.request(
-      `/v1/sessions/${sessionId}/interrupt`,
-      { method: 'POST' },
-    );
+    const interruptResponse = await app.request(`/v1/sessions/${sessionId}/interrupt`, {
+      method: 'POST',
+    });
     expect(interruptResponse.status).toBe(204);
   });
 
@@ -223,9 +211,7 @@ describe('server app', () => {
 
     // The bus should have forwarded a usage_updated event with cumulative
     // usage and the resolved contextWindow alongside the other agent events.
-    const usageEnvelope = snapshot.find(
-      (envelope) => envelope.type === 'usage_updated',
-    );
+    const usageEnvelope = snapshot.find((envelope) => envelope.type === 'usage_updated');
     expect(usageEnvelope).toBeDefined();
     if (usageEnvelope && usageEnvelope.type === 'usage_updated') {
       expect(usageEnvelope.contextWindow).toBe(200_000);
@@ -276,36 +262,30 @@ describe('server app', () => {
       })
     ).json();
 
-    const addRuleResponse = await app.request(
-      `/v1/sessions/${sessionId}/permissions/rules`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          rule: {
-            tool: 'bash',
-            target: 'host',
-            pattern: 'pnpm *',
-            patternKind: 'glob',
-            decision: 'allow',
-            createdAt: Date.now(),
-          },
-          scope: 'session',
-        }),
-      },
-    );
+    const addRuleResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rule: {
+          tool: 'bash',
+          target: 'host',
+          pattern: 'pnpm *',
+          patternKind: 'glob',
+          decision: 'allow',
+          createdAt: Date.now(),
+        },
+        scope: 'session',
+      }),
+    });
     expect(addRuleResponse.status).toBe(201);
 
-    const listRulesResponse = await app.request(
-      `/v1/sessions/${sessionId}/permissions/rules`,
-    );
+    const listRulesResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules`);
     const rules = await listRulesResponse.json();
     expect(rules).toHaveLength(1);
 
-    const removeRuleResponse = await app.request(
-      `/v1/sessions/${sessionId}/permissions/rules/0`,
-      { method: 'DELETE' },
-    );
+    const removeRuleResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules/0`, {
+      method: 'DELETE',
+    });
     expect(removeRuleResponse.status).toBe(204);
 
     await rm(projectCwd, { recursive: true, force: true });
@@ -326,14 +306,11 @@ describe('server app', () => {
       })
     ).json();
 
-    const reloadResponse = await app.request(
-      `/v1/sessions/${sessionId}/reload`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ systemPrompt: 'updated prompt' }),
-      },
-    );
+    const reloadResponse = await app.request(`/v1/sessions/${sessionId}/reload`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ systemPrompt: 'updated prompt' }),
+    });
     expect(reloadResponse.status).toBe(200);
     const reloadBody = await reloadResponse.json();
     expect(reloadBody.ok).toBe(true);
@@ -346,14 +323,11 @@ describe('server app', () => {
     });
     const app = buildApp({ registry, home });
 
-    const reloadResponse = await app.request(
-      '/v1/sessions/unknown-session-id/reload',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ systemPrompt: 'updated prompt' }),
-      },
-    );
+    const reloadResponse = await app.request('/v1/sessions/unknown-session-id/reload', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ systemPrompt: 'updated prompt' }),
+    });
     expect(reloadResponse.status).toBe(404);
   });
 });

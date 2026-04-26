@@ -102,10 +102,7 @@ describe('DockerExecutor.start mount strategy', () => {
 
   it('overlay mode mounts /lower:ro + /upper and adds SYS_ADMIN', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'inspect',
-      { stdout: 'true|0|running\n', exitCode: 0 },
-    );
+    runner.on((a) => a[0] === 'inspect', { stdout: 'true|0|running\n', exitCode: 0 });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -126,10 +123,7 @@ describe('DockerExecutor.start mount strategy', () => {
 
   it('ephemeral mode uses --tmpfs /upper', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'inspect',
-      { stdout: 'true|0|running\n', exitCode: 0 },
-    );
+    runner.on((a) => a[0] === 'inspect', { stdout: 'true|0|running\n', exitCode: 0 });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -179,10 +173,7 @@ describe('DockerExecutor overlay fallback', () => {
       {},
     );
     runner.scripts.pop(); // remove placeholder so we add stateful one
-    runner.on(
-      (a) => a[0] === 'inspect',
-      {},
-    );
+    runner.on((a) => a[0] === 'inspect', {});
     runner.scripts.pop();
     runner.scripts.push({
       match: (a) => a[0] === 'inspect',
@@ -272,10 +263,9 @@ describe('DockerExecutor file ops', () => {
 
   it('readFile cat returns stdout bytes', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('cat'),
-      { stdout: Buffer.from('payload', 'utf8') },
-    );
+    runner.on((a) => a[0] === 'exec' && a.includes('cat'), {
+      stdout: Buffer.from('payload', 'utf8'),
+    });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -289,10 +279,7 @@ describe('DockerExecutor file ops', () => {
 
   it('stat parses %F|%s output', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('stat'),
-      { stdout: 'regular file|42\n' },
-    );
+    runner.on((a) => a[0] === 'exec' && a.includes('stat'), { stdout: 'regular file|42\n' });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -307,10 +294,10 @@ describe('DockerExecutor file ops', () => {
 
   it('stat returns null for No such file', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('stat'),
-      { exitCode: 1, stderr: "stat: cannot stat 'x': No such file or directory" },
-    );
+    runner.on((a) => a[0] === 'exec' && a.includes('stat'), {
+      exitCode: 1,
+      stderr: "stat: cannot stat 'x': No such file or directory",
+    });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -324,10 +311,7 @@ describe('DockerExecutor file ops', () => {
 
   it('exec routes command via docker exec -i sh -c', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('sh'),
-      { stdout: 'hello\n', exitCode: 0 },
-    );
+    runner.on((a) => a[0] === 'exec' && a.includes('sh'), { stdout: 'hello\n', exitCode: 0 });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -339,19 +323,18 @@ describe('DockerExecutor file ops', () => {
     const execResult = await exec.exec('echo hello');
     expect(execResult.stdout).toBe('hello\n');
     expect(execResult.exitCode).toBe(0);
-    const execCall = runner.calls.find(
-      (c) => c.args[0] === 'exec' && c.args.includes('sh'),
-    )!;
+    const execCall = runner.calls.find((c) => c.args[0] === 'exec' && c.args.includes('sh'))!;
     expect(execCall.args[1]).toBe('-i');
     expect(execCall.args[execCall.args.indexOf('-c') + 1]).toBe('echo hello');
   });
 
   it('exec forwards timeoutMs to the runner', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('sh'),
-      { stdout: '', exitCode: -1, timedOut: true },
-    );
+    runner.on((a) => a[0] === 'exec' && a.includes('sh'), {
+      stdout: '',
+      exitCode: -1,
+      timedOut: true,
+    });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -362,9 +345,7 @@ describe('DockerExecutor file ops', () => {
     await exec.start();
     const timeoutResult = await exec.exec('sleep 60', { timeoutMs: 100 });
     expect(timeoutResult.timedOut).toBe(true);
-    const execCall = runner.calls.find(
-      (c) => c.args[0] === 'exec' && c.args.includes('sh'),
-    )!;
+    const execCall = runner.calls.find((c) => c.args[0] === 'exec' && c.args.includes('sh'))!;
     expect(execCall.opts?.timeoutMs).toBe(100);
   });
 });
@@ -389,14 +370,10 @@ describe('DockerExecutor host user mapping', () => {
 
   it('passes --user UID:GID on docker exec for exec/readFile/writeFile/stat', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('cat'),
-      { stdout: Buffer.from('payload', 'utf8') },
-    );
-    runner.on(
-      (a) => a[0] === 'exec' && a.includes('stat'),
-      { stdout: 'regular file|0\n' },
-    );
+    runner.on((a) => a[0] === 'exec' && a.includes('cat'), {
+      stdout: Buffer.from('payload', 'utf8'),
+    });
+    runner.on((a) => a[0] === 'exec' && a.includes('stat'), { stdout: 'regular file|0\n' });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',
@@ -437,9 +414,7 @@ describe('DockerExecutor host user mapping', () => {
     const runCall = runner.calls.find((c) => c.args[0] === 'run')!;
     expect(runCall.args.some((a) => a.startsWith('CHIMERA_HOST_UID='))).toBe(false);
     expect(runCall.args.some((a) => a.startsWith('CHIMERA_HOST_GID='))).toBe(false);
-    const execCall = runner.calls.find(
-      (c) => c.args[0] === 'exec' && c.args.includes('sh'),
-    )!;
+    const execCall = runner.calls.find((c) => c.args[0] === 'exec' && c.args.includes('sh'))!;
     expect(execCall.args).not.toContain('--user');
   });
 });
@@ -447,10 +422,10 @@ describe('DockerExecutor host user mapping', () => {
 describe('DockerExecutor.ensureImage', () => {
   it('errors when the image is missing and dockerfileDir is not set', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'image' && a[1] === 'inspect',
-      { exitCode: 1, stderr: 'No such image' },
-    );
+    runner.on((a) => a[0] === 'image' && a[1] === 'inspect', {
+      exitCode: 1,
+      stderr: 'No such image',
+    });
     const exec = new DockerExecutor({
       runner,
       image: 'someone-else/chimera-sandbox:weird',
@@ -492,20 +467,12 @@ describe('DockerExecutor.ensureImage', () => {
     expect(warnings.some((w) => /missing — building/.test(w))).toBe(true);
     const buildCall = runner.calls.find((c) => c.args[0] === 'build');
     expect(buildCall).toBeDefined();
-    expect(buildCall!.args).toEqual([
-      'build',
-      '-t',
-      'chimera-sandbox:dev',
-      '/fake/docker',
-    ]);
+    expect(buildCall!.args).toEqual(['build', '-t', 'chimera-sandbox:dev', '/fake/docker']);
   });
 
   it('skips build when image is already present', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'image' && a[1] === 'inspect',
-      { stdout: '[{...}]', exitCode: 0 },
-    );
+    runner.on((a) => a[0] === 'image' && a[1] === 'inspect', { stdout: '[{...}]', exitCode: 0 });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:dev',
@@ -558,10 +525,7 @@ describe('DockerExecutor lifecycle', () => {
 
   it('stop retains overlay upperdir; discardUpperdir removes it', async () => {
     const runner = new FakeRunner();
-    runner.on(
-      (a) => a[0] === 'inspect',
-      { stdout: 'true|0|running\n' },
-    );
+    runner.on((a) => a[0] === 'inspect', { stdout: 'true|0|running\n' });
     const exec = new DockerExecutor({
       runner,
       image: 'chimera-sandbox:test',

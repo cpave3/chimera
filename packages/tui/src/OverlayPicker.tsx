@@ -17,9 +17,7 @@ const HINT = 'space toggle · a all · n none · enter apply · esc cancel';
 
 export function OverlayPicker({ entries, onResolve }: OverlayPickerProps): React.ReactElement {
   const theme = useTheme();
-  const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(entries.map((_, i) => i)),
-  );
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(entries.map((_, i) => i)));
   const [cursor, setCursor] = useState(0);
 
   useInput((char, key) => {
@@ -28,9 +26,7 @@ export function OverlayPicker({ entries, onResolve }: OverlayPickerProps): React
       return;
     }
     if (key.return) {
-      const paths = entries
-        .filter((_, i) => selected.has(i))
-        .map((e) => e.path);
+      const paths = entries.filter((_, i) => selected.has(i)).map((e) => e.path);
       onResolve({ paths });
       return;
     }
@@ -71,8 +67,7 @@ export function OverlayPicker({ entries, onResolve }: OverlayPickerProps): React
         const checked = selected.has(i);
         const here = i === cursor;
         const marker = checked ? '[x]' : '[ ]';
-        const tag =
-          e.kind === 'added' ? '+' : e.kind === 'deleted' ? '-' : '~';
+        const tag = e.kind === 'added' ? '+' : e.kind === 'deleted' ? '-' : '~';
         return (
           <Text key={`${e.kind}:${e.path}`} color={here ? theme.ui.accent : undefined}>
             {`${here ? '>' : ' '} ${marker} ${tag} ${e.path}`}

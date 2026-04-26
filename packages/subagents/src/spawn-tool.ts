@@ -19,9 +19,7 @@ const ARGS_SCHEMA = z.object({
   purpose: z
     .string()
     .min(1)
-    .describe(
-      'Short label (≤80 chars) shown in the parent TUI alongside the subagent id.',
-    ),
+    .describe('Short label (≤80 chars) shown in the parent TUI alongside the subagent id.'),
   cwd: z.string().optional().describe('Override the working directory.'),
   model: z
     .string()
@@ -58,12 +56,11 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
   return defineTool<SpawnAgentArgs, SubagentResult>({
     description:
       'Spawn a fresh Chimera agent (a "subagent") to handle a delegated task. ' +
-      'Returns the subagent\'s final answer as a string. Use for sub-investigations, ' +
+      "Returns the subagent's final answer as a string. Use for sub-investigations, " +
       'research, or parallelizable tool work where keeping the parent context clean matters.',
     inputSchema: ARGS_SCHEMA,
     formatScrollback: (args, result) => {
-      const label =
-        args.purpose && args.purpose.length > 0 ? args.purpose : args.prompt;
+      const label = args.purpose && args.purpose.length > 0 ? args.purpose : args.prompt;
       const head = clipSpawnLabel(label);
       if (!result) return { summary: head };
       const tag = result.reason === 'stop' ? 'done' : result.reason;
@@ -80,13 +77,11 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       // the resolver guaranteed to find our entry.
       await Promise.resolve();
       const parentCallId =
-        (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ??
-        newCallId();
+        (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ?? newCallId();
       const childCwd = args.cwd ?? ctx.cwd;
       const modelRef = args.model ?? ctx.defaultModelRef;
       const inProcess = args.in_process === true;
-      const timeoutMs =
-        args.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeoutMs = args.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
       // Effective signal: combine the AI SDK's per-call abortSignal with the
       // parent agent's own signal so either can interrupt the child.
@@ -180,8 +175,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           parentSessionId: ctx.parentSessionId,
           modelRef,
           autoApprove: ctx.autoApprove,
-          sandbox:
-            args.sandbox === undefined ? ctx.sandboxMode !== 'off' : args.sandbox,
+          sandbox: args.sandbox === undefined ? ctx.sandboxMode !== 'off' : args.sandbox,
           sandboxMode: args.sandbox_mode,
           parentHasTty: ctx.parentHasTty,
           currentSubagentDepth: ctx.currentDepth + 1,
@@ -247,10 +241,7 @@ function clipSpawnLabel(s: string): string {
   return `${firstLine.slice(0, 60)}…`;
 }
 
-function errorResult(opts: {
-  subagentId: string;
-  message: string;
-}): SubagentResult {
+function errorResult(opts: { subagentId: string; message: string }): SubagentResult {
   return {
     subagent_id: opts.subagentId,
     result: opts.message,
@@ -278,9 +269,7 @@ function parseModelRef(ref: string): {
 } {
   const slash = ref.indexOf('/');
   if (slash <= 0) {
-    throw new Error(
-      `invalid model ref "${ref}" (expected "<providerId>/<modelId>")`,
-    );
+    throw new Error(`invalid model ref "${ref}" (expected "<providerId>/<modelId>")`);
   }
   return {
     providerId: ref.slice(0, slash),

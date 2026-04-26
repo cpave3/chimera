@@ -125,9 +125,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       })}\n`,
     );
   } else {
-    process.stderr.write(
-      `chimera server listening on ${server.url} (session ${sessionId})\n`,
-    );
+    process.stderr.write(`chimera server listening on ${server.url} (session ${sessionId})\n`);
   }
 
   // Stay alive.

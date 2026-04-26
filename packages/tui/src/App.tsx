@@ -3,18 +3,21 @@ import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { AgentEvent, ModelConfig, SandboxMode, SessionId, SessionInfo, Usage } from '@chimera/core';
+import type {
+  AgentEvent,
+  ModelConfig,
+  SandboxMode,
+  SessionId,
+  SessionInfo,
+  Usage,
+} from '@chimera/core';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import { renderMarkdown } from './markdown';
 import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
 import { Scrollback, type ScrollbackEntry } from './scrollback';
-import {
-  SessionPicker,
-  buildSessionTreeRows,
-  formatRelativeTime,
-} from './SessionPicker';
+import { SessionPicker, buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import {
   BUILTIN_COMMANDS,
@@ -352,10 +355,7 @@ export function App(props: AppProps): React.ReactElement {
             url: sa.url,
           },
         });
-      } else if (
-        inner.type === 'permission_resolved' ||
-        inner.type === 'permission_timeout'
-      ) {
+      } else if (inner.type === 'permission_resolved' || inner.type === 'permission_timeout') {
         setPending((p) => (p && p.requestId === inner.requestId ? null : p));
       }
     } else if (ev.type === 'run_finished') {
@@ -454,10 +454,7 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
     if (key.downArrow && latestInput.length === 0) {
-      historyIdxRef.current = Math.min(
-        historyRef.current.length,
-        historyIdxRef.current + 1,
-      );
+      historyIdxRef.current = Math.min(historyRef.current.length, historyIdxRef.current + 1);
       setInput(historyRef.current[historyIdxRef.current] ?? '');
       return;
     }
@@ -467,16 +464,12 @@ export function App(props: AppProps): React.ReactElement {
         setInput(match.name);
         return;
       }
-      const userMatch = props.commands
-        ?.list()
-        .find((c) => `/${c.name}`.startsWith(latestInput));
+      const userMatch = props.commands?.list().find((c) => `/${c.name}`.startsWith(latestInput));
       if (userMatch) {
         setInput(`/${userMatch.name}`);
         return;
       }
-      const skillMatch = props.skills
-        ?.all()
-        .find((s) => `/${s.name}`.startsWith(latestInput));
+      const skillMatch = props.skills?.all().find((s) => `/${s.name}`.startsWith(latestInput));
       if (skillMatch) setInput(`/${skillMatch.name}`);
       return;
     }
@@ -641,18 +634,14 @@ export function App(props: AppProps): React.ReactElement {
                   const marker = r.info.id === activeSession.sessionId ? '  ←' : '';
                   return `${r.prefix}${truncId}${childMark}  ${r.info.messageCount} msg${marker}`;
                 });
-                scrollback.addInfo(
-                  `session tree ${scopeLabel}:\n${lines.join('\n')}`,
-                );
+                scrollback.addInfo(`session tree ${scopeLabel}:\n${lines.join('\n')}`);
               }
               setEntries(scrollback.all());
               return;
             }
             if (sub.length > 0 && sub !== 'all') {
               // /sessions <id> — always look up against the full set
-              const target = allSessions.find(
-                (s) => s.id === sub || s.id.endsWith(sub),
-              );
+              const target = allSessions.find((s) => s.id === sub || s.id.endsWith(sub));
               if (!target) {
                 scrollback.addError(`/sessions: no session matching ${sub}`);
                 setEntries(scrollback.all());
@@ -742,8 +731,7 @@ export function App(props: AppProps): React.ReactElement {
               scrollback.addInfo('no active subagents');
             } else {
               const lines = list.map(
-                (s) =>
-                  `${s.subagentId}  ${s.purpose}  ${s.status}  ${s.url || '(in-process)'}`,
+                (s) => `${s.subagentId}  ${s.purpose}  ${s.status}  ${s.url || '(in-process)'}`,
               );
               const hint =
                 '\n\nTo inspect: copy a subagentId, then run `chimera attach <id>` in another terminal,\n' +
@@ -806,10 +794,7 @@ export function App(props: AppProps): React.ReactElement {
         return;
       }
       case '/detach': {
-        if (
-          activeSession.client === props.client &&
-          activeSession.sessionId === props.sessionId
-        ) {
+        if (activeSession.client === props.client && activeSession.sessionId === props.sessionId) {
           scrollback.addInfo('already attached to the parent session');
           setEntries(scrollback.all());
           return;
@@ -902,8 +887,7 @@ export function App(props: AppProps): React.ReactElement {
           void (async () => {
             try {
               const diff = await props.overlay!.diff();
-              const total =
-                diff.added.length + diff.modified.length + diff.deleted.length;
+              const total = diff.added.length + diff.modified.length + diff.deleted.length;
               if (total === 0) {
                 scrollback.addInfo('overlay: no pending changes');
               } else {
@@ -1032,7 +1016,6 @@ export function App(props: AppProps): React.ReactElement {
       });
   }
 
-
   // Split entries: the in-flight assistant entry and any tool entries that
   // haven't yet seen their `tool_call_result` render inline below <Static>
   // so their text can keep updating (deltas for assistants, the result-aware
@@ -1063,9 +1046,7 @@ export function App(props: AppProps): React.ReactElement {
       if (e.parentEntryId) continue; // rendered as nested children
       const isStreamingAssistant = e.id === streamingEntryId;
       const isPendingTool =
-        e.kind === 'tool' &&
-        e.toolResult === undefined &&
-        e.toolError === undefined;
+        e.kind === 'tool' && e.toolResult === undefined && e.toolError === undefined;
       if (isStreamingAssistant || isPendingTool) {
         inFlight.push(e);
       } else {
@@ -1085,18 +1066,14 @@ export function App(props: AppProps): React.ReactElement {
     return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
   }, [committedEntries, childrenByParent, showHeader]);
 
-  const cwdLeft: StatusBarWidget[] = [
-    <Text color={theme.accent.primary}>{props.cwd}</Text>,
-  ];
+  const cwdLeft: StatusBarWidget[] = [<Text color={theme.accent.primary}>{props.cwd}</Text>];
   const cwdRight: StatusBarWidget[] = [
     <Text color={theme.text.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
   ];
   const modelLeft: StatusBarWidget[] = [
     <Text color={theme.accent.primary}>{props.modelRef}</Text>,
     <Text color={theme.text.muted}>{`session ${activeSession.sessionId.slice(-8)}`}</Text>,
-    activeParentId ? (
-      <Text color={theme.accent.secondary}>(forked)</Text>
-    ) : null,
+    activeParentId ? <Text color={theme.accent.secondary}>(forked)</Text> : null,
   ];
   const modelRight: StatusBarWidget[] = [
     usageState && (
@@ -1237,9 +1214,7 @@ export function App(props: AppProps): React.ReactElement {
             }}
           />
         )}
-        {menuOpen && (
-          <SlashMenu items={menuItems} highlightIdx={menuHighlight} />
-        )}
+        {menuOpen && <SlashMenu items={menuItems} highlightIdx={menuHighlight} />}
         <Box
           borderStyle="single"
           borderTop
@@ -1322,7 +1297,9 @@ function renderEntryLines(
     return [
       <Box key={`${entry.id}:u`} flexDirection="column">
         <Text>
-          <Text color={theme.ui.accent} bold>you</Text>
+          <Text color={theme.ui.accent} bold>
+            you
+          </Text>
           {`: ${lines[0] ?? ''}`}
         </Text>
         {lines.slice(1).map((line, i) => (
@@ -1348,8 +1325,7 @@ function renderEntryLines(
     const out: React.ReactElement[] = [
       <Box key={`${entry.id}:t`} flexDirection="column">
         <Text>
-          <Text color={theme.ui.badge}>{badge}</Text>
-          {' '}
+          <Text color={theme.ui.badge}>{badge}</Text>{' '}
           <Text color={theme.accent.secondary}>{textLines[0] ?? ''}</Text>
         </Text>
         {textLines.slice(1).map((line, i) => (
@@ -1385,13 +1361,11 @@ function renderEntryLines(
                 </Box>
               ))}
               {child.detail !== undefined &&
-                wrapToLines(child.detail, width, prefixLen + connector.length).map(
-                  (line, i) => (
-                    <Box key={`cd${i}`} paddingLeft={connector.length}>
-                      <Text color={theme.text.muted}>{line}</Text>
-                    </Box>
-                  ),
-                )}
+                wrapToLines(child.detail, width, prefixLen + connector.length).map((line, i) => (
+                  <Box key={`cd${i}`} paddingLeft={connector.length}>
+                    <Text color={theme.text.muted}>{line}</Text>
+                  </Box>
+                ))}
             </Box>
           );
         })}
@@ -1402,7 +1376,9 @@ function renderEntryLines(
       out.push(
         <Box key={`${entry.id}:e`} flexDirection="column" paddingLeft={prefixLen}>
           {errLines.map((line, i) => (
-            <Text key={i} color={theme.status.error}>{line}</Text>
+            <Text key={i} color={theme.status.error}>
+              {line}
+            </Text>
           ))}
         </Box>,
       );
@@ -1420,8 +1396,7 @@ function renderEntryLines(
     return [
       <Box key={`${entry.id}:s`} flexDirection="column" paddingLeft={2}>
         <Text>
-          <Text color={theme.ui.accent}>{label}</Text>
-          {' '}
+          <Text color={theme.ui.accent}>{label}</Text>{' '}
           <Text color={theme.text.muted}>{lines[0] ?? ''}</Text>
         </Text>
         {lines.slice(1).map((line, i) => (

@@ -103,18 +103,16 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       <Text>
         Run on the <Text bold>HOST</Text>:
       </Text>
-      <Text>  $ {props.command}</Text>
-      {props.reason && (
-        <Text color={muted}>Reason: {props.reason}</Text>
-      )}
+      <Text> $ {props.command}</Text>
+      {props.reason && <Text color={muted}>Reason: {props.reason}</Text>}
       <Box marginTop={1} flexDirection="column">
         <Text>
-          <Text color={success}>[a]</Text> Allow once  {' '}
-          <Text color={success}>[A]</Text> Allow &amp; remember this command
+          <Text color={success}>[a]</Text> Allow once <Text color={success}>[A]</Text> Allow &amp;
+          remember this command
         </Text>
         <Text>
-          <Text color={success}>[g]</Text> Allow pattern... {' '}
-          <Text color={danger}>[d]</Text> Deny once
+          <Text color={success}>[g]</Text> Allow pattern... <Text color={danger}>[d]</Text> Deny
+          once
         </Text>
         <Text>
           <Text color={danger}>[D]</Text> Deny &amp; remember

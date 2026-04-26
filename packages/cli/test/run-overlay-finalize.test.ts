@@ -54,19 +54,20 @@ describe('finalizeOverlay', () => {
     expect(discardOverlay).toHaveBeenCalledOnce();
   });
 
-  it.each(['error', 'interrupted', 'timeout'] as const)(
-    "discards (no apply) on exit '%s' even with applyOnSuccess=true",
-    async (reason) => {
-      await finalizeOverlay({
-        sessionId: SESSION,
-        cwd: CWD,
-        exitReason: reason,
-        applyOnSuccess: true,
-      });
-      expect(applyOverlay).not.toHaveBeenCalled();
-      expect(discardOverlay).toHaveBeenCalledOnce();
-    },
-  );
+  it.each([
+    'error',
+    'interrupted',
+    'timeout',
+  ] as const)("discards (no apply) on exit '%s' even with applyOnSuccess=true", async (reason) => {
+    await finalizeOverlay({
+      sessionId: SESSION,
+      cwd: CWD,
+      exitReason: reason,
+      applyOnSuccess: true,
+    });
+    expect(applyOverlay).not.toHaveBeenCalled();
+    expect(discardOverlay).toHaveBeenCalledOnce();
+  });
 
   it('discards (no apply) on a clean stop when applyOnSuccess is false', async () => {
     await finalizeOverlay({

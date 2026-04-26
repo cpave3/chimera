@@ -1,12 +1,7 @@
 import type { AgentEvent, CallId, ModelConfig, SandboxMode, SessionId } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 
-export type SubagentReason =
-  | 'stop'
-  | 'max_steps'
-  | 'error'
-  | 'timeout'
-  | 'interrupted';
+export type SubagentReason = 'stop' | 'max_steps' | 'error' | 'timeout' | 'interrupted';
 
 export interface SubagentSpawnOptions {
   prompt: string;
@@ -36,33 +31,28 @@ export interface SubagentResult {
  * supplies this when registering the tool; when omitted, in-process mode
  * returns an error result rather than crashing.
  */
-export interface InProcessAgentBuilder {
-  (init: {
-    cwd: string;
-    model: ModelConfig;
-    sandboxMode: SandboxMode;
-    parentAbortSignal: AbortSignal;
-    systemPrompt?: string;
-    toolNames: string[];
-    currentDepth: number;
-    maxDepth: number;
-    /**
-     * Always `true` for in-process spawns: the parent's TUI cannot resolve a
-     * permission prompt raised inside the parent's own event loop without
-     * re-entrant scheduling, so in-process children auto-deny host prompts
-     * regardless of the parent's TTY state. See SUBAGENTS.md.
-     */
-    headlessAutoDeny: boolean;
-  }): Promise<{
-    sessionId: SessionId;
-    send: (
-      prompt: string,
-      opts?: { signal?: AbortSignal },
-    ) => AsyncIterable<AgentEvent>;
-    interrupt: () => void;
-    dispose: () => Promise<void>;
-  }>;
-}
+export type InProcessAgentBuilder = (init: {
+  cwd: string;
+  model: ModelConfig;
+  sandboxMode: SandboxMode;
+  parentAbortSignal: AbortSignal;
+  systemPrompt?: string;
+  toolNames: string[];
+  currentDepth: number;
+  maxDepth: number;
+  /**
+   * Always `true` for in-process spawns: the parent's TUI cannot resolve a
+   * permission prompt raised inside the parent's own event loop without
+   * re-entrant scheduling, so in-process children auto-deny host prompts
+   * regardless of the parent's TTY state. See SUBAGENTS.md.
+   */
+  headlessAutoDeny: boolean;
+}) => Promise<{
+  sessionId: SessionId;
+  send: (prompt: string, opts?: { signal?: AbortSignal }) => AsyncIterable<AgentEvent>;
+  interrupt: () => void;
+  dispose: () => Promise<void>;
+}>;
 
 export interface SpawnAgentToolContext {
   /** Emit an event into the parent's event stream. */

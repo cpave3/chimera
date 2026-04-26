@@ -112,9 +112,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       : undefined;
 
   // Build extensions array matching the factory's logic for skills.
-  const extensions = skills
-    ? [() => skills.buildIndex() || null]
-    : undefined;
+  const extensions = skills ? [() => skills.buildIndex() || null] : undefined;
 
   const handle = mountTui({
     client,

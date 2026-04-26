@@ -6,10 +6,7 @@ import { ReloadingCommandRegistry } from '../src/reloading';
 
 const DEBOUNCE = 20;
 
-async function waitForChange(
-  registry: ReloadingCommandRegistry,
-  ms = 500,
-): Promise<void> {
+async function waitForChange(registry: ReloadingCommandRegistry, ms = 500): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let unsubscribe: (() => void) | undefined;
     const timer = setTimeout(() => {

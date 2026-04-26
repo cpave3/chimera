@@ -15,8 +15,10 @@ export interface ComposeOptions {
 const SANDBOX_HINTS: Record<SandboxMode, string> = {
   off: "no sandbox; tools run directly on the host. 'target' defaults to 'host' and may be omitted on bash calls.",
   bind: "file tools and bash (default target='sandbox') run inside a Docker container with the host cwd bind-mounted rw; writes appear on the host immediately.",
-  overlay: "file tools and bash (default target='sandbox') run inside a Docker container with the host cwd as an overlayfs lowerdir; writes go to a per-session upperdir and only land on the host when the user runs `/apply`.",
-  ephemeral: "file tools and bash (default target='sandbox') run inside a Docker container with a tmpfs upperdir; all writes are discarded at session end.",
+  overlay:
+    "file tools and bash (default target='sandbox') run inside a Docker container with the host cwd as an overlayfs lowerdir; writes go to a per-session upperdir and only land on the host when the user runs `/apply`.",
+  ephemeral:
+    "file tools and bash (default target='sandbox') run inside a Docker container with a tmpfs upperdir; all writes are discarded at session end.",
 };
 
 /**

@@ -32,15 +32,13 @@ describe('expandBody', () => {
   });
 
   it('substitutes positional $1 $2 via whitespace split respecting quotes', () => {
-    expect(
-      expandBody('[$1]-[$2]', { args: '"a b" c', cwd: '/' }),
-    ).toBe('[a b]-[c]');
+    expect(expandBody('[$1]-[$2]', { args: '"a b" c', cwd: '/' })).toBe('[a b]-[c]');
   });
 
   it('leaves $PATH and other unknown $-tokens intact', () => {
-    expect(
-      expandBody('use $PATH and $HOME and $ARGUMENTS', { args: 'x', cwd: '/' }),
-    ).toBe('use $PATH and $HOME and x');
+    expect(expandBody('use $PATH and $HOME and $ARGUMENTS', { args: 'x', cwd: '/' })).toBe(
+      'use $PATH and $HOME and x',
+    );
   });
 
   it('missing positional becomes empty string', () => {
@@ -61,9 +59,7 @@ describe('expandBody', () => {
     // "$12" should remain literal (no $12 in grammar, no $1 substitution with trailing 2).
     // Use `$1` elsewhere in the body so the template counts as arg-consuming and
     // the fallback append stays out of the frame.
-    expect(expandBody('x=$12 first=$1', { args: 'a b', cwd: '/' })).toBe(
-      'x=$12 first=a',
-    );
+    expect(expandBody('x=$12 first=$1', { args: 'a b', cwd: '/' })).toBe('x=$12 first=a');
   });
 
   it('appends args when the template consumes no arg placeholder', () => {
@@ -74,18 +70,14 @@ describe('expandBody', () => {
   });
 
   it('does not append when args is empty', () => {
-    expect(expandBody('Standalone template.', { args: '', cwd: '/' })).toBe(
-      'Standalone template.',
-    );
+    expect(expandBody('Standalone template.', { args: '', cwd: '/' })).toBe('Standalone template.');
     expect(expandBody('Standalone template.', { args: '   ', cwd: '/' })).toBe(
       'Standalone template.',
     );
   });
 
   it('does not append when template uses $ARGUMENTS', () => {
-    expect(
-      expandBody('body: $ARGUMENTS', { args: 'hello', cwd: '/' }),
-    ).toBe('body: hello');
+    expect(expandBody('body: $ARGUMENTS', { args: 'hello', cwd: '/' })).toBe('body: hello');
   });
 
   it('does not append when template uses any $1-$9 positional', () => {
@@ -94,15 +86,13 @@ describe('expandBody', () => {
 
   it('$CWD/$DATE alone do not suppress the arg append', () => {
     // Template references env-ish scalars but not args — so extra args should still land.
-    expect(expandBody('at $CWD:', { args: 'extra', cwd: '/tmp' })).toBe(
-      'at /tmp:\n\nextra',
-    );
+    expect(expandBody('at $CWD:', { args: 'extra', cwd: '/tmp' })).toBe('at /tmp:\n\nextra');
   });
 
   it('$ARGUMENTS runs before positionals so template can use both', () => {
-    expect(
-      expandBody('all=[$ARGUMENTS] first=[$1]', { args: '"a b" c', cwd: '/' }),
-    ).toBe('all=["a b" c] first=[a b]');
+    expect(expandBody('all=[$ARGUMENTS] first=[$1]', { args: '"a b" c', cwd: '/' })).toBe(
+      'all=["a b" c] first=[a b]',
+    );
   });
 });
 

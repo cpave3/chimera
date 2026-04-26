@@ -1,10 +1,4 @@
-import type {
-  ExecOptions,
-  ExecResult,
-  Executor,
-  PermissionGate,
-  StatResult,
-} from '@chimera/core';
+import type { ExecOptions, ExecResult, Executor, PermissionGate, StatResult } from '@chimera/core';
 import { newRequestId } from '@chimera/core';
 
 export interface GatedExecutorOptions {
@@ -60,11 +54,18 @@ export class GatedExecutor implements Executor {
     if (resolution.decision === 'deny') {
       return {
         stdout: '',
-        stderr: 'denied by user',
+        stderr: denialMessage(resolution.denialSource),
         exitCode: -1,
         timedOut: false,
       };
     }
     return this.inner.exec(cmd, opts);
   }
+}
+
+function denialMessage(source: 'rule' | 'hook' | 'headless' | 'user' | undefined): string {
+  if (source === 'rule') return 'denied by rule';
+  if (source === 'hook') return 'denied by hook';
+  if (source === 'headless') return 'denied by policy';
+  return 'denied by user';
 }

@@ -1,12 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type {
-  ExecOptions,
-  ExecResult,
-  Executor,
-  StatResult,
-} from '@chimera/core';
+import type { ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { PathEscapeError } from './errors';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -158,7 +153,8 @@ export class LocalExecutor implements Executor {
       child.on('close', (code, signal) => {
         clearTimeout(timeoutTimer);
         if (killTimer) clearTimeout(killTimer);
-        const exitCode = code === null ? (signal === 'SIGTERM' || signal === 'SIGKILL' ? -1 : 0) : code;
+        const exitCode =
+          code === null ? (signal === 'SIGTERM' || signal === 'SIGKILL' ? -1 : 0) : code;
         resolvePromise({ stdout, stderr, exitCode, timedOut });
       });
     });

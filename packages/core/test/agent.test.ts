@@ -392,9 +392,7 @@ describe('Agent.pushEvent', () => {
       home,
       contextWindow: 200_000,
     });
-    expect(() =>
-      agent.pushEvent({ type: 'assistant_text_done', text: 'lost' }),
-    ).not.toThrow();
+    expect(() => agent.pushEvent({ type: 'assistant_text_done', text: 'lost' })).not.toThrow();
   });
 });
 

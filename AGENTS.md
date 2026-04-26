@@ -1,5 +1,7 @@
 # AGENTS.md
 
+If the tdd skill is available, use it for all code changes.
+
 Operational notes for agents working on this codebase. User-facing docs are in
 `README.md` and `docs/`. This file targets things that aren't obvious from
 reading the code.
@@ -22,7 +24,21 @@ rebuilding, vitest errors with `Failed to resolve entry for package
 "@chimera/commands"`. This is expected; just build.
 
 Dependency DAG (no back-edges): `cli → tui, server, client, permissions,
-sandbox, tools, providers, commands, skills, core`.
+hooks, sandbox, tools, providers, commands, skills, core`.
+
+## User-home layout: always `~/.chimera/`, never `~/.config/chimera/`
+
+Every piece of Chimera state under the user's home goes in `~/.chimera/`:
+config (`config.json`), sessions, instances, logs, overlays, themes, hooks.
+Do not introduce `~/.config/chimera/` paths — XDG-style placement was
+explicitly rejected for this project (see
+`openspec/changes/add-tui-color-theme-system/design.md` for the original
+ruling). Project-local state mirrors the same name: `<cwd>/.chimera/`.
+
+When adding a new global-state directory, default to
+`join(homedir(), '.chimera', '<thing>')` and accept an override option for
+tests. Grep for existing siblings before adding (`packages/cli/src/config.ts`,
+`packages/core/src/persistence.ts`, etc.).
 
 ## Scripts
 

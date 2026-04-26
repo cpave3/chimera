@@ -38,6 +38,9 @@ importers:
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
+      '@chimera/hooks':
+        specifier: workspace:*
+        version: link:../hooks
       '@chimera/permissions':
         specifier: workspace:*
         version: link:../permissions
@@ -141,11 +144,30 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.27.7))
 
+  packages/hooks:
+    dependencies:
+      '@chimera/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(postcss@8.5.10)(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@25.6.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.27.7))
+
   packages/permissions:
     dependencies:
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
+      '@chimera/hooks':
+        specifier: workspace:*
+        version: link:../hooks
       '@chimera/tools':
         specifier: workspace:*
         version: link:../tools
@@ -211,6 +233,9 @@ importers:
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
+      '@chimera/hooks':
+        specifier: workspace:*
+        version: link:../hooks
       '@chimera/permissions':
         specifier: workspace:*
         version: link:../permissions

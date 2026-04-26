@@ -114,6 +114,7 @@ describe('DefaultPermissionGate', () => {
     const resolution = await gate.request(req({ target: 'host', command: 'rm -rf /' }));
     expect(resolution.decision).toBe('deny');
     expect(resolution.remembered).toBe(false);
+    expect(resolution.denialSource).toBe('headless');
     expect(raised).toBe(0);
   });
 

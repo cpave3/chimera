@@ -71,9 +71,7 @@ describe('GET /v1/sessions/:id/subagents', () => {
     });
     const { sessionId } = await createResponse.json();
 
-    const subagentsResponse = await app.request(
-      `/v1/sessions/${sessionId}/subagents`,
-    );
+    const subagentsResponse = await app.request(`/v1/sessions/${sessionId}/subagents`);
     expect(subagentsResponse.status).toBe(200);
     expect(await subagentsResponse.json()).toEqual([]);
   });
@@ -102,9 +100,7 @@ describe('GET /v1/sessions/:id/subagents', () => {
       purpose: 'investigate logs',
     });
 
-    let subagentsResponse = await app.request(
-      `/v1/sessions/${sessionId}/subagents`,
-    );
+    let subagentsResponse = await app.request(`/v1/sessions/${sessionId}/subagents`);
     let subagentsBody = await subagentsResponse.json();
     expect(subagentsBody).toHaveLength(1);
     expect(subagentsBody[0]).toMatchObject({
@@ -123,9 +119,7 @@ describe('GET /v1/sessions/:id/subagents', () => {
       reason: 'stop',
     });
 
-    subagentsResponse = await app.request(
-      `/v1/sessions/${sessionId}/subagents`,
-    );
+    subagentsResponse = await app.request(`/v1/sessions/${sessionId}/subagents`);
     subagentsBody = await subagentsResponse.json();
     expect(subagentsBody).toEqual([]);
   });
@@ -136,9 +130,7 @@ describe('GET /v1/sessions/:id/subagents', () => {
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
     const app = buildApp({ registry });
-    const unknownResponse = await app.request(
-      '/v1/sessions/no-such/subagents',
-    );
+    const unknownResponse = await app.request('/v1/sessions/no-such/subagents');
     expect(unknownResponse.status).toBe(404);
   });
 });

@@ -32,9 +32,7 @@ export async function runSkillsList(opts: ListSkillsOptions): Promise<void> {
 
   const nameWidth = Math.max(4, ...list.map((s) => s.name.length));
   const srcWidth = Math.max(6, ...list.map((s) => s.source.length));
-  process.stdout.write(
-    `${'NAME'.padEnd(nameWidth)}  ${'SOURCE'.padEnd(srcWidth)}  DESCRIPTION\n`,
-  );
+  process.stdout.write(`${'NAME'.padEnd(nameWidth)}  ${'SOURCE'.padEnd(srcWidth)}  DESCRIPTION\n`);
   for (const s of list) {
     process.stdout.write(
       `${s.name.padEnd(nameWidth)}  ${s.source.padEnd(srcWidth)}  ${s.description}\n`,

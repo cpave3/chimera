@@ -19,10 +19,8 @@ export function readStepUsage(raw: unknown): UsageStep | undefined {
   ) {
     return undefined;
   }
-  const inputTokens =
-    typeof usageObject.inputTokens === 'number' ? usageObject.inputTokens : 0;
-  const outputTokens =
-    typeof usageObject.outputTokens === 'number' ? usageObject.outputTokens : 0;
+  const inputTokens = typeof usageObject.inputTokens === 'number' ? usageObject.inputTokens : 0;
+  const outputTokens = typeof usageObject.outputTokens === 'number' ? usageObject.outputTokens : 0;
   // Prefer the canonical inputTokenDetails.cacheReadTokens; fall back to the
   // deprecated top-level cachedInputTokens for older provider shapes.
   const detailCacheRead = usageObject.inputTokenDetails?.cacheReadTokens;
@@ -72,8 +70,7 @@ export function reconcileFinalUsage(
   if (totalUsage.totalTokens === runDelta.totalTokens) return false;
   usage.inputTokens += totalUsage.inputTokens - runDelta.inputTokens;
   usage.outputTokens += totalUsage.outputTokens - runDelta.outputTokens;
-  usage.cachedInputTokens +=
-    totalUsage.cachedInputTokens - runDelta.cachedInputTokens;
+  usage.cachedInputTokens += totalUsage.cachedInputTokens - runDelta.cachedInputTokens;
   usage.totalTokens += totalUsage.totalTokens - runDelta.totalTokens;
   return true;
 }

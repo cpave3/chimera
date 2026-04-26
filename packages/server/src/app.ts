@@ -100,10 +100,7 @@ export function buildApp(opts: AppOptions): Hono {
       }
       return c.body(null, 204);
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : String(err) },
-        500,
-      );
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
   });
 
@@ -246,7 +243,10 @@ export function buildApp(opts: AppOptions): Hono {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
     const requestId = c.req.param('requestId');
-    if (entry.resolvedPermissionIds.has(requestId) || !entry.agent.hasPendingPermission(requestId)) {
+    if (
+      entry.resolvedPermissionIds.has(requestId) ||
+      !entry.agent.hasPendingPermission(requestId)
+    ) {
       return c.json({ error: 'already resolved' }, 409);
     }
     const body = await c.req.json();

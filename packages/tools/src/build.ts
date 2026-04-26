@@ -27,9 +27,7 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
  * Exported so the CLI factory can fold in dynamically-added tools
  * (e.g. `spawn_agent`) before handing both halves to the agent.
  */
-export function splitDefs(
-  defs: Record<string, ChimeraToolDef<any, any>>,
-): BuildToolsResult {
+export function splitDefs(defs: Record<string, ChimeraToolDef<any, any>>): BuildToolsResult {
   const tools: ToolSet = {};
   const formatters: Record<string, FormatScrollback<any, any>> = {};
   for (const [name, def] of Object.entries(defs)) {

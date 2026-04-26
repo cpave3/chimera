@@ -100,15 +100,11 @@ describe('disk-aware session routes', () => {
       sessionId: string;
     };
 
-    const list = (await (
-      await app.request('/v1/sessions')
-    ).json()) as Array<{
+    const list = (await (await app.request('/v1/sessions')).json()) as Array<{
       id: string;
     }>;
     const persistedIds = list.map((entry) => entry.id).sort();
-    expect(persistedIds).toEqual(
-      [firstSession.sessionId, secondSession.sessionId].sort(),
-    );
+    expect(persistedIds).toEqual([firstSession.sessionId, secondSession.sessionId].sort());
   });
 
   it('cache invalidates on create / fork / delete', async () => {
@@ -117,9 +113,7 @@ describe('disk-aware session routes', () => {
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
     const app = buildApp({ registry, home });
-    const initialList = (await (
-      await app.request('/v1/sessions')
-    ).json()) as Array<unknown>;
+    const initialList = (await (await app.request('/v1/sessions')).json()) as Array<unknown>;
     expect(initialList).toHaveLength(0);
 
     const createResponse = await app.request('/v1/sessions', {
@@ -129,9 +123,7 @@ describe('disk-aware session routes', () => {
     });
     const { sessionId } = (await createResponse.json()) as { sessionId: string };
 
-    const listAfterCreate = (await (
-      await app.request('/v1/sessions')
-    ).json()) as Array<unknown>;
+    const listAfterCreate = (await (await app.request('/v1/sessions')).json()) as Array<unknown>;
     expect(listAfterCreate).toHaveLength(1);
 
     const forkResponse = await app.request(`/v1/sessions/${sessionId}/fork`, {
@@ -140,9 +132,7 @@ describe('disk-aware session routes', () => {
       body: '{}',
     });
     expect(forkResponse.status).toBe(201);
-    const listAfterFork = (await (
-      await app.request('/v1/sessions')
-    ).json()) as Array<unknown>;
+    const listAfterFork = (await (await app.request('/v1/sessions')).json()) as Array<unknown>;
     expect(listAfterFork).toHaveLength(2);
   });
 
@@ -194,14 +184,11 @@ describe('disk-aware session routes', () => {
     const freshApp = buildApp({ registry: freshRegistry, home });
     expect(freshRegistry.get(sessionId)).toBeNull();
 
-    const resumeResponse = await freshApp.request(
-      `/v1/sessions/${sessionId}/resume`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-      },
-    );
+    const resumeResponse = await freshApp.request(`/v1/sessions/${sessionId}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
     expect(resumeResponse.status).toBe(200);
     const resumeBody = (await resumeResponse.json()) as { sessionId: string };
     expect(resumeBody.sessionId).toBe(sessionId);
@@ -237,8 +224,10 @@ describe('disk-aware session routes', () => {
       body: JSON.stringify({ purpose: 'try alt' }),
     });
     expect(forkResponse.status).toBe(201);
-    const { sessionId: childId, parentId: returnedParentId } =
-      (await forkResponse.json()) as { sessionId: string; parentId: string };
+    const { sessionId: childId, parentId: returnedParentId } = (await forkResponse.json()) as {
+      sessionId: string;
+      parentId: string;
+    };
     expect(returnedParentId).toBe(parentId);
     expect(childId).not.toBe(parentId);
 
@@ -287,14 +276,11 @@ describe('disk-aware session routes', () => {
     });
     const app = buildApp({ registry, home });
     // Use a syntactically valid ULID (26 chars Crockford base32) that's never been created
-    const resumeResponse = await app.request(
-      '/v1/sessions/01HZZZZZZZZZZZZZZZZZZZZZZZ/resume',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-      },
-    );
+    const resumeResponse = await app.request('/v1/sessions/01HZZZZZZZZZZZZZZZZZZZZZZZ/resume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
     expect(resumeResponse.status).toBe(404);
   });
 
@@ -303,9 +289,7 @@ describe('disk-aware session routes', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'overlay' },
     });
-    let onForkCalled:
-      | { parentId: string; childId: string; mode: string }
-      | null = null;
+    let onForkCalled: { parentId: string; childId: string; mode: string } | null = null;
     const app = buildApp({
       registry,
       home,
@@ -356,14 +340,11 @@ describe('disk-aware session routes', () => {
     // DELETE so we can verify post-DELETE that `registry.delete` actually
     // awaited the run (its `finally` block nulls `activeRun` only after the
     // run settles).
-    const sendResponse = await app.request(
-      `/v1/sessions/${sessionId}/messages`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: 'hi' }),
-      },
-    );
+    const sendResponse = await app.request(`/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'hi' }),
+    });
     expect(sendResponse.status).toBe(202);
     const entry = registry.get(sessionId)!;
     expect(entry).not.toBeNull();
@@ -387,8 +368,6 @@ describe('disk-aware session routes', () => {
     // and the directory must already be gone — there's no way for a stray
     // appendFile to recreate it after this point.
     const { existsSync } = await import('node:fs');
-    expect(
-      existsSync(join(home, '.chimera', 'sessions', sessionId)),
-    ).toBe(false);
+    expect(existsSync(join(home, '.chimera', 'sessions', sessionId))).toBe(false);
   });
 });

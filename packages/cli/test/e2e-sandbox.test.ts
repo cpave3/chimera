@@ -52,10 +52,7 @@ describeDocker('sandbox E2E (Docker-gated)', () => {
   });
 
   afterAll(() => {
-    spawnSync('sh', [
-      '-c',
-      'docker ps -aq --filter "name=chimera-e2e-" | xargs -r docker rm -f',
-    ]);
+    spawnSync('sh', ['-c', 'docker ps -aq --filter "name=chimera-e2e-" | xargs -r docker rm -f']);
   });
 
   function track(d: DockerExecutor): DockerExecutor {
@@ -78,96 +75,85 @@ describeDocker('sandbox E2E (Docker-gated)', () => {
     expect(r.stdout).toMatch(/hello-sandbox/);
   });
 
-  it(
-    '11.2 overlay apply: rsync brings sandbox writes back to the host',
-    { timeout: 90000 },
-    async () => {
-      const sessionId = `e2e-overlay-apply-${Date.now()}`;
-      const docker = track(
-        new DockerExecutor({
-          image: SANDBOX_IMAGE,
-          mode: 'overlay',
-          sessionId,
-          hostCwd: workspace,
-          overlaysHome,
-        }),
-      );
-      await docker.start();
-      // Skip if the host kernel/Docker doesn't support overlayfs in containers.
-      if (docker.mode() !== 'overlay') {
-        return;
-      }
-      const w = await docker.exec("sh -c 'echo applied > /workspace/from-overlay.txt'");
-      expect(w.exitCode).toBe(0);
-      // Nothing on host yet.
-      expect(existsSync(join(workspace, 'from-overlay.txt'))).toBe(false);
+  it('11.2 overlay apply: rsync brings sandbox writes back to the host', {
+    timeout: 90000,
+  }, async () => {
+    const sessionId = `e2e-overlay-apply-${Date.now()}`;
+    const docker = track(
+      new DockerExecutor({
+        image: SANDBOX_IMAGE,
+        mode: 'overlay',
+        sessionId,
+        hostCwd: workspace,
+        overlaysHome,
+      }),
+    );
+    await docker.start();
+    // Skip if the host kernel/Docker doesn't support overlayfs in containers.
+    if (docker.mode() !== 'overlay') {
+      return;
+    }
+    const w = await docker.exec("sh -c 'echo applied > /workspace/from-overlay.txt'");
+    expect(w.exitCode).toBe(0);
+    // Nothing on host yet.
+    expect(existsSync(join(workspace, 'from-overlay.txt'))).toBe(false);
 
-      await applyOverlay(sessionId, workspace, undefined, { overlaysHome });
-      expect(readFileSync(join(workspace, 'from-overlay.txt'), 'utf8')).toMatch(
-        /applied/,
-      );
-    },
-  );
+    await applyOverlay(sessionId, workspace, undefined, { overlaysHome });
+    expect(readFileSync(join(workspace, 'from-overlay.txt'), 'utf8')).toMatch(/applied/);
+  });
 
-  it(
-    '11.3 overlay discard: writes do NOT appear on host',
-    { timeout: 90000 },
-    async () => {
-      const sessionId = `e2e-overlay-discard-${Date.now()}`;
-      const docker = track(
-        new DockerExecutor({
-          image: SANDBOX_IMAGE,
-          mode: 'overlay',
-          sessionId,
-          hostCwd: workspace,
-          overlaysHome,
-        }),
-      );
-      await docker.start();
-      if (docker.mode() !== 'overlay') return;
+  it('11.3 overlay discard: writes do NOT appear on host', { timeout: 90000 }, async () => {
+    const sessionId = `e2e-overlay-discard-${Date.now()}`;
+    const docker = track(
+      new DockerExecutor({
+        image: SANDBOX_IMAGE,
+        mode: 'overlay',
+        sessionId,
+        hostCwd: workspace,
+        overlaysHome,
+      }),
+    );
+    await docker.start();
+    if (docker.mode() !== 'overlay') return;
 
-      await docker.exec("sh -c 'echo nope > /workspace/should-not-apply.txt'");
-      await docker.stop();
-      await discardOverlay(sessionId, { overlaysHome });
+    await docker.exec("sh -c 'echo nope > /workspace/should-not-apply.txt'");
+    await docker.stop();
+    await discardOverlay(sessionId, { overlaysHome });
 
-      expect(existsSync(join(workspace, 'should-not-apply.txt'))).toBe(false);
-      const { root } = overlayPaths(sessionId, overlaysHome);
-      expect(existsSync(root)).toBe(false);
-    },
-  );
+    expect(existsSync(join(workspace, 'should-not-apply.txt'))).toBe(false);
+    const { root } = overlayPaths(sessionId, overlaysHome);
+    expect(existsSync(root)).toBe(false);
+  });
 
-  it(
-    '11.4 ephemeral: tmpfs upperdir, no host writes, no overlays-home entry',
-    { timeout: 60000 },
-    async () => {
-      const sessionId = `e2e-ephemeral-${Date.now()}`;
-      const docker = track(
-        new DockerExecutor({
-          image: SANDBOX_IMAGE,
-          mode: 'ephemeral',
-          sessionId,
-          hostCwd: workspace,
-          overlaysHome,
-        }),
-      );
-      await docker.start();
-      if (docker.mode() !== 'ephemeral') return;
+  it('11.4 ephemeral: tmpfs upperdir, no host writes, no overlays-home entry', {
+    timeout: 60000,
+  }, async () => {
+    const sessionId = `e2e-ephemeral-${Date.now()}`;
+    const docker = track(
+      new DockerExecutor({
+        image: SANDBOX_IMAGE,
+        mode: 'ephemeral',
+        sessionId,
+        hostCwd: workspace,
+        overlaysHome,
+      }),
+    );
+    await docker.start();
+    if (docker.mode() !== 'ephemeral') return;
 
-      await docker.exec("sh -c 'echo gone > /workspace/transient.txt'");
-      // Visible inside the container.
-      const inside = await docker.exec('cat /workspace/transient.txt');
-      expect(inside.stdout).toMatch(/gone/);
+    await docker.exec("sh -c 'echo gone > /workspace/transient.txt'");
+    // Visible inside the container.
+    const inside = await docker.exec('cat /workspace/transient.txt');
+    expect(inside.stdout).toMatch(/gone/);
 
-      // Nothing on host.
-      expect(existsSync(join(workspace, 'transient.txt'))).toBe(false);
-      // No upperdir on host.
-      const root = defaultOverlaysHome(home);
-      // overlaysHome was passed explicitly so the default location stays empty,
-      // and the explicit one only ever sees a directory once we use overlay,
-      // not ephemeral.
-      void root;
-      expect(existsSync(join(overlaysHome, sessionId))).toBe(false);
-    },
-  );
-
+    // Nothing on host.
+    expect(existsSync(join(workspace, 'transient.txt'))).toBe(false);
+    // No upperdir on host.
+    const root = defaultOverlaysHome(home);
+    // overlaysHome was passed explicitly so the default location stays empty,
+    // and the explicit one only ever sees a directory once we use overlay,
+    // not ephemeral.
+    void root;
+    expect(existsSync(join(overlaysHome, sessionId))).toBe(false);
+  });
 });

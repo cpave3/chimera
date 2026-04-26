@@ -8,8 +8,10 @@ import type {
   Session,
   SessionId,
 } from '@chimera/core';
+import type { HookRunner } from '@chimera/hooks';
 import type { Skill } from '@chimera/skills';
 import { EventBus } from './event-bus';
+import { bridgeHooksToBus } from './hook-bridge';
 
 export interface SessionInit {
   cwd: string;
@@ -27,6 +29,13 @@ export interface SessionInit {
 export interface BuildResult {
   agent: Agent;
   gate?: PermissionGate;
+  /**
+   * Lifecycle-hook runner for this session. The registry wires it into the
+   * event bus (firing UserPromptSubmit / PostToolUse / Stop) and fires
+   * SessionEnd from `delete()`. Optional — factories that don't supply one
+   * (e.g., subagent test factories) skip hook integration entirely.
+   */
+  hookRunner?: HookRunner;
 }
 
 export interface SubagentInfo {
@@ -40,6 +49,7 @@ export interface SubagentInfo {
 export interface AgentEntry {
   agent: Agent;
   gate?: PermissionGate;
+  hookRunner?: HookRunner;
   bus: EventBus;
   runActive: boolean;
   /**
@@ -72,13 +82,9 @@ export interface AgentFactory {
   build(init: SessionInit): Promise<BuildResult>;
 }
 
-export interface CommandsLoader {
-  (ctx: { cwd: string }): Command[];
-}
+export type CommandsLoader = (ctx: { cwd: string }) => Command[];
 
-export interface SkillsLoader {
-  (ctx: { cwd: string }): Skill[];
-}
+export type SkillsLoader = (ctx: { cwd: string }) => Skill[];
 
 export interface AgentRegistryOptions {
   factory: AgentFactory;
@@ -108,7 +114,7 @@ export class AgentRegistry {
   }
 
   async create(init: SessionInit): Promise<{ sessionId: SessionId; entry: AgentEntry }> {
-    const { agent, gate } = await this.factory.build(init);
+    const { agent, gate, hookRunner } = await this.factory.build(init);
     const bus = new EventBus(agent.session.id);
     const commands = this.loadCommands ? this.loadCommands({ cwd: init.cwd }) : [];
     const skills = this.loadSkills ? this.loadSkills({ cwd: init.cwd }) : [];
@@ -116,6 +122,7 @@ export class AgentRegistry {
     const entry: AgentEntry = {
       agent,
       gate,
+      hookRunner,
       bus,
       runActive: false,
       activeRun: null,
@@ -124,6 +131,9 @@ export class AgentRegistry {
       skills,
       subagents,
     };
+    if (hookRunner) {
+      bridgeHooksToBus(bus, hookRunner);
+    }
     bus.subscribe((env) => {
       if (env.type === 'subagent_spawned') {
         subagents.set(env.subagentId, {
@@ -162,6 +172,13 @@ export class AgentRegistry {
         await entry.activeRun;
       } catch {
         // run errors already surfaced via the event bus; we only need it done
+      }
+    }
+    if (entry.hookRunner) {
+      try {
+        await entry.hookRunner.fire({ event: 'SessionEnd' });
+      } catch {
+        // Hook failures must not abort the session lifecycle.
       }
     }
     this.entries.delete(id);

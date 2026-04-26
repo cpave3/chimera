@@ -21,7 +21,7 @@ describe('parseFrontmatter', () => {
   });
 
   it('unquotes single- and double-quoted values', () => {
-    const parsed = parseFrontmatter("---\na: \"hi\"\nb: 'lo'\n---\n");
+    const parsed = parseFrontmatter('---\na: "hi"\nb: \'lo\'\n---\n');
     expect(parsed.frontmatter).toEqual({ a: 'hi', b: 'lo' });
   });
 

@@ -1,17 +1,9 @@
 import { dirname } from 'node:path';
-import {
-  Agent,
-  composeSystemPrompt,
-  loadSession,
-  writeSessionMetadata,
-} from '@chimera/core';
+import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
 import type { Executor, SessionId } from '@chimera/core';
+import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
 import { DefaultPermissionGate, GatedExecutor, type AutoApproveLevel } from '@chimera/permissions';
-import {
-  loadProviders,
-  resolveContextWindow,
-  type ProvidersConfig,
-} from '@chimera/providers';
+import { loadProviders, resolveContextWindow, type ProvidersConfig } from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
@@ -93,19 +85,13 @@ export class CliAgentFactory implements AgentFactory {
     });
 
     const skillsReg = this.skills;
-    const extensions = skillsReg
-      ? [() => skillsReg.buildIndex() || null]
-      : undefined;
-    const skillActivation = skillsReg
-      ? buildSkillActivationLookup(skillsReg, init.cwd)
-      : undefined;
+    const extensions = skillsReg ? [() => skillsReg.buildIndex() || null] : undefined;
+    const skillActivation = skillsReg ? buildSkillActivationLookup(skillsReg, init.cwd) : undefined;
 
     // Skills often live outside cwd (e.g. `~/.claude/skills/tdd/`). Allow
     // read access to each resolved skill's directory so the model can
     // read the SKILL.md itself and any peer scripts bundled with it.
-    const readAllowDirs = skillsReg
-      ? skillsReg.all().map((s) => dirname(s.path))
-      : undefined;
+    const readAllowDirs = skillsReg ? skillsReg.all().map((s) => dirname(s.path)) : undefined;
     const local = new LocalExecutor({ cwd: init.cwd, readAllowDirs });
 
     // Build agent first so we can wire its raisePermissionRequest into the gate.
@@ -137,11 +123,19 @@ export class CliAgentFactory implements AgentFactory {
       // best-effort
     }
 
+    const hookRunner: HookRunner = new DefaultHookRunner({
+      cwd: init.cwd,
+      sessionId: agent.session.id,
+    });
+
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
       autoApprove: this.autoApprove,
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
+      hookRunner,
+      emitResolved: (requestId, decision, remembered) =>
+        agent.emitPermissionResolved(requestId, decision, remembered),
     });
 
     // Wire remember handler so resolvePermission's `remember` arg persists a rule.
@@ -149,9 +143,8 @@ export class CliAgentFactory implements AgentFactory {
       gate.applyRemember(scope, req, 'allow');
     });
 
-    const hostExecutor = this.autoApprove === 'all'
-      ? local
-      : new GatedExecutor({ inner: local, gate });
+    const hostExecutor =
+      this.autoApprove === 'all' ? local : new GatedExecutor({ inner: local, gate });
 
     let sandboxExecutor: Executor = local;
     if (this.sandbox?.enabled && init.sandboxMode !== 'off') {
@@ -194,16 +187,14 @@ export class CliAgentFactory implements AgentFactory {
         parentSessionId: agent.session.id,
         cwd: init.cwd,
         defaultModelRef:
-          this.subagents.defaultModelRef ??
-          `${init.model.providerId}/${init.model.modelId}`,
+          this.subagents.defaultModelRef ?? `${init.model.providerId}/${init.model.modelId}`,
         sandboxMode: init.sandboxMode,
         autoApprove: this.autoApprove,
         currentDepth: this.subagents.currentDepth ?? 0,
         maxDepth: this.subagents.maxDepth ?? 3,
         chimeraBin: this.subagents.chimeraBin ?? invocation.bin,
         chimeraBinArgs: invocation.preArgs,
-        parentHasTty:
-          this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
+        parentHasTty: this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
       });
       tools.spawn_agent = spawn.tool;
       if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
@@ -212,7 +203,7 @@ export class CliAgentFactory implements AgentFactory {
     agent.setTools(tools);
     agent.setToolFormatters(formatters);
 
-    return { agent, gate };
+    return { agent, gate, hookRunner };
   }
 
   /** Live DockerExecutor for a session, if sandbox is on. */

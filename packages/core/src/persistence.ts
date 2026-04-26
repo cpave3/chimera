@@ -13,13 +13,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { PersistedEvent } from './events';
 import { newSessionId, type SessionId } from './ids';
-import {
-  emptyUsage,
-  type ModelConfig,
-  type SandboxMode,
-  type Session,
-  type Usage,
-} from './types';
+import { emptyUsage, type ModelConfig, type SandboxMode, type Session, type Usage } from './types';
 
 export function sessionsDir(home = homedir()): string {
   return join(home, '.chimera', 'sessions');
@@ -63,10 +57,7 @@ function toMetadata(session: Session): SessionMetadata {
 
 let tmpCounter = 0;
 
-export async function writeSessionMetadata(
-  session: Session,
-  home = homedir(),
-): Promise<void> {
+export async function writeSessionMetadata(session: Session, home = homedir()): Promise<void> {
   const path = sessionMetadataPath(session.id, home);
   await mkdir(dirname(path), { recursive: true });
   // Per-call counter prevents tmp-name collisions when multiple writes
@@ -105,10 +96,7 @@ export async function persistSession(
   ]);
 }
 
-export async function loadSession(
-  sessionId: SessionId,
-  home = homedir(),
-): Promise<Session> {
+export async function loadSession(sessionId: SessionId, home = homedir()): Promise<Session> {
   const metaPath = sessionMetadataPath(sessionId, home);
   const raw = await readFile(metaPath, 'utf8');
   const parsed = JSON.parse(raw) as Partial<SessionMetadata> & {
@@ -138,9 +126,7 @@ export async function loadSession(
     },
     sandboxMode: (parsed.sandboxMode as SandboxMode) ?? 'off',
     usage:
-      parsed.usage && typeof parsed.usage === 'object'
-        ? (parsed.usage as Usage)
-        : emptyUsage(),
+      parsed.usage && typeof parsed.usage === 'object' ? (parsed.usage as Usage) : emptyUsage(),
   };
 
   const snapshot = await readLatestStepSnapshot(sessionId, home);
@@ -182,13 +168,9 @@ async function readLatestStepSnapshot(
       const isLast = i === lines.length - 1;
       const where = `${path}:${i + 1}`;
       if (isLast) {
-        process.stderr.write(
-          `[chimera] warn: skipping malformed trailing line at ${where}\n`,
-        );
+        process.stderr.write(`[chimera] warn: skipping malformed trailing line at ${where}\n`);
       } else {
-        process.stderr.write(
-          `[chimera] warn: skipping malformed line at ${where}\n`,
-        );
+        process.stderr.write(`[chimera] warn: skipping malformed line at ${where}\n`);
       }
       continue;
     }
@@ -349,17 +331,11 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
   return out;
 }
 
-async function countLatestMessageCount(
-  sessionId: SessionId,
-  home: string,
-): Promise<number> {
+async function countLatestMessageCount(sessionId: SessionId, home: string): Promise<number> {
   const snap = await readLatestStepSnapshot(sessionId, home);
   return snap ? snap.messages.length : 0;
 }
 
-export async function deleteSession(
-  sessionId: SessionId,
-  home = homedir(),
-): Promise<void> {
+export async function deleteSession(sessionId: SessionId, home = homedir()): Promise<void> {
   await rm(sessionDir(sessionId, home), { recursive: true, force: true });
 }

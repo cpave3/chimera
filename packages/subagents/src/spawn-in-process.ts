@@ -3,10 +3,7 @@ import type { InProcessAgentBuilder } from './types';
 
 export interface InProcessHandle {
   childSessionId: SessionId;
-  send: (
-    prompt: string,
-    opts?: { signal?: AbortSignal },
-  ) => AsyncIterable<AgentEvent>;
+  send: (prompt: string, opts?: { signal?: AbortSignal }) => AsyncIterable<AgentEvent>;
   interrupt: () => void;
   dispose: () => Promise<void>;
 }

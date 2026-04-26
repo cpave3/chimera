@@ -33,9 +33,7 @@ describe('LocalExecutor', () => {
 
   it('throws PathEscapeError on ../ traversal', async () => {
     const exec = new LocalExecutor({ cwd: root });
-    await expect(exec.writeFile('../outside.txt', 'x')).rejects.toBeInstanceOf(
-      PathEscapeError,
-    );
+    await expect(exec.writeFile('../outside.txt', 'x')).rejects.toBeInstanceOf(PathEscapeError);
   });
 
   it('stat returns null for missing files', async () => {
@@ -98,9 +96,9 @@ describe('LocalExecutor', () => {
       const allowed = join(outside, 'pdf');
       await mkdir(allowed);
       const exec = new LocalExecutor({ cwd: root, readAllowDirs: [allowed] });
-      await expect(
-        exec.writeFile(join(allowed, 'new.txt'), 'x'),
-      ).rejects.toBeInstanceOf(PathEscapeError);
+      await expect(exec.writeFile(join(allowed, 'new.txt'), 'x')).rejects.toBeInstanceOf(
+        PathEscapeError,
+      );
     } finally {
       await rm(outside, { recursive: true, force: true });
     }

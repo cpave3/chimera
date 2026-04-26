@@ -1,8 +1,4 @@
-import {
-  loadCommands,
-  ReloadingCommandRegistry,
-  type CommandRegistry,
-} from '@chimera/commands';
+import { loadCommands, ReloadingCommandRegistry, type CommandRegistry } from '@chimera/commands';
 import type { ChimeraConfig } from './config';
 
 export interface LoadRegistryOpts {
@@ -31,8 +27,7 @@ export function loadCommandsFromConfig(opts: LoadRegistryOpts): CommandRegistry 
   const enabled = opts.config.commands?.enabled !== false;
   if (!enabled) return EMPTY_REGISTRY;
 
-  const claudeCompat =
-    opts.claudeCompatOverride ?? opts.config.commands?.claudeCompat ?? true;
+  const claudeCompat = opts.claudeCompatOverride ?? opts.config.commands?.claudeCompat ?? true;
 
   return loadCommands({
     cwd: opts.cwd,
@@ -48,14 +43,11 @@ export function loadCommandsFromConfig(opts: LoadRegistryOpts): CommandRegistry 
  * `close()` when the TUI exits. When commands are disabled via config, returns
  * the shared empty registry (no watcher installed).
  */
-export function loadReloadingCommandsFromConfig(
-  opts: LoadRegistryOpts,
-): CommandRegistry {
+export function loadReloadingCommandsFromConfig(opts: LoadRegistryOpts): CommandRegistry {
   const enabled = opts.config.commands?.enabled !== false;
   if (!enabled) return EMPTY_REGISTRY;
 
-  const claudeCompat =
-    opts.claudeCompatOverride ?? opts.config.commands?.claudeCompat ?? true;
+  const claudeCompat = opts.claudeCompatOverride ?? opts.config.commands?.claudeCompat ?? true;
 
   return new ReloadingCommandRegistry({
     cwd: opts.cwd,

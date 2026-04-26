@@ -2,10 +2,7 @@ import type { Session, ToolCallRecord } from '@chimera/core';
 import { describe, expect, it } from 'vitest';
 import { Scrollback } from '../src/scrollback';
 
-function rehydrate(
-  messages: unknown[],
-  toolCalls: ToolCallRecord[] = [],
-) {
+function rehydrate(messages: unknown[], toolCalls: ToolCallRecord[] = []) {
   const scrollback = new Scrollback();
   scrollback.rehydrateFromSession({
     messages,

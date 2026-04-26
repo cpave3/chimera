@@ -118,7 +118,9 @@ describe('chimera run E2E (stub provider)', () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it('bash tool call round-trip: model invokes echo, loop continues, exits 0', { timeout: 20000 }, async () => {
+  it('bash tool call round-trip: model invokes echo, loop continues, exits 0', {
+    timeout: 20000,
+  }, async () => {
     const factory: AgentFactory = {
       build: async (init) => {
         const executor = new LocalExecutor({ cwd: init.cwd });

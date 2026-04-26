@@ -141,9 +141,7 @@ export class Scrollback {
         // `{ type: 'json', value: <obj> }`, `{ type: 'text', value: '...' }`,
         // `{ type: 'error-json' | 'error-text', value: ... }`, etc. — so we
         // unwrap the inner value before handing it to scrollback.
-        const parts: LoosePart[] = Array.isArray(msg.content)
-          ? (msg.content as LoosePart[])
-          : [];
+        const parts: LoosePart[] = Array.isArray(msg.content) ? (msg.content as LoosePart[]) : [];
         for (const part of parts) {
           if (part.type !== 'tool-result') continue;
           const callId = part.toolCallId as string | undefined;
@@ -163,7 +161,6 @@ export class Scrollback {
             });
           }
         }
-        continue;
       }
     }
   }
@@ -281,10 +278,7 @@ export class Scrollback {
         this.subagentToolsByCallId.delete(ev.subagentId);
         return;
       }
-      const summary =
-        ev.reason === 'stop'
-          ? 'subagent finished'
-          : `subagent ${ev.reason}`;
+      const summary = ev.reason === 'stop' ? 'subagent finished' : `subagent ${ev.reason}`;
       this.entries.push({
         id: this.newId(),
         kind: 'subagent',
@@ -310,12 +304,10 @@ export class Scrollback {
         return;
       }
       if (inner.type === 'tool_call_start') {
-        const childTarget =
-          inner.target === 'host' ? ' [host]' : '';
-        const text =
-          inner.display?.summary
-            ? `${inner.name}: ${inner.display.summary}${childTarget}`
-            : `${inner.name}${childTarget}`;
+        const childTarget = inner.target === 'host' ? ' [host]' : '';
+        const text = inner.display?.summary
+          ? `${inner.name}: ${inner.display.summary}${childTarget}`
+          : `${inner.name}${childTarget}`;
         const entry: ScrollbackEntry = {
           id: this.newId(),
           kind: 'subagent',
@@ -339,8 +331,7 @@ export class Scrollback {
         const map = this.subagentToolsByCallId.get(id);
         const entry = map?.get(inner.callId);
         if (entry && inner.display) {
-          const targetTag =
-            entry.text.endsWith('[host]') ? ' [host]' : '';
+          const targetTag = entry.text.endsWith('[host]') ? ' [host]' : '';
           entry.text = `${entry.toolName}: ${inner.display.summary}${targetTag}`;
           entry.detail = inner.display.detail;
           entry.toolResult = inner.result;
@@ -463,11 +454,7 @@ function extractText(content: unknown): string {
   if (!Array.isArray(content)) return '';
   const parts: string[] = [];
   for (const part of content) {
-    if (
-      part &&
-      typeof part === 'object' &&
-      (part as { type?: string }).type === 'text'
-    ) {
+    if (part && typeof part === 'object' && (part as { type?: string }).type === 'text') {
       const t = (part as { text?: unknown }).text;
       if (typeof t === 'string') parts.push(t);
     }

@@ -45,7 +45,9 @@ async function type(stdin: NodeJS.WritableStream, text: string): Promise<void> {
 
 describe('slash menu', () => {
   it('opens when you type "/s" and lists matching built-ins + user commands', async () => {
-    const commandRegistry = buildCommandRegistry([{ name: 'summarize', body: 'S $ARGUMENTS', description: 'sum' }]);
+    const commandRegistry = buildCommandRegistry([
+      { name: 'summarize', body: 'S $ARGUMENTS', description: 'sum' },
+    ]);
     const { lastFrame, stdin, unmount } = render(
       <App client={stub()} sessionId="s" modelRef="m/m" cwd="/tmp" commands={commandRegistry} />,
     );

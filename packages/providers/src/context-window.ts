@@ -38,9 +38,9 @@ const TABLE: Record<ProviderShape, Record<string, number>> = {
     'gpt-4o': 128_000,
     'gpt-4o-mini': 128_000,
     // o-series reasoning
-    'o1': 200_000,
+    o1: 200_000,
     'o1-mini': 128_000,
-    'o3': 200_000,
+    o3: 200_000,
     'o3-mini': 200_000,
     'o4-mini': 200_000,
   },
@@ -70,9 +70,7 @@ export interface ResolvedContextWindow {
   source: ContextWindowSource;
 }
 
-export function resolveContextWindow(
-  opts: ResolveContextWindowOptions,
-): ResolvedContextWindow {
+export function resolveContextWindow(opts: ResolveContextWindowOptions): ResolvedContextWindow {
   if (typeof opts.override === 'number' && opts.override > 0) {
     return { value: opts.override, source: 'override' };
   }
@@ -95,10 +93,7 @@ export function resolveContextWindow(
   return { value: CONTEXT_WINDOW_FALLBACK, source: 'fallback' };
 }
 
-function longestPrefixMatch(
-  table: Record<string, number>,
-  modelId: string,
-): number | undefined {
+function longestPrefixMatch(table: Record<string, number>, modelId: string): number | undefined {
   let best: { key: string; value: number } | undefined;
   for (const key of Object.keys(table)) {
     if (modelId.startsWith(key) && (best === undefined || key.length > best.key.length)) {

@@ -99,10 +99,7 @@ describe('loadCommands discovery', () => {
   it('loads a namespaced command from a .claude/commands subdirectory', async () => {
     const cwd = join(home, 'nested-claude');
     await mkdir(join(cwd, '.claude', 'commands', 'opsx'), { recursive: true });
-    await writeFile(
-      join(cwd, '.claude', 'commands', 'opsx', 'explore.md'),
-      'explore template',
-    );
+    await writeFile(join(cwd, '.claude', 'commands', 'opsx', 'explore.md'), 'explore template');
 
     const registry = loadCommands({ cwd, userHome: home });
     const command = registry.find('opsx:explore');

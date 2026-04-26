@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "chimera": "./dist/bin.js"
@@ -27,6 +26,7 @@
     "@chimera/client": "workspace:*",
     "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
+    "@chimera/hooks": "workspace:*",
     "@chimera/permissions": "workspace:*",
     "@chimera/providers": "workspace:*",
     "@chimera/sandbox": "workspace:*",

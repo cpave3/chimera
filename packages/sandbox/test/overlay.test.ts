@@ -80,12 +80,7 @@ describe('diffOverlay / applyOverlay', () => {
     const runner = {
       run: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
     };
-    await applyOverlay(
-      SESSION,
-      hostCwd,
-      { paths: ['src/a.ts', 'b.ts'] },
-      { overlaysHome, runner },
-    );
+    await applyOverlay(SESSION, hostCwd, { paths: ['src/a.ts', 'b.ts'] }, { overlaysHome, runner });
     const args = runner.run.mock.calls[0]![0] as string[];
     expect(args.slice(0, 2)).toEqual(['-a', '--delete']);
     expect(args).toContain('--include');
@@ -160,9 +155,7 @@ describe('forkOverlay', () => {
         exitCode: 23,
       }),
     };
-    await expect(
-      forkOverlay('p', 'c', { overlaysHome, runner }),
-    ).resolves.not.toThrow();
+    await expect(forkOverlay('p', 'c', { overlaysHome, runner })).resolves.not.toThrow();
   });
 
   it('throws on other non-zero exit codes', async () => {
@@ -173,8 +166,6 @@ describe('forkOverlay', () => {
         exitCode: 12,
       }),
     };
-    await expect(
-      forkOverlay('p', 'c', { overlaysHome, runner }),
-    ).rejects.toThrow(/forkOverlay/);
+    await expect(forkOverlay('p', 'c', { overlaysHome, runner })).rejects.toThrow(/forkOverlay/);
   });
 });

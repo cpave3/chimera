@@ -80,18 +80,11 @@ function itemInlineTokens(item: Tokens.ListItem): Tokens.Generic[] {
   return out;
 }
 
-function renderInline(
-  tokens: Tokens.Generic[],
-  theme: Theme,
-): React.ReactNode[] {
+function renderInline(tokens: Tokens.Generic[], theme: Theme): React.ReactNode[] {
   return tokens.map((tok, i) => renderInlineToken(tok, theme, i));
 }
 
-function renderInlineToken(
-  tok: Tokens.Generic,
-  theme: Theme,
-  key: number,
-): React.ReactNode {
+function renderInlineToken(tok: Tokens.Generic, theme: Theme, key: number): React.ReactNode {
   if (tok.type === 'text') {
     return <React.Fragment key={key}>{(tok as Tokens.Text).text}</React.Fragment>;
   }

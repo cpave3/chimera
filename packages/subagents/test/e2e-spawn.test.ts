@@ -71,15 +71,7 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
   it('11.3 chimera serve --machine-handshake produces a parseable ready line and ChimeraClient can talk to /healthz', async () => {
     const proc = spawn(
       process.execPath,
-      [
-        CLI_BIN,
-        'serve',
-        '--machine-handshake',
-        '--cwd',
-        cwd,
-        '--auto-approve',
-        'host',
-      ],
+      [CLI_BIN, 'serve', '--machine-handshake', '--cwd', cwd, '--auto-approve', 'host'],
       {
         cwd,
         env: { ...process.env, HOME: home },
@@ -113,9 +105,7 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
       expect(subs).toEqual([]);
     } catch (err) {
       // Surface stderr to make E2E diagnostics tractable.
-      throw new Error(
-        `${(err as Error).message}\n--- child stderr ---\n${stderrBuf}`,
-      );
+      throw new Error(`${(err as Error).message}\n--- child stderr ---\n${stderrBuf}`);
     } finally {
       try {
         proc.kill('SIGTERM');

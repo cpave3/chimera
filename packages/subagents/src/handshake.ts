@@ -8,7 +8,10 @@ export interface HandshakeMessage {
 }
 
 export class HandshakeError extends Error {
-  constructor(message: string, readonly diagnostic?: string) {
+  constructor(
+    message: string,
+    readonly diagnostic?: string,
+  ) {
     super(message);
     this.name = 'HandshakeError';
   }
@@ -24,10 +27,7 @@ export class HandshakeError extends Error {
  * On success the stream is left in a half-drained state — callers should
  * either keep it for further use (we don't), or detach all listeners.
  */
-export function readHandshakeLine(
-  stdout: Readable,
-  timeoutMs: number,
-): Promise<HandshakeMessage> {
+export function readHandshakeLine(stdout: Readable, timeoutMs: number): Promise<HandshakeMessage> {
   return new Promise<HandshakeMessage>((resolve, reject) => {
     let buf = '';
     let settled = false;
@@ -39,10 +39,7 @@ export function readHandshakeLine(
       clearTimeout(timer);
     };
 
-    const settle = (
-      err: HandshakeError | null,
-      msg?: HandshakeMessage,
-    ): void => {
+    const settle = (err: HandshakeError | null, msg?: HandshakeMessage): void => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -59,21 +56,11 @@ export function readHandshakeLine(
       try {
         parsed = JSON.parse(line);
       } catch (e) {
-        settle(
-          new HandshakeError(
-            'child handshake line was not valid JSON',
-            (e as Error).message,
-          ),
-        );
+        settle(new HandshakeError('child handshake line was not valid JSON', (e as Error).message));
         return;
       }
       if (!isHandshakeMessage(parsed)) {
-        settle(
-          new HandshakeError(
-            'child handshake JSON missing required fields',
-            line,
-          ),
-        );
+        settle(new HandshakeError('child handshake JSON missing required fields', line));
         return;
       }
       settle(null, parsed);

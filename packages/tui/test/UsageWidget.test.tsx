@@ -116,12 +116,7 @@ describe('UsageWidget', () => {
       },
     });
     const out = frame(
-      <UsageWidget
-        usage={usage}
-        contextWindow={0}
-        usedContextTokens={5_000}
-        unknownWindow
-      />,
+      <UsageWidget usage={usage} contextWindow={0} usedContextTokens={5_000} unknownWindow />,
     );
     expect(out).toContain('5k');
     // Render uses an em-dash for an unknown window.
@@ -131,9 +126,7 @@ describe('UsageWidget', () => {
 
   it('renders without delta when no step has finished yet', () => {
     const usage = usageWith();
-    const out = frame(
-      <UsageWidget usage={usage} contextWindow={200_000} usedContextTokens={0} />,
-    );
+    const out = frame(<UsageWidget usage={usage} contextWindow={200_000} usedContextTokens={0} />);
     expect(out).toContain('0 / 200k');
     expect(out).not.toContain('+');
   });

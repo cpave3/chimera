@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { runAttach } from './commands/attach';
 import { runCommandsList } from './commands/commands';
+import { runHooksList } from './commands/hooks';
 import { runInteractive } from './commands/interactive';
 import { runLs } from './commands/ls';
 import { runOneShot } from './commands/run';
@@ -19,10 +20,8 @@ export const CHIMERA_CLI_VERSION = '0.1.0';
 
 function applySubagentOptions(cmd: Command): Command {
   return cmd
-    .option(
-      '--max-subagent-depth <n>',
-      'Maximum subagent nesting depth (default 3)',
-      (v) => Number.parseInt(v, 10),
+    .option('--max-subagent-depth <n>', 'Maximum subagent nesting depth (default 3)', (v) =>
+      Number.parseInt(v, 10),
     )
     .option('--no-subagents', 'Disable the spawn_agent tool');
 }
@@ -30,10 +29,7 @@ function applySubagentOptions(cmd: Command): Command {
 function applySandboxOptions(cmd: Command): Command {
   return cmd
     .option('--sandbox', 'Run tools inside a Docker sandbox', false)
-    .option(
-      '--sandbox-mode <mode>',
-      "Sandbox mode: bind|overlay|ephemeral (default: bind)",
-    )
+    .option('--sandbox-mode <mode>', 'Sandbox mode: bind|overlay|ephemeral (default: bind)')
     .option(
       '--sandbox-strict',
       'Refuse fallback to bind when overlay/ephemeral is unavailable',
@@ -83,9 +79,7 @@ export function buildProgram(): Command {
       prompt = await readStdin();
     }
     if (opts.command && prompt.length > 0) {
-      process.stderr.write(
-        'error: --command is mutually exclusive with a positional prompt.\n',
-      );
+      process.stderr.write('error: --command is mutually exclusive with a positional prompt.\n');
       process.exit(1);
     }
     if (!opts.command && prompt.length === 0) {
@@ -123,6 +117,16 @@ export function buildProgram(): Command {
         json: opts.json,
         claudeCompat: opts.claudeCompat,
       });
+    });
+
+  const hooks = program.command('hooks').description('Inspect lifecycle hooks.');
+  hooks
+    .command('list', { isDefault: true })
+    .description('List discovered lifecycle hooks for the current cwd.')
+    .option('--cwd <path>', 'Working directory', process.cwd())
+    .option('--json', 'Emit JSON', false)
+    .action(async (opts) => {
+      await runHooksList({ cwd: opts.cwd, json: opts.json });
     });
 
   program
@@ -191,7 +195,9 @@ export function buildProgram(): Command {
   const sessions = program.command('sessions').description('Manage persisted sessions.');
   sessions
     .command('list', { isDefault: true })
-    .description('List persisted sessions in the current directory (use --all for every directory).')
+    .description(
+      'List persisted sessions in the current directory (use --all for every directory).',
+    )
     .option('--cwd <path>', 'Filter by this directory', process.cwd())
     .option('-a, --all', 'List sessions from every directory', false)
     .action(async (opts) => {
@@ -264,9 +270,7 @@ export function buildProgram(): Command {
       program
         .command('continue')
         .alias('c')
-        .description(
-          'Resume the most-recently-active session in the current directory.',
-        )
+        .description('Resume the most-recently-active session in the current directory.')
         .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
         .option('--cwd <path>', 'Working directory', process.cwd())
         .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
@@ -278,9 +282,7 @@ export function buildProgram(): Command {
     const cwd = opts.cwd ?? process.cwd();
     const latest = await findLatestSessionInCwd(cwd, opts.home);
     if (!latest) {
-      process.stderr.write(
-        `No sessions in ${cwd}. Run \`chimera\` to start a new one.\n`,
-      );
+      process.stderr.write(`No sessions in ${cwd}. Run \`chimera\` to start a new one.\n`);
       process.exit(1);
     }
     await runInteractive({
@@ -342,9 +344,7 @@ export function buildProgram(): Command {
   ).action(async (opts) => {
     const cwd = opts.cwd ?? process.cwd();
     if (opts.session && opts.resume !== undefined) {
-      process.stderr.write(
-        'warning: --session takes precedence over --resume; --resume ignored\n',
-      );
+      process.stderr.write('warning: --session takes precedence over --resume; --resume ignored\n');
     }
     if (opts.session && opts.continue) {
       process.stderr.write(
@@ -355,9 +355,7 @@ export function buildProgram(): Command {
     if (!session && opts.continue) {
       const latest = await findLatestSessionInCwd(cwd, opts.home);
       if (!latest) {
-        process.stderr.write(
-          `No sessions in ${cwd}. Run \`chimera\` to start a new one.\n`,
-        );
+        process.stderr.write(`No sessions in ${cwd}. Run \`chimera\` to start a new one.\n`);
         process.exit(1);
       }
       session = latest.id;

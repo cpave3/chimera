@@ -1,17 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  emptyUsage,
-  newSessionId,
-  persistSession,
-  type Session,
-} from '@chimera/core';
+import { emptyUsage, newSessionId, persistSession, type Session } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  findLatestSessionInCwd,
-  resolveSessionId,
-} from '../src/commands/sessions';
+import { findLatestSessionInCwd, resolveSessionId } from '../src/commands/sessions';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -79,15 +71,11 @@ describe('resolveSessionId', () => {
     const sessionB = makeSession({ id: '01HZBBBBBBBBBBBBBBBBAAAAAA' });
     await persistEmptySession(sessionA, home);
     await persistEmptySession(sessionB, home);
-    await expect(resolveSessionId('AAAAAA', { home })).rejects.toThrow(
-      /Ambiguous/,
-    );
+    await expect(resolveSessionId('AAAAAA', { home })).rejects.toThrow(/Ambiguous/);
   });
 
   it('throws when no session matches', async () => {
-    await expect(resolveSessionId('NEVERMATCHES', { home })).rejects.toThrow(
-      /No session matching/,
-    );
+    await expect(resolveSessionId('NEVERMATCHES', { home })).rejects.toThrow(/No session matching/);
   });
 
   it('scopes suffix matching to cwd when provided', async () => {
@@ -117,9 +105,9 @@ describe('resolveSessionId', () => {
       cwd: '/tmp/proj-other',
     });
     await persistEmptySession(sessionInOtherDir, home);
-    await expect(
-      resolveSessionId('AAAAAA', { home, cwd: '/tmp/proj-a' }),
-    ).rejects.toThrow(/in other directories/);
+    await expect(resolveSessionId('AAAAAA', { home, cwd: '/tmp/proj-a' })).rejects.toThrow(
+      /in other directories/,
+    );
   });
 
   it('still resolves a full-id exact match even from a different cwd', async () => {

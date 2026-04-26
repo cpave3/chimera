@@ -32,9 +32,7 @@ export async function runCommandsList(opts: ListCommandsOptions): Promise<void> 
 
   const nameWidth = Math.max(4, ...list.map((c) => c.name.length));
   const srcWidth = Math.max(6, ...list.map((c) => c.source.length));
-  process.stdout.write(
-    `${'NAME'.padEnd(nameWidth)}  ${'SOURCE'.padEnd(srcWidth)}  DESCRIPTION\n`,
-  );
+  process.stdout.write(`${'NAME'.padEnd(nameWidth)}  ${'SOURCE'.padEnd(srcWidth)}  DESCRIPTION\n`);
   for (const c of list) {
     process.stdout.write(
       `${c.name.padEnd(nameWidth)}  ${c.source.padEnd(srcWidth)}  ${c.description ?? ''}\n`,

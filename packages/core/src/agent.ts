@@ -3,20 +3,9 @@ import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
-import {
-  type CallId,
-  type SessionId,
-  newCallId,
-  newRequestId,
-  newSessionId,
-} from './ids';
+import { type CallId, type SessionId, newCallId, newRequestId, newSessionId } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
-import {
-  appendSessionEvent,
-  forkSession,
-  loadSession,
-  persistSession,
-} from './persistence';
+import { appendSessionEvent, forkSession, loadSession, persistSession } from './persistence';
 import {
   type ExecutionTarget,
   type ModelConfig,
@@ -27,12 +16,7 @@ import {
   type UsageStep,
   emptyUsage,
 } from './types';
-import {
-  applyStepUsage,
-  cloneUsage,
-  readStepUsage,
-  reconcileFinalUsage,
-} from './usage';
+import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
 export interface AgentOptions {
   cwd: string;
@@ -62,15 +46,15 @@ export interface AgentOptions {
    * `{ skillName, source }` so the agent can emit `skill_activated`. Purely
    * observational; return value does not change tool behavior.
    */
-  skillActivation?: (readPath: string) => {
-    skillName: string;
-    source: 'project' | 'user' | 'claude-compat';
-  } | undefined;
+  skillActivation?: (readPath: string) =>
+    | {
+        skillName: string;
+        source: 'project' | 'user' | 'claude-compat';
+      }
+    | undefined;
 }
 
-export type PermissionRaiseHandler = (
-  req: PermissionRequest,
-) => Promise<PermissionResolution>;
+export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<PermissionResolution>;
 
 export class Agent {
   readonly session: Session;
@@ -190,11 +174,7 @@ export class Agent {
     req: PermissionRequest,
   ) => void;
 
-  resolvePermission(
-    requestId: string,
-    decision: 'allow' | 'deny',
-    remember?: RememberScope,
-  ): void {
+  resolvePermission(requestId: string, decision: 'allow' | 'deny', remember?: RememberScope): void {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request: ${requestId}`);
@@ -229,6 +209,37 @@ export class Agent {
 
   hasPendingPermission(requestId: string): boolean {
     return this.pendingPermissions.has(requestId);
+  }
+
+  /**
+   * Emit a `permission_resolved` event without going through the
+   * raise/resolve dance. Used by the gate when the hook subsystem decides
+   * the call before the user is ever prompted — there is no pending request
+   * to settle, but the spec still requires the resolved event to fire.
+   */
+  emitPermissionResolved(
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remembered: boolean,
+  ): void {
+    this.currentQueue?.push({
+      type: 'permission_resolved',
+      requestId,
+      decision,
+      remembered,
+    });
+    void appendSessionEvent(
+      this.session.id,
+      {
+        type: 'permission_resolved',
+        requestId,
+        decision,
+        remembered,
+      },
+      this.opts.home,
+    ).catch(() => {
+      // persistence errors are non-fatal
+    });
   }
 
   interrupt(): void {
@@ -293,11 +304,7 @@ export class Agent {
     return this.callIdByToolCallId.get(toolCallId);
   }
 
-  private safeFormat(
-    name: string,
-    args: unknown,
-    result?: unknown,
-  ): ToolDisplay | undefined {
+  private safeFormat(name: string, args: unknown, result?: unknown): ToolDisplay | undefined {
     const fmt = this.toolFormatters[name];
     if (!fmt) return undefined;
     try {
@@ -332,10 +339,7 @@ export class Agent {
     return queue.drain();
   }
 
-  private async runInternal(
-    userMessage: string,
-    queue: EventQueue<AgentEvent>,
-  ): Promise<void> {
+  private async runInternal(userMessage: string, queue: EventQueue<AgentEvent>): Promise<void> {
     this.session.status = 'running';
     this.session.messages.push({ role: 'user', content: userMessage });
 
@@ -394,10 +398,7 @@ export class Agent {
             textStreams.set(part.id, '');
             break;
           case 'text-delta':
-            textStreams.set(
-              part.id,
-              (textStreams.get(part.id) ?? '') + part.text,
-            );
+            textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
             queue.push({ type: 'assistant_text_delta', delta: part.text });
             break;
           case 'text-end': {
@@ -474,8 +475,7 @@ export class Agent {
             const info = callInfo.get(part.toolCallId);
             if (!info) break;
             const errorValue = (part as { error?: unknown }).error;
-            const message =
-              errorValue instanceof Error ? errorValue.message : String(errorValue);
+            const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
             const record = this.session.toolCalls.find(
               (toolCall) => toolCall.callId === info.callId,
             );
@@ -495,9 +495,7 @@ export class Agent {
               stepNumber,
               finishReason: part.finishReason,
             });
-            const stepUsage = readStepUsage(
-              (part as { usage?: unknown }).usage,
-            );
+            const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
             if (stepUsage) {
               applyStepUsage(this.session.usage, stepUsage);
               runDelta.inputTokens += stepUsage.inputTokens;
@@ -540,9 +538,7 @@ export class Agent {
             break;
           }
           case 'finish': {
-            const total = readStepUsage(
-              (part as { totalUsage?: unknown }).totalUsage,
-            );
+            const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
             if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
               queue.push({
                 type: 'usage_updated',
@@ -563,8 +559,7 @@ export class Agent {
           }
           case 'error': {
             terminalReason = 'error';
-            errorMessage =
-              part.error instanceof Error ? part.error.message : String(part.error);
+            errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
             break;
           }
           default:

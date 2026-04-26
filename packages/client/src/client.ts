@@ -214,35 +214,26 @@ export class ChimeraClient {
     opts: { signal?: AbortSignal } = {},
   ): AsyncGenerator<AgentEvent | { type: 'permission_timeout'; requestId: string }, void, void> {
     // Open SSE connection up front.
-    const eventsResponse = await this.fetchImpl(
-      `${this.baseUrl}/v1/sessions/${sessionId}/events`,
-      { headers: { accept: 'text/event-stream' }, signal: opts.signal },
-    );
+    const eventsResponse = await this.fetchImpl(`${this.baseUrl}/v1/sessions/${sessionId}/events`, {
+      headers: { accept: 'text/event-stream' },
+      signal: opts.signal,
+    });
     if (!eventsResponse.ok) {
-      throw new ChimeraHttpError(
-        eventsResponse.status,
-        await safeBody(eventsResponse),
-      );
+      throw new ChimeraHttpError(eventsResponse.status, await safeBody(eventsResponse));
     }
 
     // Give the server a microtask to register the subscriber before we POST.
     await new Promise((r) => setTimeout(r, 0));
 
     // POST the message.
-    const postResponse = await this.fetchImpl(
-      `${this.baseUrl}/v1/sessions/${sessionId}/messages`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: message }),
-        signal: opts.signal,
-      },
-    );
+    const postResponse = await this.fetchImpl(`${this.baseUrl}/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: message }),
+      signal: opts.signal,
+    });
     if (!postResponse.ok && postResponse.status !== 202) {
-      throw new ChimeraHttpError(
-        postResponse.status,
-        await safeBody(postResponse),
-      );
+      throw new ChimeraHttpError(postResponse.status, await safeBody(postResponse));
     }
 
     // Iterate the already-open SSE.
@@ -295,10 +286,7 @@ export class ChimeraClient {
           continue;
         }
         if (!streamResponse.ok) {
-          throw new ChimeraHttpError(
-            streamResponse.status,
-            await safeBody(streamResponse),
-          );
+          throw new ChimeraHttpError(streamResponse.status, await safeBody(streamResponse));
         }
 
         try {
@@ -345,7 +333,6 @@ export class ChimeraClient {
           // last-seen eventId so we don't miss events that fired during the
           // gap.
           if (opts.signal?.aborted) return;
-          continue;
         } catch (err) {
           if (opts.signal?.aborted) return;
           if (retries >= this.maxRetries) throw err;

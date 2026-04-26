@@ -60,10 +60,7 @@ describe('buildTools', () => {
     const lines = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n');
     await writeFile(join(root, 'big.txt'), lines);
     const toolset = tools();
-    const result = await toolset.read!.execute(
-      { path: 'big.txt', start_line: 5, end_line: 7 },
-      {},
-    );
+    const result = await toolset.read!.execute({ path: 'big.txt', start_line: 5, end_line: 7 }, {});
     expect(result.content.split('\n')).toEqual(['5\tline5', '6\tline6', '7\tline7']);
   });
 
@@ -78,10 +75,7 @@ describe('buildTools', () => {
 
   it('write creates files and reports bytes', async () => {
     const toolset = tools();
-    const result = await toolset.write!.execute(
-      { path: 'new.txt', content: 'hello' },
-      {},
-    );
+    const result = await toolset.write!.execute({ path: 'new.txt', content: 'hello' }, {});
     expect(result.created).toBe(true);
     expect(result.bytes_written).toBe(5);
     expect(await readFile(join(root, 'new.txt'), 'utf8')).toBe('hello');
@@ -90,10 +84,7 @@ describe('buildTools', () => {
   it('write reports created=false when overwriting', async () => {
     await writeFile(join(root, 'e.txt'), 'old');
     const toolset = tools();
-    const result = await toolset.write!.execute(
-      { path: 'e.txt', content: 'new' },
-      {},
-    );
+    const result = await toolset.write!.execute({ path: 'e.txt', content: 'new' }, {});
     expect(result.created).toBe(false);
   });
 
@@ -112,10 +103,7 @@ describe('buildTools', () => {
     await writeFile(join(root, 'f.txt'), 'abc');
     const toolset = tools();
     await expect(
-      toolset.edit!.execute(
-        { path: 'f.txt', old_string: 'xyz', new_string: 'foo' },
-        {},
-      ),
+      toolset.edit!.execute({ path: 'f.txt', old_string: 'xyz', new_string: 'foo' }, {}),
     ).rejects.toThrow(/not found/);
   });
 
@@ -123,10 +111,7 @@ describe('buildTools', () => {
     await writeFile(join(root, 'f.txt'), 'a\na\na');
     const toolset = tools();
     await expect(
-      toolset.edit!.execute(
-        { path: 'f.txt', old_string: 'a', new_string: 'b' },
-        {},
-      ),
+      toolset.edit!.execute({ path: 'f.txt', old_string: 'a', new_string: 'b' }, {}),
     ).rejects.toThrow(/3 occurrences/);
     const result = await toolset.edit!.execute(
       { path: 'f.txt', old_string: 'a', new_string: 'b', replace_all: true },

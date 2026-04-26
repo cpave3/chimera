@@ -10,7 +10,11 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/help', description: 'List built-in slash commands' },
   { name: '/clear', description: 'Clear the visible scrollback' },
   { name: '/new', description: 'Create and switch to a new session' },
-  { name: '/sessions', description: 'Pick a session in this dir (/sessions all to see every dir; /sessions tree, /sessions <id> for variants)' },
+  {
+    name: '/sessions',
+    description:
+      'Pick a session in this dir (/sessions all to see every dir; /sessions tree, /sessions <id> for variants)',
+  },
   { name: '/fork', description: 'Fork the current session into a child (/fork [purpose])' },
   { name: '/exit', description: 'Exit the TUI' },
   { name: '/model', description: 'Show or change the active model' },
@@ -19,7 +23,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/theme', description: 'List or apply a colour theme (/theme <name>)' },
   { name: '/subagents', description: 'List active subagents of the current session' },
   { name: '/attach', description: 'Attach the TUI to a subagent by id (/attach <id>)' },
-  { name: '/detach', description: "Detach from a subagent and return to the parent session" },
+  { name: '/detach', description: 'Detach from a subagent and return to the parent session' },
 ];
 
 export const OVERLAY_COMMANDS: SlashCommand[] = [
@@ -30,8 +34,7 @@ export const OVERLAY_COMMANDS: SlashCommand[] = [
 
 export function isBuiltin(name: string): boolean {
   return (
-    BUILTIN_COMMANDS.some((c) => c.name === name) ||
-    OVERLAY_COMMANDS.some((c) => c.name === name)
+    BUILTIN_COMMANDS.some((c) => c.name === name) || OVERLAY_COMMANDS.some((c) => c.name === name)
   );
 }
 
@@ -74,10 +77,7 @@ function levenshtein(a: string, b: string): number {
     dp[0] = i;
     for (let j = 1; j <= n; j += 1) {
       const tmp = dp[j]!;
-      dp[j] =
-        a[i - 1] === b[j - 1]
-          ? prev
-          : 1 + Math.min(prev, dp[j]!, dp[j - 1]!);
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j]!, dp[j - 1]!);
       prev = tmp;
     }
   }

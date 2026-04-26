@@ -5,12 +5,7 @@ import { render } from 'ink-testing-library';
 import { Text } from 'ink';
 import React, { useContext } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  ThemeContext,
-  ThemeProvider,
-  useTheme,
-  useThemeContext,
-} from '../src/theme/ThemeProvider';
+import { ThemeContext, ThemeProvider, useTheme, useThemeContext } from '../src/theme/ThemeProvider';
 import { defaultTheme } from '../src/theme/tokens';
 import type { Theme } from '../src/theme/types';
 
@@ -92,11 +87,7 @@ describe('ThemeProvider.reload', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function ReloadProbe({
-    onReady,
-  }: {
-    onReady: (reload: () => void) => void;
-  }): React.ReactElement {
+  function ReloadProbe({ onReady }: { onReady: (reload: () => void) => void }): React.ReactElement {
     const ctx = useThemeContext();
     React.useEffect(() => {
       onReady(ctx.reload);
@@ -133,10 +124,7 @@ describe('ThemeProvider.reload', () => {
   });
 
   it('falls back to the base theme when the file disappears between reloads', async () => {
-    writeFileSync(
-      themePath,
-      JSON.stringify({ accent: { primary: '#111111' } }),
-    );
+    writeFileSync(themePath, JSON.stringify({ accent: { primary: '#111111' } }));
 
     let reload: (() => void) | undefined;
     const { lastFrame } = render(

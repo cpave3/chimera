@@ -23,7 +23,8 @@ function makeCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolConte
 describe('parallel spawn_agent interrupt cascade', () => {
   it('aborts both in-flight children when the parent signal fires', async () => {
     const interrupts: string[] = [];
-    const builder = (label: string): InProcessAgentBuilder =>
+    const builder =
+      (label: string): InProcessAgentBuilder =>
       async () => {
         const send = async function* (
           _p: string,

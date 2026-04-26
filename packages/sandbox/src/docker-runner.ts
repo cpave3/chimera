@@ -16,7 +16,10 @@ export interface RunOptions {
 
 export interface DockerRunner {
   run(args: string[], opts?: RunOptions): Promise<RunResult>;
-  runRaw(args: string[], opts?: RunOptions): Promise<{
+  runRaw(
+    args: string[],
+    opts?: RunOptions,
+  ): Promise<{
     stdout: Buffer;
     stderr: string;
     exitCode: number;
@@ -50,7 +53,10 @@ export class SpawnDockerRunner implements DockerRunner {
     };
   }
 
-  runRaw(args: string[], opts: RunOptions = {}): Promise<{
+  runRaw(
+    args: string[],
+    opts: RunOptions = {},
+  ): Promise<{
     stdout: Buffer;
     stderr: string;
     exitCode: number;

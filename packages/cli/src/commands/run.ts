@@ -169,9 +169,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
             applyOnSuccess: sandboxOpts.applyOnSuccess,
           });
         } catch (err) {
-          process.stderr.write(
-            `overlay finalization failed: ${(err as Error).message}\n`,
-          );
+          process.stderr.write(`overlay finalization failed: ${(err as Error).message}\n`);
         }
       }
     }

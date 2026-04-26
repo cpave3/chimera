@@ -22,12 +22,16 @@ function checkDestructive(cmd: string): string | null {
 const BASH_SCHEMA = z.object({
   command: z.string().describe('The shell command to run.'),
   timeout_ms: z.number().int().positive().optional().describe('Timeout in ms. Default 120000.'),
-  target: z.enum(['sandbox', 'host']).optional().describe(
-    "Which executor to use. Defaults to 'host' when sandbox is off.",
-  ),
-  reason: z.string().optional().describe(
-    "Short justification for running on the host (required when sandbox is on and target='host').",
-  ),
+  target: z
+    .enum(['sandbox', 'host'])
+    .optional()
+    .describe("Which executor to use. Defaults to 'host' when sandbox is off."),
+  reason: z
+    .string()
+    .optional()
+    .describe(
+      "Short justification for running on the host (required when sandbox is on and target='host').",
+    ),
 });
 type BashArgs = z.infer<typeof BASH_SCHEMA>;
 type BashResult = {

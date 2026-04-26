@@ -1,4 +1,10 @@
-export type CommandSource = 'project' | 'ancestor' | 'user' | 'claude-project' | 'claude-ancestor' | 'claude-user';
+export type CommandSource =
+  | 'project'
+  | 'ancestor'
+  | 'user'
+  | 'claude-project'
+  | 'claude-ancestor'
+  | 'claude-user';
 
 export interface Command {
   name: string;

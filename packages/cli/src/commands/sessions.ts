@@ -1,12 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import {
-  deleteSession,
-  listSessionsOnDisk,
-  sessionDir,
-  type SessionInfo,
-} from '@chimera/core';
+import { deleteSession, listSessionsOnDisk, sessionDir, type SessionInfo } from '@chimera/core';
 
 export interface RunSessionsListOpts {
   /** Default cwd for filtering. Required unless `all` is true. */
@@ -21,13 +16,10 @@ function filterByCwd(sessions: SessionInfo[], cwd: string): SessionInfo[] {
   return sessions.filter((s) => resolve(s.cwd) === target);
 }
 
-export async function runSessionsList(
-  opts: RunSessionsListOpts = {},
-): Promise<void> {
+export async function runSessionsList(opts: RunSessionsListOpts = {}): Promise<void> {
   const home = opts.home ?? homedir();
   const all = await listSessionsOnDisk(home);
-  const filtered =
-    opts.all || !opts.cwd ? all : filterByCwd(all, opts.cwd);
+  const filtered = opts.all || !opts.cwd ? all : filterByCwd(all, opts.cwd);
   filtered.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
   if (filtered.length === 0) {
     if (!opts.all && opts.cwd) {
@@ -42,16 +34,11 @@ export async function runSessionsList(
   process.stdout.write('ID\tCWD\tMESSAGES\tLAST ACTIVITY\tPARENT\n');
   for (const s of filtered) {
     const last = new Date(s.lastActivityAt).toISOString();
-    process.stdout.write(
-      `${s.id}\t${s.cwd}\t${s.messageCount}\t${last}\t${s.parentId ?? '-'}\n`,
-    );
+    process.stdout.write(`${s.id}\t${s.cwd}\t${s.messageCount}\t${last}\t${s.parentId ?? '-'}\n`);
   }
 }
 
-export async function runSessionsRm(
-  sessionId: string,
-  home = homedir(),
-): Promise<void> {
+export async function runSessionsRm(sessionId: string, home = homedir()): Promise<void> {
   const dir = sessionDir(sessionId, home);
   if (!existsSync(dir)) {
     process.stderr.write(`No such session: ${sessionId}\n`);
@@ -106,18 +93,14 @@ export async function resolveSessionId(
   if (exactMatch) return exactMatch.id;
 
   const upperNeedle = idOrSuffix.toUpperCase();
-  const candidates = options.cwd
-    ? filterByCwd(allSessions, options.cwd)
-    : allSessions;
+  const candidates = options.cwd ? filterByCwd(allSessions, options.cwd) : allSessions;
   const suffixMatches = candidates.filter((session) =>
     session.id.toUpperCase().endsWith(upperNeedle),
   );
 
   if (suffixMatches.length === 1) return suffixMatches[0]!.id;
   if (suffixMatches.length > 1) {
-    const matches = suffixMatches
-      .map((session) => `  ${session.id}  ${session.cwd}`)
-      .join('\n');
+    const matches = suffixMatches.map((session) => `  ${session.id}  ${session.cwd}`).join('\n');
     throw new Error(
       `Ambiguous session id "${idOrSuffix}" — matches ${suffixMatches.length} sessions:\n${matches}`,
     );

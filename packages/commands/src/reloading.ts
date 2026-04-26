@@ -105,7 +105,7 @@ export class ReloadingCommandRegistry implements CommandRegistry {
 
   private onFsEvent(filename: string | Buffer | null): void {
     if (this.closed) return;
-    const name = typeof filename === 'string' ? filename : filename?.toString() ?? '';
+    const name = typeof filename === 'string' ? filename : (filename?.toString() ?? '');
     // Only react to markdown files. `fs.watch` sometimes fires with empty
     // names on macOS or when a dir itself changes; reload in that case too so
     // we don't miss moves. Nested paths (e.g. `ops/deploy.md`) still match.

@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const BIN = join(__dirname, '..', 'dist', 'bin.js');
 
@@ -52,5 +54,46 @@ describe('chimera CLI smoke', () => {
     });
     expect(continueResult.status).not.toBe(0);
     expect(continueResult.stderr).toMatch(/No sessions in/);
+  });
+});
+
+describe('chimera hooks list smoke', () => {
+  let cwd: string;
+
+  beforeEach(async () => {
+    cwd = await mkdtemp(join(tmpdir(), 'chimera-hooks-smoke-'));
+  });
+
+  afterEach(async () => {
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  it('lists installed hooks via the binary, --json includes every event', async () => {
+    const dir = join(cwd, '.chimera', 'hooks', 'PostToolUse');
+    await mkdir(dir, { recursive: true });
+    const script = join(dir, 'audit.sh');
+    await writeFile(script, '#!/bin/sh\nexit 0\n');
+    await chmod(script, 0o755);
+
+    // Use an isolated HOME so the developer's real ~/.chimera/hooks doesn't
+    // pollute the assertion on global hooks.
+    const result = spawnSync(
+      'node',
+      [BIN, 'hooks', 'list', '--json', '--cwd', cwd],
+      { encoding: 'utf8', env: { ...process.env, HOME: cwd } },
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout.trim());
+    expect(parsed).toHaveProperty('events');
+    for (const event of [
+      'UserPromptSubmit',
+      'PostToolUse',
+      'PermissionRequest',
+      'Stop',
+      'SessionEnd',
+    ]) {
+      expect(parsed.events).toHaveProperty(event);
+    }
+    expect(parsed.events.PostToolUse.project).toEqual([script]);
   });
 });

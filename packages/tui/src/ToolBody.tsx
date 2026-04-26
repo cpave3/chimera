@@ -16,10 +16,7 @@ export interface ToolBodyProps {
   theme: Theme;
 }
 
-export function renderToolBody(
-  entry: ScrollbackEntry,
-  ctx: ToolBodyProps,
-): React.ReactElement[] {
+export function renderToolBody(entry: ScrollbackEntry, ctx: ToolBodyProps): React.ReactElement[] {
   if (entry.toolError) return [];
   switch (entry.toolName) {
     case 'edit':
@@ -37,9 +34,7 @@ function renderEditBody(
   entry: ScrollbackEntry,
   { width, prefixLen, theme }: ToolBodyProps,
 ): React.ReactElement[] {
-  const args = entry.toolArgs as
-    | { old_string?: string; new_string?: string }
-    | undefined;
+  const args = entry.toolArgs as { old_string?: string; new_string?: string } | undefined;
   if (!args) return [];
   const oldLines = args.old_string ? stripTrailingNewline(args.old_string).split('\n') : [];
   const newLines = args.new_string ? stripTrailingNewline(args.new_string).split('\n') : [];
@@ -52,16 +47,12 @@ function renderEditBody(
   let shown = 0;
   for (const line of oldLines) {
     if (shown >= cap) break;
-    rows.push(
-      diffRow(`d${key++}`, '- ', line, theme.status.error, innerWidth, prefixLen),
-    );
+    rows.push(diffRow(`d${key++}`, '- ', line, theme.status.error, innerWidth, prefixLen));
     shown += 1;
   }
   for (const line of newLines) {
     if (shown >= cap) break;
-    rows.push(
-      diffRow(`d${key++}`, '+ ', line, theme.status.success, innerWidth, prefixLen),
-    );
+    rows.push(diffRow(`d${key++}`, '+ ', line, theme.status.success, innerWidth, prefixLen));
     shown += 1;
   }
   if (total > cap) {
@@ -105,9 +96,7 @@ function renderBashBody(
   entry: ScrollbackEntry,
   { width, prefixLen, theme }: ToolBodyProps,
 ): React.ReactElement[] {
-  const result = entry.toolResult as
-    | { stdout?: string; stderr?: string }
-    | undefined;
+  const result = entry.toolResult as { stdout?: string; stderr?: string } | undefined;
   if (!result) return [];
   const stdout = stripTrailingNewline(result.stdout ?? '');
   const stderr = stripTrailingNewline(result.stderr ?? '');
@@ -176,16 +165,14 @@ function moreLinesRow(
   const noun = count === 1 ? 'line' : 'lines';
   return (
     <Box key={key} paddingLeft={prefixLen}>
-      <Text color={theme.text.muted}>…{count} more {noun}</Text>
+      <Text color={theme.text.muted}>
+        …{count} more {noun}
+      </Text>
     </Box>
   );
 }
 
-function noOutputRow(
-  key: string,
-  prefixLen: number,
-  theme: Theme,
-): React.ReactElement {
+function noOutputRow(key: string, prefixLen: number, theme: Theme): React.ReactElement {
   return (
     <Box key={key} paddingLeft={prefixLen}>
       <Text color={theme.text.muted}>(no output)</Text>

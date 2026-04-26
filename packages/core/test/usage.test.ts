@@ -105,8 +105,7 @@ describe('Agent usage tracking', () => {
     for await (const ev of agent.run('hi')) events.push(ev);
 
     const usageEvents = events.filter(
-      (e): e is Extract<AgentEvent, { type: 'usage_updated' }> =>
-        e.type === 'usage_updated',
+      (e): e is Extract<AgentEvent, { type: 'usage_updated' }> => e.type === 'usage_updated',
     );
     expect(usageEvents.length).toBeGreaterThanOrEqual(1);
     const first = usageEvents[0];
@@ -138,8 +137,7 @@ describe('Agent usage tracking', () => {
     const events: AgentEvent[] = [];
     for await (const ev of agent.run('hi')) events.push(ev);
     const usageEvent = events.find(
-      (e): e is Extract<AgentEvent, { type: 'usage_updated' }> =>
-        e.type === 'usage_updated',
+      (e): e is Extract<AgentEvent, { type: 'usage_updated' }> => e.type === 'usage_updated',
     );
     expect(usageEvent?.unknownWindow).toBe(true);
   });
@@ -258,10 +256,7 @@ describe('Agent usage tracking', () => {
     const firstDeltaIdx = events.findIndex((e) => e.type === 'assistant_text_delta');
     expect(firstUsageIdx).toBeLessThan(firstDeltaIdx);
 
-    const snapshot = events[firstUsageIdx] as Extract<
-      AgentEvent,
-      { type: 'usage_updated' }
-    >;
+    const snapshot = events[firstUsageIdx] as Extract<AgentEvent, { type: 'usage_updated' }>;
     expect(snapshot.usage.totalTokens).toBe(6500);
     expect(snapshot.usedContextTokens).toBe(1500); // lastStep.inputTokens
   });

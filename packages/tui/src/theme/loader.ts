@@ -141,10 +141,7 @@ export interface ApplyThemeResult {
  * `theme.json` with a `_themeName` marker, and return what was applied.
  * The TUI calls `useTheme().reload()` afterwards to pick up the change.
  */
-export function applyThemeByName(
-  name: string,
-  opts: ListThemesOptions = {},
-): ApplyThemeResult {
+export function applyThemeByName(name: string, opts: ListThemesOptions = {}): ApplyThemeResult {
   const presetsDir = opts.presetsDir ?? getUserPresetsDir();
   const themePath = opts.themePath ?? getDefaultThemePath();
 
@@ -156,21 +153,17 @@ export function applyThemeByName(
   if (existsSync(userPath)) {
     const loadResult = loadUserTheme(userPath);
     if (loadResult.kind !== 'ok') {
-      throw new Error(
-        `theme '${name}' at ${userPath}: ${describeLoadFailure(loadResult)}`,
-      );
+      throw new Error(`theme '${name}' at ${userPath}: ${describeLoadFailure(loadResult)}`);
     }
     partial = loadResult.theme;
     origin = 'user';
     source = userPath;
-  } else if (Object.prototype.hasOwnProperty.call(BUILTIN_PRESETS, name)) {
+  } else if (Object.hasOwn(BUILTIN_PRESETS, name)) {
     partial = BUILTIN_PRESETS[name]!;
     origin = 'builtin';
     source = `builtin:${name}`;
   } else {
-    throw new Error(
-      `unknown theme '${name}'. Run /theme to see available themes.`,
-    );
+    throw new Error(`unknown theme '${name}'. Run /theme to see available themes.`);
   }
 
   const payload: Record<string, unknown> = { _themeName: name, ...partial };

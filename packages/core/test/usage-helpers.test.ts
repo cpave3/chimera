@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyUsage } from '../src/types';
-import {
-  applyStepUsage,
-  cloneUsage,
-  readStepUsage,
-  reconcileFinalUsage,
-} from '../src/usage';
+import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from '../src/usage';
 
 describe('readStepUsage', () => {
   it('returns undefined for non-objects', () => {
@@ -20,8 +15,12 @@ describe('readStepUsage', () => {
   });
 
   it('treats a step with explicit zero counts as a real step', () => {
-    expect(readStepUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }))
-      .toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, totalTokens: 0 });
+    expect(readStepUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      totalTokens: 0,
+    });
   });
 
   it('infers totalTokens from input+output when missing', () => {
@@ -34,9 +33,7 @@ describe('readStepUsage', () => {
   });
 
   it('treats a cached-only payload as a real step', () => {
-    expect(
-      readStepUsage({ inputTokenDetails: { cacheReadTokens: 800 } }),
-    ).toEqual({
+    expect(readStepUsage({ inputTokenDetails: { cacheReadTokens: 800 } })).toEqual({
       inputTokens: 0,
       outputTokens: 0,
       cachedInputTokens: 800,

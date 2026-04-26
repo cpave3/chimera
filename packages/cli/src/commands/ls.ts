@@ -8,8 +8,6 @@ export function runLs(home?: string): void {
   }
   process.stdout.write('PID\tPORT\tCWD\tSESSION\n');
   for (const inst of instances) {
-    process.stdout.write(
-      `${inst.pid}\t${inst.port}\t${inst.cwd}\t${inst.sessionId ?? ''}\n`,
-    );
+    process.stdout.write(`${inst.pid}\t${inst.port}\t${inst.cwd}\t${inst.sessionId ?? ''}\n`);
   }
 }

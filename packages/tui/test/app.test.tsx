@@ -24,7 +24,12 @@ function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
 describe('App', () => {
   it('renders header with cwd and model', () => {
     const { lastFrame, unmount } = render(
-      <App client={stubClient()} sessionId="01ABCDEFGH" modelRef="anthropic/claude-opus-4-7" cwd="/tmp/proj" />,
+      <App
+        client={stubClient()}
+        sessionId="01ABCDEFGH"
+        modelRef="anthropic/claude-opus-4-7"
+        cwd="/tmp/proj"
+      />,
     );
     expect(lastFrame()).toContain('Chimera');
     expect(lastFrame()).toContain('/tmp/proj');
@@ -71,7 +76,13 @@ describe('App', () => {
     });
 
     const { lastFrame, unmount } = render(
-      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" sandboxMode={target === 'sandbox' ? 'bind' : 'off'} />,
+      <App
+        client={client}
+        sessionId="01ABCDEFGH"
+        modelRef="m/m"
+        cwd="/tmp"
+        sandboxMode={target === 'sandbox' ? 'bind' : 'off'}
+      />,
     );
     // Wait one tick so the subscribe generator yields and React flushes.
     await new Promise((r) => setTimeout(r, 30));
@@ -188,10 +199,7 @@ describe('App', () => {
     pushEvent?.({ type: 'run_finished', reason: 'interrupted' });
     await new Promise((r) => setTimeout(r, 30));
 
-    expect(sends).toEqual([
-      'first follow-up',
-      'second follow-up\n\nthird follow-up',
-    ]);
+    expect(sends).toEqual(['first follow-up', 'second follow-up\n\nthird follow-up']);
     expect(lastFrame()).not.toContain('queued (');
 
     sendResolvers[1]?.();
@@ -358,11 +366,7 @@ afterEach(() => {
 describe('PermissionModal', () => {
   it('shows the command and choices', () => {
     const { lastFrame, unmount } = render(
-      <PermissionModal
-        command="pnpm test"
-        target="host"
-        onResolve={() => {}}
-      />,
+      <PermissionModal command="pnpm test" target="host" onResolve={() => {}} />,
     );
     const frame = lastFrame()!;
     expect(frame).toContain('pnpm test');

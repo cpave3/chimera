@@ -17,9 +17,7 @@ export interface DefineToolOptions<I, O> {
  * authoring a tool with a formatter is the same shape as authoring one
  * without — the field is simply optional.
  */
-export function defineTool<I, O>(
-  opts: DefineToolOptions<I, O>,
-): ChimeraToolDef<I, O> {
+export function defineTool<I, O>(opts: DefineToolOptions<I, O>): ChimeraToolDef<I, O> {
   const aiSdkTool = (tool as unknown as (cfg: unknown) => unknown)({
     description: opts.description,
     inputSchema: opts.inputSchema,

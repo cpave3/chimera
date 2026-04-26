@@ -17,9 +17,7 @@ export function resolveAttachTarget(target: string, home?: string): AttachTarget
   }
   const instances = listLiveInstances(home);
   // Match by pid or session id prefix.
-  const match = instances.find(
-    (i) => String(i.pid) === target || i.sessionId?.startsWith(target),
-  );
+  const match = instances.find((i) => String(i.pid) === target || i.sessionId?.startsWith(target));
   if (!match) {
     throw new Error(
       `No running instance matches '${target}'. Run 'chimera ls' to see running instances.`,

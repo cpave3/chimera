@@ -112,8 +112,7 @@ describe('buildSpawnAgentTool — in-process happy path', () => {
     expect(finished).toBeDefined();
     // sub-stream events were forwarded
     const wraps = events.filter(
-      (e): e is Extract<AgentEvent, { type: 'subagent_event' }> =>
-        e.type === 'subagent_event',
+      (e): e is Extract<AgentEvent, { type: 'subagent_event' }> => e.type === 'subagent_event',
     );
     expect(wraps.length).toBeGreaterThan(0);
     // Order is preserved: parent's wrap stream matches the child's emission order.

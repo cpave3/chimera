@@ -48,6 +48,18 @@ export interface PermissionRequest {
 export interface PermissionResolution {
   decision: 'allow' | 'deny';
   remembered: boolean;
+  /**
+   * Origin of the decision, used by the executor to render the right
+   * "denied by ..." message and by consumers that need to distinguish
+   * automated denials from interactive ones. Optional — absent on paths
+   * that don't track denial origin (e.g. pre-existing factories).
+   *
+   * - `rule`     — matched a deny rule in the rule store.
+   * - `hook`     — blocked by a `PermissionRequest` lifecycle hook.
+   * - `headless` — server-side auto-deny when the parent has no TTY.
+   * - `user`     — interactively rejected at the prompt.
+   */
+  denialSource?: 'rule' | 'hook' | 'headless' | 'user';
 }
 
 export interface PermissionGate {

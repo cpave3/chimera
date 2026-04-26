@@ -56,9 +56,7 @@ describe('persistence', () => {
       },
       home,
     );
-    const meta = JSON.parse(
-      await readFile(sessionMetadataPath(session.id, home), 'utf8'),
-    );
+    const meta = JSON.parse(await readFile(sessionMetadataPath(session.id, home), 'utf8'));
     expect(meta.id).toEqual(session.id);
     expect(meta).not.toHaveProperty('messages');
     expect(meta).not.toHaveProperty('toolCalls');
@@ -197,9 +195,7 @@ describe('persistence', () => {
       expect(child.id).toEqual(childId);
       expect(child.children).toEqual([]);
 
-      const childEvents = (
-        await readFile(sessionEventsPath(childId, home), 'utf8')
-      )
+      const childEvents = (await readFile(sessionEventsPath(childId, home), 'utf8'))
         .split('\n')
         .filter(Boolean);
       // copied step_finished + appended forked_from
@@ -209,9 +205,7 @@ describe('persistence', () => {
       expect(last.parentId).toEqual(parent.id);
       expect(last.purpose).toEqual('try it');
 
-      const parentMeta = JSON.parse(
-        await readFile(sessionMetadataPath(parent.id, home), 'utf8'),
-      );
+      const parentMeta = JSON.parse(await readFile(sessionMetadataPath(parent.id, home), 'utf8'));
       expect(parentMeta.children).toContain(childId);
     });
 
@@ -229,10 +223,7 @@ describe('persistence', () => {
         },
         home,
       );
-      const parentBefore = await readFile(
-        sessionEventsPath(parent.id, home),
-        'utf8',
-      );
+      const parentBefore = await readFile(sessionEventsPath(parent.id, home), 'utf8');
 
       const { childId } = await forkSession({ parentId: parent.id, home });
       // Now write a new event to the child
@@ -253,10 +244,7 @@ describe('persistence', () => {
         home,
       );
 
-      const parentAfter = await readFile(
-        sessionEventsPath(parent.id, home),
-        'utf8',
-      );
+      const parentAfter = await readFile(sessionEventsPath(parent.id, home), 'utf8');
       expect(parentAfter).toEqual(parentBefore);
     });
   });
@@ -380,8 +368,7 @@ describe('persistence', () => {
         home,
       );
       const firstScan = await listSessionsOnDisk(home);
-      const firstActivity = firstScan.find((entry) => entry.id === session.id)!
-        .lastActivityAt;
+      const firstActivity = firstScan.find((entry) => entry.id === session.id)!.lastActivityAt;
       expect(firstActivity).toBeGreaterThanOrEqual(session.createdAt);
 
       // Force a measurable mtime change before the second persist; some
@@ -405,9 +392,7 @@ describe('persistence', () => {
         home,
       );
       const secondScan = await listSessionsOnDisk(home);
-      const secondActivity = secondScan.find(
-        (entry) => entry.id === session.id,
-      )!.lastActivityAt;
+      const secondActivity = secondScan.find((entry) => entry.id === session.id)!.lastActivityAt;
       expect(secondActivity).toBeGreaterThanOrEqual(firstActivity);
     });
   });

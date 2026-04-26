@@ -12,7 +12,7 @@ export function splitArgs(s: string): string[] {
     if (i >= n) break;
     if (s[i] === '"') {
       i += 1;
-      let start = i;
+      const start = i;
       let buf = '';
       while (i < n && s[i] !== '"') i += 1;
       buf = s.slice(start, i);

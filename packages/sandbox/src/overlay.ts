@@ -56,11 +56,7 @@ export async function forkOverlay(
   const child = overlayPaths(childSessionId, overlaysHome);
   // rsync the upperdir contents (-a preserves perms/timestamps/ownership;
   // trailing slash on src copies contents, not the dir itself).
-  const { exitCode, stderr } = await runner.run([
-    '-a',
-    `${parent.upper}/`,
-    `${child.upper}/`,
-  ]);
+  const { exitCode, stderr } = await runner.run(['-a', `${parent.upper}/`, `${child.upper}/`]);
   // Exit 23 (partial transfer) typically means the source didn't exist;
   // treat that as "nothing to copy" rather than a hard error.
   if (exitCode !== 0 && exitCode !== 23) {
@@ -154,9 +150,7 @@ export async function diffOverlay(
     `${hostCwd}/`,
   ]);
   if (diffResult.exitCode !== 0) {
-    throw new Error(
-      `rsync diff failed (exit ${diffResult.exitCode}): ${diffResult.stderr.trim()}`,
-    );
+    throw new Error(`rsync diff failed (exit ${diffResult.exitCode}): ${diffResult.stderr.trim()}`);
   }
   return parseRsyncItemize(diffResult.stdout);
 }

@@ -5,12 +5,7 @@ import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import React from 'react';
 import { App, type OverlayHandlers } from './App';
-import {
-  deepMerge,
-  getDefaultThemePath,
-  loadUserTheme,
-  pickBaseTheme,
-} from './theme/loader';
+import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
 
 export interface MountOptions {

@@ -38,9 +38,7 @@ describe('RuleStore', () => {
     const store = new RuleStore(cwd);
     const r = makeRule('pnpm test *');
     store.add(r, 'project');
-    const parsed = JSON.parse(
-      readFileSync(join(cwd, '.chimera', 'permissions.json'), 'utf8'),
-    );
+    const parsed = JSON.parse(readFileSync(join(cwd, '.chimera', 'permissions.json'), 'utf8'));
     expect(parsed.version).toBe(1);
     expect(parsed.rules).toHaveLength(1);
     expect(parsed.rules[0].pattern).toBe('pnpm test *');
@@ -59,9 +57,7 @@ describe('RuleStore', () => {
     store.add(makeRule('a'), 'project');
     store.add(makeRule('b'), 'project');
     store.removeAt(0); // removes 'a' from project rules
-    const parsed = JSON.parse(
-      readFileSync(join(cwd, '.chimera', 'permissions.json'), 'utf8'),
-    );
+    const parsed = JSON.parse(readFileSync(join(cwd, '.chimera', 'permissions.json'), 'utf8'));
     expect(parsed.rules.map((r: PermissionRule) => r.pattern)).toEqual(['b']);
   });
 

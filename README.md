@@ -268,6 +268,10 @@ The TUI ships a few bundled presets: `default`, `tokyo-night-moon`, and `cyberpu
 
 Drop additional partial themes into `~/.chimera/themes/<name>.json` to extend the list; user files shadow bundled presets of the same name. Hand-edits to `~/.chimera/theme.json` always take effect on next start, but running `/theme <name>` overwrites them.
 
+## Lifecycle hooks
+
+Drop an executable file in `~/.chimera/hooks/<EventName>/` (global) or `<cwd>/.chimera/hooks/<EventName>/` (project) and Chimera fires it on the matching event. Events: `UserPromptSubmit`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`. `chimera hooks list` prints what's installed. See [`docs/hooks.md`](docs/hooks.md) for the payload schema, exit-code semantics, and a Legato integration recipe.
+
 ## Packages
 
 ```
@@ -275,6 +279,7 @@ packages/core          — agent loop, events, session persistence
 packages/providers     — OpenAI/Anthropic-compat provider factories
 packages/tools         — Executor, LocalExecutor, bash/read/write/edit
 packages/permissions   — rule store, GatedExecutor, auto-approve tiers
+packages/hooks         — lifecycle hook discovery + execution
 packages/sandbox       — DockerExecutor, overlay diff/apply, sandbox image
 packages/server        — Hono HTTP + SSE surface
 packages/client        — typed TypeScript SDK (ChimeraClient)
@@ -282,4 +287,4 @@ packages/tui           — Ink-based interactive UI
 packages/cli           — chimera binary
 ```
 
-Dependency DAG is strict: `cli → tui, server, client, permissions, sandbox, tools, providers, core`. No back edges.
+Dependency DAG is strict: `cli → tui, server, client, permissions, hooks, sandbox, tools, providers, core`. No back edges.

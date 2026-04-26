@@ -8,8 +8,7 @@ import { LocalExecutor } from '../src/local-executor';
 
 type AnyTool = { execute: (args: any, opts?: any) => Promise<any> };
 
-const asAny = (def: ReturnType<typeof buildBashTool>) =>
-  def.tool as unknown as AnyTool;
+const asAny = (def: ReturnType<typeof buildBashTool>) => def.tool as unknown as AnyTool;
 
 class FakeGate implements PermissionGate {
   request = vi.fn(
@@ -41,12 +40,14 @@ describe('bash tool — sandbox vs host routing', () => {
 
   it('sandbox-target call bypasses the gate when sandbox is on', async () => {
     const gate = new FakeGate();
-    const tool = asAny(buildBashTool({
-      sandboxExecutor,
-      hostExecutor,
-      sandboxMode: 'overlay',
-      permissionGate: gate,
-    }));
+    const tool = asAny(
+      buildBashTool({
+        sandboxExecutor,
+        hostExecutor,
+        sandboxMode: 'overlay',
+        permissionGate: gate,
+      }),
+    );
     const r = await tool.execute({ command: 'echo sandboxed', target: 'sandbox' }, {});
     expect(r.exit_code).toBe(0);
     expect(gate.request).not.toHaveBeenCalled();
@@ -54,12 +55,14 @@ describe('bash tool — sandbox vs host routing', () => {
 
   it('host-target call invokes the gate when sandbox is on (with reason)', async () => {
     const gate = new FakeGate();
-    const tool = asAny(buildBashTool({
-      sandboxExecutor,
-      hostExecutor,
-      sandboxMode: 'overlay',
-      permissionGate: gate,
-    }));
+    const tool = asAny(
+      buildBashTool({
+        sandboxExecutor,
+        hostExecutor,
+        sandboxMode: 'overlay',
+        permissionGate: gate,
+      }),
+    );
     const r = await tool.execute(
       { command: 'echo on host', target: 'host', reason: 'need real env' },
       {},
@@ -71,12 +74,14 @@ describe('bash tool — sandbox vs host routing', () => {
 
   it('host-target without reason is refused before reaching the gate', async () => {
     const gate = new FakeGate();
-    const tool = asAny(buildBashTool({
-      sandboxExecutor,
-      hostExecutor,
-      sandboxMode: 'overlay',
-      permissionGate: gate,
-    }));
+    const tool = asAny(
+      buildBashTool({
+        sandboxExecutor,
+        hostExecutor,
+        sandboxMode: 'overlay',
+        permissionGate: gate,
+      }),
+    );
     const r = await tool.execute({ command: 'rm -rf /tmp/foo', target: 'host' }, {});
     expect(r.exit_code).toBe(-1);
     expect(r.stderr).toMatch(/requires a 'reason'/);
@@ -85,12 +90,14 @@ describe('bash tool — sandbox vs host routing', () => {
 
   it('default target is host when sandbox is off', async () => {
     const gate = new FakeGate();
-    const tool = asAny(buildBashTool({
-      sandboxExecutor,
-      hostExecutor,
-      sandboxMode: 'off',
-      permissionGate: gate,
-    }));
+    const tool = asAny(
+      buildBashTool({
+        sandboxExecutor,
+        hostExecutor,
+        sandboxMode: 'off',
+        permissionGate: gate,
+      }),
+    );
     const r = await tool.execute({ command: 'echo hi' }, {});
     expect(r.exit_code).toBe(0);
     // Sandbox-off path doesn't gate either; tool short-circuits to the

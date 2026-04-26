@@ -3,12 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChimeraClient } from '@chimera/client';
 import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands';
-import type {
-  AgentEvent,
-  ModelConfig,
-  Session,
-  SessionInfo,
-} from '@chimera/core';
+import type { AgentEvent, ModelConfig, Session, SessionInfo } from '@chimera/core';
 import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
 import React from 'react';
@@ -361,9 +356,7 @@ describe('TUI slash dispatch', () => {
   });
 
   it('/<skill> with no args still dispatches (no appended body)', async () => {
-    const skills = buildSkillRegistry([
-      { name: 'pdf', description: 'PDF things' },
-    ]);
+    const skills = buildSkillRegistry([{ name: 'pdf', description: 'PDF things' }]);
     const sent: string[] = [];
     const { stdin, unmount } = render(
       <App
@@ -382,7 +375,9 @@ describe('TUI slash dispatch', () => {
   });
 
   it('user command shadows a skill of the same name', async () => {
-    const commandRegistry = buildCommandRegistry([{ name: 'pdf', body: 'Command body $ARGUMENTS' }]);
+    const commandRegistry = buildCommandRegistry([
+      { name: 'pdf', body: 'Command body $ARGUMENTS' },
+    ]);
     const skills = buildSkillRegistry([{ name: 'pdf', description: 'PDF things' }]);
     const sent: string[] = [];
     const { stdin, unmount } = render(
@@ -498,7 +493,6 @@ describe('TUI overlay slash dispatch', () => {
     expect(lastFrame()).toContain('overlay discarded');
     unmount();
   });
-
 });
 
 // /theme reads/writes ~/.chimera/{theme.json,themes/}, so we redirect HOME to
@@ -552,9 +546,7 @@ describe('TUI /theme slash dispatch', () => {
     );
     await type(stdin, '/theme cyberpunk\r');
     expect(lastFrame()).toContain("theme: applied 'cyberpunk' (builtin)");
-    const written = JSON.parse(
-      readFileSync(join(tmpHome, '.chimera', 'theme.json'), 'utf-8'),
-    );
+    const written = JSON.parse(readFileSync(join(tmpHome, '.chimera', 'theme.json'), 'utf-8'));
     expect(written._themeName).toBe('cyberpunk');
     expect(written.accent.primary).toBeDefined();
     unmount();
@@ -603,12 +595,7 @@ describe('TUI /theme slash dispatch', () => {
       status: 'running',
     };
     const { lastFrame, stdin, unmount } = render(
-      <App
-        client={stubClient({ subagents: [sub] })}
-        sessionId="s"
-        modelRef="m/m"
-        cwd="/tmp"
-      />,
+      <App client={stubClient({ subagents: [sub] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/subagents\r');
     const frame = lastFrame()!;
@@ -646,12 +633,7 @@ describe('TUI /theme slash dispatch', () => {
       status: 'running',
     };
     const { lastFrame, stdin, unmount } = render(
-      <App
-        client={stubClient({ subagents: [sub] })}
-        sessionId="s"
-        modelRef="m/m"
-        cwd="/tmp"
-      />,
+      <App client={stubClient({ subagents: [sub] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/attach sub-inproc\r');
     expect(lastFrame()!).toMatch(/in-process and not attachable/);
@@ -669,12 +651,7 @@ describe('TUI /theme slash dispatch', () => {
       status: 'running',
     };
     const { lastFrame, stdin, unmount } = render(
-      <App
-        client={stubClient({ subagents: [sub] })}
-        sessionId="s"
-        modelRef="m/m"
-        cwd="/tmp"
-      />,
+      <App client={stubClient({ subagents: [sub] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/attach tail-1234\r');
     expect(lastFrame()!).toContain(`attaching to subagent ${sub.subagentId}`);
@@ -683,13 +660,7 @@ describe('TUI /theme slash dispatch', () => {
 
   it('/detach is a no-op when already on the parent session', async () => {
     const { lastFrame, stdin, unmount } = render(
-      <App
-        client={stubClient({})}
-        sessionId="s"
-        modelRef="m/m"
-        model={TEST_MODEL}
-        cwd="/tmp"
-      />,
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" model={TEST_MODEL} cwd="/tmp" />,
     );
     await type(stdin, '/detach\r');
     expect(lastFrame()!).toContain('already attached to the parent session');
@@ -786,9 +757,7 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/fork try alternative\r');
-    expect(forkCalls).toEqual([
-      { id: '01HZPARENT0000000000000000AB', purpose: 'try alternative' },
-    ]);
+    expect(forkCalls).toEqual([{ id: '01HZPARENT0000000000000000AB', purpose: 'try alternative' }]);
     expect(lastFrame()!).toContain('forked session');
     unmount();
   });
@@ -807,9 +776,7 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/fork\r');
-    expect(forkCalls).toEqual([
-      { id: '01HZPARENT0000000000000000AB', purpose: undefined },
-    ]);
+    expect(forkCalls).toEqual([{ id: '01HZPARENT0000000000000000AB', purpose: undefined }]);
     unmount();
   });
 });

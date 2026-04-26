@@ -50,7 +50,9 @@ export function parseSandboxFlags(opts: ParseSandboxFlagsInput): CliSandboxOptio
 
   const mode = (opts.sandboxMode ?? 'bind') as SandboxRunMode;
   if (!VALID_MODES.has(mode)) {
-    throw new Error(`invalid --sandbox-mode '${opts.sandboxMode}': expected bind|overlay|ephemeral`);
+    throw new Error(
+      `invalid --sandbox-mode '${opts.sandboxMode}': expected bind|overlay|ephemeral`,
+    );
   }
 
   const network = (opts.sandboxNetwork ?? 'host') as 'none' | 'host';

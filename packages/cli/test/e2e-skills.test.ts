@@ -40,9 +40,7 @@ describe('chimera skills E2E', () => {
       '---\nname: pdf\ndescription: PDF things\n---',
     );
 
-    const out = await capture(() =>
-      runSkillsList({ cwd: workspace, home, json: true }),
-    );
+    const out = await capture(() => runSkillsList({ cwd: workspace, home, json: true }));
     const data = JSON.parse(out);
     expect(data).toHaveLength(1);
     expect(data[0]).toMatchObject({ name: 'pdf', source: 'project' });
@@ -59,9 +57,7 @@ describe('chimera skills E2E', () => {
       join(workspace, '.claude', 'skills', 'git', 'SKILL.md'),
       '---\nname: git\ndescription: claude-compat\n---',
     );
-    const out = await capture(() =>
-      runSkillsList({ cwd: workspace, home, json: true }),
-    );
+    const out = await capture(() => runSkillsList({ cwd: workspace, home, json: true }));
     const data = JSON.parse(out);
     const git = data.find((s: { name: string }) => s.name === 'git');
     expect(git).toMatchObject({ source: 'project', description: 'chimera-native' });

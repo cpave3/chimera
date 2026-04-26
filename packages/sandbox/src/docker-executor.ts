@@ -1,9 +1,4 @@
-import type {
-  ExecOptions,
-  ExecResult,
-  Executor,
-  StatResult,
-} from '@chimera/core';
+import type { ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { type DockerRunner, SpawnDockerRunner } from './docker-runner';
 import { ensureOverlayDirs, overlayPaths, removeOverlayDirs } from './overlay';
 import type { SandboxConfig, SandboxRunMode } from './types';
@@ -86,7 +81,9 @@ export class DockerExecutor implements Executor {
       await ensureOverlayDirs(this.config.sessionId, this.config.overlaysHome);
     }
 
-    const tryStart = async (mode: SandboxRunMode): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    const tryStart = async (
+      mode: SandboxRunMode,
+    ): Promise<{ ok: true } | { ok: false; reason: string }> => {
       // Best-effort cleanup of any stale container from a previous crash.
       await this.runner.run(['rm', '-f', this.containerName]).catch(() => undefined);
 
@@ -178,10 +175,9 @@ export class DockerExecutor implements Executor {
     }
 
     this.warn(`sandbox: image '${ref}' missing — building from ${this.dockerfileDir} (one-time)`);
-    const build = await this.runner.run(
-      ['build', '-t', ref, this.dockerfileDir],
-      { timeoutMs: 30 * 60_000 },
-    );
+    const build = await this.runner.run(['build', '-t', ref, this.dockerfileDir], {
+      timeoutMs: 30 * 60_000,
+    });
     if (build.exitCode !== 0) {
       throw new Error(
         `sandbox: 'docker build -t ${ref}' failed: ${(build.stderr || build.stdout).trim()}`,

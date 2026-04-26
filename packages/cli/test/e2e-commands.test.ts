@@ -65,45 +65,43 @@ describe('chimera run --command E2E', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  it(
-    'expands a .chimera/commands/<name>.md template and sends the expanded body as the first user message',
-    { timeout: 20000 },
-    async () => {
-      await mkdir(join(workspace, '.chimera', 'commands'), { recursive: true });
-      await writeFile(
-        join(workspace, '.chimera', 'commands', 'summarize.md'),
-        '---\ndescription: Summarize something\n---\nSummarize: $ARGUMENTS',
-      );
+  it('expands a .chimera/commands/<name>.md template and sends the expanded body as the first user message', {
+    timeout: 20000,
+  }, async () => {
+    await mkdir(join(workspace, '.chimera', 'commands'), { recursive: true });
+    await writeFile(
+      join(workspace, '.chimera', 'commands', 'summarize.md'),
+      '---\ndescription: Summarize something\n---\nSummarize: $ARGUMENTS',
+    );
 
-      const captured: { firstUser?: string } = {};
-      const factory: AgentFactory = {
-        build: async (init) => ({
-          agent: new Agent({
-            cwd: init.cwd,
-            model: init.model,
-            languageModel: capturingModel(captured),
-            tools: {},
-            sandboxMode: init.sandboxMode,
-            home,
-            contextWindow: 200_000,
-          }),
+    const captured: { firstUser?: string } = {};
+    const factory: AgentFactory = {
+      build: async (init) => ({
+        agent: new Agent({
+          cwd: init.cwd,
+          model: init.model,
+          languageModel: capturingModel(captured),
+          tools: {},
+          sandboxMode: init.sandboxMode,
+          home,
+          contextWindow: 200_000,
         }),
-      };
+      }),
+    };
 
-      const res = await runOneShot({
-        prompt: '',
-        cwd: workspace,
-        home,
-        command: 'summarize',
-        commandArgs: 'foo',
-        factoryOverride: factory,
-        modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
-      });
+    const res = await runOneShot({
+      prompt: '',
+      cwd: workspace,
+      home,
+      command: 'summarize',
+      commandArgs: 'foo',
+      factoryOverride: factory,
+      modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+    });
 
-      expect(res.exitCode).toBe(0);
-      expect(captured.firstUser).toBe('Summarize: foo');
-    },
-  );
+    expect(res.exitCode).toBe(0);
+    expect(captured.firstUser).toBe('Summarize: foo');
+  });
 
   it('exits nonzero on --command with an unknown template name', async () => {
     const res = await runOneShot({

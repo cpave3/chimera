@@ -66,9 +66,7 @@ export function buildChildArgv(args: SpawnChildArgs): string[] {
   return argv;
 }
 
-export async function spawnChimeraChild(
-  args: SpawnChildArgs,
-): Promise<ChildHandle> {
+export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHandle> {
   const argv = buildChildArgv(args);
   const proc = spawn(args.chimeraBin, argv, {
     cwd: args.cwd,
@@ -92,10 +90,7 @@ export async function spawnChimeraChild(
 
   type EarlyExit = { code: number | null; signal: NodeJS.Signals | null };
   let earlyExit: EarlyExit | null = null;
-  const exitHandler = (
-    code: number | null,
-    signal: NodeJS.Signals | null,
-  ) => {
+  const exitHandler = (code: number | null, signal: NodeJS.Signals | null) => {
     earlyExit = { code, signal };
   };
   proc.once('exit', exitHandler);
@@ -148,10 +143,7 @@ export async function spawnChimeraChild(
   };
 }
 
-async function waitForHealth(
-  client: ChimeraClient,
-  timeoutMs: number,
-): Promise<boolean> {
+async function waitForHealth(client: ChimeraClient, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -281,10 +273,7 @@ export async function interruptChild(handle: ChildHandle): Promise<void> {
   }
 }
 
-async function terminateProc(
-  proc: ChildProcess,
-  graceMs: number,
-): Promise<void> {
+async function terminateProc(proc: ChildProcess, graceMs: number): Promise<void> {
   if (proc.exitCode !== null || proc.signalCode !== null) return;
   await new Promise<void>((resolve) => {
     let resolved = false;

@@ -149,10 +149,7 @@ describe('loadUserTheme', () => {
 
   it('strips unknown top-level keys (e.g. _comment)', () => {
     const path = join(tmpDir, 'theme.json');
-    writeFileSync(
-      path,
-      JSON.stringify({ _comment: 'A note', accent: { primary: 'red' } }),
-    );
+    writeFileSync(path, JSON.stringify({ _comment: 'A note', accent: { primary: 'red' } }));
     const result = loadUserTheme(path);
     expect(result).toEqual({ kind: 'ok', theme: { accent: { primary: 'red' } } });
   });
@@ -298,9 +295,7 @@ describe('applyThemeByName', () => {
     expect(r.kind).toBe('ok');
     if (r.kind === 'ok') {
       expect(r.activeName).toBe('tokyo-night-moon');
-      expect(r.theme.accent?.primary).toBe(
-        BUILTIN_PRESETS['tokyo-night-moon']!.accent!.primary,
-      );
+      expect(r.theme.accent?.primary).toBe(BUILTIN_PRESETS['tokyo-night-moon']!.accent!.primary);
     }
   });
 });

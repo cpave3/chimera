@@ -64,11 +64,11 @@ describe('Agent — tool formatters', () => {
     const events: AgentEvent[] = [];
     for await (const ev of agent.run('go')) events.push(ev);
 
-    const start = events.find((e): e is Extract<AgentEvent, { type: 'tool_call_start' }> =>
-      e.type === 'tool_call_start',
+    const start = events.find(
+      (e): e is Extract<AgentEvent, { type: 'tool_call_start' }> => e.type === 'tool_call_start',
     );
-    const done = events.find((e): e is Extract<AgentEvent, { type: 'tool_call_result' }> =>
-      e.type === 'tool_call_result',
+    const done = events.find(
+      (e): e is Extract<AgentEvent, { type: 'tool_call_result' }> => e.type === 'tool_call_result',
     );
     expect(start?.display).toEqual({ summary: 'hello' });
     expect(done?.display).toEqual({ summary: 'hello → hello' });
@@ -98,8 +98,8 @@ describe('Agent — tool formatters', () => {
     const events: AgentEvent[] = [];
     for await (const ev of agent.run('go')) events.push(ev);
 
-    const start = events.find((e): e is Extract<AgentEvent, { type: 'tool_call_start' }> =>
-      e.type === 'tool_call_start',
+    const start = events.find(
+      (e): e is Extract<AgentEvent, { type: 'tool_call_start' }> => e.type === 'tool_call_start',
     );
     expect(start).toBeDefined();
     expect(start?.display).toBeUndefined();

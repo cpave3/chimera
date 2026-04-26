@@ -24,8 +24,7 @@ export function loadSkillsFromConfig(opts: LoadSkillsOpts): SkillRegistry {
   const configDisabled = opts.config.skills?.enabled === false;
   if (configDisabled || opts.skillsDisabled) return EMPTY_REGISTRY;
 
-  const claudeCompat =
-    opts.claudeCompatOverride ?? opts.config.skills?.claudeCompat ?? true;
+  const claudeCompat = opts.claudeCompatOverride ?? opts.config.skills?.claudeCompat ?? true;
 
   return loadSkills({
     cwd: opts.cwd,

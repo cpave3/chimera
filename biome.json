@@ -1,15 +1,14 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": {
-    "enabled": true
-  },
+  "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "files": {
-    "ignore": [
-      "**/dist/**",
-      "**/node_modules/**",
-      "**/coverage/**",
-      "**/*.generated.*",
-      "pnpm-lock.yaml"
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/*.generated.*",
+      "!**/pnpm-lock.yaml"
     ]
   },
   "formatter": {

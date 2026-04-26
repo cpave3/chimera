@@ -20,7 +20,9 @@ export function Header({ version, modelRef, cwd, sessionId }: HeaderProps): Reac
       marginBottom={1}
     >
       <Box>
-        <Text color={theme.accent.primary} bold>Chimera</Text>
+        <Text color={theme.accent.primary} bold>
+          Chimera
+        </Text>
         <Text color={theme.text.muted}>{`  v${version}`}</Text>
       </Box>
       <Text color={theme.accent.secondary}>{modelRef}</Text>

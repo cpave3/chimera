@@ -22,8 +22,7 @@ export function pickUsageColor(pct: number | null, theme: Theme): string {
 export function UsageWidget(props: UsageWidgetProps): React.ReactElement {
   const theme = useTheme();
   const { usage, contextWindow, usedContextTokens, unknownWindow } = props;
-  const pct =
-    contextWindow > 0 ? Math.round((usedContextTokens / contextWindow) * 100) : null;
+  const pct = contextWindow > 0 ? Math.round((usedContextTokens / contextWindow) * 100) : null;
   const color = pickUsageColor(pct, theme);
 
   const used = formatTokens(usedContextTokens);
