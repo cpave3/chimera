@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChimeraClient } from '@chimera/client';
 import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands';
-import type { AgentEvent } from '@chimera/core';
+import type {
+  AgentEvent,
+  ModelConfig,
+  Session,
+  SessionInfo,
+} from '@chimera/core';
 import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
 import React from 'react';
@@ -28,11 +33,41 @@ interface StubClientOpts {
   echoOnSend?: (content: string) => AgentEvent[];
   /** Active subagents returned by `listSubagents`. */
   subagents?: SubagentStub[];
+  /** Sessions returned by `listSessions`. Default: empty. */
+  sessions?: SessionInfo[];
+  /** Override the response from `getSession(id)`. Default: returns an empty session. */
+  getSessionImpl?: (id: string) => Session;
+  createSessionSpy?: (opts: unknown) => void;
+  resumeSessionSpy?: (id: string) => void;
+  forkSessionSpy?: (id: string, purpose?: string) => void;
+}
+
+function emptySession(id: string): Session {
+  return {
+    id,
+    parentId: null,
+    children: [],
+    cwd: '/tmp',
+    createdAt: 1,
+    messages: [],
+    toolCalls: [],
+    status: 'idle',
+    model: { providerId: 'mock', modelId: 'mock', maxSteps: 10 },
+    sandboxMode: 'off',
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      totalTokens: 0,
+      stepCount: 0,
+    },
+  };
 }
 
 function stubClient(opts: StubClientOpts = {}): ChimeraClient {
   const queue: AgentEvent[] = [];
   let wake: (() => void) | null = null;
+  const getSessionImpl = opts.getSessionImpl ?? emptySession;
 
   return {
     subscribe: async function* () {
@@ -59,8 +94,31 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient {
     removeRule: async () => {},
     resolvePermission: async () => {},
     listSubagents: async () => opts.subagents ?? [],
+    getSession: async (id: string) => getSessionImpl(id),
+    listSessions: async () => opts.sessions ?? [],
+    createSession: async (createOpts: unknown) => {
+      opts.createSessionSpy?.(createOpts);
+      return { sessionId: '01HZNEWSESSION00000000000000' };
+    },
+    resumeSession: async (id: string) => {
+      opts.resumeSessionSpy?.(id);
+      return { sessionId: id };
+    },
+    forkSession: async (id: string, purpose?: string) => {
+      opts.forkSessionSpy?.(id, purpose);
+      return {
+        sessionId: '01HZFORKEDCHILD0000000000000',
+        parentId: id,
+      };
+    },
   } as unknown as ChimeraClient;
 }
+
+const TEST_MODEL: ModelConfig = {
+  providerId: 'mock',
+  modelId: 'mock',
+  maxSteps: 10,
+};
 
 function registry(
   cmds: { name: string; body: string; description?: string }[],
@@ -625,10 +683,133 @@ describe('TUI /theme slash dispatch', () => {
 
   it('/detach is a no-op when already on the parent session', async () => {
     const { lastFrame, stdin, unmount } = render(
-      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+      <App
+        client={stubClient({})}
+        sessionId="s"
+        modelRef="m/m"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
     );
     await type(stdin, '/detach\r');
     expect(lastFrame()!).toContain('already attached to the parent session');
+    unmount();
+  });
+
+  it('/new invokes createSession and shows a confirmation', async () => {
+    const createCalls: unknown[] = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({
+          createSessionSpy: (createOpts) => createCalls.push(createOpts),
+        })}
+        sessionId="01HZSTARTING0000000000000000"
+        modelRef="mock/mock"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/new\r');
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toMatchObject({
+      cwd: '/tmp',
+      model: TEST_MODEL,
+      sandboxMode: 'off',
+    });
+    expect(lastFrame()!).toContain('new session');
+    unmount();
+  });
+
+  it('/sessions opens an interactive picker when sessions exist', async () => {
+    const persistedSessions: SessionInfo[] = [
+      {
+        id: '01HZAAAAAAAAAAAAAAAAAAAAAA',
+        parentId: null,
+        children: [],
+        createdAt: 1700000000000,
+        lastActivityAt: 1700000000000,
+        cwd: '/tmp',
+        model: TEST_MODEL,
+        sandboxMode: 'off',
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedInputTokens: 0,
+          totalTokens: 0,
+          stepCount: 0,
+        },
+        messageCount: 2,
+      },
+    ];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ sessions: persistedSessions })}
+        sessionId="01HZSTARTING0000000000000000"
+        modelRef="mock/mock"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/sessions\r');
+    const frame = lastFrame()!;
+    expect(frame).toContain('Sessions (1)');
+    expect(frame).toContain('AAAAAAAA'); // truncated id of the persisted session
+    unmount();
+  });
+
+  it('/sessions reports empty when no sessions match the cwd', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ sessions: [] })}
+        sessionId="01HZSTARTING0000000000000000"
+        modelRef="mock/mock"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/sessions\r');
+    expect(lastFrame()!).toContain('no persisted sessions');
+    unmount();
+  });
+
+  it('/fork invokes forkSession with the current id and shows confirmation', async () => {
+    const forkCalls: Array<{ id: string; purpose?: string }> = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({
+          forkSessionSpy: (id, purpose) => forkCalls.push({ id, purpose }),
+        })}
+        sessionId="01HZPARENT0000000000000000AB"
+        modelRef="mock/mock"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/fork try alternative\r');
+    expect(forkCalls).toEqual([
+      { id: '01HZPARENT0000000000000000AB', purpose: 'try alternative' },
+    ]);
+    expect(lastFrame()!).toContain('forked session');
+    unmount();
+  });
+
+  it('/fork without a purpose passes undefined', async () => {
+    const forkCalls: Array<{ id: string; purpose?: string }> = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({
+          forkSessionSpy: (id, purpose) => forkCalls.push({ id, purpose }),
+        })}
+        sessionId="01HZPARENT0000000000000000AB"
+        modelRef="mock/mock"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/fork\r');
+    expect(forkCalls).toEqual([
+      { id: '01HZPARENT0000000000000000AB', purpose: undefined },
+    ]);
     unmount();
   });
 });

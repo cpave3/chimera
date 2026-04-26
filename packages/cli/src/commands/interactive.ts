@@ -1,7 +1,7 @@
 import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
 import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
-import { applyOverlay, diffOverlay, discardOverlay } from '@chimera/sandbox';
+import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
@@ -81,7 +81,15 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
   });
-  const app = buildApp({ registry });
+  const app = buildApp({
+    registry,
+    home: opts.home,
+    onFork: async (parent, childId) => {
+      if (parent.sandboxMode === 'overlay') {
+        await forkOverlay(parent.id, childId, {});
+      }
+    },
+  });
   const server = await startServer({ app });
 
   const client = new ChimeraClient({ baseUrl: server.url });
@@ -112,6 +120,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     client,
     sessionId,
     modelRef: ref,
+    model,
     cwd: opts.cwd,
     commands,
     skills,

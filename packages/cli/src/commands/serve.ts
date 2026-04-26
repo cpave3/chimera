@@ -1,4 +1,5 @@
 import type { SandboxMode } from '@chimera/core';
+import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
@@ -74,7 +75,15 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     loadSkills: () => skills.all(),
   });
 
-  const app = buildApp({ registry });
+  const app = buildApp({
+    registry,
+    home: opts.home,
+    onFork: async (parent, childId) => {
+      if (parent.sandboxMode === 'overlay') {
+        await forkOverlay(parent.id, childId, {});
+      }
+    },
+  });
   const server = await startServer({ app, port: opts.port, host: opts.host });
 
   // Create a default session bound to the working directory.

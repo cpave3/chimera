@@ -1,14 +1,20 @@
+import { resolve as resolvePath } from 'node:path';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { AgentEvent, SandboxMode, SessionId, Usage } from '@chimera/core';
+import type { AgentEvent, ModelConfig, SandboxMode, SessionId, SessionInfo, Usage } from '@chimera/core';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import { renderMarkdown } from './markdown';
 import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
 import { Scrollback, type ScrollbackEntry } from './scrollback';
+import {
+  SessionPicker,
+  buildSessionTreeRows,
+  formatRelativeTime,
+} from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import {
   BUILTIN_COMMANDS,
@@ -33,6 +39,8 @@ export interface AppProps {
   client: ChimeraClient;
   sessionId: SessionId;
   modelRef: string;
+  /** Resolved model config; needed to drive `/new` and `/fork`. */
+  model: ModelConfig;
   cwd: string;
   commands?: CommandRegistry;
   skills?: SkillRegistry;
@@ -100,6 +108,10 @@ export function App(props: AppProps): React.ReactElement {
     label: string;
   }>({ client: props.client, sessionId: props.sessionId, label: 'parent' });
   const [overlayPicker, setOverlayPicker] = useState<OverlayDiffEntry[] | null>(null);
+  const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null);
+  // Tracks the active session's parentId for header display; refreshed via
+  // `client.getSession()` after switches and forks.
+  const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
   const [running, setRunning] = useState(false);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
@@ -198,7 +210,7 @@ export function App(props: AppProps): React.ReactElement {
       ? [...BUILTIN_COMMANDS, ...OVERLAY_COMMANDS]
       : BUILTIN_COMMANDS;
     const builtins: SlashMenuItem[] = visibleBuiltins
-      .filter((c) => c.name.toLowerCase().slice(1).startsWith(partial))
+      .filter((c) => c.name.toLowerCase().slice(1).includes(partial))
       .map((c) => ({
         name: c.name.slice(1),
         description: c.description,
@@ -207,7 +219,7 @@ export function App(props: AppProps): React.ReactElement {
     const builtinNames = new Set(visibleBuiltins.map((c) => c.name));
     const users: SlashMenuItem[] = (props.commands?.list() ?? [])
       .filter((c) => !builtinNames.has(`/${c.name}`))
-      .filter((c) => c.name.toLowerCase().startsWith(partial))
+      .filter((c) => c.name.toLowerCase().includes(partial))
       .map((c) => ({
         name: c.name,
         description: c.description,
@@ -217,7 +229,7 @@ export function App(props: AppProps): React.ReactElement {
     const userCmdNames = new Set(users.map((u) => u.name));
     const skills: SlashMenuItem[] = (props.skills?.all() ?? [])
       .filter((s) => !builtinNames.has(`/${s.name}`) && !userCmdNames.has(s.name))
-      .filter((s) => s.name.toLowerCase().startsWith(partial))
+      .filter((s) => s.name.toLowerCase().includes(partial))
       .map((s) => ({
         name: s.name,
         description: s.description,
@@ -241,6 +253,31 @@ export function App(props: AppProps): React.ReactElement {
     const id = setInterval(() => setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
   }, [running]);
+
+  // Keep `activeParentId` in sync with whatever session the TUI is showing,
+  // and rehydrate scrollback from the session's persisted messages so a
+  // resumed/forked/switched session shows its prior conversation.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const s = await activeSession.client.getSession(activeSession.sessionId);
+        if (cancelled) return;
+        setActiveParentId(s.parentId ?? null);
+        // Only rehydrate if the session actually has prior messages — avoids
+        // wiping a fresh "/new" session's empty scrollback unnecessarily.
+        if (Array.isArray(s.messages) && s.messages.length > 0) {
+          scrollback.rehydrateFromSession(s);
+          setEntries(scrollback.all());
+        }
+      } catch {
+        if (!cancelled) setActiveParentId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSession.client, activeSession.sessionId, scrollback]);
 
   // When a run ends with queued messages, concatenate and send as one turn.
   useEffect(() => {
@@ -344,6 +381,7 @@ export function App(props: AppProps): React.ReactElement {
   useInput((char, key) => {
     if (pending) return; // handled by modal
     if (overlayPicker) return; // handled by picker
+    if (sessionPicker) return; // handled by SessionPicker
 
     if (key.ctrl && char === 'c') {
       if (running) {
@@ -549,10 +587,151 @@ export function App(props: AppProps): React.ReactElement {
         })();
         return;
       }
-      case '/new':
+      case '/new': {
+        void (async () => {
+          try {
+            const { sessionId: newId } = await props.client.createSession({
+              cwd: props.cwd,
+              model: props.model,
+              sandboxMode: props.sandboxMode ?? 'off',
+            });
+            stdout?.write('\x1b[2J\x1b[3J\x1b[H');
+            scrollback.clear();
+            setStaticEpoch((n) => n + 1);
+            setShowHeader(false);
+            setActiveSession({
+              client: props.client,
+              sessionId: newId,
+              label: 'session',
+            });
+            setRunning(false);
+            setQueue([]);
+            setStreaming(false);
+            setStreamingEntryId(null);
+            scrollback.addInfo(`new session ${newId.slice(-8)}`);
+            setEntries(scrollback.all());
+          } catch (err) {
+            scrollback.addError(`/new: ${(err as Error).message}`);
+            setEntries(scrollback.all());
+          }
+        })();
+        return;
+      }
       case '/sessions': {
-        scrollback.addInfo(`${name} is not yet wired to the server in MVP.`);
-        setEntries(scrollback.all());
+        void (async () => {
+          try {
+            const allSessions = await props.client.listSessions();
+            const sub = rest.join(' ').trim();
+            // /sessions all → bypass cwd-scoping for the picker
+            const showAll = sub === 'all';
+            const targetCwd = resolvePath(props.cwd);
+            const scoped = showAll
+              ? allSessions
+              : allSessions.filter((s) => resolvePath(s.cwd) === targetCwd);
+            const scopeLabel = showAll ? '(all directories)' : `in ${props.cwd}`;
+            if (sub === 'tree') {
+              if (scoped.length === 0) {
+                scrollback.addInfo(`no persisted sessions ${scopeLabel}`);
+              } else {
+                const rows = buildSessionTreeRows(scoped);
+                const lines = rows.map((r) => {
+                  const truncId = r.info.id.slice(-8);
+                  const childMark =
+                    r.info.children.length > 0 ? ` (${r.info.children.length})` : '';
+                  const marker = r.info.id === activeSession.sessionId ? '  ←' : '';
+                  return `${r.prefix}${truncId}${childMark}  ${r.info.messageCount} msg${marker}`;
+                });
+                scrollback.addInfo(
+                  `session tree ${scopeLabel}:\n${lines.join('\n')}`,
+                );
+              }
+              setEntries(scrollback.all());
+              return;
+            }
+            if (sub.length > 0 && sub !== 'all') {
+              // /sessions <id> — always look up against the full set
+              const target = allSessions.find(
+                (s) => s.id === sub || s.id.endsWith(sub),
+              );
+              if (!target) {
+                scrollback.addError(`/sessions: no session matching ${sub}`);
+                setEntries(scrollback.all());
+                return;
+              }
+              const ancestry: string[] = [];
+              {
+                const renderedAt = Date.now();
+                let cur: SessionInfo | undefined = target;
+                while (cur) {
+                  ancestry.unshift(
+                    `${cur.id.slice(-8)} (${formatRelativeTime(renderedAt, cur.createdAt)})`,
+                  );
+                  if (!cur.parentId) break;
+                  cur = allSessions.find((s) => s.id === cur!.parentId);
+                }
+              }
+              const lines = [
+                `id:        ${target.id}`,
+                `cwd:       ${target.cwd}`,
+                `model:     ${target.model.providerId}/${target.model.modelId}`,
+                `parent:    ${target.parentId ?? '(root)'}`,
+                `children:  ${target.children.length}`,
+                `messages:  ${target.messageCount}`,
+                `ancestry:  ${ancestry.join(' → ')}`,
+              ];
+              scrollback.addInfo(lines.join('\n'));
+              setEntries(scrollback.all());
+              return;
+            }
+            // No sub-arg (or `all`): open interactive picker
+            if (scoped.length === 0) {
+              scrollback.addInfo(
+                `no persisted sessions ${scopeLabel}` +
+                  (showAll ? '' : ' — use `/sessions all` to see every session'),
+              );
+              setEntries(scrollback.all());
+              return;
+            }
+            setSessionPicker(scoped);
+          } catch (err) {
+            scrollback.addError(`/sessions: ${(err as Error).message}`);
+            setEntries(scrollback.all());
+          }
+        })();
+        return;
+      }
+      case '/fork': {
+        const purpose = rest.join(' ').trim();
+        void (async () => {
+          try {
+            const { sessionId: childId, parentId } = await props.client.forkSession(
+              activeSession.sessionId,
+              purpose.length > 0 ? purpose : undefined,
+            );
+            stdout?.write('\x1b[2J\x1b[3J\x1b[H');
+            scrollback.clear();
+            setStaticEpoch((n) => n + 1);
+            setShowHeader(false);
+            setActiveSession({
+              client: props.client,
+              sessionId: childId,
+              label: 'forked',
+            });
+            setRunning(false);
+            setQueue([]);
+            setStreaming(false);
+            setStreamingEntryId(null);
+            scrollback.addInfo(
+              `forked session ${childId.slice(-8)} from ${parentId.slice(-8)}${
+                purpose.length > 0 ? ` (${purpose})` : ''
+              }`,
+            );
+            setEntries(scrollback.all());
+          } catch (err) {
+            scrollback.addError(`/fork: ${(err as Error).message}`);
+            setEntries(scrollback.all());
+          }
+        })();
         return;
       }
       case '/subagents': {
@@ -914,6 +1093,10 @@ export function App(props: AppProps): React.ReactElement {
   ];
   const modelLeft: StatusBarWidget[] = [
     <Text color={theme.accent.primary}>{props.modelRef}</Text>,
+    <Text color={theme.text.muted}>{`session ${activeSession.sessionId.slice(-8)}`}</Text>,
+    activeParentId ? (
+      <Text color={theme.accent.secondary}>(forked)</Text>
+    ) : null,
   ];
   const modelRight: StatusBarWidget[] = [
     usageState && (
@@ -1008,6 +1191,48 @@ export function App(props: AppProps): React.ReactElement {
                   scrollback.addError(`apply: ${(err as Error).message}`);
                 }
                 setEntries(scrollback.all());
+              })();
+            }}
+          />
+        )}
+        {sessionPicker && (
+          <SessionPicker
+            sessions={sessionPicker}
+            currentSessionId={activeSession.sessionId}
+            onCancel={() => {
+              setSessionPicker(null);
+              scrollback.addInfo('/sessions cancelled');
+              setEntries(scrollback.all());
+            }}
+            onSelect={(selectedId) => {
+              setSessionPicker(null);
+              if (selectedId === activeSession.sessionId) {
+                scrollback.addInfo(`already on session ${selectedId.slice(-8)}`);
+                setEntries(scrollback.all());
+                return;
+              }
+              void (async () => {
+                try {
+                  await props.client.resumeSession(selectedId);
+                  stdout?.write('\x1b[2J\x1b[3J\x1b[H');
+                  scrollback.clear();
+                  setStaticEpoch((n) => n + 1);
+                  setShowHeader(false);
+                  setActiveSession({
+                    client: props.client,
+                    sessionId: selectedId,
+                    label: 'session',
+                  });
+                  setRunning(false);
+                  setQueue([]);
+                  setStreaming(false);
+                  setStreamingEntryId(null);
+                  scrollback.addInfo(`switched to session ${selectedId.slice(-8)}`);
+                  setEntries(scrollback.all());
+                } catch (err) {
+                  scrollback.addError(`/sessions: ${(err as Error).message}`);
+                  setEntries(scrollback.all());
+                }
               })();
             }}
           />

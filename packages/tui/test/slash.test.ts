@@ -10,6 +10,7 @@ describe('slash commands', () => {
         '/clear',
         '/detach',
         '/exit',
+        '/fork',
         '/help',
         '/model',
         '/new',

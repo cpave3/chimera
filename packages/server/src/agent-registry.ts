@@ -15,6 +15,12 @@ export interface SessionInit {
   cwd: string;
   model: ModelConfig;
   sandboxMode: SandboxMode;
+  /**
+   * When set, the factory MUST call `loadSession(sessionId)` to populate
+   * the new Agent's `messages` and `toolCalls`. This is the resume
+   * contract: routes that pass `sessionId` (e.g. `POST /v1/sessions/:id/resume`)
+   * rely on the factory honoring it.
+   */
   sessionId?: SessionId;
 }
 
@@ -36,6 +42,12 @@ export interface AgentEntry {
   gate?: PermissionGate;
   bus: EventBus;
   runActive: boolean;
+  /**
+   * Promise tracking the currently active run, if any. Awaited by
+   * `delete()` so that the agent's final persistSession completes before the
+   * caller tears down the session directory.
+   */
+  activeRun: Promise<void> | null;
   resolvedPermissionIds: Set<string>;
   /**
    * Commands bound to this session at creation time. Captured once so that
@@ -106,6 +118,7 @@ export class AgentRegistry {
       gate,
       bus,
       runActive: false,
+      activeRun: null,
       resolvedPermissionIds: new Set(),
       commands,
       skills,
@@ -142,6 +155,15 @@ export class AgentRegistry {
     const e = this.entries.get(id);
     if (!e) return false;
     e.agent.interrupt();
+    // Wait for any in-flight run (and its final persistSession) to settle so
+    // the caller can safely tear down the session directory afterwards.
+    if (e.activeRun) {
+      try {
+        await e.activeRun;
+      } catch {
+        // run errors already surfaced via the event bus; we only need it done
+      }
+    }
     this.entries.delete(id);
     return true;
   }
@@ -155,7 +177,7 @@ export class AgentRegistry {
     if (!e) return 'missing';
     if (e.runActive) return 'already-running';
     e.runActive = true;
-    void (async () => {
+    e.activeRun = (async () => {
       try {
         for await (const ev of e.agent.run(content)) {
           e.bus.publish(ev);
@@ -167,6 +189,7 @@ export class AgentRegistry {
         e.bus.publish(finished);
       } finally {
         e.runActive = false;
+        e.activeRun = null;
       }
     })();
     return 'queued';

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { Agent, type ModelConfig } from '@chimera/core';
+import { Agent, type ModelConfig, writeSessionMetadata } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry, type AgentFactory } from '../src/agent-registry';
 import { buildApp } from '../src/app';
@@ -35,8 +35,8 @@ const model: ModelConfig = { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 
 function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
   return {
-    build: async () => ({
-      agent: new Agent({
+    build: async (init) => {
+      const agent = new Agent({
         cwd: '/tmp',
         model,
         languageModel: textOnlyModel(text),
@@ -44,8 +44,11 @@ function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-      }),
-    }),
+        sessionId: init.sessionId,
+      });
+      await writeSessionMetadata(agent.session, home);
+      return { agent };
+    },
   };
 }
 
@@ -65,7 +68,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
     const r = await app.request('/healthz');
     expect(r.status).toBe(200);
     expect(await r.text()).toBe('ok');
@@ -76,7 +79,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 42, cwd: '/tmp/x', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
     const r = await app.request('/v1/instance');
     expect(r.status).toBe(200);
     const j = await r.json();
@@ -89,7 +92,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
 
     const cr = await app.request('/v1/sessions', {
       method: 'POST',
@@ -141,7 +144,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
     const { sessionId } = await (
       await app.request('/v1/sessions', {
         method: 'POST',
@@ -159,7 +162,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
 
     const { sessionId } = await (
       await app.request('/v1/sessions', {
@@ -238,7 +241,7 @@ describe('server app', () => {
       factory,
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
 
     const projectCwd = await mkdtemp(join(tmpdir(), 'chimera-rulescrud-'));
     const { sessionId } = await (
@@ -283,7 +286,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
 
     const { sessionId } = await (
       await app.request('/v1/sessions', {
@@ -308,7 +311,7 @@ describe('server app', () => {
       factory: makeFactory(home),
       instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
     });
-    const app = buildApp({ registry });
+    const app = buildApp({ registry, home });
 
     const r = await app.request('/v1/sessions/unknown-session-id/reload', {
       method: 'POST',

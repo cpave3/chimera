@@ -152,6 +152,14 @@ Inherited from user rules:
 - **No emojis** unless explicitly requested.
 - **No backwards-compat shims** for deleted code — just delete it.
 - **Don't add error handling / validation for impossible cases.**
+- **Descriptive variable names.** Avoid one- and two-letter throwaways
+  (`r`, `cr`, `ra`, `rb`, `fr`) for response objects, results, and other
+  values that survive more than one statement. Prefer `createResponse`,
+  `forkResponse`, `errorBody`, etc. Loop indices (`i`), well-known math
+  vars, and immediately-destructured tuple elements are still fine.
+  Some older test files (e.g. `packages/server/test/app.test.ts`) use
+  the short-name style — leave those alone unless touching them, but
+  don't add new code in that style.
 
 ## Commit conventions
 

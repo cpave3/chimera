@@ -1,6 +1,6 @@
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { SandboxMode, SessionId } from '@chimera/core';
+import type { ModelConfig, SandboxMode, SessionId } from '@chimera/core';
 import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import React from 'react';
@@ -17,6 +17,11 @@ export interface MountOptions {
   client: ChimeraClient;
   sessionId: SessionId;
   modelRef: string;
+  /**
+   * Resolved model configuration — required so that `/new` and `/fork`
+   * can create new sessions with the same model defaults as the current one.
+   */
+  model: ModelConfig;
   cwd: string;
   commands?: CommandRegistry;
   skills?: SkillRegistry;
@@ -56,6 +61,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         client={opts.client}
         sessionId={opts.sessionId}
         modelRef={opts.modelRef}
+        model={opts.model}
         cwd={opts.cwd}
         commands={opts.commands}
         skills={opts.skills}

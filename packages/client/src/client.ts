@@ -9,6 +9,7 @@ import type {
   SandboxMode,
   Session,
   SessionId,
+  SessionInfo,
 } from '@chimera/core';
 import type { Skill } from '@chimera/skills';
 import { ChimeraHttpError, PermissionAlreadyResolvedError } from './errors';
@@ -48,6 +49,13 @@ export interface CreateSessionOpts {
   sandboxMode?: SandboxMode;
   sessionId?: SessionId;
 }
+
+export interface ForkResponse {
+  sessionId: SessionId;
+  parentId: SessionId;
+}
+
+export type { SessionInfo } from '@chimera/core';
 
 export interface SubscribeOpts {
   sinceEventId?: EventId;
@@ -89,8 +97,8 @@ export class ChimeraClient {
     });
   }
 
-  async listSessions(): Promise<Session[]> {
-    return this.json<Session[]>('/v1/sessions');
+  async listSessions(): Promise<SessionInfo[]> {
+    return this.json<SessionInfo[]>('/v1/sessions');
   }
 
   async getSession(id: SessionId): Promise<Session> {
@@ -99,6 +107,22 @@ export class ChimeraClient {
 
   async deleteSession(id: SessionId): Promise<void> {
     await this.json<void>(`/v1/sessions/${id}`, { method: 'DELETE' });
+  }
+
+  async resumeSession(id: SessionId): Promise<{ sessionId: SessionId }> {
+    return this.json<{ sessionId: SessionId }>(`/v1/sessions/${id}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+  }
+
+  async forkSession(id: SessionId, purpose?: string): Promise<ForkResponse> {
+    return this.json<ForkResponse>(`/v1/sessions/${id}/fork`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(purpose !== undefined ? { purpose } : {}),
+    });
   }
 
   async interrupt(id: SessionId): Promise<void> {

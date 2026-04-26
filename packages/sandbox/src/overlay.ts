@@ -30,6 +30,46 @@ export async function removeOverlayDirs(sessionId: string, overlaysHome?: string
   await rm(p.root, { recursive: true, force: true });
 }
 
+/**
+ * Snapshot a parent session's overlay upperdir into a child session's
+ * upperdir. Used when forking an `overlay`-mode session: the child receives
+ * an independent copy-on-write view so its writes do not affect the parent.
+ *
+ * If the parent has no overlay (e.g. the session was created in `overlay`
+ * mode but never produced any writes), the child is initialized with an
+ * empty upperdir.
+ */
+export interface ForkOverlayOptions {
+  overlaysHome?: string;
+  /** Inject a fake rsync for tests. */
+  runner?: RsyncRunner;
+}
+
+export async function forkOverlay(
+  parentSessionId: string,
+  childSessionId: string,
+  options: ForkOverlayOptions = {},
+): Promise<void> {
+  const { overlaysHome, runner = new SpawnRsync() } = options;
+  await ensureOverlayDirs(childSessionId, overlaysHome);
+  const parent = overlayPaths(parentSessionId, overlaysHome);
+  const child = overlayPaths(childSessionId, overlaysHome);
+  // rsync the upperdir contents (-a preserves perms/timestamps/ownership;
+  // trailing slash on src copies contents, not the dir itself).
+  const { exitCode, stderr } = await runner.run([
+    '-a',
+    `${parent.upper}/`,
+    `${child.upper}/`,
+  ]);
+  // Exit 23 (partial transfer) typically means the source didn't exist;
+  // treat that as "nothing to copy" rather than a hard error.
+  if (exitCode !== 0 && exitCode !== 23) {
+    throw new Error(
+      `forkOverlay: rsync from ${parent.upper}/ to ${child.upper}/ failed (exit ${exitCode}): ${stderr.trim()}`,
+    );
+  }
+}
+
 interface RsyncRunner {
   run(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }>;
 }

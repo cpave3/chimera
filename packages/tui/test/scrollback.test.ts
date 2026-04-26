@@ -1,5 +1,18 @@
+import type { Session, ToolCallRecord } from '@chimera/core';
 import { describe, expect, it } from 'vitest';
 import { Scrollback } from '../src/scrollback';
+
+function rehydrate(
+  messages: unknown[],
+  toolCalls: ToolCallRecord[] = [],
+) {
+  const scrollback = new Scrollback();
+  scrollback.rehydrateFromSession({
+    messages,
+    toolCalls,
+  } as Pick<Session, 'messages' | 'toolCalls'>);
+  return scrollback.all();
+}
 
 describe('Scrollback', () => {
   it('accumulates assistant text deltas into a single row', () => {
@@ -319,5 +332,201 @@ describe('Scrollback', () => {
     const row = sb.all()[0]!;
     expect(row.kind).toBe('subagent');
     expect(row.subagentStatus).toBe('finished');
+  });
+});
+
+describe('Scrollback.rehydrateFromSession', () => {
+  it('renders user + assistant text turns in order', () => {
+    const entries = rehydrate([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'hi back' },
+      { role: 'user', content: 'thanks' },
+    ]);
+    expect(entries).toHaveLength(3);
+    expect(entries[0]!.kind).toBe('user');
+    expect(entries[0]!.text).toBe('hello');
+    expect(entries[1]!.kind).toBe('assistant');
+    expect(entries[1]!.text).toBe('hi back');
+    expect(entries[2]!.kind).toBe('user');
+    expect(entries[2]!.text).toBe('thanks');
+  });
+
+  it('skips system messages entirely', () => {
+    const entries = rehydrate([
+      { role: 'system', content: 'you are helpful' },
+      { role: 'user', content: 'hi' },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.kind).toBe('user');
+  });
+
+  it('extracts text parts from array-shaped user content', () => {
+    const entries = rehydrate([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'first part ' },
+          { type: 'text', text: 'second part' },
+          { type: 'image', image: 'data:...' },
+        ],
+      },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.text).toBe('first part second part');
+  });
+
+  it('pairs assistant tool-call with subsequent tool-result message', () => {
+    const entries = rehydrate([
+      { role: 'user', content: 'list files' },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'bash',
+            input: { command: 'ls -la' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'call-1',
+            toolName: 'bash',
+            output: {
+              type: 'json',
+              value: { stdout: 'a\nb\n', stderr: '', exit_code: 0 },
+            },
+          },
+        ],
+      },
+    ]);
+    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    expect(toolEntry).toBeDefined();
+    expect(toolEntry!.toolName).toBe('bash');
+    expect(toolEntry!.toolResult).toEqual({
+      stdout: 'a\nb\n',
+      stderr: '',
+      exit_code: 0,
+    });
+  });
+
+  it('unwraps AI-SDK v5 error-text output to toolError', () => {
+    const entries = rehydrate([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call-err',
+            toolName: 'bash',
+            input: { command: 'false' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'call-err',
+            toolName: 'bash',
+            output: { type: 'error-text', value: 'command failed' },
+          },
+        ],
+      },
+    ]);
+    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    expect(toolEntry!.toolError).toBe('command failed');
+    expect(toolEntry!.toolResult).toBeUndefined();
+  });
+
+  it('handles legacy v4 output shape (no discriminator wrapper)', () => {
+    const entries = rehydrate([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call-legacy',
+            toolName: 'read',
+            input: { path: '/tmp/x' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'call-legacy',
+            toolName: 'read',
+            output: { content: 'file body' },
+          },
+        ],
+      },
+    ]);
+    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    expect(toolEntry!.toolResult).toEqual({ content: 'file body' });
+  });
+
+  it('defaults tool target to host when no matching ToolCallRecord exists', () => {
+    const entries = rehydrate([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'call-noop',
+            toolName: 'read',
+            input: { path: '/tmp/x' },
+          },
+        ],
+      },
+    ]);
+    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    expect(toolEntry!.toolTarget).toBe('host');
+  });
+
+  it('uses ToolCallRecord.target when name + args match', () => {
+    const toolCallRecord: ToolCallRecord = {
+      callId: 'agent-side-id',
+      name: 'bash',
+      args: { command: 'echo hi' },
+      target: 'sandbox',
+      startedAt: 1,
+    };
+    const entries = rehydrate(
+      [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'sdk-side-id',
+              toolName: 'bash',
+              input: { command: 'echo hi' },
+            },
+          ],
+        },
+      ],
+      [toolCallRecord],
+    );
+    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    expect(toolEntry!.toolTarget).toBe('sandbox');
+  });
+
+  it('clears prior entries before rehydrating', () => {
+    const scrollback = new Scrollback();
+    scrollback.addInfo('this should be wiped');
+    scrollback.rehydrateFromSession({
+      messages: [{ role: 'user', content: 'fresh' }],
+      toolCalls: [],
+    } as Pick<Session, 'messages' | 'toolCalls'>);
+    expect(scrollback.all()).toHaveLength(1);
+    expect(scrollback.all()[0]!.kind).toBe('user');
   });
 });

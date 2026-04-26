@@ -112,7 +112,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
   });
-  const app = buildApp({ registry });
+  const app = buildApp({ registry, home: opts.home });
   const server = await startServer({ app });
 
   const client = new ChimeraClient({ baseUrl: server.url });

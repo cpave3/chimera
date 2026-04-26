@@ -116,12 +116,55 @@ apparmor=unconfined` on `docker run`. See `SECURITY.md`.
 Chimera writes to:
 
 - `~/.chimera/config.json` — read on startup.
-- `~/.chimera/sessions/<sessionId>.json` — session snapshot on every step boundary.
+- `~/.chimera/sessions/<sessionId>/session.json` — per-session metadata (id, parentId, children, cwd, model, sandbox mode, usage). Atomic tmp+rename on every update.
+- `~/.chimera/sessions/<sessionId>/events.jsonl` — append-only event log. One JSON object per line. Only `step_finished`, `permission_resolved`, `run_finished`, and `forked_from` events are persisted; transient events (text deltas, tool starts, etc.) are not.
 - `~/.chimera/logs/<date>.log` — structured JSON-line activity log. API keys are never written.
 - `~/.chimera/instances/<pid>.json` — lockfile for each running server process. Cleaned up on shutdown (and by `chimera ls` on next run).
 - `./.chimera/permissions.json` — per-project permission rules (when the user picks "remember for project" in the modal).
 
+> **Breaking change**: prior versions wrote sessions as flat `~/.chimera/sessions/<sessionId>.json` files. Those files are ignored by the current version — they are not migrated and not listed. To recover their contents, open the file directly.
+
+> **Concurrent access**: there is no inter-process locking on a session. If two clients hold the same session id, writes are last-write-wins for `session.json` and atomic-per-line for `events.jsonl` appends. Practically: don't open the same session twice.
+
 See `docs/gitignore-template.md` for recommended `.gitignore` entries.
+
+## Sessions, resume, fork
+
+The TUI exposes three session-management commands:
+
+- `/new` — create a fresh root session and switch to it. The previous session is persisted and remains listable.
+- `/sessions` — open an interactive picker (↑/↓ to navigate, Enter to switch, Esc to cancel). Sessions are shown as a tree, with forks indented under their parents.
+  - `/sessions tree` prints a static tree to scrollback.
+  - `/sessions <id>` prints details for one session: full id, cwd, model, parent, child count, and ancestry chain.
+- `/fork [purpose]` — create a child session inheriting the current session's conversation state. The parent is unchanged. In `overlay` sandbox mode the parent's filesystem upperdir is snapshotted into a new upperdir for the child, so the child's filesystem changes do not affect the parent.
+
+Resume across server restarts:
+
+```
+chimera resume <id>     # subcommand, by id
+chimera resume          # subcommand, no id → stdin picker scoped to cwd
+chimera continue        # subcommand: resume the most-recently-active session in cwd
+chimera c               # subcommand alias of `continue`
+chimera --resume <id>   # flag on the default interactive command
+chimera --resume        # flag, no value → same stdin picker
+chimera --continue      # flag on the default interactive command
+chimera -c              # short flag alias of `--continue`
+```
+
+`chimera c` (subcommand) and `chimera -c` (flag on the default command) are
+two different entry points but behave identically; same for `--continue` and
+the `continue` subcommand. All resume/continue paths are scoped to the
+working directory by default — you only see and continue sessions that were
+started in the current `cwd`. Inside the TUI, `/sessions` is similarly
+scoped; use `/sessions all` to see every session across all directories.
+
+CLI session management:
+
+```
+chimera sessions           # list sessions in the current directory
+chimera sessions --all     # list every persisted session
+chimera sessions rm <id>   # delete a session (rejected if the session has children)
+```
 
 ## Exit codes for `chimera run`
 

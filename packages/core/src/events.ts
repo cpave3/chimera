@@ -1,5 +1,6 @@
+import type { ModelMessage } from 'ai';
 import type { CallId, SessionId } from './ids';
-import type { ExecutionTarget, Usage } from './types';
+import type { ExecutionTarget, ToolCallRecord, Usage } from './types';
 
 /**
  * Per-tool human-readable display payload, computed by a tool's
@@ -87,6 +88,12 @@ export type AgentEvent =
       type: 'run_finished';
       reason: 'stop' | 'max_steps' | 'error' | 'interrupted';
       error?: string;
+    }
+  | {
+      type: 'forked_from';
+      parentId: SessionId;
+      parentEventCount: number;
+      purpose?: string;
     };
 
 export type AgentEventEnvelope = AgentEvent & {
@@ -94,3 +101,39 @@ export type AgentEventEnvelope = AgentEvent & {
   sessionId: SessionId;
   ts: number;
 };
+
+/**
+ * On-disk representation of events written to `events.jsonl`. The persisted
+ * `step_finished` line carries a snapshot of the cumulative `messages`,
+ * `toolCalls`, and `usage` at step boundary so that resume can rehydrate
+ * conversation state without replaying the full event log.
+ *
+ * Only event types in this union are persisted; transient events such as
+ * `assistant_text_delta`, `tool_call_start`, etc. are filtered out.
+ */
+export type PersistedEvent =
+  | {
+      type: 'step_finished';
+      stepNumber: number;
+      finishReason: string;
+      messages: ModelMessage[];
+      toolCalls: ToolCallRecord[];
+      usage: Usage;
+    }
+  | {
+      type: 'permission_resolved';
+      requestId: string;
+      decision: 'allow' | 'deny';
+      remembered: boolean;
+    }
+  | {
+      type: 'run_finished';
+      reason: 'stop' | 'max_steps' | 'error' | 'interrupted';
+      error?: string;
+    }
+  | {
+      type: 'forked_from';
+      parentId: SessionId;
+      parentEventCount: number;
+      purpose?: string;
+    };

@@ -6,7 +6,13 @@ import { runLs } from './commands/ls';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
 import { runServe } from './commands/serve';
-import { runSessionsList, runSessionsRm } from './commands/sessions';
+import {
+  findLatestSessionInCwd,
+  pickSessionInteractive,
+  resolveSessionId,
+  runSessionsList,
+  runSessionsRm,
+} from './commands/sessions';
 import { runSkillsList } from './commands/skills';
 
 export const CHIMERA_CLI_VERSION = '0.1.0';
@@ -185,12 +191,111 @@ export function buildProgram(): Command {
   const sessions = program.command('sessions').description('Manage persisted sessions.');
   sessions
     .command('list', { isDefault: true })
-    .description('List persisted sessions.')
-    .action(() => runSessionsList());
+    .description('List persisted sessions in the current directory (use --all for every directory).')
+    .option('--cwd <path>', 'Filter by this directory', process.cwd())
+    .option('-a, --all', 'List sessions from every directory', false)
+    .action(async (opts) => {
+      await runSessionsList({ cwd: opts.cwd, all: opts.all });
+    });
   sessions
     .command('rm <id>')
     .description('Delete a persisted session.')
-    .action((id: string) => runSessionsRm(id));
+    .option('--cwd <path>', 'Scope suffix matching to this directory', process.cwd())
+    .option('-a, --all', 'Resolve suffix across every directory', false)
+    .action(async (id: string, options: { cwd?: string; all?: boolean }) => {
+      try {
+        const resolved = await resolveSessionId(id, {
+          cwd: options.all ? undefined : options.cwd,
+        });
+        await runSessionsRm(resolved);
+      } catch (err) {
+        process.stderr.write(`${(err as Error).message}\n`);
+        process.exit(1);
+      }
+    });
+
+  applySubagentOptions(
+    applySandboxOptions(
+      program
+        .command('resume [id]')
+        .description(
+          'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
+        )
+        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+        .option('--cwd <path>', 'Working directory', process.cwd())
+        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+        .option('--auto-approve <level>', 'none|sandbox|host|all')
+        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+        .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+    ),
+  ).action(async (id: string | undefined, opts) => {
+    let sessionId = id;
+    if (!sessionId) {
+      const picked = await pickSessionInteractive(opts.cwd ?? process.cwd(), opts.home);
+      if (!picked) process.exit(1);
+      sessionId = picked;
+    } else {
+      try {
+        sessionId = await resolveSessionId(sessionId, {
+          home: opts.home,
+          cwd: opts.cwd ?? process.cwd(),
+        });
+      } catch (err) {
+        process.stderr.write(`${(err as Error).message}\n`);
+        process.exit(1);
+      }
+    }
+    await runInteractive({
+      cwd: opts.cwd ?? process.cwd(),
+      model: opts.model,
+      maxSteps: opts.maxSteps,
+      autoApprove: opts.autoApprove,
+      session: sessionId,
+      claudeCompat: opts.claudeCompat,
+      skills: opts.skills,
+      sandboxFlags: opts,
+      subagents: opts.subagents,
+      maxSubagentDepth: opts.maxSubagentDepth,
+    });
+  });
+
+  applySubagentOptions(
+    applySandboxOptions(
+      program
+        .command('continue')
+        .alias('c')
+        .description(
+          'Resume the most-recently-active session in the current directory.',
+        )
+        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+        .option('--cwd <path>', 'Working directory', process.cwd())
+        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+        .option('--auto-approve <level>', 'none|sandbox|host|all')
+        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+        .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+    ),
+  ).action(async (opts) => {
+    const cwd = opts.cwd ?? process.cwd();
+    const latest = await findLatestSessionInCwd(cwd, opts.home);
+    if (!latest) {
+      process.stderr.write(
+        `No sessions in ${cwd}. Run \`chimera\` to start a new one.\n`,
+      );
+      process.exit(1);
+    }
+    await runInteractive({
+      cwd,
+      model: opts.model,
+      maxSteps: opts.maxSteps,
+      autoApprove: opts.autoApprove,
+      session: latest.id,
+      claudeCompat: opts.claudeCompat,
+      skills: opts.skills,
+      sandboxFlags: opts,
+      subagents: opts.subagents,
+      maxSubagentDepth: opts.maxSubagentDepth,
+    });
+  });
 
   const sandbox = program.command('sandbox').description('Manage the sandbox image.');
   sandbox
@@ -222,16 +327,75 @@ export function buildProgram(): Command {
         .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
         .option('--auto-approve <level>', 'none|sandbox|host|all')
         .option('--session <id>', 'Resume a persisted session')
+        .option(
+          '--resume [id]',
+          'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
+        )
+        .option(
+          '-c, --continue',
+          'Resume the most-recently-active session in the current directory.',
+          false,
+        )
         .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
         .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
     ),
   ).action(async (opts) => {
+    const cwd = opts.cwd ?? process.cwd();
+    if (opts.session && opts.resume !== undefined) {
+      process.stderr.write(
+        'warning: --session takes precedence over --resume; --resume ignored\n',
+      );
+    }
+    if (opts.session && opts.continue) {
+      process.stderr.write(
+        'warning: --session takes precedence over --continue; --continue ignored\n',
+      );
+    }
+    let session: string | undefined = opts.session;
+    if (!session && opts.continue) {
+      const latest = await findLatestSessionInCwd(cwd, opts.home);
+      if (!latest) {
+        process.stderr.write(
+          `No sessions in ${cwd}. Run \`chimera\` to start a new one.\n`,
+        );
+        process.exit(1);
+      }
+      session = latest.id;
+    }
+    if (!session && opts.resume !== undefined) {
+      // `--resume` with a value: opts.resume is the id (a string).
+      // `--resume` with no value: commander's `[id]` form yields `true`.
+      if (typeof opts.resume === 'string') {
+        session = opts.resume;
+      } else {
+        const picked = await pickSessionInteractive(cwd, opts.home);
+        if (!picked) process.exit(1);
+        session = picked;
+      }
+    }
+    const userSuppliedId =
+      typeof opts.session === 'string'
+        ? opts.session
+        : typeof opts.resume === 'string'
+          ? opts.resume
+          : null;
+    if (session && userSuppliedId && session === userSuppliedId) {
+      try {
+        session = await resolveSessionId(session, {
+          home: opts.home,
+          cwd,
+        });
+      } catch (err) {
+        process.stderr.write(`${(err as Error).message}\n`);
+        process.exit(1);
+      }
+    }
     await runInteractive({
-      cwd: opts.cwd ?? process.cwd(),
+      cwd,
       model: opts.model,
       maxSteps: opts.maxSteps,
       autoApprove: opts.autoApprove,
-      session: opts.session,
+      session,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
       sandboxFlags: opts,

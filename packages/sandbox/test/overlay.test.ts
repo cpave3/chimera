@@ -7,6 +7,7 @@ import {
   diffOverlay,
   discardOverlay,
   ensureOverlayDirs,
+  forkOverlay,
   parseRsyncItemize,
   removeOverlayDirs,
 } from '../src/overlay';
@@ -130,5 +131,50 @@ describe('overlay dir lifecycle', () => {
     await mkdir(join(overlaysHome, SESSION), { recursive: true });
     await removeOverlayDirs(SESSION, overlaysHome);
     await removeOverlayDirs(SESSION, overlaysHome);
+  });
+});
+
+describe('forkOverlay', () => {
+  it("rsyncs from parent's upper to child's upper and creates child dirs", async () => {
+    const runner = {
+      run: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
+    };
+    const parentId = 'parent-fork';
+    const childId = 'child-fork';
+    await ensureOverlayDirs(parentId, overlaysHome);
+    await forkOverlay(parentId, childId, { overlaysHome, runner });
+    const args = runner.run.mock.calls[0]![0] as string[];
+    expect(args[0]).toBe('-a');
+    expect(args[1]).toMatch(new RegExp(`/${parentId}/upper/$`));
+    expect(args[2]).toMatch(new RegExp(`/${childId}/upper/$`));
+    // Child dirs should exist
+    const childUpper = await stat(join(overlaysHome, childId, 'upper', 'data'));
+    expect(childUpper.isDirectory()).toBe(true);
+  });
+
+  it('tolerates exit 23 (parent had no overlay yet)', async () => {
+    const runner = {
+      run: vi.fn().mockResolvedValue({
+        stdout: '',
+        stderr: 'no source',
+        exitCode: 23,
+      }),
+    };
+    await expect(
+      forkOverlay('p', 'c', { overlaysHome, runner }),
+    ).resolves.not.toThrow();
+  });
+
+  it('throws on other non-zero exit codes', async () => {
+    const runner = {
+      run: vi.fn().mockResolvedValue({
+        stdout: '',
+        stderr: 'broken',
+        exitCode: 12,
+      }),
+    };
+    await expect(
+      forkOverlay('p', 'c', { overlaysHome, runner }),
+    ).rejects.toThrow(/forkOverlay/);
   });
 });

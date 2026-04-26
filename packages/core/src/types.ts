@@ -59,6 +59,8 @@ export type SessionStatus =
 
 export interface Session {
   id: SessionId;
+  parentId: SessionId | null;
+  children: SessionId[];
   cwd: string;
   createdAt: number;
   messages: ModelMessage[];

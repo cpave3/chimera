@@ -10,6 +10,7 @@ export {
   ensureOverlayDirs,
   removeOverlayDirs,
   defaultOverlaysHome,
+  forkOverlay,
 } from './overlay';
 export { defaultImageRef, LOCAL_DEV_IMAGE } from './image';
 export { sandboxDockerDir } from './dockerfile-path';

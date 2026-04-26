@@ -11,7 +11,12 @@ import {
   newSessionId,
 } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
-import { persistSession } from './persistence';
+import {
+  appendSessionEvent,
+  forkSession,
+  loadSession,
+  persistSession,
+} from './persistence';
 import {
   type ExecutionTarget,
   type ModelConfig,
@@ -98,12 +103,16 @@ export class Agent {
     if (opts.session) {
       this.session = {
         ...opts.session,
+        parentId: opts.session.parentId ?? null,
+        children: opts.session.children ?? [],
         status: 'idle',
         usage: opts.session.usage ?? emptyUsage(),
       };
     } else {
       this.session = {
         id: opts.sessionId ?? newSessionId(),
+        parentId: null,
+        children: [],
         cwd: opts.cwd,
         createdAt: Date.now(),
         messages: [],
@@ -114,6 +123,36 @@ export class Agent {
         usage: emptyUsage(),
       };
     }
+  }
+
+  /**
+   * Resume a previously persisted session from disk and construct an Agent
+   * around it.
+   */
+  static async resume(
+    opts: Omit<AgentOptions, 'session' | 'sessionId'> & { sessionId: SessionId },
+  ): Promise<Agent> {
+    const session = await loadSession(opts.sessionId, opts.home);
+    return new Agent({ ...opts, session });
+  }
+
+  /**
+   * Fork an existing session. Copies the parent's `events.jsonl`, appends a
+   * `forked_from` marker to the child's log, and updates the parent's
+   * `children[]`. Returns an Agent attached to the new child session.
+   */
+  static async fork(
+    opts: Omit<AgentOptions, 'session' | 'sessionId'> & {
+      parentSessionId: SessionId;
+      purpose?: string;
+    },
+  ): Promise<Agent> {
+    const { session } = await forkSession({
+      parentId: opts.parentSessionId,
+      purpose: opts.purpose,
+      home: opts.home,
+    });
+    return new Agent({ ...opts, session });
   }
 
   /**
@@ -173,6 +212,18 @@ export class Agent {
       requestId,
       decision,
       remembered: !!remember,
+    });
+    void appendSessionEvent(
+      this.session.id,
+      {
+        type: 'permission_resolved',
+        requestId,
+        decision,
+        remembered: !!remember,
+      },
+      this.opts.home,
+    ).catch(() => {
+      // persistence errors are non-fatal
     });
   }
 
@@ -468,7 +519,18 @@ export class Agent {
               }
             }
             try {
-              await persistSession(this.session, this.opts.home);
+              await persistSession(
+                this.session,
+                {
+                  type: 'step_finished',
+                  stepNumber,
+                  finishReason: part.finishReason,
+                  messages: this.session.messages,
+                  toolCalls: this.session.toolCalls,
+                  usage: cloneUsage(this.session.usage),
+                },
+                this.opts.home,
+              );
             } catch (_e) {
               // persistence errors should not crash the run
             }
@@ -523,6 +585,29 @@ export class Agent {
           terminalReason = 'max_steps';
         }
       }
+
+      // The AI SDK only exposes the assistant + tool messages from the run
+      // via `await stream.response` *after* the stream completes — so the
+      // per-step `step_finished` events persisted during the loop captured
+      // a snapshot that still only had the user message. Emit one more
+      // `step_finished` here, carrying the now-complete `messages` /
+      // `toolCalls`, so resume can see the full conversation.
+      try {
+        await persistSession(
+          this.session,
+          {
+            type: 'step_finished',
+            stepNumber,
+            finishReason: terminalReason === 'stop' ? 'stop' : terminalReason,
+            messages: this.session.messages,
+            toolCalls: this.session.toolCalls,
+            usage: cloneUsage(this.session.usage),
+          },
+          this.opts.home,
+        );
+      } catch {
+        // best-effort
+      }
     } catch (err) {
       if (this.abortController.signal.aborted) {
         terminalReason = 'interrupted';
@@ -534,7 +619,15 @@ export class Agent {
 
     this.session.status = terminalReason === 'error' ? 'error' : 'idle';
     try {
-      await persistSession(this.session, this.opts.home);
+      await persistSession(
+        this.session,
+        {
+          type: 'run_finished',
+          reason: terminalReason,
+          ...(errorMessage !== undefined ? { error: errorMessage } : {}),
+        },
+        this.opts.home,
+      );
     } catch (_e) {
       // ignore
     }

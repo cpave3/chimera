@@ -1,5 +1,10 @@
 import { dirname } from 'node:path';
-import { Agent, composeSystemPrompt, loadSession } from '@chimera/core';
+import {
+  Agent,
+  composeSystemPrompt,
+  loadSession,
+  writeSessionMetadata,
+} from '@chimera/core';
 import type { Executor, SessionId } from '@chimera/core';
 import { DefaultPermissionGate, GatedExecutor, type AutoApproveLevel } from '@chimera/permissions';
 import {
@@ -124,6 +129,14 @@ export class CliAgentFactory implements AgentFactory {
       contextWindowIsApproximate: resolvedWindow.source === 'fallback',
     });
 
+    // Persist metadata immediately so the session appears in disk-scanned
+    // listings before any model run produces a step_finished snapshot.
+    try {
+      await writeSessionMetadata(agent.session, this.home);
+    } catch {
+      // best-effort
+    }
+
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
       autoApprove: this.autoApprove,
@@ -222,8 +235,10 @@ export class CliAgentFactory implements AgentFactory {
 async function tryLoadSession(sessionId: string, home?: string) {
   try {
     return await loadSession(sessionId, home);
-  } catch {
-    return undefined;
+  } catch (err) {
+    throw new Error(
+      `Could not resume session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

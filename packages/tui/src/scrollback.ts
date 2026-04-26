@@ -1,4 +1,4 @@
-import type { AgentEvent, CallId } from '@chimera/core';
+import type { AgentEvent, CallId, Session, ToolCallRecord } from '@chimera/core';
 
 export interface ScrollbackEntry {
   id: string;
@@ -78,6 +78,94 @@ export class Scrollback {
     this.subagentParents.clear();
     this.subagentToolsByCallId.clear();
     this.suppressUserContent = null;
+  }
+
+  /**
+   * Rebuild scrollback entries from a previously persisted session — used
+   * after `/sessions` switching, `chimera resume`, or `chimera --continue`
+   * so the user sees their prior conversation instead of an empty buffer.
+   *
+   * Synthesizes the relevant `AgentEvent`s from the session's `messages` and
+   * `toolCalls` and feeds them through `apply()`. We don't have streaming
+   * text-deltas in the persisted form, so assistant turns appear as a
+   * single `assistant_text_done` per message rather than incrementally.
+   */
+  rehydrateFromSession(session: Pick<Session, 'messages' | 'toolCalls'>): void {
+    this.clear();
+    // The AI SDK's per-call `toolCallId` (carried on `tool-call` parts of
+    // assistant messages and on `tool-result` parts of tool messages) is
+    // distinct from the agent's internal `CallId` stored on
+    // `session.toolCalls`. To attach the right `target` to a tool entry, we
+    // first try to match by tool name + JSON-equal args; missing matches
+    // default to 'host'.
+    type LooseMessage = { role?: string; content?: unknown };
+    type LoosePart = { type?: string; [k: string]: unknown };
+    for (const msg of session.messages as LooseMessage[]) {
+      if (msg.role === 'system') continue;
+      if (msg.role === 'user') {
+        const text = extractText(msg.content);
+        if (text) this.apply({ type: 'user_message', content: text });
+        continue;
+      }
+      if (msg.role === 'assistant') {
+        const parts: LoosePart[] = Array.isArray(msg.content)
+          ? (msg.content as LoosePart[])
+          : [{ type: 'text', text: String(msg.content) }];
+        for (const part of parts) {
+          if (part.type === 'text') {
+            const text = part.text;
+            if (typeof text === 'string' && text.length > 0) {
+              this.apply({ type: 'assistant_text_done', text });
+            }
+          } else if (part.type === 'tool-call') {
+            const callId = part.toolCallId as string | undefined;
+            const name = part.toolName as string | undefined;
+            if (!callId || !name) continue;
+            const args = part.input ?? part.args;
+            const rec = findToolRecord(session.toolCalls, name, args);
+            this.apply({
+              type: 'tool_call_start',
+              callId,
+              name,
+              args,
+              target: rec?.target ?? 'host',
+            });
+          }
+        }
+        continue;
+      }
+      if (msg.role === 'tool') {
+        // Tool-result messages contain `tool-result` parts whose
+        // `toolCallId` matches the assistant's earlier `tool-call` part.
+        // In AI SDK v5 the part's `output` is a discriminated union —
+        // `{ type: 'json', value: <obj> }`, `{ type: 'text', value: '...' }`,
+        // `{ type: 'error-json' | 'error-text', value: ... }`, etc. — so we
+        // unwrap the inner value before handing it to scrollback.
+        const parts: LoosePart[] = Array.isArray(msg.content)
+          ? (msg.content as LoosePart[])
+          : [];
+        for (const part of parts) {
+          if (part.type !== 'tool-result') continue;
+          const callId = part.toolCallId as string | undefined;
+          if (!callId) continue;
+          const { result, isError } = unwrapToolResultOutput(
+            part as Parameters<typeof unwrapToolResultOutput>[0],
+          );
+          if (isError) {
+            const err = typeof result === 'string' ? result : JSON.stringify(result);
+            this.apply({ type: 'tool_call_error', callId, error: err });
+          } else {
+            this.apply({
+              type: 'tool_call_result',
+              callId,
+              result,
+              durationMs: 0,
+            });
+          }
+        }
+        continue;
+      }
+    }
   }
 
   apply(ev: AgentEvent): void {
@@ -303,4 +391,86 @@ function formatArgs(args: unknown): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * Unwrap an AI-SDK `tool-result` part's `output` (discriminated union in
+ * v5: `{type:'json'|'text'|'error-json'|'error-text'|'content', value}`),
+ * falling back to legacy v4 shapes (`output` raw, `result`, `content`).
+ */
+function unwrapToolResultOutput(part: {
+  output?: unknown;
+  result?: unknown;
+  content?: unknown;
+  isError?: unknown;
+  is_error?: unknown;
+}): { result: unknown; isError: boolean } {
+  let isError = (part.isError ?? part.is_error) === true;
+  let result: unknown = part.output ?? part.result ?? part.content;
+  if (
+    result &&
+    typeof result === 'object' &&
+    'type' in (result as Record<string, unknown>) &&
+    'value' in (result as Record<string, unknown>)
+  ) {
+    const wrapped = result as { type: string; value: unknown };
+    if (wrapped.type === 'error-json' || wrapped.type === 'error-text') {
+      isError = true;
+    }
+    result = wrapped.value;
+  }
+  return { result, isError };
+}
+
+/**
+ * Best-effort match of an AI-SDK `tool-call` part to its
+ * `ToolCallRecord` so we can attach the recorded `target` (sandbox vs.
+ * host). The agent's internal `CallId` differs from the SDK's
+ * `toolCallId`, so we match by name + JSON-equal args. Returns the first
+ * record whose result is unconsumed; falls back to any matching record.
+ */
+function findToolRecord(
+  records: ToolCallRecord[],
+  name: string,
+  args: unknown,
+): ToolCallRecord | undefined {
+  let argsKey: string;
+  try {
+    argsKey = JSON.stringify(args);
+  } catch {
+    argsKey = '';
+  }
+  for (const rec of records) {
+    if (rec.name !== name) continue;
+    let recKey: string;
+    try {
+      recKey = JSON.stringify(rec.args);
+    } catch {
+      recKey = '';
+    }
+    if (recKey === argsKey) return rec;
+  }
+  return undefined;
+}
+
+/**
+ * Pull text out of an AI-SDK message `content` field, which is either a
+ * plain string or an array of typed parts (`{type: 'text', text: '...'}`,
+ * etc.). Non-text parts (images, tool calls, etc.) are skipped here.
+ */
+function extractText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const part of content) {
+    if (
+      part &&
+      typeof part === 'object' &&
+      (part as { type?: string }).type === 'text'
+    ) {
+      const t = (part as { text?: unknown }).text;
+      if (typeof t === 'string') parts.push(t);
+    }
+  }
+  return parts.join('');
 }
