@@ -78,14 +78,7 @@ describe('loadModes', () => {
     mkdirSync(userModes, { recursive: true });
     writeFileSync(
       join(userModes, 'broken.md'),
-      [
-        '---',
-        'name: broken',
-        'description: x',
-        'color: "not-a-color"',
-        '---',
-        'body',
-      ].join('\n'),
+      ['---', 'name: broken', 'description: x', 'color: "not-a-color"', '---', 'body'].join('\n'),
     );
     const warnings: string[] = [];
     const registry = loadModes({

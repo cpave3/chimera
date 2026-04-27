@@ -249,11 +249,7 @@ export class Agent {
    * the call before the user is ever prompted — there is no pending request
    * to settle, but the spec still requires the resolved event to fire.
    */
-  emitPermissionResolved(
-    requestId: string,
-    decision: 'allow' | 'deny',
-    remembered: boolean,
-  ): void {
+  emitPermissionResolved(requestId: string, decision: 'allow' | 'deny', remembered: boolean): void {
     this.currentQueue?.push({
       type: 'permission_resolved',
       requestId,
@@ -345,9 +341,7 @@ export class Agent {
    * resolver registered via `setModeResolver()`. Returns `{ status: 'invalid' }`
    * if the resolver throws.
    */
-  queueModeSwitch(
-    name: string,
-  ):
+  queueModeSwitch(name: string):
     | { status: 'queued' }
     | { status: 'noop' }
     | {

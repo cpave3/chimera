@@ -78,9 +78,7 @@ describe('DefaultPermissionGate hook integration', () => {
       target: 'host',
       command: 'rm -rf /',
     });
-    expect(resolvedEvents).toEqual([
-      { requestId: 'r1', decision: 'deny', remembered: false },
-    ]);
+    expect(resolvedEvents).toEqual([{ requestId: 'r1', decision: 'deny', remembered: false }]);
   });
 
   it('does not call emitResolved when the hook allows', async () => {

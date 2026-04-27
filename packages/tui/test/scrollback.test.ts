@@ -65,7 +65,11 @@ describe('Scrollback', () => {
     // back-to-back identical assistant entries, not any pair separated by a
     // tool entry or info message.
     const scrollback = new Scrollback();
-    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: "I'll explore the codebase" });
+    scrollback.apply({
+      type: 'assistant_text_delta',
+      id: 't1',
+      delta: "I'll explore the codebase",
+    });
     scrollback.apply({ type: 'assistant_text_done', id: 't1', text: "I'll explore the codebase" });
     scrollback.apply({
       type: 'tool_call_start',

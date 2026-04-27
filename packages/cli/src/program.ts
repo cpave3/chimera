@@ -60,26 +60,28 @@ export function buildProgram(): Command {
   // https://github.com/tj/commander.js#parsing-and-positional-options.
   program.enablePositionalOptions();
 
-  applyModeOptions(applySubagentOptions(
-    applySandboxOptions(
-      program
-        .command('run [prompt...]', { isDefault: false })
-        .description('Run a one-shot prompt non-interactively.')
-        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-        .option('--cwd <path>', 'Working directory', process.cwd())
-        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-        .option('--auto-approve <level>', 'none|sandbox|host|all')
-        .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
-        .option('--session <id>', 'Resume a persisted session')
-        .option('--stdin', 'Read prompt from stdin', false)
-        .option('--command <name>', 'Run a user command template by name')
-        .option('--args <args>', 'Arguments for --command (quoted string)')
-        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-        .option('--no-skills', 'Skip skill discovery and system-prompt injection')
-        .option('-v, --verbose', 'Verbose logging', false)
-        .option('-q, --quiet', 'Suppress non-essential logging', false),
+  applyModeOptions(
+    applySubagentOptions(
+      applySandboxOptions(
+        program
+          .command('run [prompt...]', { isDefault: false })
+          .description('Run a one-shot prompt non-interactively.')
+          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+          .option('--cwd <path>', 'Working directory', process.cwd())
+          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+          .option('--auto-approve <level>', 'none|sandbox|host|all')
+          .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
+          .option('--session <id>', 'Resume a persisted session')
+          .option('--stdin', 'Read prompt from stdin', false)
+          .option('--command <name>', 'Run a user command template by name')
+          .option('--args <args>', 'Arguments for --command (quoted string)')
+          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+          .option('--no-skills', 'Skip skill discovery and system-prompt injection')
+          .option('-v, --verbose', 'Verbose logging', false)
+          .option('-q, --quiet', 'Suppress non-essential logging', false),
+      ),
     ),
-  )).action(async (promptArgs: string[], opts) => {
+  ).action(async (promptArgs: string[], opts) => {
     let prompt = promptArgs.join(' ');
     if (opts.stdin) {
       prompt = await readStdin();
@@ -151,31 +153,33 @@ export function buildProgram(): Command {
       });
     });
 
-  applyModeOptions(applySubagentOptions(
-    applySandboxOptions(
-      program
-        .command('serve')
-        .description('Start only the HTTP/SSE server.')
-        .option('-m, --model <modelRef>', 'Default model')
-        .option('--cwd <path>', 'Working directory', process.cwd())
-        .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
-        .option('--host <addr>', 'Bind address', '127.0.0.1')
-        .option('--machine-handshake', 'Emit a single JSON line on ready', false)
-        .option('--parent <sessionId>', 'Parent session id (for subagents)')
-        .option(
-          '--current-subagent-depth <n>',
-          'Internal: nesting depth of this child agent',
-          (v) => Number.parseInt(v, 10),
-        )
-        .option(
-          '--headless-permission-auto-deny',
-          'Internal: auto-deny host-target permission requests instead of prompting',
-          false,
-        )
-        .option('--auto-approve <level>', 'none|sandbox|host|all')
-        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+  applyModeOptions(
+    applySubagentOptions(
+      applySandboxOptions(
+        program
+          .command('serve')
+          .description('Start only the HTTP/SSE server.')
+          .option('-m, --model <modelRef>', 'Default model')
+          .option('--cwd <path>', 'Working directory', process.cwd())
+          .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
+          .option('--host <addr>', 'Bind address', '127.0.0.1')
+          .option('--machine-handshake', 'Emit a single JSON line on ready', false)
+          .option('--parent <sessionId>', 'Parent session id (for subagents)')
+          .option(
+            '--current-subagent-depth <n>',
+            'Internal: nesting depth of this child agent',
+            (v) => Number.parseInt(v, 10),
+          )
+          .option(
+            '--headless-permission-auto-deny',
+            'Internal: auto-deny host-target permission requests instead of prompting',
+            false,
+          )
+          .option('--auto-approve <level>', 'none|sandbox|host|all')
+          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+      ),
     ),
-  )).action(async (opts) => {
+  ).action(async (opts) => {
     await runServe({
       port: opts.port,
       host: opts.host,
@@ -230,21 +234,23 @@ export function buildProgram(): Command {
       }
     });
 
-  applyModeOptions(applySubagentOptions(
-    applySandboxOptions(
-      program
-        .command('resume [id]')
-        .description(
-          'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
-        )
-        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-        .option('--cwd <path>', 'Working directory', process.cwd())
-        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-        .option('--auto-approve <level>', 'none|sandbox|host|all')
-        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-        .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applyModeOptions(
+    applySubagentOptions(
+      applySandboxOptions(
+        program
+          .command('resume [id]')
+          .description(
+            'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
+          )
+          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+          .option('--cwd <path>', 'Working directory', process.cwd())
+          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+          .option('--auto-approve <level>', 'none|sandbox|host|all')
+          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+          .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+      ),
     ),
-  )).action(async (id: string | undefined, opts) => {
+  ).action(async (id: string | undefined, opts) => {
     let sessionId = id;
     if (!sessionId) {
       const picked = await pickSessionInteractive(opts.cwd ?? process.cwd(), opts.home);
@@ -277,20 +283,22 @@ export function buildProgram(): Command {
     });
   });
 
-  applyModeOptions(applySubagentOptions(
-    applySandboxOptions(
-      program
-        .command('continue')
-        .alias('c')
-        .description('Resume the most-recently-active session in the current directory.')
-        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-        .option('--cwd <path>', 'Working directory', process.cwd())
-        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-        .option('--auto-approve <level>', 'none|sandbox|host|all')
-        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-        .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applyModeOptions(
+    applySubagentOptions(
+      applySandboxOptions(
+        program
+          .command('continue')
+          .alias('c')
+          .description('Resume the most-recently-active session in the current directory.')
+          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+          .option('--cwd <path>', 'Working directory', process.cwd())
+          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+          .option('--auto-approve <level>', 'none|sandbox|host|all')
+          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+          .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+      ),
     ),
-  )).action(async (opts) => {
+  ).action(async (opts) => {
     const cwd = opts.cwd ?? process.cwd();
     const latest = await findLatestSessionInCwd(cwd, opts.home);
     if (!latest) {
@@ -335,27 +343,29 @@ export function buildProgram(): Command {
     });
 
   // Default (no subcommand): interactive TUI session.
-  applyModeOptions(applySubagentOptions(
-    applySandboxOptions(
-      program
-        .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-        .option('--cwd <path>', 'Working directory', process.cwd())
-        .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-        .option('--auto-approve <level>', 'none|sandbox|host|all')
-        .option('--session <id>', 'Resume a persisted session')
-        .option(
-          '--resume [id]',
-          'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
-        )
-        .option(
-          '-c, --continue',
-          'Resume the most-recently-active session in the current directory.',
-          false,
-        )
-        .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-        .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applyModeOptions(
+    applySubagentOptions(
+      applySandboxOptions(
+        program
+          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+          .option('--cwd <path>', 'Working directory', process.cwd())
+          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+          .option('--auto-approve <level>', 'none|sandbox|host|all')
+          .option('--session <id>', 'Resume a persisted session')
+          .option(
+            '--resume [id]',
+            'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
+          )
+          .option(
+            '-c, --continue',
+            'Resume the most-recently-active session in the current directory.',
+            false,
+          )
+          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+          .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+      ),
     ),
-  )).action(async (opts) => {
+  ).action(async (opts) => {
     const cwd = opts.cwd ?? process.cwd();
     if (opts.session && opts.resume !== undefined) {
       process.stderr.write('warning: --session takes precedence over --resume; --resume ignored\n');

@@ -25,18 +25,24 @@ const GREP_SCHEMA = z.object({
     .int()
     .positive()
     .optional()
-    .describe(`Cap on results (lines or files). Default ${DEFAULT_MAX_MATCHES}, hard max ${HARD_MAX_MATCHES}.`),
+    .describe(
+      `Cap on results (lines or files). Default ${DEFAULT_MAX_MATCHES}, hard max ${HARD_MAX_MATCHES}.`,
+    ),
 });
 type GrepArgs = z.infer<typeof GREP_SCHEMA>;
 type GrepResult =
-  | { mode: 'content'; matches: Array<{ file: string; line: number; text: string }>; truncated: boolean }
+  | {
+      mode: 'content';
+      matches: Array<{ file: string; line: number; text: string }>;
+      truncated: boolean;
+    }
   | { mode: 'files'; files: string[]; truncated: boolean };
 
 export function buildGrepTool(ctx: ToolContext) {
   return defineTool<GrepArgs, GrepResult>({
     description:
       'Search file contents with a regex, gitignore-aware. Returns matched lines (default) or just file paths ' +
-      "(set files_with_matches=true). Backed by ripgrep. Cap results with max_count to avoid context blowups.",
+      '(set files_with_matches=true). Backed by ripgrep. Cap results with max_count to avoid context blowups.',
     inputSchema: GREP_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const limit = Math.min(args.max_count ?? DEFAULT_MAX_MATCHES, HARD_MAX_MATCHES);

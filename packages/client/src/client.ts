@@ -205,9 +205,7 @@ export class ChimeraClient {
   }
 
   async getMode(sessionId: SessionId): Promise<{ mode: string; pending: string | null }> {
-    return this.json<{ mode: string; pending: string | null }>(
-      `/v1/sessions/${sessionId}/mode`,
-    );
+    return this.json<{ mode: string; pending: string | null }>(`/v1/sessions/${sessionId}/mode`);
   }
 
   async setMode(sessionId: SessionId, mode: string): Promise<void> {

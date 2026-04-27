@@ -77,11 +77,10 @@ describe('chimera hooks list smoke', () => {
 
     // Use an isolated HOME so the developer's real ~/.chimera/hooks doesn't
     // pollute the assertion on global hooks.
-    const result = spawnSync(
-      'node',
-      [BIN, 'hooks', 'list', '--json', '--cwd', cwd],
-      { encoding: 'utf8', env: { ...process.env, HOME: cwd } },
-    );
+    const result = spawnSync('node', [BIN, 'hooks', 'list', '--json', '--cwd', cwd], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: cwd },
+    });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout.trim());
     expect(parsed).toHaveProperty('events');

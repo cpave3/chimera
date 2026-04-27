@@ -27,7 +27,10 @@ function quietModel(): LanguageModel {
 
 const model: ModelConfig = { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 
-function makeFactory(home: string, runnerFactory: (sessionId: string, cwd: string) => HookRunner): AgentFactory {
+function makeFactory(
+  home: string,
+  runnerFactory: (sessionId: string, cwd: string) => HookRunner,
+): AgentFactory {
   return {
     build: async (init) => {
       const agent = new Agent({

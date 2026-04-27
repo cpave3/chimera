@@ -138,7 +138,10 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
     sandboxMode: (parsed.sandboxMode as SandboxMode) ?? 'off',
     usage:
       parsed.usage && typeof parsed.usage === 'object' ? (parsed.usage as Usage) : emptyUsage(),
-    mode: typeof parsed.mode === 'string' && parsed.mode.length > 0 ? parsed.mode : DEFAULT_SESSION_MODE,
+    mode:
+      typeof parsed.mode === 'string' && parsed.mode.length > 0
+        ? parsed.mode
+        : DEFAULT_SESSION_MODE,
     userModelOverride:
       typeof parsed.userModelOverride === 'string' ? parsed.userModelOverride : null,
   };

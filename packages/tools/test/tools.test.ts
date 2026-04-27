@@ -30,14 +30,7 @@ describe('buildTools', () => {
 
   it('returns the full default tool set', () => {
     const toolset = tools();
-    expect(Object.keys(toolset).sort()).toEqual([
-      'bash',
-      'edit',
-      'glob',
-      'grep',
-      'read',
-      'write',
-    ]);
+    expect(Object.keys(toolset).sort()).toEqual(['bash', 'edit', 'glob', 'grep', 'read', 'write']);
   });
 
   it('bash runs the command and returns stdout', async () => {

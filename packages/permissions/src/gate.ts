@@ -36,11 +36,7 @@ export interface GateOptions {
    * call). The factory wires this to `Agent.emitPermissionResolved` so the
    * `permission_resolved` event still fires for hook-decided denials.
    */
-  emitResolved?: (
-    requestId: string,
-    decision: 'allow' | 'deny',
-    remembered: boolean,
-  ) => void;
+  emitResolved?: (requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void;
 }
 
 export class DefaultPermissionGate implements PermissionGate {

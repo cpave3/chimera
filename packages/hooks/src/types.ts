@@ -92,8 +92,4 @@ export interface HookRunner {
 
 export type HookLogLevel = 'warn' | 'error';
 
-export type HookLogger = (
-  level: HookLogLevel,
-  msg: string,
-  meta?: Record<string, unknown>,
-) => void;
+export type HookLogger = (level: HookLogLevel, msg: string, meta?: Record<string, unknown>) => void;

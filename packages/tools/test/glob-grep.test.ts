@@ -77,10 +77,7 @@ describeIfRg('glob and grep tools (require ripgrep)', () => {
     await writeFile(join(root, 'a.ts'), 'hello\n');
     await writeFile(join(root, 'b.ts'), 'hello\n');
     await writeFile(join(root, 'c.ts'), 'no\n');
-    const result = await tools().grep!.execute(
-      { pattern: 'hello', files_with_matches: true },
-      {},
-    );
+    const result = await tools().grep!.execute({ pattern: 'hello', files_with_matches: true }, {});
     expect(result.mode).toBe('files');
     expect(result.files.sort()).toEqual(['./a.ts', './b.ts']);
   });

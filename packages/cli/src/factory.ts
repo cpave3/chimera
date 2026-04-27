@@ -2,7 +2,13 @@ import { dirname } from 'node:path';
 import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
 import type { Executor, SessionId } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
-import { applyAllowlist, computeAllowlist, DEFAULT_MODE_NAME, type Mode, type ModeRegistry } from '@chimera/modes';
+import {
+  applyAllowlist,
+  computeAllowlist,
+  DEFAULT_MODE_NAME,
+  type Mode,
+  type ModeRegistry,
+} from '@chimera/modes';
 import { DefaultPermissionGate, GatedExecutor, type AutoApproveLevel } from '@chimera/permissions';
 import { loadProviders, resolveContextWindow, type ProvidersConfig } from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
@@ -117,8 +123,7 @@ export class CliAgentFactory implements AgentFactory {
     const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
 
     const modesReg = this.modes;
-    const requestedMode =
-      session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
+    const requestedMode = session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
     const initialModeObj = modesReg ? modesReg.find(requestedMode) : undefined;
     if (modesReg && !initialModeObj && requestedMode !== DEFAULT_MODE_NAME) {
       this.warn(
@@ -273,8 +278,7 @@ export class CliAgentFactory implements AgentFactory {
         // → review) need the *currently* active mode to compute
         // `effectiveModelChanged` correctly.
         const previousMode = modesReg.find(agent.session.mode);
-        const effectiveModel =
-          agent.session.userModelOverride ?? next.model ?? sessionModelRef;
+        const effectiveModel = agent.session.userModelOverride ?? next.model ?? sessionModelRef;
         const previousModel =
           agent.session.userModelOverride ?? previousMode?.model ?? sessionModelRef;
         return {

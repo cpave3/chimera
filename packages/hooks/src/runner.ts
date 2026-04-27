@@ -98,11 +98,7 @@ export class DefaultHookRunner implements HookRunner {
     };
   }
 
-  private runOne(
-    script: string,
-    json: string,
-    env: NodeJS.ProcessEnv,
-  ): Promise<RunOutcome> {
+  private runOne(script: string, json: string, env: NodeJS.ProcessEnv): Promise<RunOutcome> {
     return new Promise((resolve) => {
       let stderr = '';
       let timedOut = false;
