@@ -2,6 +2,8 @@ import type { ToolSet } from 'ai';
 import { buildBashTool } from './bash';
 import type { ToolContext } from './context';
 import { buildEditTool } from './edit';
+import { buildGlobTool } from './glob';
+import { buildGrepTool } from './grep';
 import { buildReadTool } from './read';
 import type { ChimeraToolDef, FormatScrollback } from './types';
 import { buildWriteTool } from './write';
@@ -17,6 +19,8 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
     read: buildReadTool(ctx),
     write: buildWriteTool(ctx),
     edit: buildEditTool(ctx),
+    glob: buildGlobTool(ctx),
+    grep: buildGrepTool(ctx),
   };
   return splitDefs(defs);
 }

@@ -22,12 +22,18 @@ export interface StatResult {
   size: number;
 }
 
+export interface DirEntry {
+  name: string;
+  isDir: boolean;
+}
+
 export interface Executor {
   exec(cmd: string, opts?: ExecOptions): Promise<ExecResult>;
   readFile(path: string): Promise<string>;
   readFileBytes(path: string): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
   stat(path: string): Promise<StatResult | null>;
+  readdir(path: string): Promise<DirEntry[]>;
   cwd(): string;
   target(): ExecutionTarget;
 }

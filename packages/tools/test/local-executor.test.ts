@@ -111,4 +111,17 @@ describe('LocalExecutor', () => {
     await exec.writeFile('out.txt', 'new');
     expect(await readFile(target, 'utf8')).toBe('new');
   });
+
+  it('readdir returns sorted entries with isDir flags', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    await mkdir(join(root, 'sub'));
+    await writeFile(join(root, 'b.txt'), 'x');
+    await writeFile(join(root, 'a.txt'), 'x');
+    const entries = await exec.readdir('.');
+    expect(entries).toEqual([
+      { name: 'a.txt', isDir: false },
+      { name: 'b.txt', isDir: false },
+      { name: 'sub', isDir: true },
+    ]);
+  });
 });

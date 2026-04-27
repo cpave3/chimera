@@ -11,7 +11,7 @@ import {
 import { driveInProcess, spawnInProcessChild } from './spawn-in-process';
 import type { SpawnAgentToolContext, SubagentResult } from './types';
 
-const DEFAULT_TOOLS = ['bash', 'read', 'write', 'edit'];
+const DEFAULT_TOOLS = ['bash', 'read', 'write', 'edit', 'glob', 'grep'];
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes per spec.
 
 const ARGS_SCHEMA = z.object({

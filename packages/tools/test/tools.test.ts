@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -28,9 +28,16 @@ describe('buildTools', () => {
     }).tools as unknown as Record<string, AnyTool>;
   }
 
-  it('returns exactly bash, read, write, edit', () => {
+  it('returns the full default tool set', () => {
     const toolset = tools();
-    expect(Object.keys(toolset).sort()).toEqual(['bash', 'edit', 'read', 'write']);
+    expect(Object.keys(toolset).sort()).toEqual([
+      'bash',
+      'edit',
+      'glob',
+      'grep',
+      'read',
+      'write',
+    ]);
   });
 
   it('bash runs the command and returns stdout', async () => {
@@ -51,8 +58,24 @@ describe('buildTools', () => {
     await writeFile(join(root, 'f.txt'), 'alpha\nbeta\ngamma\n');
     const toolset = tools();
     const result = await toolset.read!.execute({ path: 'f.txt' }, {});
+    expect(result.kind).toBe('file');
     expect(result.total_lines).toBe(3);
     expect(result.content.split('\n')).toEqual(['1\talpha', '2\tbeta', '3\tgamma']);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('read on a directory returns sorted entries instead of erroring', async () => {
+    await mkdir(join(root, 'sub'));
+    await writeFile(join(root, 'a.txt'), 'x');
+    await writeFile(join(root, 'b.txt'), 'x');
+    const toolset = tools();
+    const result = await toolset.read!.execute({ path: '.' }, {});
+    expect(result.kind).toBe('directory');
+    expect(result.entries).toEqual([
+      { name: 'a.txt', isDir: false },
+      { name: 'b.txt', isDir: false },
+      { name: 'sub', isDir: true },
+    ]);
     expect(result.truncated).toBe(false);
   });
 

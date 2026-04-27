@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
+import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { PathEscapeError } from './errors';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -92,6 +92,14 @@ export class LocalExecutor implements Executor {
       if (code === 'ENOENT') return null;
       throw err;
     }
+  }
+
+  async readdir(path: string): Promise<DirEntry[]> {
+    const abs = this.resolveReadable(path);
+    const entries = await readdir(abs, { withFileTypes: true });
+    return entries
+      .map((entry) => ({ name: entry.name, isDir: entry.isDirectory() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {

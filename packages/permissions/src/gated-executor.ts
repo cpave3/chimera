@@ -1,4 +1,11 @@
-import type { ExecOptions, ExecResult, Executor, PermissionGate, StatResult } from '@chimera/core';
+import type {
+  DirEntry,
+  ExecOptions,
+  ExecResult,
+  Executor,
+  PermissionGate,
+  StatResult,
+} from '@chimera/core';
 import { newRequestId } from '@chimera/core';
 
 export interface GatedExecutorOptions {
@@ -41,6 +48,10 @@ export class GatedExecutor implements Executor {
 
   stat(path: string): Promise<StatResult | null> {
     return this.inner.stat(path);
+  }
+
+  readdir(path: string): Promise<DirEntry[]> {
+    return this.inner.readdir(path);
   }
 
   async exec(cmd: string, opts?: ExecOptions): Promise<ExecResult> {

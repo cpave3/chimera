@@ -1,4 +1,4 @@
-import type { ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
+import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { type DockerRunner, SpawnDockerRunner } from './docker-runner';
 import { ensureOverlayDirs, overlayPaths, removeOverlayDirs } from './overlay';
 import type { SandboxConfig, SandboxRunMode } from './types';
@@ -344,6 +344,35 @@ export class DockerExecutor implements Executor {
         `writeFile(${path}) failed: ${writeResult.stderr.trim() || `exit ${writeResult.exitCode}`}`,
       );
     }
+  }
+
+  async readdir(path: string): Promise<DirEntry[]> {
+    this.assertStarted();
+    const containerPath = this.toContainerPath(path);
+    const listResult = await this.runner.run([
+      ...this.execPrefix(),
+      this.containerName,
+      'sh',
+      '-c',
+      // Print "<type><tab><name>" per entry. %y → 'd' for dir, 'f' for file, 'l' for symlink.
+      `find ${shellQuote(containerPath)} -mindepth 1 -maxdepth 1 -printf '%y\\t%f\\n'`,
+    ]);
+    if (listResult.exitCode !== 0) {
+      throw new Error(
+        `readdir(${path}) failed: ${listResult.stderr.trim() || `exit ${listResult.exitCode}`}`,
+      );
+    }
+    const entries: DirEntry[] = [];
+    for (const line of listResult.stdout.split('\n')) {
+      if (line.length === 0) continue;
+      const tab = line.indexOf('\t');
+      if (tab < 0) continue;
+      const kind = line.slice(0, tab);
+      const name = line.slice(tab + 1);
+      entries.push({ name, isDir: kind === 'd' });
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    return entries;
   }
 
   async stat(path: string): Promise<StatResult | null> {
