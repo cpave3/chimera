@@ -16,8 +16,8 @@ export type ToolDisplay = {
 export type AgentEvent =
   | { type: 'session_started'; sessionId: SessionId }
   | { type: 'user_message'; content: string }
-  | { type: 'assistant_text_delta'; delta: string }
-  | { type: 'assistant_text_done'; text: string }
+  | { type: 'assistant_text_delta'; id?: string; delta: string }
+  | { type: 'assistant_text_done'; id?: string; text: string }
   | {
       type: 'tool_call_start';
       callId: CallId;

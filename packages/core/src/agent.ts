@@ -399,13 +399,13 @@ export class Agent {
             break;
           case 'text-delta':
             textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
-            queue.push({ type: 'assistant_text_delta', delta: part.text });
+            queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
             break;
           case 'text-end': {
             const full = textStreams.get(part.id) ?? '';
             textStreams.delete(part.id);
             if (full.length > 0) {
-              queue.push({ type: 'assistant_text_done', text: full });
+              queue.push({ type: 'assistant_text_done', id: part.id, text: full });
             }
             break;
           }

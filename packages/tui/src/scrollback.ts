@@ -26,6 +26,15 @@ export interface ScrollbackEntry {
    * iteration.
    */
   parentEntryId?: string;
+  /**
+   * AI SDK `text-id` for assistant entries — present when the originating
+   * `assistant_text_delta`/`assistant_text_done` event carried `id`. `apply()`
+   * uses this to collapse re-emitted text parts: the SDK can yield the same
+   * `text-start`/`text-delta`/`text-end` cycle multiple times across step
+   * boundaries for what `response.messages` ultimately consolidates into one
+   * part.
+   */
+  textId?: string;
 }
 
 export class Scrollback {
@@ -169,7 +178,12 @@ export class Scrollback {
     if (ev.type === 'assistant_text_delta') {
       if (this.assistantBuf === null) {
         this.assistantBuf = '';
-        this.entries.push({ id: this.newId(), kind: 'assistant', text: '' });
+        this.entries.push({
+          id: this.newId(),
+          kind: 'assistant',
+          text: '',
+          textId: ev.id,
+        });
       }
       this.assistantBuf += ev.delta;
       this.entries[this.entries.length - 1]!.text = this.assistantBuf;
@@ -177,14 +191,56 @@ export class Scrollback {
     }
     if (ev.type === 'assistant_text_done') {
       this.assistantBuf = null;
-      if (
-        this.entries.length === 0 ||
-        this.entries[this.entries.length - 1]!.kind !== 'assistant' ||
-        this.entries[this.entries.length - 1]!.text.length === 0
-      ) {
-        this.entries.push({ id: this.newId(), kind: 'assistant', text: ev.text });
+      const last = this.entries[this.entries.length - 1];
+      if (last && last.kind === 'assistant' && last.text.length > 0) {
+        last.text = ev.text;
+        if (ev.id !== undefined) last.textId = ev.id;
       } else {
-        this.entries[this.entries.length - 1]!.text = ev.text;
+        this.entries.push({
+          id: this.newId(),
+          kind: 'assistant',
+          text: ev.text,
+          textId: ev.id,
+        });
+      }
+
+      const finalEntry = this.entries[this.entries.length - 1];
+      if (!finalEntry || finalEntry.kind !== 'assistant') return;
+
+      if (ev.id !== undefined) {
+        // Id-aware dedup: the AI SDK reuses a `text-id` across step
+        // boundaries when re-emitting a logical text part. Scan back through
+        // prior assistant entries (skipping tool calls etc.) for one with
+        // the same `textId` and `text` — a match means the part was already
+        // rendered, so the just-finalized entry is a duplicate.
+        for (let i = this.entries.length - 2; i >= 0; i -= 1) {
+          const candidate = this.entries[i];
+          if (
+            candidate &&
+            candidate.kind === 'assistant' &&
+            candidate.textId === ev.id &&
+            candidate.text === finalEntry.text
+          ) {
+            this.entries.pop();
+            return;
+          }
+        }
+        return;
+      }
+
+      // Id-less fallback: rehydrated history and legacy producers don't
+      // carry `text-id`, so the only available signal is the immediately
+      // preceding entry. Gate on the preceding entry's `textId` being
+      // undefined too — an id-tagged entry deserves the id-aware path's
+      // discrimination, not a content match against an id-less event.
+      const above = this.entries[this.entries.length - 2];
+      if (
+        above &&
+        above.kind === 'assistant' &&
+        above.text === finalEntry.text &&
+        above.textId === undefined
+      ) {
+        this.entries.pop();
       }
       return;
     }

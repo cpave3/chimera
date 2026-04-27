@@ -85,6 +85,27 @@ describe('Agent', () => {
     expect(events[events.length - 1]).toBe('run_finished');
   });
 
+  it('passes part.id through on emitted assistant_text_delta and assistant_text_done', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hello'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const deltaIds: (string | undefined)[] = [];
+    const doneIds: (string | undefined)[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'assistant_text_delta') deltaIds.push(ev.id);
+      if (ev.type === 'assistant_text_done') doneIds.push(ev.id);
+    }
+    expect(deltaIds).toEqual(['t1']);
+    expect(doneIds).toEqual(['t1']);
+  });
+
   it('interrupt during run yields run_finished with reason interrupted', async () => {
     // A stream that never finishes naturally (long delay).
     const model = new MockLanguageModelV3({

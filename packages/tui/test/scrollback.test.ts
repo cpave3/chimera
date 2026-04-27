@@ -22,6 +22,110 @@ describe('Scrollback', () => {
     expect(rows[0]!.text).toBe('Hello');
   });
 
+  it('collapses repeated delta+done cycles for the same text-id into one row', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hello' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Hello' });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hello' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Hello' });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hello' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Hello' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.text).toBe('Hello');
+  });
+
+  it('keeps distinct text-ids in separate rows', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'first' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'first' });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't2', delta: 'second' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't2', text: 'second' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.text).toBe('first');
+    expect(rows[1]!.text).toBe('second');
+  });
+
+  it('treats no-id deltas after a no-id done as a fresh row', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'assistant_text_delta', delta: 'first' });
+    scrollback.apply({ type: 'assistant_text_done', text: 'first' });
+    scrollback.apply({ type: 'assistant_text_delta', delta: 'second' });
+    scrollback.apply({ type: 'assistant_text_done', text: 'second' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.text).toBe('first');
+    expect(rows[1]!.text).toBe('second');
+  });
+
+  it('preserves a second assistant turn separated from the first by a tool call', () => {
+    // Models often emit a preamble, run tools, then summarize. Both text
+    // turns must remain visible — content-dedupe should only collapse
+    // back-to-back identical assistant entries, not any pair separated by a
+    // tool entry or info message.
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: "I'll explore the codebase" });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: "I'll explore the codebase" });
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'c1',
+      name: 'glob',
+      args: { pattern: '**/*.ts' },
+      target: 'host',
+    });
+    scrollback.apply({
+      type: 'tool_call_result',
+      callId: 'c1',
+      result: { files: [] },
+      durationMs: 5,
+    });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Based on my analysis' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Based on my analysis' });
+    const rows = scrollback.all();
+    const assistantTexts = rows.filter((r) => r.kind === 'assistant').map((r) => r.text);
+    expect(assistantTexts).toEqual(["I'll explore the codebase", 'Based on my analysis']);
+  });
+
+  it('collapses identical assistant text re-emitted across a tool call when ids match', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'preamble' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'preamble' });
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'c1',
+      name: 'glob',
+      args: { pattern: '**' },
+      target: 'host',
+    });
+    scrollback.apply({
+      type: 'tool_call_result',
+      callId: 'c1',
+      result: [],
+      durationMs: 1,
+    });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'preamble' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'preamble' });
+    const assistantTexts = scrollback
+      .all()
+      .filter((r) => r.kind === 'assistant')
+      .map((r) => r.text);
+    expect(assistantTexts).toEqual(['preamble']);
+  });
+
+  it('keeps two adjacent assistant entries with matching text but different ids', () => {
+    // Distinct logical text parts that happen to share content — must not
+    // be silently merged just because their text is identical.
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Sure.' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Sure.' });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't2', delta: 'Sure.' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't2', text: 'Sure.' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.text)).toEqual(['Sure.', 'Sure.']);
+  });
+
   it('records user messages', () => {
     const scrollback = new Scrollback();
     scrollback.apply({ type: 'user_message', content: 'hi' });
