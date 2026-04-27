@@ -207,6 +207,31 @@ once the tool returns. Plugin tools authored via `defineTool` from
 `@chimera/tools` opt in by passing `formatScrollback`; tools without one
 fall back to the original `<name> <truncated-JSON>` rendering.
 
+## Multi-line prompt composition
+
+The TUI prompt is multi-line. Three triggers insert a newline at the cursor
+without submitting:
+
+- **`\<Enter>`** — type a backslash, then press Enter. The trailing `\` is
+  consumed and replaced with a newline. This works on every terminal and is
+  the documented portable form.
+- **`Shift+Enter`** / **`Alt+Enter`** — best-effort. Works wherever the
+  terminal emits a distinguishable byte sequence (kitty keyboard protocol,
+  iTerm2, modern xterm with `modifyOtherKeys`). On terminals that don't, the
+  keystroke is reported as plain Enter and submits — fall back to
+  `\<Enter>`.
+
+For longer drafts, **`Ctrl+G`** opens `$VISUAL` / `$EDITOR` (falling back to
+`vi`) on the current buffer. On save and clean exit the buffer is replaced
+with the file's contents; non-zero exits leave the buffer alone and write a
+single info line to scrollback.
+
+Within a multi-line buffer, arrow keys move the cursor by char (Left/Right)
+or by logical line (Up/Down); `Home`/`Ctrl+A` and `End`/`Ctrl+E` jump to
+line start and end. `Backspace` and `Delete` operate at the cursor and
+join lines when crossing a `\n`. With an empty buffer, `Up`/`Down` continue
+to recall input history.
+
 ## Token usage
 
 The TUI's status bar shows live token usage and the percentage of the model's

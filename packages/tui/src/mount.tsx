@@ -6,6 +6,7 @@ import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import React from 'react';
 import { App, type OverlayHandlers } from './App';
+import { createFilteredStdin } from './input/stdin-filter';
 import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
 
@@ -45,6 +46,20 @@ export interface TuiHandle {
  * scrollback + click-drag selection + wheel scroll all work normally.
  */
 export function mountTui(opts: MountOptions): TuiHandle {
+  // Disable terminal keyboard-protocol extensions that emit byte
+  // sequences Ink's keypress parser doesn't understand. Without these,
+  // Shift+Enter / modified-Enter chords leak as literal `[27;<mod>;13~`
+  // characters into the prompt buffer. We send the full set rather than
+  // probing terminal capability, since unsupported sequences are silently
+  // ignored:
+  //   - `\x1b[>4;0m`  — xterm modifyOtherKeys mode 0 (disable)
+  //   - `\x1b[>4m`    — xterm modifyOtherKeys default (also disable)
+  //   - `\x1b[<u`     — kitty keyboard protocol pop-all (disable)
+  // After this, Shift+Enter falls back to plain Enter — the portable
+  // `\<Enter>` form remains the documented newline trigger.
+  if (process.stdout.isTTY) {
+    process.stdout.write('\x1b[>4;0m\x1b[>4m\x1b[<u');
+  }
   const base = pickBaseTheme();
   const result = loadUserTheme(getDefaultThemePath());
   if (result.kind === 'error') {
@@ -74,6 +89,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
     </ThemeProvider>,
     {
       exitOnCtrlC: false,
+      stdin: createFilteredStdin(process.stdin),
     },
   );
 

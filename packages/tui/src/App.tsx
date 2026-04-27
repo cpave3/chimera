@@ -14,6 +14,22 @@ import type {
 import type { Mode, ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
+import {
+  backspace,
+  cursorLineCol,
+  endsWithUnescapedBackslashAtCursor,
+  insertChar,
+  insertNewline,
+  type MultilineBuffer,
+  moveDown,
+  moveLeft,
+  moveLineEnd,
+  moveLineStart,
+  moveRight,
+  moveUp,
+  replaceAll,
+} from './input/buffer';
+import { openInEditor as openInEditorImpl, type OpenInEditorResult } from './input/external-editor';
 import { renderMarkdown } from './markdown';
 import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
@@ -61,6 +77,12 @@ export interface AppProps {
    * to send to the server.
    */
   reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
+  /**
+   * Injection point for the Ctrl+G editor handoff. Defaults to the real
+   * implementation that uses `process.stdin`/`process.stdout` and treats the
+   * mouse as inactive (the inline TUI does not enable mouse tracking).
+   */
+  openInEditor?: (args: { initialText: string }) => Promise<OpenInEditorResult>;
 }
 
 interface PendingPermission {
@@ -105,7 +127,7 @@ export function App(props: AppProps): React.ReactElement {
   const { stdout } = useStdout();
   const scrollback = useMemo(() => new Scrollback(), []);
   const [entries, setEntries] = useState<ScrollbackEntry[]>([]);
-  const [input, setInputState] = useState('');
+  const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [pending, setPending] = useState<PendingPermission | null>(null);
   // Active subagents indexed by subagentId. Updated from the parent's stream.
   const subagentsRef = useRef<Map<string, ActiveSubagent>>(new Map());
@@ -122,9 +144,7 @@ export function App(props: AppProps): React.ReactElement {
   // `client.getSession()` after switches and forks.
   const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
   const [running, setRunning] = useState(false);
-  const [activeModeName, setActiveModeName] = useState<string>(
-    props.initialMode ?? 'build',
-  );
+  const [activeModeName, setActiveModeName] = useState<string>(props.initialMode ?? 'build');
   const [pendingModeName, setPendingModeName] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
@@ -148,17 +168,24 @@ export function App(props: AppProps): React.ReactElement {
   // The welcome header is included in Static's items on the first mount and
   // omitted after /clear so it doesn't reappear mid-session.
   const [showHeader, setShowHeader] = useState(true);
-  // Sync mirror of `input` so the useInput handler can see the latest value
+  // Sync mirror of `buffer` so the useInput handler can see the latest value
   // even before React has flushed a render (happens when keys arrive in a
   // burst).
-  const inputRef = useRef('');
-  function setInput(next: string | ((old: string) => string)): void {
-    setInputState((prev) => {
+  const bufferRef = useRef<MultilineBuffer>({ text: '', cursor: 0 });
+  function setBuffer(next: MultilineBuffer | ((old: MultilineBuffer) => MultilineBuffer)): void {
+    setBufferState((prev) => {
       const value = typeof next === 'function' ? next(prev) : next;
-      inputRef.current = value;
+      bufferRef.current = value;
       return value;
     });
   }
+  // Tracks the user's "intended column" across vertical motions so going up
+  // and then back down lands at the original column even on uneven lines.
+  const stickyColRef = useRef<number | null>(null);
+  // Set while the external editor is open so other input events don't try
+  // to mutate the buffer concurrently.
+  const editorOpenRef = useRef(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [registryVersion, setRegistryVersion] = useState(0);
   const historyRef = useRef<string[]>([]);
   const historyIdxRef = useRef<number>(-1);
@@ -215,10 +242,13 @@ export function App(props: AppProps): React.ReactElement {
   const sandboxMode = props.sandboxMode ?? 'off';
   const overlayMode = sandboxMode === 'overlay';
 
-  // Filtered slash-menu items derived from input + registry.
+  // Filtered slash-menu items derived from buffer + registry. The menu only
+  // appears for a single-line buffer beginning with `/`.
   const menuItems = useMemo<SlashMenuItem[]>(() => {
-    if (!input.startsWith('/') || input.includes(' ') || menuDismissed) return [];
-    const partial = input.slice(1).toLowerCase();
+    const text = buffer.text;
+    if (!text.startsWith('/') || text.includes(' ') || text.includes('\n') || menuDismissed)
+      return [];
+    const partial = text.slice(1).toLowerCase();
     const visibleBuiltins = overlayMode
       ? [...BUILTIN_COMMANDS, ...OVERLAY_COMMANDS]
       : BUILTIN_COMMANDS;
@@ -249,16 +279,16 @@ export function App(props: AppProps): React.ReactElement {
         kind: 'skill' as const,
       }));
     return [...builtins, ...users, ...skills];
-  }, [input, props.commands, props.skills, menuDismissed, registryVersion, overlayMode]);
+  }, [buffer.text, props.commands, props.skills, menuDismissed, registryVersion, overlayMode]);
 
   const menuOpen = menuItems.length > 0;
 
   useEffect(() => {
     setMenuHighlight(0);
-  }, [input]);
+  }, [buffer.text]);
   useEffect(() => {
-    if (!input.startsWith('/')) setMenuDismissed(false);
-  }, [input]);
+    if (!buffer.text.startsWith('/')) setMenuDismissed(false);
+  }, [buffer.text]);
 
   // Tick the spinner while waiting for a response.
   useEffect(() => {
@@ -393,10 +423,16 @@ export function App(props: AppProps): React.ReactElement {
     setEntries(scrollback.all());
   }
 
+  function setBufferText(text: string): void {
+    setBuffer({ text, cursor: text.length });
+    stickyColRef.current = null;
+  }
+
   useInput((char, key) => {
     if (pending) return; // handled by modal
     if (overlayPicker) return; // handled by picker
     if (sessionPicker) return; // handled by SessionPicker
+    if (editorOpenRef.current) return; // editor is mid-handoff
 
     if (key.ctrl && char === 'c') {
       if (running) {
@@ -437,7 +473,8 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
 
-    const latestInput = inputRef.current;
+    const latestBuffer = bufferRef.current;
+    const latestText = latestBuffer.text;
 
     if (menuOpen) {
       if (key.escape) {
@@ -454,63 +491,144 @@ export function App(props: AppProps): React.ReactElement {
       }
       if (key.tab) {
         const sel = menuItems[menuHighlight];
-        if (sel) setInput(`/${sel.name} `);
+        if (sel) setBufferText(`/${sel.name} `);
         return;
       }
       if (key.return) {
         const sel = menuItems[menuHighlight];
-        if (!sel || latestInput === `/${sel.name}`) {
+        if (!sel || latestText === `/${sel.name}`) {
           // fall through to submit below
         } else {
-          setInput(`/${sel.name} `);
+          setBufferText(`/${sel.name} `);
           return;
         }
       }
     }
 
+    if (key.ctrl && char === 'g') {
+      void runEditorHandoff();
+      return;
+    }
+
     if (key.return) {
-      if (latestInput.trim().length === 0) return;
-      const text = latestInput;
-      setInput('');
+      const insertNewlineKey =
+        key.shift || key.meta || endsWithUnescapedBackslashAtCursor(latestBuffer);
+      if (insertNewlineKey) {
+        setBuffer((b) => insertNewline(b));
+        stickyColRef.current = null;
+        return;
+      }
+      if (latestText.trim().length === 0) return;
+      const text = latestText;
+      setBufferText('');
       historyRef.current.push(text);
       historyIdxRef.current = historyRef.current.length;
       void handleSubmit(text);
       return;
     }
-    if (key.upArrow && latestInput.length === 0) {
-      if (historyRef.current.length === 0) return;
-      historyIdxRef.current = Math.max(0, historyIdxRef.current - 1);
-      setInput(historyRef.current[historyIdxRef.current] ?? '');
+    if (key.upArrow) {
+      if (latestText.length === 0) {
+        if (historyRef.current.length === 0) return;
+        historyIdxRef.current = Math.max(0, historyIdxRef.current - 1);
+        setBufferText(historyRef.current[historyIdxRef.current] ?? '');
+        return;
+      }
+      const { buf, col } = moveUp(latestBuffer, stickyColRef.current);
+      stickyColRef.current = col;
+      setBuffer(buf);
       return;
     }
-    if (key.downArrow && latestInput.length === 0) {
-      historyIdxRef.current = Math.min(historyRef.current.length, historyIdxRef.current + 1);
-      setInput(historyRef.current[historyIdxRef.current] ?? '');
+    if (key.downArrow) {
+      if (latestText.length === 0) {
+        historyIdxRef.current = Math.min(historyRef.current.length, historyIdxRef.current + 1);
+        setBufferText(historyRef.current[historyIdxRef.current] ?? '');
+        return;
+      }
+      const { buf, col } = moveDown(latestBuffer, stickyColRef.current);
+      stickyColRef.current = col;
+      setBuffer(buf);
       return;
     }
-    if (key.tab && latestInput.startsWith('/')) {
-      const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(latestInput));
+    if (key.leftArrow) {
+      stickyColRef.current = null;
+      setBuffer((b) => moveLeft(b));
+      return;
+    }
+    if (key.rightArrow) {
+      stickyColRef.current = null;
+      setBuffer((b) => moveRight(b));
+      return;
+    }
+    if (key.ctrl && char === 'a') {
+      stickyColRef.current = null;
+      setBuffer((b) => moveLineStart(b));
+      return;
+    }
+    if (key.ctrl && char === 'e') {
+      stickyColRef.current = null;
+      setBuffer((b) => moveLineEnd(b));
+      return;
+    }
+    if (key.tab && latestText.startsWith('/') && !latestText.includes('\n')) {
+      const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(latestText));
       if (match) {
-        setInput(match.name);
+        setBufferText(match.name);
         return;
       }
-      const userMatch = props.commands?.list().find((c) => `/${c.name}`.startsWith(latestInput));
+      const userMatch = props.commands?.list().find((c) => `/${c.name}`.startsWith(latestText));
       if (userMatch) {
-        setInput(`/${userMatch.name}`);
+        setBufferText(`/${userMatch.name}`);
         return;
       }
-      const skillMatch = props.skills?.all().find((s) => `/${s.name}`.startsWith(latestInput));
-      if (skillMatch) setInput(`/${skillMatch.name}`);
+      const skillMatch = props.skills?.all().find((s) => `/${s.name}`.startsWith(latestText));
+      if (skillMatch) setBufferText(`/${skillMatch.name}`);
       return;
     }
     if (key.backspace || key.delete) {
-      setInput((i) => i.slice(0, -1));
+      // Ink's keypress parser maps `\x7f` (the modern Backspace key) to
+      // `key.delete` and `\x08` (legacy / Ctrl+H) to `key.backspace`. The
+      // physical Delete key (`[3~`) also lands on `key.delete`, so we can't
+      // reliably distinguish it from Backspace — both behave as
+      // "delete the char before the cursor", matching the convention used
+      // elsewhere in the TUI (e.g. `PermissionModal`).
+      stickyColRef.current = null;
+      setBuffer((b) => backspace(b));
       return;
     }
     if (char && !key.ctrl && !key.meta) {
-      setInput((i) => i + char);
+      stickyColRef.current = null;
+      setBuffer((b) => insertChar(b, char));
     }
   });
+
+  async function runEditorHandoff(): Promise<void> {
+    if (editorOpenRef.current) return;
+    editorOpenRef.current = true;
+    setEditorOpen(true);
+    try {
+      const handler =
+        props.openInEditor ??
+        ((args: { initialText: string }) =>
+          openInEditorImpl({
+            initialText: args.initialText,
+            mouseActive: false,
+            stdout: process.stdout,
+            stdin: process.stdin,
+          }));
+      const result = await handler({ initialText: bufferRef.current.text });
+      if (result.ok) {
+        setBuffer((b) => replaceAll(b, result.text));
+        stickyColRef.current = null;
+      } else {
+        scrollback.addInfo(`editor: ${result.reason}`);
+        setEntries(scrollback.all());
+        setBuffer((b) => ({ ...b }));
+      }
+    } finally {
+      editorOpenRef.current = false;
+      setEditorOpen(false);
+    }
+  }
 
   async function handleSubmit(text: string): Promise<void> {
     if (text.startsWith('/')) {
@@ -1179,8 +1297,9 @@ export function App(props: AppProps): React.ReactElement {
     ),
   ];
   const hintsLeft: StatusBarWidget[] = [
+    <Text color={theme.text.muted}>{'\\<Enter> newline'}</Text>,
+    <Text color={theme.text.muted}>Ctrl+G editor</Text>,
     <Text color={theme.text.muted}>Esc/Ctrl+C interrupt</Text>,
-    <Text color={theme.text.muted}>Ctrl+D exit</Text>,
     <Text color={theme.text.muted}>/ commands</Text>,
     <Text color={theme.text.muted}>Shift+Tab cycle mode</Text>,
   ];
@@ -1316,12 +1435,9 @@ export function App(props: AppProps): React.ReactElement {
           borderLeft={false}
           borderRight={false}
           borderColor={theme.text.muted}
+          flexDirection="column"
         >
-          <Text color={theme.accent.primary}>{'> '}</Text>
-          <Text>
-            {input}
-            <Text inverse> </Text>
-          </Text>
+          {renderPromptLines(buffer, theme.accent.primary, editorOpen)}
         </Box>
         <StatusBar left={cwdLeft} right={cwdRight} separatorColor={theme.text.muted} />
         <StatusBar left={modelLeft} right={modelRight} separatorColor={theme.text.muted} />
@@ -1340,6 +1456,39 @@ export function App(props: AppProps): React.ReactElement {
 function previewLine(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine;
+}
+
+function renderPromptLines(
+  buffer: MultilineBuffer,
+  accentColor: string,
+  editorOpen: boolean,
+): React.ReactElement[] {
+  const allLines = buffer.text.split('\n');
+  const { line: cursorLine, col: cursorCol } = cursorLineCol(buffer);
+  return allLines.map((lineText, idx) => {
+    const isFirst = idx === 0;
+    const prefix = isFirst ? '> ' : '  ';
+    const showCursor = idx === cursorLine && !editorOpen;
+    if (!showCursor) {
+      return (
+        <Box key={idx}>
+          <Text color={isFirst ? accentColor : undefined}>{prefix}</Text>
+          <Text>{lineText}</Text>
+        </Box>
+      );
+    }
+    const pre = lineText.slice(0, cursorCol);
+    const atChar = cursorCol < lineText.length ? lineText[cursorCol]! : ' ';
+    const post = cursorCol < lineText.length ? lineText.slice(cursorCol + 1) : '';
+    return (
+      <Box key={idx}>
+        <Text color={isFirst ? accentColor : undefined}>{prefix}</Text>
+        <Text>{pre}</Text>
+        <Text inverse>{atChar}</Text>
+        <Text>{post}</Text>
+      </Box>
+    );
+  });
 }
 
 function expandSkillInvocation(name: string, path: string, args: string): string {
