@@ -286,11 +286,20 @@ export function buildApp(opts: AppOptions): Hono {
         });
       });
 
+      // SSE comment heartbeat — keeps idle connections from being killed by
+      // undici's keep-alive timeout or any intermediate proxy. Comments
+      // (lines beginning with `:`) are ignored by EventSource-compatible
+      // parsers, including our parseSSE.
+      const heartbeat = setInterval(() => {
+        void stream.write(': ping\n\n');
+      }, 15_000);
+
       // Keep open until aborted.
       const abort = new Promise<void>((resolve) => {
         c.req.raw.signal.addEventListener('abort', () => resolve());
       });
       await abort;
+      clearInterval(heartbeat);
       unsubscribe();
     });
   });

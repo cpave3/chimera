@@ -312,6 +312,10 @@ export class ChimeraClient {
               pendingTimers.delete(envelope.requestId);
             }
             yield stripEnvelopeMeta(envelope);
+            // Successful delivery — clear the retry budget so transient
+            // disconnects later in the session don't accumulate toward the
+            // cap.
+            retries = 0;
 
             // Drain any timeouts.
             while (timeoutQueue.length > 0) {
