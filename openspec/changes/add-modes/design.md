@@ -21,9 +21,9 @@
 
 ## Decisions
 
-### D1. Three fields per mode: prompt fragment, tool allowlist, optional model override
+### D1. Four fields per mode: prompt fragment, tool allowlist, optional model override, optional color
 
-**Decision:** A Mode has exactly `{ name, description, body, tools?, model? }`. Nothing else. `body` is the markdown after the YAML frontmatter; `tools` is a `string[]` allowlist; `model` is a `providerId/modelId` string.
+**Decision:** A Mode has exactly `{ name, description, body, tools?, model?, color? }`. Nothing else. `body` is the markdown after the YAML frontmatter; `tools` is a `string[]` allowlist; `model` is a `providerId/modelId` string; `color` is a CSS hex used by the TUI mode indicator (with a deterministic name-derived fallback when absent).
 
 **Why:** The abstraction has to stay narrow to survive. Each additional knob (temperature, sandbox, permissions overlay, compaction config) multiplies the surface and creates cross-cutting concerns ("does switching modes re-apply all of these?"). Vim's modes change what keys mean; they don't also change your colorscheme. Our modes change the agent's directive and toolset — no more.
 
@@ -43,7 +43,7 @@
 
 **Why:** Consistency. If the user already learned skill / command discovery, they already know mode discovery. The walker is factored to one shared helper.
 
-**`normal` is NOT a shipped file.** "No mode active" IS normal; shipping a `normal.md` creates circular reasoning ("what is normal's default for its own model override?"). Absence-of-mode is the sentinel.
+**No `normal` sentinel.** Earlier drafts treated "no mode active" as the implicit `normal` state. The shipping design instead bundles a real `build` mode as the default. The session's `mode` is always a string (defaulting to `"build"`), the system prompt always carries a `# Current mode:` block, and the TUI always shows a mode badge with a color. This trades one extra (benign) line in the system prompt for: a uniform code path (no `mode === undefined` branches), a discoverable default mode users can override, and a status-bar that always tells the user where they are.
 
 ### D4. Validation: warn-on-discovery, error-on-use
 
@@ -65,11 +65,13 @@
 
 **Why:** Explicit allowlists future-proof against new mutating tools (plan.md from a year ago shouldn't silently start allowing a freshly-added `delete` tool). Registration-time enforcement prevents the model from trying tools that will always be denied — no wasted rounds.
 
-### D7. Queued mid-run switching
+### D7. Queued switching with mid-run interrupt
 
-**Decision:** Mode switches requested via `/mode`, Shift+Tab, or `POST /v1/sessions/:id/mode` while a run is active are queued — they take effect at the top of the next run. The TUI shows `[mode:normal → plan]` inline until the switch lands.
+**Decision:** Mode switches requested via `/mode`, Shift+Tab, or `POST /v1/sessions/:id/mode` are queued — the next call to `Agent.run()` drains the queue, recomposes the system prompt, filters tools, and emits `mode_changed`. When a switch is requested mid-run, the TUI ALSO issues `interrupt()` so the active run terminates promptly; the queued switch then lands at the top of the user's next message.
 
-**Why:** Interrupting a run to recompose the system prompt leaves half-finished tool chains and confusing state. Users who want to stop can Ctrl+C, then `/mode`. Two motions, two intents.
+**Why (revised):** The original design left mid-run switches purely queued, which felt sluggish — a five-step plan the model was working on would have to complete before the user's `/mode plan` took effect. The user's feedback was: "tokens currently streaming can't be helped, but we should switch mode at the earliest sane opportunity." The realistic compromise is to interrupt the run; the model loses the rest of its current plan but the user's next message starts in the new mode immediately. A finer-grained "swap mode at the next streamText step boundary" would require Chimera to drive its own step loop instead of delegating to the AI SDK's stopWhen orchestration, which is out of scope for this change.
+
+**Why we don't recompose silently mid-stream:** the AI SDK's multi-step orchestration runs internally inside `streamText` once we call it. There is no clean hook to swap `system` or `tools` between SDK-managed steps. Aborting + restarting is the cleanest available primitive; doing so explicitly (with a visible interrupt notice in scrollback) is honest about what happened.
 
 ### D8. `Session.userModelOverride` is sticky; mode.model is a soft default
 
@@ -81,15 +83,15 @@
 
 ### D9. Shift+Tab cycles a config-driven list
 
-**Decision:** `cycleModes` in config is an ordered list of mode names (default `["normal", "plan"]`). Shift+Tab advances to the next entry; wraps. Unknown names in the list warn and skip. Forward-only in V1.
+**Decision:** `cycleModes` in config is an ordered list of mode names. When unset, the cycle defaults to **every discovered mode** (alphabetical). When set, exactly that list is used (unknown names warn and skip). Shift+Tab advances forward; wraps; forward-only in V1.
 
-**Why:** Default behavior is the obvious toggle (normal ↔ plan) without configuration. Power users extend the list. Cycle membership is a presentation concern → lives in config, not in mode frontmatter. Direct `/mode <name>` access doesn't require cycle membership.
+**Why:** Earlier the default was `["build", "plan"]`, which surprised users who dropped `~/.chimera/modes/question.md` and expected Shift+Tab to find it. Defaulting to "every mode" means the keybind picks up user-authored modes for free; the explicit-list form is reserved for users who actively want a smaller cycle. Cycle membership stays a presentation concern — lives in config, not in mode frontmatter. Direct `/mode <name>` access still works regardless of cycle membership.
 
-### D10. Subagents default to normal, not parent's mode
+### D10. Subagents default to build, not parent's mode
 
-**Decision:** `spawn_agent` takes an optional `mode?: string` param. Default is `"normal"`. Parent's mode is not inherited.
+**Decision:** `spawn_agent` takes an optional `mode?: string` param. Default is `"build"`. Parent's mode is not inherited.
 
-**Why:** Mode is task intent, not environment. A plan-mode parent spawning a child almost always means "I've planned, now YOU execute" — inheriting plan would be subtly wrong. Making the default normal and the override explicit means `spawn_agent` reads honestly: "do this task as a normal agent, unless I specify otherwise."
+**Why:** Mode is task intent, not environment. A plan-mode parent spawning a child almost always means "I've planned, now YOU execute" — inheriting plan would be subtly wrong. Making the default `build` and the override explicit means `spawn_agent` reads honestly: "do this task as a build-mode agent, unless I specify otherwise."
 
 ### D11. Commands can switch modes persistently; skills cannot
 
@@ -107,7 +109,21 @@
 
 ## Migration Plan
 
-Additive. Sessions created before this change deserialize with `mode: undefined` (normal). `Session.userModelOverride` defaults to `null`. Users who haven't authored any modes get zero behavior change until they either (a) type `/mode plan` to use the built-in, or (b) drop a mode file in one of the discovery tiers. Rollback: `git revert`; `Session.mode` and `userModelOverride` fields become dead but harmless in persisted sessions.
+Additive. Sessions created before this change deserialize with `mode: "build"` (the new default) and `userModelOverride: null`. Users who haven't authored any modes still get the bundled `build` and `plan` builtins; behavior is effectively unchanged for `build` (no tool allowlist, near-no-op body) and `/mode plan` flips the session into the plan-mode preset. Rollback: `git revert`; `Session.mode` and `userModelOverride` fields become dead but harmless in persisted sessions.
+
+## Decisions added in revision
+
+### D12. Bottom status bar, not header
+
+**Decision:** The TUI mode indicator lives in the existing bottom status bar (left side of the existing chrome rows), not in the top header. Always visible, always colored.
+
+**Why:** The header is reserved for cwd / model / context-window information that is critical at the start of a session. The bottom status bar is the persistent ambient surface — same place users already look for status indicators (cwd, model). A mode indicator that is always visible there reinforces "you are always in some mode" and gives the color a steady visual anchor.
+
+### D13. Color is per-mode and deterministic by default
+
+**Decision:** Mode frontmatter takes an optional `color: <hex>`. When absent, the runtime derives a deterministic color from the mode name (FNV-1a hash → hue, fixed S/V) so every mode automatically has a stable, distinct color. The same helper is reused by `chimera modes` listings and any future surface that wants to brand a mode.
+
+**Why:** Color is the cheapest way to make "I'm in plan vs build" visible at a glance. Forcing every mode author to pick a color is friction; falling back to grey loses the signal. Deterministic derivation gives users distinct colors for free; explicit `color:` lets them tune for muscle memory or accessibility.
 
 ## Open Questions
 

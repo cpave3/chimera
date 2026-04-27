@@ -13,7 +13,14 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { PersistedEvent } from './events';
 import { newSessionId, type SessionId } from './ids';
-import { emptyUsage, type ModelConfig, type SandboxMode, type Session, type Usage } from './types';
+import {
+  DEFAULT_SESSION_MODE,
+  emptyUsage,
+  type ModelConfig,
+  type SandboxMode,
+  type Session,
+  type Usage,
+} from './types';
 
 export function sessionsDir(home = homedir()): string {
   return join(home, '.chimera', 'sessions');
@@ -40,6 +47,8 @@ interface SessionMetadata {
   model: ModelConfig;
   sandboxMode: SandboxMode;
   usage: Usage;
+  mode: string;
+  userModelOverride: string | null;
 }
 
 function toMetadata(session: Session): SessionMetadata {
@@ -52,6 +61,8 @@ function toMetadata(session: Session): SessionMetadata {
     model: session.model,
     sandboxMode: session.sandboxMode,
     usage: session.usage,
+    mode: session.mode,
+    userModelOverride: session.userModelOverride,
   };
 }
 
@@ -127,6 +138,9 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
     sandboxMode: (parsed.sandboxMode as SandboxMode) ?? 'off',
     usage:
       parsed.usage && typeof parsed.usage === 'object' ? (parsed.usage as Usage) : emptyUsage(),
+    mode: typeof parsed.mode === 'string' && parsed.mode.length > 0 ? parsed.mode : DEFAULT_SESSION_MODE,
+    userModelOverride:
+      typeof parsed.userModelOverride === 'string' ? parsed.userModelOverride : null,
   };
 
   const snapshot = await readLatestStepSnapshot(sessionId, home);
@@ -249,6 +263,11 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     model: parent.model,
     sandboxMode: parent.sandboxMode,
     usage: emptyUsage(),
+    // Don't inherit parent's mode — per add-modes design D10, children
+    // start in `build` so a plan-mode parent doesn't silently impose a
+    // read-only allowlist on its child.
+    mode: DEFAULT_SESSION_MODE,
+    userModelOverride: null,
   };
   await writeSessionMetadata(child, home);
 

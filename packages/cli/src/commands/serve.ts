@@ -4,6 +4,7 @@ import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
+import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
@@ -26,6 +27,10 @@ export interface ServeOptions {
   currentSubagentDepth?: number;
   /** Internal: parent had no TTY; child auto-denies prompts. */
   headlessPermissionAutoDeny?: boolean;
+  /** Initial mode for the server-bound default session. Falls back to config.defaultMode then "build". */
+  mode?: string;
+  /** False → skip mode discovery (from `--no-modes`). */
+  modes?: boolean;
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
@@ -48,11 +53,22 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     onWarning: (m) => process.stderr.write(`${m}\n`),
   });
 
+  const modes = loadModesFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    modesDisabled: opts.modes === false,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
+  const initialMode = opts.mode ?? config.defaultMode ?? 'build';
+
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
     skills,
+    modes,
+    initialMode,
     sandbox: sandboxOpts ?? undefined,
     subagents: {
       enabled: opts.subagents !== false,
@@ -73,6 +89,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       parentId: opts.parent,
     },
     loadSkills: () => skills.all(),
+    loadModes: () => modes.all(),
   });
 
   const app = buildApp({

@@ -10,6 +10,12 @@ export interface ComposeOptions {
   model?: Pick<ModelConfig, 'providerId' | 'modelId'>;
   sandboxMode?: SandboxMode;
   extensions?: ((ctx: { cwd: string }) => string | null)[];
+  /**
+   * Active mode block, appended last. Composers pass `{ name, body }` from the
+   * resolved Mode object; the rendered section is `# Current mode: <name>`
+   * followed by the body verbatim. Replaces nothing else in the prompt.
+   */
+  mode?: { name: string; body: string };
 }
 
 const SANDBOX_HINTS: Record<SandboxMode, string> = {
@@ -109,6 +115,10 @@ export function composeSystemPrompt(opts: ComposeOptions): string {
   for (const ext of opts.extensions ?? []) {
     const chunk = ext({ cwd: opts.cwd });
     if (chunk) parts.push(`\n\n${chunk}`);
+  }
+
+  if (opts.mode) {
+    parts.push(`\n\n# Current mode: ${opts.mode.name}\n\n${opts.mode.body}`);
   }
 
   return parts.join('');

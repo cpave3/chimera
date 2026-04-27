@@ -5,8 +5,15 @@ import { type AgentEvent, type ToolDisplay } from './events';
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
 import { type CallId, type SessionId, newCallId, newRequestId, newSessionId } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
-import { appendSessionEvent, forkSession, loadSession, persistSession } from './persistence';
 import {
+  appendSessionEvent,
+  forkSession,
+  loadSession,
+  persistSession,
+  writeSessionMetadata,
+} from './persistence';
+import {
+  DEFAULT_SESSION_MODE,
   type ExecutionTarget,
   type ModelConfig,
   type RememberScope,
@@ -52,6 +59,10 @@ export interface AgentOptions {
         source: 'project' | 'user' | 'claude-compat';
       }
     | undefined;
+  /** Initial mode for new sessions (no `session` provided). Defaults to "build". */
+  initialMode?: string;
+  /** Initial sticky user model override. Defaults to null. */
+  initialUserModelOverride?: string | null;
 }
 
 export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<PermissionResolution>;
@@ -79,6 +90,23 @@ export class Agent {
    * tool call so the TUI can nest sub-events under the right entry.
    */
   private callIdByToolCallId = new Map<string, CallId>();
+  /**
+   * Single-slot pending mode switch. Drained at the top of each run() so
+   * mid-run requests take effect on the next turn (last-writer-wins).
+   */
+  private queuedMode: string | null = null;
+  /**
+   * Optional callback invoked when a queued mode switch is drained. Returns
+   * the freshly-recomposed system prompt + filtered tool set + effective
+   * model to apply for the next run. Embedders register it via
+   * `setModeResolver()`.
+   */
+  private modeResolver?: (name: string) => {
+    systemPrompt: string;
+    tools: ToolSet;
+    effectiveModel: string;
+    effectiveModelChanged: boolean;
+  };
 
   constructor(opts: AgentOptions) {
     this.opts = opts;
@@ -91,6 +119,8 @@ export class Agent {
         children: opts.session.children ?? [],
         status: 'idle',
         usage: opts.session.usage ?? emptyUsage(),
+        mode: opts.session.mode ?? DEFAULT_SESSION_MODE,
+        userModelOverride: opts.session.userModelOverride ?? null,
       };
     } else {
       this.session = {
@@ -105,6 +135,8 @@ export class Agent {
         model: opts.model,
         sandboxMode: opts.sandboxMode,
         usage: emptyUsage(),
+        mode: opts.initialMode ?? DEFAULT_SESSION_MODE,
+        userModelOverride: opts.initialUserModelOverride ?? null,
       };
     }
   }
@@ -283,6 +315,104 @@ export class Agent {
   }
 
   /**
+   * Register the embedder's mode-resolution callback. The callback is invoked
+   * synchronously at the top of each `run()` when a switch is queued; it is
+   * expected to (a) look the mode up in the registry, (b) recompose the
+   * system prompt with the new mode block, (c) compute the filtered tool set,
+   * and (d) report the effective model. Throwing from the resolver aborts the
+   * switch — the agent stays in its previous mode.
+   */
+  setModeResolver(
+    resolver: (name: string) => {
+      systemPrompt: string;
+      tools: ToolSet;
+      effectiveModel: string;
+      effectiveModelChanged: boolean;
+    },
+  ): void {
+    this.modeResolver = resolver;
+  }
+
+  /**
+   * Queue a mode switch. If a run is active, the switch is queued (last-
+   * writer-wins, single-slot) and drained at the top of the next `run()`.
+   * If the agent is idle, the switch is applied immediately: the resolver
+   * recomposes the system prompt + tools, the session snapshot is updated,
+   * and the result is returned so the caller (typically the server) can
+   * publish a `mode_changed` event on its event bus.
+   *
+   * Validation (registry membership, tool allowlist) happens inside the
+   * resolver registered via `setModeResolver()`. Returns `{ status: 'invalid' }`
+   * if the resolver throws.
+   */
+  queueModeSwitch(
+    name: string,
+  ):
+    | { status: 'queued' }
+    | { status: 'noop' }
+    | {
+        status: 'applied';
+        from: string;
+        to: string;
+        effectiveModel: string;
+        effectiveModelChanged: boolean;
+      }
+    | { status: 'invalid'; error: string } {
+    if (name === this.session.mode) {
+      // Noop check runs *before* the running guard so rapid Shift+Tab
+      // presses can't queue a switch to the current mode (which would
+      // briefly render `[mode:X → X]` in the chrome before the runtime
+      // drain discards it).
+      this.queuedMode = null;
+      return { status: 'noop' };
+    }
+    if (this.running) {
+      this.queuedMode = name;
+      return { status: 'queued' };
+    }
+    if (!this.modeResolver) {
+      const from = this.session.mode;
+      this.session.mode = name;
+      this.queuedMode = null;
+      return {
+        status: 'applied',
+        from,
+        to: name,
+        effectiveModel: `${this.session.model.providerId}/${this.session.model.modelId}`,
+        effectiveModelChanged: false,
+      };
+    }
+    let resolved: ReturnType<NonNullable<typeof this.modeResolver>>;
+    try {
+      resolved = this.modeResolver(name);
+    } catch (err) {
+      this.queuedMode = null;
+      return { status: 'invalid', error: (err as Error).message };
+    }
+    const from = this.session.mode;
+    this.opts = {
+      ...this.opts,
+      systemPrompt: resolved.systemPrompt,
+      tools: resolved.tools,
+    };
+    this.session.mode = name;
+    this.queuedMode = null;
+    void writeSessionMetadata(this.session, this.opts.home).catch(() => {});
+    return {
+      status: 'applied',
+      from,
+      to: name,
+      effectiveModel: resolved.effectiveModel,
+      effectiveModelChanged: resolved.effectiveModelChanged,
+    };
+  }
+
+  /** The queued mode name, or null when no switch is pending. */
+  get pendingMode(): string | null {
+    return this.queuedMode;
+  }
+
+  /**
    * Register optional per-tool scrollback formatters keyed by tool name.
    * Called by the agent on tool_call_start/result to compute the `display`
    * payload that ships with each event. Errors thrown from a formatter are
@@ -341,6 +471,58 @@ export class Agent {
 
   private async runInternal(userMessage: string, queue: EventQueue<AgentEvent>): Promise<void> {
     this.session.status = 'running';
+
+    // Drain any queued mode switch before the user message lands. The resolver
+    // is responsible for recomposing the system prompt, filtering tools, and
+    // resolving the effective model for the new mode. We then emit
+    // `mode_changed` ahead of any other run-time event so consumers observe
+    // the switch before they see effects of it.
+    const queuedMode = this.queuedMode;
+    if (queuedMode !== null && queuedMode !== this.session.mode) {
+      this.queuedMode = null;
+      try {
+        if (this.modeResolver) {
+          const resolved = this.modeResolver(queuedMode);
+          const previousMode = this.session.mode;
+          this.opts = {
+            ...this.opts,
+            systemPrompt: resolved.systemPrompt,
+            tools: resolved.tools,
+          };
+          this.session.mode = queuedMode;
+          queue.push({
+            type: 'mode_changed',
+            from: previousMode,
+            to: queuedMode,
+            reason: 'user',
+            effectiveModel: resolved.effectiveModel,
+            effectiveModelChanged: resolved.effectiveModelChanged,
+          });
+        } else {
+          // Resolver missing → just record the mode on the session without
+          // recomposing the prompt. Embedders that care about the system
+          // prompt block always register a resolver.
+          const previousMode = this.session.mode;
+          this.session.mode = queuedMode;
+          queue.push({
+            type: 'mode_changed',
+            from: previousMode,
+            to: queuedMode,
+            reason: 'user',
+            effectiveModel: `${this.session.model.providerId}/${this.session.model.modelId}`,
+            effectiveModelChanged: false,
+          });
+        }
+      } catch (err) {
+        // Validation failure: surface as a tool_call_error-shaped error event
+        // is overkill — we just leave the mode unchanged and emit nothing.
+        // The caller (TUI) gets the rejection from `setMode` synchronously.
+        process.stderr.write(
+          `[chimera] mode resolver rejected switch to "${queuedMode}": ${(err as Error).message}\n`,
+        );
+      }
+    }
+
     this.session.messages.push({ role: 'user', content: userMessage });
 
     queue.push({ type: 'session_started', sessionId: this.session.id });

@@ -5,6 +5,7 @@ import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimer
 import { loadCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
@@ -26,6 +27,10 @@ export interface RunOptions {
   claudeCompat?: boolean;
   /** If false, skip skill discovery + system-prompt injection entirely. */
   skills?: boolean;
+  /** If false, skip mode discovery (from `--no-modes`). */
+  modes?: boolean;
+  /** Initial mode for the session. Falls back to config.defaultMode then "build". */
+  mode?: string;
   /** Test hook: bypass provider loading and supply a pre-built factory. */
   factoryOverride?: AgentFactory;
   /** Test hook: override model config when `factoryOverride` is supplied. */
@@ -59,6 +64,15 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     skillsDisabled: opts.skills === false,
     onWarning: (m) => process.stderr.write(`${m}\n`),
   });
+  const modes = loadModesFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    claudeCompatOverride: opts.claudeCompat,
+    modesDisabled: opts.modes === false,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
+  const initialMode = opts.mode ?? config.defaultMode ?? 'build';
   if (opts.factoryOverride && opts.modelOverride) {
     model = opts.modelOverride;
     factory = opts.factoryOverride;
@@ -74,6 +88,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       autoApprove: opts.autoApprove ?? 'host',
       home: opts.home,
       skills,
+      modes,
+      initialMode,
       sandbox: sandboxOpts ?? undefined,
       subagents: {
         enabled: opts.subagents !== false,
@@ -111,6 +127,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode },
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
+    loadModes: () => modes.all(),
   });
   const app = buildApp({ registry, home: opts.home });
   const server = await startServer({ app });

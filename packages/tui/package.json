@@ -25,6 +25,7 @@
     "@chimera/client": "workspace:*",
     "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
+    "@chimera/modes": "workspace:*",
     "@chimera/skills": "workspace:*",
     "ink": "npm:@jrichman/ink@6.6.9",
     "marked": "^18.0.2",

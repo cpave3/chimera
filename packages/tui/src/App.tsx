@@ -11,6 +11,7 @@ import type {
   SessionInfo,
   Usage,
 } from '@chimera/core';
+import type { Mode, ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import { renderMarkdown } from './markdown';
@@ -47,6 +48,11 @@ export interface AppProps {
   cwd: string;
   commands?: CommandRegistry;
   skills?: SkillRegistry;
+  modes?: ModeRegistry;
+  /** Mode names cycled by Shift+Tab. Default: ["build", "plan"]. */
+  cycleModes?: string[];
+  /** Initial active mode (overrides registry default). Default: "build". */
+  initialMode?: string;
   sandboxMode?: SandboxMode;
   overlay?: OverlayHandlers;
   /**
@@ -116,6 +122,10 @@ export function App(props: AppProps): React.ReactElement {
   // `client.getSession()` after switches and forks.
   const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
   const [running, setRunning] = useState(false);
+  const [activeModeName, setActiveModeName] = useState<string>(
+    props.initialMode ?? 'build',
+  );
+  const [pendingModeName, setPendingModeName] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -369,6 +379,11 @@ export function App(props: AppProps): React.ReactElement {
         usedContextTokens: ev.usedContextTokens,
         unknownWindow: ev.unknownWindow,
       });
+    } else if (ev.type === 'mode_changed') {
+      setActiveModeName(ev.to);
+      setPendingModeName(null);
+      scrollback.addInfo(`Mode change: ${ev.from} → ${ev.to}`);
+      setEntries(scrollback.all());
     }
   }
 
@@ -404,6 +419,21 @@ export function App(props: AppProps): React.ReactElement {
     }
     if (key.ctrl && char === 'd') {
       app.exit();
+      return;
+    }
+
+    if (key.shift && key.tab) {
+      // When `cycleModes` isn't supplied, default to every discovered
+      // mode so user-authored files (e.g. ~/.chimera/modes/question.md)
+      // are picked up automatically — see add-modes design D9.
+      const all = props.modes?.all() ?? [];
+      const cycle = props.cycleModes ?? all.map((mode) => mode.name);
+      const validCycle = cycle.filter((name) => all.some((mode) => mode.name === name));
+      if (validCycle.length === 0) return;
+      const here = pendingModeName ?? activeModeName;
+      const idx = validCycle.indexOf(here);
+      const nextName = validCycle[(idx + 1) % validCycle.length] ?? validCycle[0]!;
+      void handleSlash(`/mode ${nextName}`);
       return;
     }
 
@@ -841,6 +871,50 @@ export function App(props: AppProps): React.ReactElement {
         })();
         return;
       }
+      case '/mode': {
+        const target = arg.trim();
+        if (!target) {
+          const list = props.modes?.all() ?? [];
+          if (list.length === 0) {
+            scrollback.addInfo('no modes available (mode discovery is disabled).');
+          } else {
+            const lines = list.map((mode) => {
+              const marker = mode.name === activeModeName ? '* ' : '  ';
+              const tail = mode.name === activeModeName ? ' (active)' : '';
+              return `${marker}${mode.name} — ${mode.description}${tail}`;
+            });
+            scrollback.addInfo(`Modes:\n${lines.join('\n')}`);
+          }
+          setEntries(scrollback.all());
+          return;
+        }
+        const next = props.modes?.find(target);
+        if (!next) {
+          scrollback.addError(`unknown mode "${target}"`);
+          setEntries(scrollback.all());
+          return;
+        }
+        const effectiveCurrent = pendingModeName ?? activeModeName;
+        if (next.name === effectiveCurrent) return;
+        setPendingModeName(next.name);
+        void (async () => {
+          try {
+            await activeSession.client.setMode(activeSession.sessionId, next.name);
+            if (running) {
+              // Mid-run switch: interrupt so the new mode applies as soon as
+              // the run terminates rather than after the model finishes its
+              // multi-step plan. Any text already streaming is past saving;
+              // anything not yet sent will be in the new mode.
+              await activeSession.client.interrupt(activeSession.sessionId);
+            }
+          } catch (err) {
+            setPendingModeName(null);
+            scrollback.addError(`mode switch failed: ${(err as Error).message}`);
+            setEntries(scrollback.all());
+          }
+        })();
+        return;
+      }
       case '/theme': {
         const target = arg.trim();
         if (!target) {
@@ -1070,7 +1144,26 @@ export function App(props: AppProps): React.ReactElement {
   const cwdRight: StatusBarWidget[] = [
     <Text color={theme.text.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
   ];
+  const activeModeObj = props.modes?.find(activeModeName);
+  const pendingModeObj = pendingModeName ? props.modes?.find(pendingModeName) : undefined;
+  const modeWidget: StatusBarWidget =
+    pendingModeObj && pendingModeObj.name !== activeModeName ? (
+      <Text>
+        <Text color={theme.text.muted}>[mode:</Text>
+        <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
+        <Text color={theme.text.muted}>{' → '}</Text>
+        <Text color={pendingModeObj.colorHex}>{pendingModeObj.name}</Text>
+        <Text color={theme.text.muted}>]</Text>
+      </Text>
+    ) : (
+      <Text>
+        <Text color={theme.text.muted}>[mode:</Text>
+        <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
+        <Text color={theme.text.muted}>]</Text>
+      </Text>
+    );
   const modelLeft: StatusBarWidget[] = [
+    modeWidget,
     <Text color={theme.accent.primary}>{props.modelRef}</Text>,
     <Text color={theme.text.muted}>{`session ${activeSession.sessionId.slice(-8)}`}</Text>,
     activeParentId ? <Text color={theme.accent.secondary}>(forked)</Text> : null,
@@ -1089,6 +1182,7 @@ export function App(props: AppProps): React.ReactElement {
     <Text color={theme.text.muted}>Esc/Ctrl+C interrupt</Text>,
     <Text color={theme.text.muted}>Ctrl+D exit</Text>,
     <Text color={theme.text.muted}>/ commands</Text>,
+    <Text color={theme.text.muted}>Shift+Tab cycle mode</Text>,
   ];
 
   return (

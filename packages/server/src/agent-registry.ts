@@ -9,6 +9,7 @@ import type {
   SessionId,
 } from '@chimera/core';
 import type { HookRunner } from '@chimera/hooks';
+import type { Mode } from '@chimera/modes';
 import type { Skill } from '@chimera/skills';
 import { EventBus } from './event-bus';
 import { bridgeHooksToBus } from './hook-bridge';
@@ -66,6 +67,8 @@ export interface AgentEntry {
   commands: Command[];
   /** Skills bound to this session at creation time. Same snapshot discipline. */
   skills: Skill[];
+  /** Modes bound to this session at creation time. Same snapshot discipline. */
+  modes: Mode[];
   /** Live subagents spawned by this session. Updated from the event bus. */
   subagents: Map<string, SubagentInfo>;
 }
@@ -86,6 +89,8 @@ export type CommandsLoader = (ctx: { cwd: string }) => Command[];
 
 export type SkillsLoader = (ctx: { cwd: string }) => Skill[];
 
+export type ModesLoader = (ctx: { cwd: string }) => Mode[];
+
 export interface AgentRegistryOptions {
   factory: AgentFactory;
   instance: InstanceInfo;
@@ -93,6 +98,8 @@ export interface AgentRegistryOptions {
   loadCommands?: CommandsLoader;
   /** Optional hook to load skills at session-creation time. */
   loadSkills?: SkillsLoader;
+  /** Optional hook to load modes at session-creation time. */
+  loadModes?: ModesLoader;
 }
 
 export class AgentRegistry {
@@ -101,12 +108,14 @@ export class AgentRegistry {
   private readonly instance: InstanceInfo;
   private readonly loadCommands?: CommandsLoader;
   private readonly loadSkills?: SkillsLoader;
+  private readonly loadModes?: ModesLoader;
 
   constructor(opts: AgentRegistryOptions) {
     this.factory = opts.factory;
     this.instance = opts.instance;
     this.loadCommands = opts.loadCommands;
     this.loadSkills = opts.loadSkills;
+    this.loadModes = opts.loadModes;
   }
 
   getInstanceInfo(): InstanceInfo {
@@ -118,6 +127,7 @@ export class AgentRegistry {
     const bus = new EventBus(agent.session.id);
     const commands = this.loadCommands ? this.loadCommands({ cwd: init.cwd }) : [];
     const skills = this.loadSkills ? this.loadSkills({ cwd: init.cwd }) : [];
+    const modes = this.loadModes ? this.loadModes({ cwd: init.cwd }) : [];
     const subagents = new Map<string, SubagentInfo>();
     const entry: AgentEntry = {
       agent,
@@ -129,6 +139,7 @@ export class AgentRegistry {
       resolvedPermissionIds: new Set(),
       commands,
       skills,
+      modes,
       subagents,
     };
     if (hookRunner) {

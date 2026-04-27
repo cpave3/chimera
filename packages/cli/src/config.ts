@@ -22,6 +22,14 @@ export interface ChimeraConfig {
    * `contextWindow` is honored — see `resolveContextWindow`.
    */
   models?: Record<string, { contextWindow?: number }>;
+  modes?: {
+    enabled?: boolean;
+    claudeCompat?: boolean;
+  };
+  /** Mode active for new sessions when no `--mode` flag is given. Defaults to "build". */
+  defaultMode?: string;
+  /** Ordered list cycled by Shift+Tab in the TUI. Defaults to ["build", "plan"]. */
+  cycleModes?: string[];
 }
 
 export function configPath(home = homedir()): string {

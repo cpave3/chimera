@@ -18,6 +18,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/fork', description: 'Fork the current session into a child (/fork [purpose])' },
   { name: '/exit', description: 'Exit the TUI' },
   { name: '/model', description: 'Show or change the active model' },
+  { name: '/mode', description: 'Show modes or queue a switch (/mode <name>)' },
   { name: '/rules', description: 'List permission rules (/rules rm <n> to delete)' },
   { name: '/reload', description: 'Re-read user commands and AGENTS.md/CLAUDE.md from disk' },
   { name: '/theme', description: 'List or apply a colour theme (/theme <name>)' },

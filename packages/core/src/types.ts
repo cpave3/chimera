@@ -69,7 +69,21 @@ export interface Session {
   model: ModelConfig;
   sandboxMode: SandboxMode;
   usage: Usage;
+  /**
+   * Currently active mode name. Defaults to `"build"` for new sessions and
+   * for sessions persisted before the modes feature landed.
+   */
+  mode: string;
+  /**
+   * Sticky model override the user explicitly requested via `-m` at launch or
+   * `/model <ref>` mid-session. Persists across mode switches; `null` means no
+   * override is active.
+   */
+  userModelOverride: string | null;
 }
+
+/** Default mode for new sessions. Mirrored in `@chimera/modes`. */
+export const DEFAULT_SESSION_MODE = 'build';
 
 export type RememberScope =
   | { scope: 'session' }

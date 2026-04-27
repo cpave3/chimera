@@ -56,6 +56,14 @@ export type AgentEvent =
     }
   | { type: 'command_invoked'; commandName: string; expandedPrompt: string }
   | {
+      type: 'mode_changed';
+      from: string;
+      to: string;
+      reason: 'user' | 'startup' | 'command' | 'subagent-inherit' | 'resume';
+      effectiveModel: string;
+      effectiveModelChanged: boolean;
+    }
+  | {
       type: 'subagent_spawned';
       subagentId: string;
       parentCallId: CallId;

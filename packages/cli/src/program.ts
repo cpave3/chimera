@@ -26,6 +26,12 @@ function applySubagentOptions(cmd: Command): Command {
     .option('--no-subagents', 'Disable the spawn_agent tool');
 }
 
+function applyModeOptions(cmd: Command): Command {
+  return cmd
+    .option('--mode <name>', 'Initial mode for the session (default: build)')
+    .option('--no-modes', 'Skip mode discovery — sessions run with no mode block');
+}
+
 function applySandboxOptions(cmd: Command): Command {
   return cmd
     .option('--sandbox', 'Run tools inside a Docker sandbox', false)
@@ -54,7 +60,7 @@ export function buildProgram(): Command {
   // https://github.com/tj/commander.js#parsing-and-positional-options.
   program.enablePositionalOptions();
 
-  applySubagentOptions(
+  applyModeOptions(applySubagentOptions(
     applySandboxOptions(
       program
         .command('run [prompt...]', { isDefault: false })
@@ -73,7 +79,7 @@ export function buildProgram(): Command {
         .option('-v, --verbose', 'Verbose logging', false)
         .option('-q, --quiet', 'Suppress non-essential logging', false),
     ),
-  ).action(async (promptArgs: string[], opts) => {
+  )).action(async (promptArgs: string[], opts) => {
     let prompt = promptArgs.join(' ');
     if (opts.stdin) {
       prompt = await readStdin();
@@ -98,6 +104,8 @@ export function buildProgram(): Command {
       commandArgs: opts.args,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
+      modes: opts.modes,
+      mode: opts.mode,
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
@@ -143,7 +151,7 @@ export function buildProgram(): Command {
       });
     });
 
-  applySubagentOptions(
+  applyModeOptions(applySubagentOptions(
     applySandboxOptions(
       program
         .command('serve')
@@ -167,7 +175,7 @@ export function buildProgram(): Command {
         .option('--auto-approve <level>', 'none|sandbox|host|all')
         .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
     ),
-  ).action(async (opts) => {
+  )).action(async (opts) => {
     await runServe({
       port: opts.port,
       host: opts.host,
@@ -182,6 +190,8 @@ export function buildProgram(): Command {
       maxSubagentDepth: opts.maxSubagentDepth,
       currentSubagentDepth: opts.currentSubagentDepth,
       headlessPermissionAutoDeny: opts.headlessPermissionAutoDeny,
+      mode: opts.mode,
+      modes: opts.modes,
     });
   });
 
@@ -220,7 +230,7 @@ export function buildProgram(): Command {
       }
     });
 
-  applySubagentOptions(
+  applyModeOptions(applySubagentOptions(
     applySandboxOptions(
       program
         .command('resume [id]')
@@ -234,7 +244,7 @@ export function buildProgram(): Command {
         .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
         .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
     ),
-  ).action(async (id: string | undefined, opts) => {
+  )).action(async (id: string | undefined, opts) => {
     let sessionId = id;
     if (!sessionId) {
       const picked = await pickSessionInteractive(opts.cwd ?? process.cwd(), opts.home);
@@ -259,13 +269,15 @@ export function buildProgram(): Command {
       session: sessionId,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
+      modes: opts.modes,
+      mode: opts.mode,
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
     });
   });
 
-  applySubagentOptions(
+  applyModeOptions(applySubagentOptions(
     applySandboxOptions(
       program
         .command('continue')
@@ -278,7 +290,7 @@ export function buildProgram(): Command {
         .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
         .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
     ),
-  ).action(async (opts) => {
+  )).action(async (opts) => {
     const cwd = opts.cwd ?? process.cwd();
     const latest = await findLatestSessionInCwd(cwd, opts.home);
     if (!latest) {
@@ -293,6 +305,8 @@ export function buildProgram(): Command {
       session: latest.id,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
+      modes: opts.modes,
+      mode: opts.mode,
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
@@ -321,7 +335,7 @@ export function buildProgram(): Command {
     });
 
   // Default (no subcommand): interactive TUI session.
-  applySubagentOptions(
+  applyModeOptions(applySubagentOptions(
     applySandboxOptions(
       program
         .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
@@ -341,7 +355,7 @@ export function buildProgram(): Command {
         .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
         .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
     ),
-  ).action(async (opts) => {
+  )).action(async (opts) => {
     const cwd = opts.cwd ?? process.cwd();
     if (opts.session && opts.resume !== undefined) {
       process.stderr.write('warning: --session takes precedence over --resume; --resume ignored\n');
@@ -396,6 +410,8 @@ export function buildProgram(): Command {
       session,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
+      modes: opts.modes,
+      mode: opts.mode,
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,

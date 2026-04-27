@@ -5,22 +5,23 @@
 ## What Changes
 
 - Introduce `@chimera/modes` with `loadModes({ cwd, userHome, includeClaudeCompat })` returning a `ModeRegistry`.
-- Define the Mode file format: `.chimera/modes/<name>.md` with YAML frontmatter carrying exactly three configurable fields — `tools` (tool allowlist), `model` (optional provider/model override), plus metadata (`name`, `description`) — and a markdown body used as an appended prompt fragment.
+- Define the Mode file format: `.chimera/modes/<name>.md` with YAML frontmatter carrying configurable fields — `tools` (tool allowlist), `model` (optional provider/model override), `color` (optional hex for the TUI mode indicator), plus metadata (`name`, `description`) — and a markdown body used as an appended prompt fragment.
 - Share the six-tier discovery walker with skills/commands (Chimera project → ancestors → user home → `.claude/` compat triplet).
-- Ship a built-in `plan` mode bundled as `@chimera/modes/builtin/plan.md`, overridable via the six-tier precedence.
+- Ship two built-in modes — `build` (default; no tool allowlist; the standard "do the work" body) and `plan` (read-only; `tools: [read, glob, grep]`; planning body) — bundled as `@chimera/modes/builtin/{build,plan}.md`, overridable via the six-tier precedence. There is no longer an implicit `normal` sentinel; sessions always have a real mode active, with `build` as the default.
 - Ship a JSON Schema (`@chimera/modes/schema.json`) so editors with YAML LSP get autocomplete and inline validation of mode frontmatter.
 - Implement a four-tier runtime validator (schema → tools-in-registry → provider-exists → opt-in live model probe) with "warn-on-discovery, error-on-use" semantics.
 - Add `chimera modes` (list) and `chimera modes check [--live]` (validate) subcommands.
-- Add `Session.mode` (persisted with the session snapshot) and `Session.userModelOverride` (sticky across mode switches).
+- Add `Session.mode` (persisted with the session snapshot; defaults to `"build"`) and `Session.userModelOverride` (sticky across mode switches).
 - Extend the system-prompt composer to append `# Current mode: <name>` + the mode body after any `AGENTS.md` / skill index blocks.
 - Filter the tool registry per turn via the current mode's allowlist: omitted = all; `[]` = none; listed = exactly those.
 - Resolve the effective model per call as `userModelOverride ?? currentMode.model ?? config.defaultModel`.
-- Implement mode switching: TUI `/mode <name>`, CLI `--mode <name>`, `defaultMode` config key, `Shift+Tab` cycles through `cycleModes` (default `["normal", "plan"]`). All switches are queued — they take effect on the next turn, not mid-run.
+- Implement mode switching: TUI `/mode <name>`, CLI `--mode <name>`, `defaultMode` config key, `Shift+Tab` cycles through `cycleModes` (default `["build", "plan"]`). All switches are queued — they take effect on the next turn, not mid-run.
 - Emit a new `mode_changed` event with `{ from, to, reason, effectiveModel, effectiveModelChanged }`.
-- Extend `spawn_agent` (from `add-subagents`) with an optional `mode: string` argument; children default to `normal`, NOT to parent's mode.
+- Extend `spawn_agent` (from `add-subagents`) with an optional `mode: string` argument; children default to `build`, NOT to parent's mode.
 - Extend command frontmatter (from `add-commands`) with an optional `mode:` field that triggers a persistent mode switch before the expanded message is sent.
 - Add HTTP endpoints `POST /v1/sessions/:id/mode` (queue a switch) and `GET /v1/sessions/:id/modes` (list the session's loaded registry); client gains `setMode` and `listModes`.
-- TUI header gains a `[mode:<name>]` badge (dim/hidden when normal); queued switches render `[mode:normal → plan]` until the current turn finishes.
+- The TUI **bottom status bar** gains a `[mode:<name>]` indicator on the left side of the existing chrome, always visible and colored using either the mode's frontmatter `color:` (hex) or a deterministic hash-derived color when `color` is absent. While a switch is queued, it renders `[mode:<current> → <queued>]`.
+- Provide a deterministic `colorFor(mode)` helper (FNV-1a hash of the name → fixed-saturation/value HSL → hex) so every mode gets a stable, distinct color out of the box; users override per-mode via frontmatter.
 
 ## Capabilities
 
@@ -44,5 +45,5 @@ None formally. `agent-core`'s system-prompt extension point already exists (MVP 
   - `@chimera/client`: add `setMode(sessionId, name)` and `listModes(sessionId)`.
   - `@chimera/subagents` (if installed): add `mode?: string` to the `spawn_agent` Zod schema; default `"normal"`; propagate to the child via an additional `--mode` CLI arg.
   - `@chimera/commands` (if installed): extend frontmatter schema with optional `mode: string`; when a user invokes a command with that field, queue the mode switch before sending the expanded message.
-- **Backward compat**: existing MVP sessions without `Session.mode` deserialize with `mode: undefined` (normal). No persisted state schema break.
+- **Backward compat**: existing MVP sessions without `Session.mode` deserialize with `mode: "build"` (the new default). No persisted state schema break.
 - **Filesystem**: reads from the same six tiers as skills/commands under `.chimera/modes/` and `.claude/modes/`; writes nothing.

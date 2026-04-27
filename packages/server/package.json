@@ -25,6 +25,7 @@
     "@chimera/commands": "workspace:*",
     "@chimera/core": "workspace:*",
     "@chimera/hooks": "workspace:*",
+    "@chimera/modes": "workspace:*",
     "@chimera/permissions": "workspace:*",
     "@chimera/skills": "workspace:*",
     "@chimera/tools": "workspace:*",

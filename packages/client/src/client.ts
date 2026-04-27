@@ -1,4 +1,5 @@
 import type { Command } from '@chimera/commands';
+import type { Mode } from '@chimera/modes';
 import type {
   AgentEvent,
   AgentEventEnvelope,
@@ -197,6 +198,24 @@ export class ChimeraClient {
 
   async listSkills(sessionId: SessionId): Promise<Skill[]> {
     return this.json<Skill[]>(`/v1/sessions/${sessionId}/skills`);
+  }
+
+  async listModes(sessionId: SessionId): Promise<Mode[]> {
+    return this.json<Mode[]>(`/v1/sessions/${sessionId}/modes`);
+  }
+
+  async getMode(sessionId: SessionId): Promise<{ mode: string; pending: string | null }> {
+    return this.json<{ mode: string; pending: string | null }>(
+      `/v1/sessions/${sessionId}/mode`,
+    );
+  }
+
+  async setMode(sessionId: SessionId, mode: string): Promise<void> {
+    await this.json<void>(`/v1/sessions/${sessionId}/mode`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
   }
 
   async listSubagents(sessionId: SessionId): Promise<SubagentInfo[]> {

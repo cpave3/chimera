@@ -11,6 +11,7 @@ The frontmatter MAY also include:
 
 - `tools`: array of strings — tool-name allowlist. If absent, all registered tools are available; if present but empty (`[]`), no tools are registered; if listed, only the listed tool names are registered for turns in this mode.
 - `model`: string — a `providerId/modelId` reference used as a soft default when the session has no sticky user override.
+- `color`: string — a CSS-style hex color (`#rgb` / `#rrggbb`, case-insensitive) used by the TUI status-bar mode indicator. When absent, the runtime SHALL derive a deterministic color from the mode `name` (see "Mode color resolution" below) so every mode displays a stable, distinct color without authoring overhead.
 
 The body after the frontmatter is the mode's prompt fragment; it is used verbatim (no placeholder substitution) as appended system-prompt content when the mode is active.
 
@@ -19,7 +20,7 @@ A JSON Schema SHALL be published at `@chimera/modes/schema.json` describing the 
 #### Scenario: Valid mode parsed
 
 - **WHEN** `.chimera/modes/plan.md` exists with frontmatter `name: plan, description: "…", tools: [read]` and a body of prose
-- **THEN** `loadModes` SHALL return a registry whose `find("plan")` returns `{ name: "plan", description: "…", body: <prose>, tools: ["read"], model: undefined, path: <absolute>, source: "project" }`
+- **THEN** `loadModes` SHALL return a registry whose `find("plan")` returns `{ name: "plan", description: "…", body: <prose>, tools: ["read"], model: undefined, color: undefined, path: <absolute>, source: "project" }`
 
 #### Scenario: Invalid frontmatter excluded
 
@@ -40,19 +41,24 @@ When `includeClaudeCompat !== false`:
 5. Ancestor walk for `.claude/modes/<name>.md`
 6. `<userHome>/.claude/modes/<name>.md`
 
-Built-in modes SHALL be registered at an implicit seventh tier backed by files bundled inside `@chimera/modes/builtin/`. The only built-in shipped in this change is `plan.md`.
+Built-in modes SHALL be registered at an implicit seventh tier backed by files bundled inside `@chimera/modes/builtin/`. This change ships **two** built-ins:
 
-Name collisions SHALL resolve higher-tier-wins with one log warning per collision. `loadModes` SHALL NOT register a `normal` entry; "no mode active" is the sentinel for normal and cannot be overridden by a file.
+- `build.md` — the default mode for new sessions. No `tools:` allowlist (all registered tools are available); body describes the standard "do the work" behavior. Replaces the previously-proposed implicit `normal` sentinel.
+- `plan.md` — read-only planning. `tools: [read, glob, grep]` (the read-only discovery set); body directs the model to discover, read, and stop without mutating anything.
+
+Both are overridable by a higher-tier user or project mode of the same name.
+
+Name collisions SHALL resolve higher-tier-wins with one log warning per collision. There are no reserved mode names: `build` and `plan` are real shipped files (not sentinels) and any user file that wins discovery for that name supersedes the built-in.
 
 #### Scenario: User override of a built-in
 
 - **WHEN** the user has `~/.chimera/modes/plan.md` AND `@chimera/modes/builtin/plan.md` ships with the package
 - **THEN** `registry.find("plan").source` SHALL equal `"user"` and its `path` SHALL be the user's copy; the built-in SHALL NOT appear in `registry.all()`
 
-#### Scenario: `normal` is not a file
+#### Scenario: Default registry contains build and plan
 
-- **WHEN** `~/.chimera/modes/normal.md` exists on disk
-- **THEN** `loadModes` SHALL exclude it with a warning identifying "normal" as a reserved name
+- **WHEN** `loadModes` is called in a directory with no user / project / ancestor mode files
+- **THEN** `registry.all()` SHALL contain exactly two entries — `build` and `plan` — both with `source: "builtin"`
 
 ### Requirement: Runtime validation
 
@@ -82,10 +88,10 @@ An opt-in `chimera modes check --live` SHALL additionally probe each mode's `mod
 
 `Session` SHALL gain two fields:
 
-- `mode: string | undefined` — the currently active mode's name; `undefined` means normal.
+- `mode: string` — the currently active mode's name. There is no "no mode" state; new sessions default to `"build"` (overridable via `defaultMode` config or `--mode`).
 - `userModelOverride: string | null` — the effective model the user explicitly requested via `-m` at launch or `/model <ref>` mid-session; `null` means no override is active.
 
-Both fields SHALL be serialized in the session snapshot (`~/.chimera/sessions/<id>.json`). Sessions persisted before this change SHALL deserialize with both fields at their defaults and SHALL NOT error on missing fields.
+Both fields SHALL be serialized in the session snapshot (`~/.chimera/sessions/<id>.json`). Sessions persisted before this change SHALL deserialize with `mode` defaulting to `"build"` and `userModelOverride` defaulting to `null`; they SHALL NOT error on missing fields.
 
 `userModelOverride` SHALL persist across mode switches — it is cleared only by `/model default` / `/model reset`, by a new session, or by the consumer calling a dedicated SDK method.
 
@@ -96,20 +102,20 @@ Both fields SHALL be serialized in the session snapshot (`~/.chimera/sessions/<i
 
 ### Requirement: System-prompt composition
 
-While a mode is active, `composeSystemPrompt` SHALL append, after any `AGENTS.md` content and skill index block, a section consisting of:
+`composeSystemPrompt` SHALL always append, after any `AGENTS.md` content and skill index block, a section consisting of:
 
 - the literal line `# Current mode: <name>`,
 - a blank line,
 - the verbatim body of the active mode's file.
 
-When `session.mode` is `undefined`, no such section SHALL be appended and the composed prompt SHALL be identical to the pre-modes MVP output.
+Because every session has a real mode active (defaulting to `build`), the section SHALL always be present. The body of the default `build` mode is written to be a near-no-op (it does not narrow tools or add restrictive directives), so its inclusion does not regress pre-modes behavior beyond the addition of the header line itself.
 
 On mode switch, the next call to `composeSystemPrompt` SHALL replace the entire trailing mode section (identifiable by its `# Current mode:` header) with the new mode's section. Historical messages SHALL NOT be rewritten.
 
-#### Scenario: Normal sessions unchanged
+#### Scenario: Build mode appends a benign block
 
-- **WHEN** a session runs without ever setting a mode
-- **THEN** its composed system prompt SHALL NOT contain the literal `# Current mode:` header
+- **WHEN** a session runs in the default `build` mode
+- **THEN** its composed system prompt SHALL contain exactly one `# Current mode: build` section appended after the role prompt / AGENTS.md / skill index, with the bundled `build.md` body verbatim
 
 #### Scenario: Switch recomposes only the mode block
 
@@ -159,24 +165,24 @@ If none of the above yields a value, the CLI SHALL have refused to start the ses
 Mode switches SHALL be requestable via:
 
 - **TUI built-in**: `/mode` (shows current), `/mode <name>` (requests switch).
-- **TUI keybind**: `Shift+Tab` — cycles forward through `cycleModes` (an ordered list from config; default `["normal", "plan"]`). Wraps. Unknown names in `cycleModes` warn and are skipped. No reverse keybind in V1.
+- **TUI keybind**: `Shift+Tab` — cycles forward through `cycleModes`. When `cycleModes` is set in config, that ordered list is used. When unset, the cycle defaults to **every discovered mode** (alphabetical) so user-authored modes like `question.md` are picked up automatically. Wraps. Unknown names in an explicit `cycleModes` warn and are skipped. No reverse keybind in V1.
 - **CLI launch flag**: `--mode <name>` sets the initial mode for a new session.
 - **Config**: `defaultMode: string` in `~/.chimera/config.json` or project config; overridden by `--mode`.
 - **SDK / HTTP**: `POST /v1/sessions/:id/mode` with body `{ mode: string }`; client method `setMode(sessionId, name)`.
 
-All in-session switches (anything after session creation) SHALL be **queued** when a run is active — they are applied at the top of the next run, not mid-turn. While queued, the TUI header SHALL render `[mode:<current> → <queued>]`. A second queued switch overwrites the first (last-writer-wins, single slot).
+All in-session switches (anything after session creation) SHALL be **queued**: they are applied at the top of the next run, not mid-step. While queued, the TUI status-bar widget SHALL render `[mode:<current> → <queued>]`. A second queued switch overwrites the first (last-writer-wins, single slot). When a switch is requested while a run is active, the TUI SHALL ALSO issue `interrupt()` on the session so the active run terminates promptly; the queued switch then lands at the top of the user's next message.
 
 Switching to a name that is not in the mode registry (unknown or excluded by validation) SHALL error before the switch is queued; the session's mode SHALL remain unchanged.
 
 #### Scenario: Queued switch applies after the current turn
 
-- **WHEN** a run is active with `mode: "normal"`, the user sends `/mode plan` mid-run, the run completes, and the next user message is sent
-- **THEN** the previous run's events SHALL include no `mode_changed`; a `mode_changed { from: "normal", to: "plan", reason: "user" }` event SHALL fire before the next run's first step; and that next step's system prompt SHALL include the plan mode block
+- **WHEN** a run is active with `mode: "build"`, the user sends `/mode plan` mid-run, the run completes, and the next user message is sent
+- **THEN** the previous run's events SHALL include no `mode_changed`; a `mode_changed { from: "build", to: "plan", reason: "user" }` event SHALL fire before the next run's first step; and that next step's system prompt SHALL include the plan mode block
 
 #### Scenario: Shift+Tab cycling
 
-- **WHEN** the session's current mode is `normal`, `cycleModes` is `["normal", "plan", "review"]`, and the user presses Shift+Tab three times between turns
-- **THEN** after processing all three keypresses the active mode SHALL be `normal` again (normal → plan → review → normal)
+- **WHEN** the session's current mode is `build`, `cycleModes` is `["build", "plan", "review"]`, and the user presses Shift+Tab three times between turns
+- **THEN** after processing all three keypresses the active mode SHALL be `build` again (build → plan → review → build)
 
 #### Scenario: Rejected switch to excluded mode
 
@@ -190,8 +196,8 @@ Every effective mode change on a session SHALL emit exactly one `mode_changed` e
 ```
 {
   type: "mode_changed",
-  from: string | null,         // previous mode name or null for normal
-  to: string | null,           // new mode name or null for normal
+  from: string,                // previous mode name (always set; defaults to "build")
+  to: string,                  // new mode name
   reason: "user" | "startup" | "command" | "subagent-inherit" | "resume",
   effectiveModel: string,
   effectiveModelChanged: boolean
@@ -207,14 +213,14 @@ The event SHALL fire *before* the first `streamText` call under the new mode, so
 
 ### Requirement: Subagent mode parameter
 
-`@chimera/subagents`'s `spawn_agent` tool SHALL accept an optional `mode?: string` argument. If omitted, the child Agent's initial `Session.mode` SHALL be `undefined` (normal) — the parent's mode SHALL NOT be inherited.
+`@chimera/subagents`'s `spawn_agent` tool SHALL accept an optional `mode?: string` argument. If omitted, the child Agent's initial `Session.mode` SHALL be `"build"` (the default) — the parent's mode SHALL NOT be inherited.
 
 If the `mode` argument names a mode that does not exist in the child's mode registry (the child resolves its own six-tier search from its own `cwd`), the child SHALL fail to start and the tool call SHALL return a `reason: "error"` result naming the missing mode.
 
-#### Scenario: Plan-parent spawning normal child
+#### Scenario: Plan-parent spawning build child
 
 - **WHEN** a parent session in `mode: "plan"` invokes `spawn_agent { prompt: "…", purpose: "…" }` without specifying `mode`
-- **THEN** the child session SHALL start with `mode: undefined` (normal) and its registered tool set SHALL NOT be restricted by plan's allowlist
+- **THEN** the child session SHALL start with `mode: "build"` and its registered tool set SHALL NOT be restricted by plan's allowlist
 
 #### Scenario: Explicit mode override on spawn
 
@@ -236,14 +242,44 @@ The mode switch triggered by a command persists after the message — commands a
 
 ### Requirement: TUI affordances
 
-The TUI header specified in MVP SHALL gain a trailing badge `[mode:<name>]` when a mode is active. The badge SHALL be hidden when `session.mode` is `undefined` (normal). While a switch is queued, the badge SHALL render as `[mode:<current> → <queued>]`.
+The TUI **bottom status bar** SHALL render the current mode as a left-side widget on the existing chrome, formatted `[mode:<name>]`. The widget SHALL always be visible (sessions always have a mode), and the bracketed text SHALL be tinted with the mode's resolved color (see "Mode color resolution"). While a switch is queued, the widget SHALL render `[mode:<current> → <queued>]` with the queued mode's color used for the queued name.
 
-The TUI SHALL implement `/mode`, `/mode <name>`, and Shift+Tab per the Switching requirement, and SHALL render an inline separator line in the scrollback on every `mode_changed` event naming the `from` / `to` mode.
+The TUI SHALL implement `/mode`, `/mode <name>`, and Shift+Tab per the Switching requirement. Mode transitions SHALL NOT add lines to the scrollback — the persistent status-bar widget (current name, queued indicator, color tint) is the only authoritative surface for "what mode am I in?" The list-listing form (`/mode` with no argument) is the one exception: it prints the discovered modes table since that is a query, not a transition.
 
-#### Scenario: Header renders queued switch
+#### Scenario: Status bar renders queued switch
 
-- **WHEN** a session in `mode: "normal"` receives a queued `/mode plan` while a run is in progress
-- **THEN** the TUI header SHALL display `... · [mode:normal → plan]` until the run completes and the switch lands; afterwards the header SHALL display `... · [mode:plan]`
+- **WHEN** a session in `mode: "build"` receives a queued `/mode plan` while a run is in progress
+- **THEN** the TUI bottom status bar SHALL display `[mode:build → plan]` (with `build` colored using build's resolved color and `plan` using plan's) until the run completes and the switch lands; afterwards it SHALL display `[mode:plan]` with plan's color
+
+### Requirement: Mode color resolution
+
+Each `Mode` object SHALL expose a `colorHex: string` property carrying a `#rrggbb` value resolved as:
+
+1. If frontmatter `color:` is set and parses as a CSS hex color (`#rgb` / `#rrggbb`, case-insensitive), use it (normalized to `#rrggbb` lowercase).
+2. Otherwise, derive a deterministic color from the mode `name`:
+   - hash the UTF-8 bytes of `name` with FNV-1a (32-bit),
+   - map the hash to a hue in `[0, 360)`,
+   - use a fixed saturation of `65%` and lightness of `55%`,
+   - convert the resulting HSL to `#rrggbb`.
+
+The derivation SHALL be pure (same input → same output, no global state) and SHALL be exposed as a public helper `colorFor(name: string, override?: string): string` so the TUI, CLI listings, and any other consumer share the resolution.
+
+If frontmatter `color:` is set but does not parse as a hex color, the runtime SHALL warn once (`modes: "<file>" has invalid color "<raw>"; falling back to derived color`) and SHALL use the derived color.
+
+#### Scenario: Frontmatter color wins
+
+- **WHEN** a mode file has `color: "#ff5500"` in frontmatter
+- **THEN** `mode.colorHex` SHALL be `"#ff5500"` regardless of `name`
+
+#### Scenario: Derivation is deterministic
+
+- **WHEN** two distinct invocations call `colorFor("plan")` with no override
+- **THEN** both SHALL return the same `#rrggbb` string, and the result SHALL differ from `colorFor("build")`
+
+#### Scenario: Invalid color falls back
+
+- **WHEN** a mode file has `color: "not-a-color"`
+- **THEN** `loadModes` SHALL emit one warning identifying the file and the bad value, and `mode.colorHex` SHALL equal `colorFor(mode.name)`
 
 ### Requirement: CLI surface
 
@@ -251,7 +287,7 @@ The TUI SHALL implement `/mode`, `/mode <name>`, and Shift+Tab per the Switching
 
 - Accept `--mode <name>` on `chimera`, `chimera run`, and `chimera attach`. It sets the initial mode for new sessions; on `attach` it queues a switch on the attached session.
 - Honor `defaultMode` in `~/.chimera/config.json` and project `.chimera/config.json`. `--mode` overrides it.
-- Honor `cycleModes: string[]` in config (default `["normal", "plan"]` as shipped).
+- Honor `cycleModes: string[]` in config (default `["build", "plan"]` as shipped).
 - Register `chimera modes` listing the session's loaded registry as a table (columns: name, source, path, tools, model, description); `--json` SHALL produce machine-readable output.
 - Register `chimera modes check [--live] [--mode <name>]` running the four-tier validator; exit code 0 on success, 1 on any warning or error. `--live` enables the opt-in provider probe tier.
 
@@ -276,16 +312,21 @@ Both endpoints SHALL be subject to the same loopback-bind and (future) auth stor
 - **WHEN** a consumer calls `await client.setMode(sessionId, "plan")` while a run is in progress
 - **THEN** the server SHALL respond `202`, the queued switch SHALL land at the top of the next run, and the SSE event stream SHALL yield a `mode_changed { reason: "user" }` event before the next run's first event
 
-### Requirement: Built-in `plan` mode
+### Requirement: Built-in `build` and `plan` modes
 
-The `@chimera/modes` package SHALL bundle a built-in `plan.md` at `@chimera/modes/builtin/plan.md` with:
+The `@chimera/modes` package SHALL bundle two built-in modes:
 
-- frontmatter: `name: plan`, `description: "Read-only planning mode. Build context and propose a plan before mutating anything."`, `tools: [read]`.
-- a body directing the model to build context, produce a numbered plan, surface assumptions and options, and end with the literal line `Plan ready for review.`
+- `@chimera/modes/builtin/build.md` with `name: build`, a one-line description (e.g. "Default mode. Build, edit, and run code with full tool access."), no `tools:` allowlist (all registered tools available), and a short body that simply states the default operating context. This is the default mode for new sessions.
+- `@chimera/modes/builtin/plan.md` with `name: plan`, `description: "Read-only planning mode. Build context and propose a plan before mutating anything."`, `tools: [read, glob, grep]`, and a body directing the model to discover with `glob`/`grep`, build context with `read`, produce a numbered plan, surface assumptions and options, and end with the literal line `Plan ready for review.`
 
-The built-in SHALL be overridable by any higher-tier user or project mode of the same name, per the Discovery paths requirement.
+Both built-ins SHALL be overridable by any higher-tier user or project mode of the same name, per the Discovery paths requirement.
 
-#### Scenario: Unoverridden built-in
+#### Scenario: Unoverridden plan built-in
 
 - **WHEN** a user runs `chimera` in a project with no `.chimera/modes/plan.md` anywhere on the discovery path and passes `--mode plan`
 - **THEN** the session SHALL start in plan mode with `registry.find("plan").source === "builtin"`, tool registration SHALL contain only `read`, and the system prompt SHALL end with a `# Current mode: plan` section followed by the built-in body
+
+#### Scenario: Default session uses build built-in
+
+- **WHEN** a user runs `chimera` with no `--mode` flag and no `defaultMode` configured
+- **THEN** the session SHALL start with `mode: "build"`, `registry.find("build").source === "builtin"`, all registered tools SHALL be available, and the system prompt SHALL end with a `# Current mode: build` section

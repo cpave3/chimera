@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
 import type { Executor, SessionId } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
+import { applyAllowlist, computeAllowlist, DEFAULT_MODE_NAME, type Mode, type ModeRegistry } from '@chimera/modes';
 import { DefaultPermissionGate, GatedExecutor, type AutoApproveLevel } from '@chimera/permissions';
 import { loadProviders, resolveContextWindow, type ProvidersConfig } from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
@@ -9,6 +10,7 @@ import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
 import { buildSpawnAgentTool } from '@chimera/subagents';
 import { buildTools, LocalExecutor } from '@chimera/tools';
+import type { ToolSet } from 'ai';
 import type { CliSandboxOptions } from './sandbox-config';
 
 export interface CliAgentFactoryOptions {
@@ -26,6 +28,19 @@ export interface CliAgentFactoryOptions {
    * the system prompt and registers activation detection on the Agent.
    */
   skills?: SkillRegistry;
+  /**
+   * Optional mode registry. When present, the factory resolves the initial
+   * mode (CLI flag → config.defaultMode → "build"), composes the system
+   * prompt with that mode block, filters tools per its allowlist, and
+   * registers a resolver on the Agent so mid-session `setMode` can
+   * recompose without going through the factory again.
+   */
+  modes?: ModeRegistry;
+  /**
+   * Initial mode for new sessions. Falls back to `config.defaultMode` then
+   * `DEFAULT_MODE_NAME` ("build"). Only relevant when `modes` is set.
+   */
+  initialMode?: string;
   /** When set, sandbox-target tools route through a DockerExecutor. */
   sandbox?: CliSandboxOptions;
   /** Subagent configuration. When omitted, `spawn_agent` is registered with defaults. */
@@ -52,6 +67,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly autoApprove: AutoApproveLevel;
   private readonly home: string | undefined;
   private readonly skills: SkillRegistry | undefined;
+  private readonly modes: ModeRegistry | undefined;
+  private readonly initialMode: string | undefined;
   private readonly sandbox: CliSandboxOptions | undefined;
   private readonly subagents: NonNullable<CliAgentFactoryOptions['subagents']>;
   private readonly warn: (msg: string) => void;
@@ -64,6 +81,8 @@ export class CliAgentFactory implements AgentFactory {
     this.autoApprove = opts.autoApprove;
     this.home = opts.home;
     this.skills = opts.skills;
+    this.modes = opts.modes;
+    this.initialMode = opts.initialMode;
     this.sandbox = opts.sandbox;
     this.subagents = opts.subagents ?? {};
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
@@ -96,6 +115,19 @@ export class CliAgentFactory implements AgentFactory {
 
     // Build agent first so we can wire its raisePermissionRequest into the gate.
     const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
+
+    const modesReg = this.modes;
+    const requestedMode =
+      session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
+    const initialModeObj = modesReg ? modesReg.find(requestedMode) : undefined;
+    if (modesReg && !initialModeObj && requestedMode !== DEFAULT_MODE_NAME) {
+      this.warn(
+        `mode "${requestedMode}" not found in registry; falling back to "${DEFAULT_MODE_NAME}"`,
+      );
+    }
+    const activeMode: Mode | undefined =
+      initialModeObj ?? (modesReg ? modesReg.find(DEFAULT_MODE_NAME) : undefined);
+
     const agent = new Agent({
       cwd: init.cwd,
       model: init.model,
@@ -106,6 +138,7 @@ export class CliAgentFactory implements AgentFactory {
         model: init.model,
         sandboxMode: init.sandboxMode,
         extensions,
+        mode: activeMode ? { name: activeMode.name, body: activeMode.body } : undefined,
       }),
       sandboxMode: init.sandboxMode,
       session,
@@ -113,6 +146,7 @@ export class CliAgentFactory implements AgentFactory {
       skillActivation,
       contextWindow: resolvedWindow.value,
       contextWindowIsApproximate: resolvedWindow.source === 'fallback',
+      initialMode: activeMode?.name ?? requestedMode,
     });
 
     // Persist metadata immediately so the session appears in disk-scanned
@@ -200,8 +234,59 @@ export class CliAgentFactory implements AgentFactory {
       if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
     }
 
-    agent.setTools(tools);
     agent.setToolFormatters(formatters);
+
+    if (modesReg && activeMode) {
+      const allowlist = computeAllowlist(activeMode);
+      if (allowlist) {
+        for (const wanted of allowlist) {
+          if (!(wanted in tools)) {
+            this.warn(
+              `mode "${activeMode.name}" lists tool "${wanted}" but it is not registered; dropping`,
+            );
+          }
+        }
+      }
+      const filtered = applyAllowlist(tools, allowlist);
+      agent.setTools(filtered as ToolSet);
+
+      // The resolver lets the agent recompose its own system prompt + tool
+      // set when a queued mode switch is drained at the top of the next run.
+      agent.setModeResolver((nextName) => {
+        const next = modesReg.find(nextName);
+        if (!next) {
+          throw new Error(`Unknown mode "${nextName}"`);
+        }
+        const nextSystemPrompt = composeSystemPrompt({
+          cwd: init.cwd,
+          model: init.model,
+          sandboxMode: init.sandboxMode,
+          extensions,
+          mode: { name: next.name, body: next.body },
+        });
+        const nextAllowlist = computeAllowlist(next);
+        const nextTools = applyAllowlist(tools, nextAllowlist) as ToolSet;
+        const sessionModelRef = `${init.model.providerId}/${init.model.modelId}`;
+        // Resolve previous mode dynamically from `agent.session.mode` —
+        // the static `activeMode` captured at session construction is only
+        // accurate for the very first switch; later switches (build → plan
+        // → review) need the *currently* active mode to compute
+        // `effectiveModelChanged` correctly.
+        const previousMode = modesReg.find(agent.session.mode);
+        const effectiveModel =
+          agent.session.userModelOverride ?? next.model ?? sessionModelRef;
+        const previousModel =
+          agent.session.userModelOverride ?? previousMode?.model ?? sessionModelRef;
+        return {
+          systemPrompt: nextSystemPrompt,
+          tools: nextTools,
+          effectiveModel,
+          effectiveModelChanged: effectiveModel !== previousModel,
+        };
+      });
+    } else {
+      agent.setTools(tools);
+    }
 
     return { agent, gate, hookRunner };
   }

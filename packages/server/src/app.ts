@@ -171,6 +171,12 @@ export function buildApp(opts: AppOptions): Hono {
     return c.json(entry.skills);
   });
 
+  app.get('/v1/sessions/:id/modes', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(entry.modes);
+  });
+
   app.get('/v1/sessions/:id/subagents', (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
@@ -206,6 +212,40 @@ export function buildApp(opts: AppOptions): Hono {
       entry.agent.setSystemPrompt(systemPrompt);
     }
     return c.json({ ok: true });
+  });
+
+  // --- Modes ---------------------------------------------------------------
+  app.post('/v1/sessions/:id/mode', async (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    const body = await c.req.json();
+    if (typeof body?.mode !== 'string' || body.mode.length === 0) {
+      return c.json({ error: 'mode is required' }, 400);
+    }
+    const result = entry.agent.queueModeSwitch(body.mode);
+    if (result.status === 'invalid') {
+      return c.json({ error: result.error }, 404);
+    }
+    if (result.status === 'applied') {
+      // Idle agent — switch landed immediately. Publish the event on the
+      // session bus so SSE subscribers (and the TUI) reflect the change
+      // without waiting for the next run.
+      entry.bus.publish({
+        type: 'mode_changed',
+        from: result.from,
+        to: result.to,
+        reason: 'user',
+        effectiveModel: result.effectiveModel,
+        effectiveModelChanged: result.effectiveModelChanged,
+      });
+    }
+    return c.body(null, 204);
+  });
+
+  app.get('/v1/sessions/:id/mode', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json({ mode: entry.agent.session.mode, pending: entry.agent.pendingMode });
   });
 
   // --- Permissions -------------------------------------------------------
