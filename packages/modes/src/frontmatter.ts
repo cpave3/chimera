@@ -4,6 +4,7 @@ export interface ParsedFrontmatter {
   tools?: string[];
   model?: string;
   color?: string;
+  cycle?: boolean;
   /** Surfaced separately so callers can warn on parse failures. */
   errors: string[];
 }
@@ -80,6 +81,12 @@ export function parseFrontmatter(source: string): ParsedDocument {
     else if (key === 'description') fm.description = value;
     else if (key === 'model') fm.model = value;
     else if (key === 'color') fm.color = value;
+    else if (key === 'cycle') {
+      const lower = value.toLowerCase();
+      if (lower === 'true' || lower === 'yes') fm.cycle = true;
+      else if (lower === 'false' || lower === 'no') fm.cycle = false;
+      else errors.push(`cycle: expected boolean, got "${value}"`);
+    }
     // Unknown keys are ignored — additional keys may land in future revisions.
   }
 

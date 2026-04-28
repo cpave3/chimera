@@ -36,6 +36,13 @@ describe('loadModes', () => {
     expect(registry.find('build')?.tools).toBeUndefined();
   });
 
+  it('builtins have cycle: true', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
+    expect(registry.find('build')?.cycle).toBe(true);
+    expect(registry.find('plan')?.cycle).toBe(true);
+  });
+
   it('user file overrides the builtin', () => {
     const { home, cwd } = makeIsolatedHome();
     const userModes = join(home, '.chimera', 'modes');
@@ -110,6 +117,66 @@ describe('loadModes', () => {
     expect(registry.find('foo')).toBeUndefined();
     expect(registry.find('bar')).toBeUndefined();
     expect(warnings.some((w) => w.includes('does not match filename'))).toBe(true);
+  });
+
+  it('defaults cycle to true when omitted', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const userModes = join(home, '.chimera', 'modes');
+    mkdirSync(userModes, { recursive: true });
+    writeFileSync(
+      join(userModes, 'question.md'),
+      ['---', 'name: question', 'description: ask things', '---', 'body'].join('\n'),
+    );
+    const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
+    const mode = registry.find('question')!;
+    expect(mode.cycle).toBe(true);
+  });
+
+  it('parses cycle: false frontmatter', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const userModes = join(home, '.chimera', 'modes');
+    mkdirSync(userModes, { recursive: true });
+    writeFileSync(
+      join(userModes, 'review.md'),
+      ['---', 'name: review', 'description: review code', 'cycle: false', '---', 'body'].join('\n'),
+    );
+    const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
+    const mode = registry.find('review')!;
+    expect(mode.cycle).toBe(false);
+  });
+
+  it('parses cycle: true explicitly', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const userModes = join(home, '.chimera', 'modes');
+    mkdirSync(userModes, { recursive: true });
+    writeFileSync(
+      join(userModes, 'audit.md'),
+      ['---', 'name: audit', 'description: audit code', 'cycle: true', '---', 'body'].join('\n'),
+    );
+    const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
+    const mode = registry.find('audit')!;
+    expect(mode.cycle).toBe(true);
+  });
+
+  it('warns on invalid cycle value and leaves it undefined (defaults to true)', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const userModes = join(home, '.chimera', 'modes');
+    mkdirSync(userModes, { recursive: true });
+    writeFileSync(
+      join(userModes, 'weird.md'),
+      ['---', 'name: weird', 'description: weird mode', 'cycle: maybe', '---', 'body'].join('\n'),
+    );
+    const warnings: string[] = [];
+    const registry = loadModes({
+      cwd,
+      userHome: home,
+      includeClaudeCompat: false,
+      onWarning: (msg) => warnings.push(msg),
+    });
+    const mode = registry.find('weird')!;
+    // When parsing fails, cycle is undefined, but discover sets default to true
+    expect(mode.cycle).toBe(true);
+    expect(warnings.some((w) => w.includes('cycle') && w.includes('expected boolean'))).toBe(true);
   });
 });
 

@@ -46,6 +46,7 @@ Frontmatter fields:
 | `tools`       | no       | Tool-name allowlist. Omitted = all tools. `[]` = no tools (pure text). Listed = exactly those.             |
 | `model`       | no       | `providerId/modelId` reference. A soft default; `userModelOverride` (CLI `-m`, `/model`) always wins.      |
 | `color`       | no       | `#rgb` or `#rrggbb` for the TUI status-bar widget. Absent = derived deterministically from `name`.         |
+| `cycle`       | no       | When `false`, excluded from `Shift+Tab` cycling. Default `true`. Mode remains selectable via `/mode`.   |
 
 The body (everything after the closing `---`) is appended verbatim to the
 system prompt under a `# Current mode: <name>` header whenever the mode is

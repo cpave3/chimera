@@ -29,6 +29,11 @@ export interface Mode {
   path: string;
   /** Which discovery tier resolved this mode. */
   source: ModeSource;
+  /**
+   * When false, this mode is excluded from Shift+Tab cycling.
+   * The mode remains selectable via `/mode <name>`. Default: true.
+   */
+  cycle: boolean;
 }
 
 export interface ModeCollision {

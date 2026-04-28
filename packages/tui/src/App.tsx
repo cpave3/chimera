@@ -464,7 +464,12 @@ export function App(props: AppProps): React.ReactElement {
       // are picked up automatically — see add-modes design D9.
       const all = props.modes?.all() ?? [];
       const cycle = props.cycleModes ?? all.map((mode) => mode.name);
-      const validCycle = cycle.filter((name) => all.some((mode) => mode.name === name));
+      // Modes with cycle: false are excluded from Shift+Tab but remain
+      // selectable via /mode <name>.
+      const validCycle = cycle.filter((name) => {
+        const mode = all.find((m) => m.name === name);
+        return mode != null && mode.cycle !== false;
+      });
       if (validCycle.length === 0) return;
       const here = pendingModeName ?? activeModeName;
       const idx = validCycle.indexOf(here);

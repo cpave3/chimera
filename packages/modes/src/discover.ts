@@ -166,6 +166,7 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         colorHex,
         path: filePath,
         source: tier.source,
+        cycle: fm.cycle ?? true,
       };
 
       const existing = byName.get(name);

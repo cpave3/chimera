@@ -3,6 +3,7 @@ name: plan
 description: Read-only planning mode. Build context and propose a plan before mutating anything.
 tools: [read, glob, grep]
 color: "#a07cff"
+cycle: true
 ---
 
 You are operating in **plan** mode. The only tools registered for this turn
