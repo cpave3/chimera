@@ -17,6 +17,10 @@ export interface ChimeraConfig {
     enabled?: boolean;
     claudeCompat?: boolean;
   };
+  agents?: {
+    enabled?: boolean;
+    claudeCompat?: boolean;
+  };
   /**
    * Per-model overrides. Keyed by `<providerId>/<modelId>`. Currently only
    * `contextWindow` is honored — see `resolveContextWindow`.

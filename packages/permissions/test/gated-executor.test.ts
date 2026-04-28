@@ -35,7 +35,14 @@ describe('GatedExecutor', () => {
       autoApprove: 'all',
       raiseRequest: async () => ({ decision: 'deny', remembered: false }),
     });
-    const inner = stubExecutor({ stdout: 'ok', stderr: '', exitCode: 0, timedOut: false });
+    const inner = stubExecutor({
+      stdout: 'ok',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
     const g = new GatedExecutor({ inner, gate });
     const r = await g.exec('echo hi');
     expect(r.stdout).toBe('ok');
@@ -49,10 +56,24 @@ describe('GatedExecutor', () => {
     });
     let innerCalled = false;
     const inner: Executor = {
-      ...stubExecutor({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+      ...stubExecutor({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
       exec: async () => {
         innerCalled = true;
-        return { stdout: 'should-not-run', stderr: '', exitCode: 0, timedOut: false };
+        return {
+          stdout: 'should-not-run',
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
       },
     };
     const g = new GatedExecutor({ inner, gate });

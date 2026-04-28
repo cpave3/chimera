@@ -304,6 +304,8 @@ export class DockerExecutor implements Executor {
       stderr: execResult.stderr,
       exitCode: execResult.exitCode,
       timedOut: execResult.timedOut,
+      stdoutTruncated: execResult.stdoutTruncated,
+      stderrTruncated: execResult.stderrTruncated,
     };
   }
 

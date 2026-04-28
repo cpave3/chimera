@@ -1,5 +1,6 @@
 import type { AgentEvent, CallId, ModelConfig, SandboxMode, SessionId } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
+import type { AgentRegistry } from './agents/types';
 
 export type SubagentReason = 'stop' | 'max_steps' | 'error' | 'timeout' | 'interrupted';
 
@@ -92,6 +93,12 @@ export interface SpawnAgentToolContext {
    * `spawn_agent` row that produced them.
    */
   resolveCallId?: (toolCallId: string) => CallId | undefined;
+  /**
+   * Optional agent-definition registry. When set, the spawn tool resolves
+   * its `agent` arg against this registry and surfaces available agents in
+   * the tool description so the model can pick a definition by name.
+   */
+  agents?: AgentRegistry;
 }
 
 export type SpawnEmit = (event: AgentEvent) => void;

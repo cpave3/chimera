@@ -11,3 +11,17 @@ export type {
 export { HandshakeError, readHandshakeLine } from './handshake';
 export type { HandshakeMessage } from './handshake';
 export { buildChildArgv } from './spawn-child';
+export {
+  loadAgents,
+  InMemoryAgentRegistry,
+  ReloadingAgentRegistry,
+  parseToolsCsv,
+} from './agents';
+export type {
+  AgentCollision,
+  AgentDefinition,
+  AgentRegistry,
+  AgentSource,
+  LoadAgentsOptions,
+  ReloadingAgentsOptions,
+} from './agents';

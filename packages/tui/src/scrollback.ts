@@ -1,12 +1,32 @@
 import type { AgentEvent, CallId, Session, ToolCallRecord } from '@chimera/core';
 
-export interface ScrollbackEntry {
+interface BaseEntry {
   id: string;
-  kind: 'user' | 'assistant' | 'tool' | 'info' | 'error' | 'subagent';
   text: string;
-  toolName?: string;
-  toolTarget?: 'sandbox' | 'host';
-  /** Raw `tool_call_start` args; consumed by `ToolBody` renderers. Not set for subagent inner tool calls. */
+}
+
+export interface UserEntry extends BaseEntry {
+  kind: 'user';
+}
+
+export interface AssistantEntry extends BaseEntry {
+  kind: 'assistant';
+  /**
+   * AI SDK `text-id` for the assistant turn — present when the originating
+   * `assistant_text_delta`/`assistant_text_done` event carried `id`. `apply()`
+   * uses this to collapse re-emitted text parts: the SDK can yield the same
+   * `text-start`/`text-delta`/`text-end` cycle multiple times across step
+   * boundaries for what `response.messages` ultimately consolidates into one
+   * part.
+   */
+  textId?: string;
+}
+
+export interface ToolEntry extends BaseEntry {
+  kind: 'tool';
+  toolName: string;
+  toolTarget: 'sandbox' | 'host';
+  /** Raw `tool_call_start` args; consumed by `ToolBody` renderers. */
   toolArgs?: unknown;
   toolResult?: unknown;
   toolError?: string;
@@ -15,7 +35,21 @@ export interface ScrollbackEntry {
   /** Set when a `skill_activated` event follows a `read` tool call. */
   skillName?: string;
   skillSource?: 'project' | 'user' | 'claude-compat';
-  /** For `subagent` entries: short id + purpose for the header label. */
+  /** Set on `spawn_agent` tool entries so the renderer can label nested children. */
+  subagentId?: string;
+  subagentPurpose?: string;
+}
+
+export interface InfoEntry extends BaseEntry {
+  kind: 'info';
+}
+
+export interface ErrorEntry extends BaseEntry {
+  kind: 'error';
+}
+
+export interface SubagentEntry extends BaseEntry {
+  kind: 'subagent';
   subagentId?: string;
   subagentPurpose?: string;
   subagentStatus?: 'spawning' | 'running' | 'finished';
@@ -26,26 +60,37 @@ export interface ScrollbackEntry {
    * iteration.
    */
   parentEntryId?: string;
-  /**
-   * AI SDK `text-id` for assistant entries — present when the originating
-   * `assistant_text_delta`/`assistant_text_done` event carried `id`. `apply()`
-   * uses this to collapse re-emitted text parts: the SDK can yield the same
-   * `text-start`/`text-delta`/`text-end` cycle multiple times across step
-   * boundaries for what `response.messages` ultimately consolidates into one
-   * part.
-   */
-  textId?: string;
+  /** Inner tool name when this row was synthesized from a child's `tool_call_start`. */
+  toolName?: string;
+  detail?: string;
 }
+
+export interface ModeChangeEntry extends BaseEntry {
+  kind: 'mode_change';
+  /** Original mode when a streak started — preserved across collapses. */
+  modeFrom: string;
+  /** Latest target mode in the streak. */
+  modeTo: string;
+}
+
+export type ScrollbackEntry =
+  | UserEntry
+  | AssistantEntry
+  | ToolEntry
+  | InfoEntry
+  | ErrorEntry
+  | SubagentEntry
+  | ModeChangeEntry;
 
 export class Scrollback {
   private entries: ScrollbackEntry[] = [];
   private assistantBuf: string | null = null;
-  private toolsByCallId = new Map<CallId, ScrollbackEntry>();
+  private toolsByCallId = new Map<CallId, ToolEntry>();
   /** subagentId → parent (spawn_agent) entry id, for routing child rows. */
   private subagentParents = new Map<string, string>();
   /** subagentId → its own callId-keyed map of child tool entries. Lets us
    *  mutate a child row's text when the inner tool_call_result arrives. */
-  private subagentToolsByCallId = new Map<string, Map<CallId, ScrollbackEntry>>();
+  private subagentToolsByCallId = new Map<string, Map<CallId, SubagentEntry>>();
   private idSeq = 0;
   private suppressUserContent: string | null = null;
 
@@ -78,6 +123,30 @@ export class Scrollback {
 
   addError(text: string): void {
     this.entries.push({ id: this.newId(), kind: 'error', text });
+  }
+
+  /**
+   * Append (or collapse into) a mode-change entry. When the trailing entry
+   * is also a `mode_change`, mutate its `modeTo` in place and keep the
+   * original `modeFrom` — so a streak `build → plan → question → build`
+   * renders as a single `build → build` row. The TUI keeps the trailing
+   * mode-change row out of `<Static>` until any other entry lands, at
+   * which point the collapsed row commits.
+   */
+  addModeChange(from: string, to: string): void {
+    const last = this.entries[this.entries.length - 1];
+    if (last && last.kind === 'mode_change') {
+      last.modeTo = to;
+      last.text = `Mode change: ${last.modeFrom} → ${to}`;
+      return;
+    }
+    this.entries.push({
+      id: this.newId(),
+      kind: 'mode_change',
+      modeFrom: from,
+      modeTo: to,
+      text: `Mode change: ${from} → ${to}`,
+    });
   }
 
   clear(): void {
@@ -376,7 +445,7 @@ export class Scrollback {
         };
         let map = this.subagentToolsByCallId.get(id);
         if (!map) {
-          map = new Map<CallId, ScrollbackEntry>();
+          map = new Map<CallId, SubagentEntry>();
           this.subagentToolsByCallId.set(id, map);
         }
         map.set(inner.callId, entry);
@@ -390,7 +459,6 @@ export class Scrollback {
           const targetTag = entry.text.endsWith('[host]') ? ' [host]' : '';
           entry.text = `${entry.toolName}: ${inner.display.summary}${targetTag}`;
           entry.detail = inner.display.detail;
-          entry.toolResult = inner.result;
         }
         return;
       }

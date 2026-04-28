@@ -115,4 +115,59 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
       await new Promise<void>((resolve) => proc.once('exit', () => resolve()));
     }
   });
+
+  it('11.6 chimera serve --system-prompt-file --tools restricts the session', async () => {
+    const promptFile = join(home, 'system-prompt.txt');
+    await writeFile(
+      promptFile,
+      'You are a tightly scoped reviewer. Use only Read and Grep.',
+      'utf8',
+    );
+
+    const proc = spawn(
+      process.execPath,
+      [
+        CLI_BIN,
+        'serve',
+        '--machine-handshake',
+        '--cwd',
+        cwd,
+        '--auto-approve',
+        'host',
+        '--system-prompt-file',
+        promptFile,
+        '--tools',
+        'read,grep',
+      ],
+      {
+        cwd,
+        env: { ...process.env, HOME: home },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let stderrBuf = '';
+    proc.stderr!.on('data', (d: Buffer) => {
+      stderrBuf += d.toString('utf8');
+    });
+
+    try {
+      const handshake = await readHandshakeLine(proc.stdout!, 10_000);
+      const client = new ChimeraClient({ baseUrl: handshake.url });
+      const info = await client.getInstance();
+      expect(info.cwd).toBe(cwd);
+      // Hand it back; the assertion that flags didn't crash boot is enough at
+      // this layer — deeper coverage (system_prompt actually used; tool map
+      // actually filtered) is exercised in unit tests where we capture builder
+      // arguments directly.
+    } catch (err) {
+      throw new Error(`${(err as Error).message}\n--- child stderr ---\n${stderrBuf}`);
+    } finally {
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // already gone
+      }
+      await new Promise<void>((resolve) => proc.once('exit', () => resolve()));
+    }
+  });
 });

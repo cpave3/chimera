@@ -62,7 +62,8 @@ export function createFilteredStdin(upstream: NodeJS.ReadStream): NodeJS.ReadStr
   function pump(): void {
     let chunk: unknown;
     while ((chunk = upstream.read()) !== null) {
-      const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8');
+      const text =
+        typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8');
       const translated = translateModifiedKeys(text);
       if (translated.length > 0) queue.push(translated);
     }

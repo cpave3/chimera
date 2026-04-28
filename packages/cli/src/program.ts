@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { runAgentsList } from './commands/agents';
 import { runAttach } from './commands/attach';
 import { runCommandsList } from './commands/commands';
 import { runHooksList } from './commands/hooks';
@@ -153,6 +154,20 @@ export function buildProgram(): Command {
       });
     });
 
+  program
+    .command('agents')
+    .description('List subagent definitions discovered from the current working directory.')
+    .option('--cwd <path>', 'Working directory', process.cwd())
+    .option('--json', 'Emit JSON', false)
+    .option('--no-claude-compat', 'Skip .claude/agents/ discovery')
+    .action(async (opts) => {
+      await runAgentsList({
+        cwd: opts.cwd,
+        json: opts.json,
+        claudeCompat: opts.claudeCompat,
+      });
+    });
+
   applyModeOptions(
     applySubagentOptions(
       applySandboxOptions(
@@ -176,6 +191,14 @@ export function buildProgram(): Command {
             false,
           )
           .option('--auto-approve <level>', 'none|sandbox|host|all')
+          .option(
+            '--system-prompt-file <path>',
+            'Internal: read file contents as the session system prompt (overrides composed default)',
+          )
+          .option(
+            '--tools <list>',
+            'Internal: comma-separated tool allowlist for the session (e.g. "read,grep,glob")',
+          )
           .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
       ),
     ),
@@ -196,6 +219,8 @@ export function buildProgram(): Command {
       headlessPermissionAutoDeny: opts.headlessPermissionAutoDeny,
       mode: opts.mode,
       modes: opts.modes,
+      systemPromptFile: opts.systemPromptFile,
+      tools: opts.tools,
     });
   });
 

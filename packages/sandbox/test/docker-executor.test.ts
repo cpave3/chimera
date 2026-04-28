@@ -12,6 +12,8 @@ interface ScriptedCall {
     stderr?: string;
     exitCode?: number;
     timedOut?: boolean;
+    stdoutTruncated?: boolean;
+    stderrTruncated?: boolean;
   };
 }
 
@@ -36,6 +38,8 @@ class FakeRunner implements DockerRunner {
       stderr: runResult.stderr,
       exitCode: runResult.exitCode,
       timedOut: runResult.timedOut,
+      stdoutTruncated: runResult.stdoutTruncated,
+      stderrTruncated: runResult.stderrTruncated,
     };
   }
 
@@ -62,6 +66,8 @@ function materialize(r: ScriptedCall['result']) {
     stderr: r.stderr ?? '',
     exitCode: r.exitCode ?? 0,
     timedOut: r.timedOut ?? false,
+    stdoutTruncated: r.stdoutTruncated ?? false,
+    stderrTruncated: r.stderrTruncated ?? false,
   };
 }
 
@@ -190,9 +196,18 @@ describe('DockerExecutor overlay fallback', () => {
             stderr: '',
             exitCode: 0,
             timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
           };
         }
-        return { stdout: 'true|0|running\n', stderr: '', exitCode: 0, timedOut: false };
+        return {
+          stdout: 'true|0|running\n',
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
       }
       return origRun(args, opts);
     };
@@ -221,6 +236,8 @@ describe('DockerExecutor overlay fallback', () => {
       stderr: '',
       exitCode: 0,
       timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
     });
     runner.runRaw = runner.run as never;
 
@@ -334,6 +351,8 @@ describe('DockerExecutor file ops', () => {
       stdout: '',
       exitCode: -1,
       timedOut: true,
+      stdoutTruncated: false,
+      stderrTruncated: false,
     });
     const exec = new DockerExecutor({
       runner,
@@ -444,10 +463,24 @@ describe('DockerExecutor.ensureImage', () => {
       runner.calls.push({ args, opts });
       if (args[0] === 'image' && args[1] === 'inspect') {
         inspectCalls += 1;
-        return { stdout: '', stderr: 'No such image', exitCode: 1, timedOut: false };
+        return {
+          stdout: '',
+          stderr: 'No such image',
+          exitCode: 1,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
       }
       if (args[0] === 'build') {
-        return { stdout: 'Successfully built', stderr: '', exitCode: 0, timedOut: false };
+        return {
+          stdout: 'Successfully built',
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
       }
       return origRun(args, opts);
     };
@@ -488,13 +521,14 @@ describe('DockerExecutor.ensureImage', () => {
   it('throws when build fails', async () => {
     const runner = new FakeRunner();
     runner.run = async (args) => {
+      const base = { stdoutTruncated: false, stderrTruncated: false };
       if (args[0] === 'image' && args[1] === 'inspect') {
-        return { stdout: '', stderr: '', exitCode: 1, timedOut: false };
+        return { stdout: '', stderr: '', exitCode: 1, timedOut: false, ...base };
       }
       if (args[0] === 'build') {
-        return { stdout: '', stderr: 'no such file', exitCode: 1, timedOut: false };
+        return { stdout: '', stderr: 'no such file', exitCode: 1, timedOut: false, ...base };
       }
-      return { stdout: '', stderr: '', exitCode: 0, timedOut: false };
+      return { stdout: '', stderr: '', exitCode: 0, timedOut: false, ...base };
     };
     const exec = new DockerExecutor({
       runner,

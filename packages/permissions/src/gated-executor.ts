@@ -68,6 +68,8 @@ export class GatedExecutor implements Executor {
         stderr: denialMessage(resolution.denialSource),
         exitCode: -1,
         timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
       };
     }
     return this.inner.exec(cmd, opts);

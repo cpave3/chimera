@@ -53,6 +53,12 @@ export function buildGrepTool(ctx: ToolContext) {
         flags.push('-l');
       } else {
         flags.push('--line-number', '--no-heading', '--color', 'never');
+        // Cap per-file matches just over the global limit so a single
+        // match-heavy file can't push our total far past `limit`. The "+1"
+        // preserves the existing truncation signal: if any file returns
+        // >limit lines, the parser hits the `matches.length >= limit` break
+        // and reports truncated=true.
+        flags.push('-m', String(limit + 1));
       }
       const searchPath = args.path && args.path.length > 0 ? args.path : '.';
       const cmd = `rg ${flags.join(' ')} -e ${shellQuote(args.pattern)} -- ${shellQuote(searchPath)}`;

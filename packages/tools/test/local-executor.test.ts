@@ -112,6 +112,33 @@ describe('LocalExecutor', () => {
     expect(await readFile(target, 'utf8')).toBe('new');
   });
 
+  it('exec caps stdout at maxOutputBytes and reports stdoutTruncated', async () => {
+    const exec = new LocalExecutor({ cwd: root, maxOutputBytes: 1024 });
+    // Write 4 KB of "a" to stdout — must exceed 1 KB cap.
+    const result = await exec.exec(`yes a | head -c 4096`);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stderrTruncated).toBe(false);
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThanOrEqual(1024);
+  });
+
+  it('exec leaves stdoutTruncated/stderrTruncated false when under the cap', async () => {
+    const exec = new LocalExecutor({ cwd: root, maxOutputBytes: 1024 });
+    const result = await exec.exec('echo hello');
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('hello');
+    expect(result.stdoutTruncated).toBe(false);
+    expect(result.stderrTruncated).toBe(false);
+  });
+
+  it('exec caps stderr at maxOutputBytes and reports stderrTruncated', async () => {
+    const exec = new LocalExecutor({ cwd: root, maxOutputBytes: 1024 });
+    const result = await exec.exec(`yes a | head -c 4096 1>&2`);
+    expect(result.stderrTruncated).toBe(true);
+    expect(result.stdoutTruncated).toBe(false);
+    expect(Buffer.byteLength(result.stderr, 'utf8')).toBeLessThanOrEqual(1024);
+  });
+
   it('readdir returns sorted entries with isDir flags', async () => {
     const exec = new LocalExecutor({ cwd: root });
     await mkdir(join(root, 'sub'));

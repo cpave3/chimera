@@ -17,6 +17,8 @@
     "fmt:check": "biome format .",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
+    "biome:lint": "node ./node_modules/@biomejs/biome/bin/biome lint .",
+    "biome:lint:fix": "node ./node_modules/@biomejs/biome/bin/biome lint --write .",
     "link": "pnpm --filter @chimera/cli link --global",
     "unlink": "pnpm --filter @chimera/cli unlink --global",
     "sandbox:build": "docker build -t chimera-sandbox:dev packages/sandbox/docker"

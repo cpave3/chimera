@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import type { SandboxMode } from '@chimera/core';
 import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
+import { loadAgentsFromConfig } from '../agents-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
@@ -31,6 +33,18 @@ export interface ServeOptions {
   mode?: string;
   /** False → skip mode discovery (from `--no-modes`). */
   modes?: boolean;
+  /**
+   * Path to a file whose contents fully replace the composed system prompt
+   * for this server's default session. Used by parents spawning children
+   * with an agent-definition body.
+   */
+  systemPromptFile?: string;
+  /**
+   * Comma-separated tool names that the server's default session is
+   * restricted to (intersected with mode allowlists). Used by parents
+   * spawning children with an agent-definition `tools:` field.
+   */
+  tools?: string;
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
@@ -53,6 +67,29 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     onWarning: (m) => process.stderr.write(`${m}\n`),
   });
 
+  const agents = loadAgentsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
+
+  let systemPromptOverride: string | undefined;
+  if (opts.systemPromptFile) {
+    try {
+      systemPromptOverride = readFileSync(opts.systemPromptFile, 'utf8');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`--system-prompt-file: could not read ${opts.systemPromptFile}: ${message}`);
+    }
+  }
+  const toolsAllowlist = opts.tools
+    ? opts.tools
+        .split(',')
+        .map((tool) => tool.trim().toLowerCase())
+        .filter((tool) => tool.length > 0)
+    : undefined;
+
   const modes = loadModesFromConfig({
     cwd: opts.cwd,
     home: opts.home,
@@ -67,6 +104,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
     skills,
+    agents,
     modes,
     initialMode,
     sandbox: sandboxOpts ?? undefined,
@@ -76,6 +114,8 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       currentDepth: opts.currentSubagentDepth,
       headlessAutoDeny: opts.headlessPermissionAutoDeny,
     },
+    systemPromptOverride,
+    toolsAllowlist,
     models: config.models,
   });
 

@@ -1,6 +1,7 @@
 import { newCallId } from '@chimera/core';
 import { defineTool } from '@chimera/tools';
 import { z } from 'zod';
+import { parseToolsCsv } from './agents/frontmatter';
 import {
   driveChild,
   interruptChild,
@@ -20,6 +21,14 @@ const ARGS_SCHEMA = z.object({
     .string()
     .min(1)
     .describe('Short label (≤80 chars) shown in the parent TUI alongside the subagent id.'),
+  agent: z
+    .string()
+    .optional()
+    .describe(
+      'Name of an agent definition (e.g. "review-correctness"). When set, the ' +
+        "definition's body becomes the child's system prompt and its frontmatter " +
+        'tools/model are applied. Explicit `tools`/`model`/`system_prompt` args still override.',
+    ),
   cwd: z.string().optional().describe('Override the working directory.'),
   model: z
     .string()
@@ -53,11 +62,15 @@ const ARGS_SCHEMA = z.object({
 export type SpawnAgentArgs = z.infer<typeof ARGS_SCHEMA>;
 
 export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
+  const baseDescription =
+    'Spawn a fresh Chimera agent (a "subagent") to handle a delegated task. ' +
+    "Returns the subagent's final answer as a string. Use for sub-investigations, " +
+    'research, or parallelizable tool work where keeping the parent context clean matters.';
+  const agentIndex = ctx.agents?.buildDescriptionIndex() ?? '';
+  const description = agentIndex ? `${baseDescription}\n\n${agentIndex}` : baseDescription;
+
   return defineTool<SpawnAgentArgs, SubagentResult>({
-    description:
-      'Spawn a fresh Chimera agent (a "subagent") to handle a delegated task. ' +
-      "Returns the subagent's final answer as a string. Use for sub-investigations, " +
-      'research, or parallelizable tool work where keeping the parent context clean matters.',
+    description,
     inputSchema: ARGS_SCHEMA,
     formatScrollback: (args, result) => {
       const label = args.purpose && args.purpose.length > 0 ? args.purpose : args.prompt;
@@ -79,7 +92,43 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       const parentCallId =
         (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ?? newCallId();
       const childCwd = args.cwd ?? ctx.cwd;
-      const modelRef = args.model ?? ctx.defaultModelRef;
+
+      // Resolve agent definition (if any). Explicit args override frontmatter.
+      let agentSystemPrompt: string | undefined;
+      let agentTools: string[] | undefined;
+      let agentModelRef: string | undefined;
+      if (args.agent) {
+        if (!ctx.agents) {
+          return errorResult({
+            subagentId,
+            message: `agent "${args.agent}" requested but no agent registry is configured`,
+          });
+        }
+        const def = ctx.agents.find(args.agent);
+        if (!def) {
+          const available = ctx.agents
+            .all()
+            .map((agent) => agent.name)
+            .join(', ');
+          return errorResult({
+            subagentId,
+            message: available
+              ? `unknown agent "${args.agent}"; available: ${available}`
+              : `unknown agent "${args.agent}" (no agent definitions discovered)`,
+          });
+        }
+        agentSystemPrompt = def.body;
+        agentTools = parseToolsCsv(def.frontmatter['tools']);
+        const rawModel = def.frontmatter['model']?.trim();
+        if (rawModel && rawModel.includes('/')) {
+          agentModelRef = rawModel;
+        }
+      }
+
+      const effectiveSystemPrompt = args.system_prompt ?? agentSystemPrompt;
+      const effectiveTools =
+        args.tools ?? (agentTools && agentTools.length > 0 ? agentTools : undefined);
+      const modelRef = args.model ?? agentModelRef ?? ctx.defaultModelRef;
       const inProcess = args.in_process === true;
       const timeoutMs = args.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -112,8 +161,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
             parsedModel,
             sandboxMode: desiredSandboxMode,
             parentAbortSignal: effectiveSignal,
-            systemPrompt: args.system_prompt,
-            toolNames: args.tools ?? DEFAULT_TOOLS,
+            systemPrompt: effectiveSystemPrompt,
+            toolNames: effectiveTools ?? DEFAULT_TOOLS,
             currentDepth: ctx.currentDepth + 1,
             maxDepth: ctx.maxDepth,
           });
@@ -180,6 +229,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           parentHasTty: ctx.parentHasTty,
           currentSubagentDepth: ctx.currentDepth + 1,
           maxSubagentDepth: ctx.maxDepth,
+          systemPrompt: effectiveSystemPrompt,
+          tools: effectiveTools,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

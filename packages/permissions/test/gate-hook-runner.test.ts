@@ -192,7 +192,14 @@ describe('DefaultPermissionGate hook integration', () => {
       inner: {
         exec: async () => {
           innerCalled = true;
-          return { stdout: '', stderr: '', exitCode: 0, timedOut: false };
+          return {
+            stdout: '',
+            stderr: '',
+            exitCode: 0,
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          };
         },
         readFile: async () => '',
         readFileBytes: async () => new Uint8Array(),
@@ -229,7 +236,14 @@ describe('DefaultPermissionGate hook integration', () => {
     const exec = new GatedExecutor({
       gate,
       inner: {
-        exec: async () => ({ stdout: '', stderr: '', exitCode: 0, timedOut: false }),
+        exec: async () => ({
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        }),
         readFile: async () => '',
         readFileBytes: async () => new Uint8Array(),
         writeFile: async () => {},

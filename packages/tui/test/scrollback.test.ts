@@ -634,4 +634,40 @@ describe('Scrollback.rehydrateFromSession', () => {
     expect(scrollback.all()).toHaveLength(1);
     expect(scrollback.all()[0]!.kind).toBe('user');
   });
+
+  it('collapses consecutive mode changes into a single from→to row', () => {
+    const scrollback = new Scrollback();
+    scrollback.addModeChange('build', 'plan');
+    scrollback.addModeChange('plan', 'question');
+    scrollback.addModeChange('question', 'build');
+    scrollback.addModeChange('build', 'mentor');
+    scrollback.addModeChange('mentor', 'build');
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.kind).toBe('mode_change');
+    if (row.kind !== 'mode_change') throw new Error('unreachable');
+    expect(row.modeFrom).toBe('build');
+    expect(row.modeTo).toBe('build');
+    expect(row.text).toBe('Mode change: build → build');
+  });
+
+  it('keeps mode changes separate once a non-mode-change entry lands between them', () => {
+    const scrollback = new Scrollback();
+    scrollback.addModeChange('build', 'plan');
+    scrollback.addModeChange('plan', 'question');
+    scrollback.addUserMessage('hello');
+    scrollback.addModeChange('question', 'build');
+    const rows = scrollback.all();
+    expect(rows.map((row) => row.kind)).toEqual(['mode_change', 'user', 'mode_change']);
+    const first = rows[0]!;
+    const second = rows[2]!;
+    if (first.kind !== 'mode_change' || second.kind !== 'mode_change') {
+      throw new Error('unreachable');
+    }
+    expect(first.modeFrom).toBe('build');
+    expect(first.modeTo).toBe('question');
+    expect(second.modeFrom).toBe('question');
+    expect(second.modeTo).toBe('build');
+  });
 });

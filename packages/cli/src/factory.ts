@@ -14,7 +14,7 @@ import { loadProviders, resolveContextWindow, type ProvidersConfig } from '@chim
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
-import { buildSpawnAgentTool } from '@chimera/subagents';
+import { type AgentRegistry, buildSpawnAgentTool } from '@chimera/subagents';
 import { buildTools, LocalExecutor } from '@chimera/tools';
 import type { ToolSet } from 'ai';
 import type { CliSandboxOptions } from './sandbox-config';
@@ -49,6 +49,24 @@ export interface CliAgentFactoryOptions {
   initialMode?: string;
   /** When set, sandbox-target tools route through a DockerExecutor. */
   sandbox?: CliSandboxOptions;
+  /**
+   * Optional agent-definition registry. When present, `spawn_agent` resolves
+   * its `agent` arg against this registry and surfaces available agents in
+   * the tool description.
+   */
+  agents?: AgentRegistry;
+  /**
+   * When set, fully replaces the composed system prompt for sessions built
+   * by this factory. Used by child subagent processes to inherit a system
+   * prompt from an agent definition file.
+   */
+  systemPromptOverride?: string;
+  /**
+   * When set, restricts the registered tool set to this allowlist (intersected
+   * with any active mode allowlist). Used by child subagent processes to
+   * inherit `tools:` from an agent definition file.
+   */
+  toolsAllowlist?: string[];
   /** Subagent configuration. When omitted, `spawn_agent` is registered with defaults. */
   subagents?: {
     /** When false, the `spawn_agent` tool is NOT registered. Default true. */
@@ -73,6 +91,9 @@ export class CliAgentFactory implements AgentFactory {
   private readonly autoApprove: AutoApproveLevel;
   private readonly home: string | undefined;
   private readonly skills: SkillRegistry | undefined;
+  private readonly agents: AgentRegistry | undefined;
+  private readonly systemPromptOverride: string | undefined;
+  private readonly toolsAllowlist: string[] | undefined;
   private readonly modes: ModeRegistry | undefined;
   private readonly initialMode: string | undefined;
   private readonly sandbox: CliSandboxOptions | undefined;
@@ -87,6 +108,9 @@ export class CliAgentFactory implements AgentFactory {
     this.autoApprove = opts.autoApprove;
     this.home = opts.home;
     this.skills = opts.skills;
+    this.agents = opts.agents;
+    this.systemPromptOverride = opts.systemPromptOverride;
+    this.toolsAllowlist = opts.toolsAllowlist;
     this.modes = opts.modes;
     this.initialMode = opts.initialMode;
     this.sandbox = opts.sandbox;
@@ -133,18 +157,21 @@ export class CliAgentFactory implements AgentFactory {
     const activeMode: Mode | undefined =
       initialModeObj ?? (modesReg ? modesReg.find(DEFAULT_MODE_NAME) : undefined);
 
+    const composedSystemPrompt = composeSystemPrompt({
+      cwd: init.cwd,
+      model: init.model,
+      sandboxMode: init.sandboxMode,
+      extensions,
+      mode: activeMode ? { name: activeMode.name, body: activeMode.body } : undefined,
+    });
+    const effectiveSystemPrompt = this.systemPromptOverride ?? composedSystemPrompt;
+
     const agent = new Agent({
       cwd: init.cwd,
       model: init.model,
       languageModel,
       tools: {} as never, // filled in below after gate is built
-      systemPrompt: composeSystemPrompt({
-        cwd: init.cwd,
-        model: init.model,
-        sandboxMode: init.sandboxMode,
-        extensions,
-        mode: activeMode ? { name: activeMode.name, body: activeMode.body } : undefined,
-      }),
+      systemPrompt: effectiveSystemPrompt,
       sandboxMode: init.sandboxMode,
       session,
       home: this.home,
@@ -234,9 +261,22 @@ export class CliAgentFactory implements AgentFactory {
         chimeraBin: this.subagents.chimeraBin ?? invocation.bin,
         chimeraBinArgs: invocation.preArgs,
         parentHasTty: this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
+        agents: this.agents,
       });
       tools.spawn_agent = spawn.tool;
       if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
+    }
+
+    // Apply an agent-definition tools allowlist before mode filtering. The
+    // mode filter then intersects: if a mode also restricts tools, the child
+    // ends up with the intersection of the two allowlists.
+    if (this.toolsAllowlist) {
+      const allowed = new Set(this.toolsAllowlist);
+      for (const name of Object.keys(tools)) {
+        if (!allowed.has(name)) {
+          delete tools[name];
+        }
+      }
     }
 
     agent.setToolFormatters(formatters);

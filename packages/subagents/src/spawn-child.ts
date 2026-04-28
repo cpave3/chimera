@@ -1,4 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
 import type { AgentEvent, SessionId } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
@@ -23,6 +26,14 @@ export interface SpawnChildArgs {
   parentHasTty: boolean;
   currentSubagentDepth?: number;
   maxSubagentDepth?: number;
+  /**
+   * When set, the child reads this string verbatim as its system prompt
+   * (passed via a temp file as `--system-prompt-file`, cleaned up at
+   * teardown).
+   */
+  systemPrompt?: string;
+  /** When set, restricts the child's registered tools to this allowlist. */
+  tools?: string[];
 }
 
 export interface ChildHandle {
@@ -31,9 +42,17 @@ export interface ChildHandle {
   url: string;
   childSessionId: SessionId;
   pid: number;
+  /**
+   * Temp directory holding the `--system-prompt-file` for this child, if any.
+   * `teardownChild` removes it on cleanup.
+   */
+  promptDir?: string;
 }
 
-export function buildChildArgv(args: SpawnChildArgs): string[] {
+export function buildChildArgv(
+  args: SpawnChildArgs,
+  extras?: { systemPromptFile?: string },
+): string[] {
   const argv: string[] = [
     ...(args.chimeraBinArgs ?? []),
     'serve',
@@ -63,11 +82,25 @@ export function buildChildArgv(args: SpawnChildArgs): string[] {
   if (typeof args.maxSubagentDepth === 'number') {
     argv.push('--max-subagent-depth', String(args.maxSubagentDepth));
   }
+  if (extras?.systemPromptFile) {
+    argv.push('--system-prompt-file', extras.systemPromptFile);
+  }
+  if (args.tools && args.tools.length > 0) {
+    argv.push('--tools', args.tools.join(','));
+  }
   return argv;
 }
 
 export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHandle> {
-  const argv = buildChildArgv(args);
+  let promptDir: string | undefined;
+  let systemPromptFile: string | undefined;
+  if (args.systemPrompt !== undefined) {
+    promptDir = mkdtempSync(join(tmpdir(), 'chimera-subagent-'));
+    systemPromptFile = join(promptDir, 'system-prompt.txt');
+    writeFileSync(systemPromptFile, args.systemPrompt, 'utf8');
+  }
+
+  const argv = buildChildArgv(args, { systemPromptFile });
   const proc = spawn(args.chimeraBin, argv, {
     cwd: args.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -107,6 +140,13 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
         // already gone
       }
     }
+    if (promptDir) {
+      try {
+        rmSync(promptDir, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    }
     const observed = earlyExit as EarlyExit | null;
     const exitCtx = observed
       ? ` (child exit code=${observed.code ?? 'null'} signal=${observed.signal ?? 'null'})`
@@ -140,6 +180,7 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
     url: handshake.url,
     childSessionId: handshake.sessionId,
     pid: handshake.pid,
+    promptDir,
   };
 }
 
@@ -254,11 +295,17 @@ export async function teardownChild(handle: ChildHandle): Promise<void> {
     // ignore
   }
 
-  if (handle.proc.exitCode !== null || handle.proc.signalCode !== null) {
-    return;
+  if (handle.proc.exitCode === null && handle.proc.signalCode === null) {
+    await terminateProc(handle.proc, SIGTERM_GRACE_MS);
   }
 
-  await terminateProc(handle.proc, SIGTERM_GRACE_MS);
+  if (handle.promptDir) {
+    try {
+      rmSync(handle.promptDir, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
 }
 
 /**

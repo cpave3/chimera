@@ -14,6 +14,10 @@ export interface ExecResult {
   stderr: string;
   exitCode: number;
   timedOut: boolean;
+  /** True when stdout exceeded the executor's per-stream byte cap and was truncated. */
+  stdoutTruncated: boolean;
+  /** True when stderr exceeded the executor's per-stream byte cap and was truncated. */
+  stderrTruncated: boolean;
 }
 
 export interface StatResult {

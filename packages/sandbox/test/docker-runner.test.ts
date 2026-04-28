@@ -19,5 +19,24 @@ describe('SpawnDockerRunner timeout', () => {
     expect(r.timedOut).toBe(false);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toMatch(/hi/);
+    expect(r.stdoutTruncated).toBe(false);
+    expect(r.stderrTruncated).toBe(false);
+  });
+
+  it('caps stdout at maxOutputBytes and reports stdoutTruncated', async () => {
+    const runner = new SpawnDockerRunner({ command: 'sh' });
+    const r = await runner.run(['-c', 'yes a | head -c 4096'], { maxOutputBytes: 1024 });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdoutTruncated).toBe(true);
+    expect(r.stderrTruncated).toBe(false);
+    expect(Buffer.byteLength(r.stdout, 'utf8')).toBeLessThanOrEqual(1024);
+  });
+
+  it('caps stderr at maxOutputBytes and reports stderrTruncated', async () => {
+    const runner = new SpawnDockerRunner({ command: 'sh' });
+    const r = await runner.run(['-c', 'yes a | head -c 4096 1>&2'], { maxOutputBytes: 1024 });
+    expect(r.stderrTruncated).toBe(true);
+    expect(r.stdoutTruncated).toBe(false);
+    expect(Buffer.byteLength(r.stderr, 'utf8')).toBeLessThanOrEqual(1024);
   });
 });

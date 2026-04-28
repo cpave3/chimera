@@ -2,6 +2,7 @@ import { ChimeraClient } from '@chimera/client';
 import type { SandboxMode } from '@chimera/core';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimera/server';
+import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
@@ -73,6 +74,13 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     onWarning: (m) => process.stderr.write(`${m}\n`),
   });
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
+  const agents = loadAgentsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    claudeCompatOverride: opts.claudeCompat,
+    onWarning: (m) => process.stderr.write(`${m}\n`),
+  });
   if (opts.factoryOverride && opts.modelOverride) {
     model = opts.modelOverride;
     factory = opts.factoryOverride;
@@ -88,6 +96,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       autoApprove: opts.autoApprove ?? 'host',
       home: opts.home,
       skills,
+      agents,
       modes,
       initialMode,
       sandbox: sandboxOpts ?? undefined,

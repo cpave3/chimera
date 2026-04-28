@@ -60,4 +60,45 @@ describe('buildChildArgv', () => {
     });
     expect(argv).toContain('--headless-permission-auto-deny');
   });
+
+  it('emits --system-prompt-file when extras supplies one', () => {
+    const argv = buildChildArgv(
+      {
+        chimeraBin: 'chimera',
+        cwd: '/p',
+        parentSessionId: 'p1',
+        autoApprove: 'host',
+        sandbox: false,
+        parentHasTty: true,
+      },
+      { systemPromptFile: '/tmp/sp.txt' },
+    );
+    expect(argv[argv.indexOf('--system-prompt-file') + 1]).toBe('/tmp/sp.txt');
+  });
+
+  it('emits --tools as a CSV when args.tools is supplied', () => {
+    const argv = buildChildArgv({
+      chimeraBin: 'chimera',
+      cwd: '/p',
+      parentSessionId: 'p1',
+      autoApprove: 'host',
+      sandbox: false,
+      parentHasTty: true,
+      tools: ['read', 'grep', 'glob'],
+    });
+    expect(argv[argv.indexOf('--tools') + 1]).toBe('read,grep,glob');
+  });
+
+  it('omits --tools when the array is empty', () => {
+    const argv = buildChildArgv({
+      chimeraBin: 'chimera',
+      cwd: '/p',
+      parentSessionId: 'p1',
+      autoApprove: 'host',
+      sandbox: false,
+      parentHasTty: true,
+      tools: [],
+    });
+    expect(argv).not.toContain('--tools');
+  });
 });

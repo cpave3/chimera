@@ -33,7 +33,7 @@ import { openInEditor as openInEditorImpl, type OpenInEditorResult } from './inp
 import { renderMarkdown } from './markdown';
 import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
-import { Scrollback, type ScrollbackEntry } from './scrollback';
+import { Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import { SessionPicker, buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import {
@@ -117,7 +117,7 @@ type StaticItem =
       kind: 'entry';
       id: string;
       entry: ScrollbackEntry;
-      children: ScrollbackEntry[];
+      children: SubagentEntry[];
     };
 
 export function App(props: AppProps): React.ReactElement {
@@ -412,7 +412,7 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'mode_changed') {
       setActiveModeName(ev.to);
       setPendingModeName(null);
-      scrollback.addInfo(`Mode change: ${ev.from} → ${ev.to}`);
+      scrollback.addModeChange(ev.from, ev.to);
       setEntries(scrollback.all());
     }
   }
@@ -1227,24 +1227,37 @@ export function App(props: AppProps): React.ReactElement {
   const { committedEntries, inFlightEntries, childrenByParent } = useMemo<{
     committedEntries: ScrollbackEntry[];
     inFlightEntries: ScrollbackEntry[];
-    childrenByParent: Map<string, ScrollbackEntry[]>;
+    childrenByParent: Map<string, SubagentEntry[]>;
   }>(() => {
-    const childrenByParent = new Map<string, ScrollbackEntry[]>();
+    const childrenByParent = new Map<string, SubagentEntry[]>();
     for (const e of entries) {
-      if (e.parentEntryId) {
+      if (e.kind === 'subagent' && e.parentEntryId) {
         const arr = childrenByParent.get(e.parentEntryId) ?? [];
         arr.push(e);
         childrenByParent.set(e.parentEntryId, arr);
       }
     }
+    // Find the index of the trailing top-level entry — a `mode_change` row in
+    // that slot stays in `inFlightEntries` so consecutive mode switches can
+    // collapse before any of them commit to <Static>.
+    let lastTopLevelIdx = -1;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const candidate = entries[i]!;
+      if (candidate.kind !== 'subagent' || !candidate.parentEntryId) {
+        lastTopLevelIdx = i;
+        break;
+      }
+    }
     const inFlight: ScrollbackEntry[] = [];
     const committed: ScrollbackEntry[] = [];
-    for (const e of entries) {
-      if (e.parentEntryId) continue; // rendered as nested children
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!;
+      if (e.kind === 'subagent' && e.parentEntryId) continue; // nested child
       const isStreamingAssistant = e.id === streamingEntryId;
       const isPendingTool =
         e.kind === 'tool' && e.toolResult === undefined && e.toolError === undefined;
-      if (isStreamingAssistant || isPendingTool) {
+      const isTrailingModeChange = e.kind === 'mode_change' && i === lastTopLevelIdx;
+      if (isStreamingAssistant || isPendingTool || isTrailingModeChange) {
         inFlight.push(e);
       } else {
         committed.push(e);
@@ -1308,6 +1321,18 @@ export function App(props: AppProps): React.ReactElement {
     <Text color={theme.text.muted}>/ commands</Text>,
     <Text color={theme.text.muted}>Shift+Tab cycle mode</Text>,
   ];
+
+  // Steady-state during a run: the buffer is empty and the spinner /
+  // streaming deltas re-render App many times per second. Keep the prompt
+  // subtree referentially stable across those renders, and collapse the
+  // outer layout to a single row when the buffer is single-line so the
+  // dynamic frame's height stays exactly 1 — matching the pre-multiline
+  // structure that did not flicker.
+  const isMultilineBuffer = buffer.text.includes('\n');
+  const promptBody = useMemo(
+    () => renderPromptLines(buffer, theme.accent.primary, editorOpen),
+    [buffer, editorOpen, theme.accent.primary],
+  );
 
   return (
     <>
@@ -1440,9 +1465,9 @@ export function App(props: AppProps): React.ReactElement {
           borderLeft={false}
           borderRight={false}
           borderColor={theme.text.muted}
-          flexDirection="column"
+          {...(isMultilineBuffer ? { flexDirection: 'column' as const } : {})}
         >
-          {renderPromptLines(buffer, theme.accent.primary, editorOpen)}
+          {promptBody}
         </Box>
         <StatusBar left={cwdLeft} right={cwdRight} separatorColor={theme.text.muted} />
         <StatusBar left={modelLeft} right={modelRight} separatorColor={theme.text.muted} />
@@ -1535,7 +1560,7 @@ function renderEntryLines(
   entry: ScrollbackEntry,
   columns: number,
   theme: Theme,
-  children: ScrollbackEntry[] = [],
+  children: SubagentEntry[] = [],
 ): React.ReactElement[] {
   const width = Math.max(10, columns);
 
@@ -1655,7 +1680,7 @@ function renderEntryLines(
       </Box>,
     ];
   }
-  if (entry.kind === 'info') {
+  if (entry.kind === 'info' || entry.kind === 'mode_change') {
     const lines = wrapToLines(entry.text, width, 0);
     return lines.map((line, i) => (
       <Text key={`${entry.id}:${i}`} color={theme.text.muted}>

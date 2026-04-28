@@ -3,7 +3,9 @@ import type { ReloadingCommandRegistry } from '@chimera/commands';
 import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
+import type { ReloadingAgentRegistry } from '@chimera/subagents';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
+import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
@@ -65,11 +67,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
 
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
 
+  const agents = loadReloadingAgentsFromConfig({
+    cwd: opts.cwd,
+    home: opts.home,
+    config,
+    claudeCompatOverride: opts.claudeCompat,
+  });
+
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     home: opts.home,
     skills,
+    agents,
     modes,
     initialMode,
     sandbox: sandboxOpts ?? undefined,
@@ -178,6 +188,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     await handle.waitUntilExit();
   } finally {
     (commands as Partial<ReloadingCommandRegistry>).close?.();
+    (agents as Partial<ReloadingAgentRegistry>).close?.();
     await factory.dispose();
     await server.close();
   }

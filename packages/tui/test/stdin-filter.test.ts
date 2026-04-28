@@ -51,7 +51,9 @@ describe('createFilteredStdin', () => {
     filtered.on('readable', () => {
       let chunk: unknown;
       while ((chunk = filtered.read()) !== null) {
-        reads.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8'));
+        reads.push(
+          typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8'),
+        );
       }
     });
     (upstream as unknown as EventEmitter).emit('readable');

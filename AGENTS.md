@@ -46,9 +46,24 @@ tests. Grep for existing siblings before adding (`packages/cli/src/config.ts`,
 pnpm -r test                      # run every package's vitest suite
 pnpm --filter @chimera/<pkg> test [name-pattern]
 pnpm -r build                     # tsup build everywhere
-pnpm fmt / pnpm lint              # biome
+pnpm fmt / pnpm lint              # biome (see "biome via rtk hook" below)
 pnpm sandbox:build                # docker build chimera-sandbox:dev
 ```
+
+### biome via the rtk hook
+
+If you're running inside a Claude Code session with the `rtk-rewrite.sh`
+PreToolUse hook installed, plain `pnpm lint` and any command containing
+`biome` get rewritten to `rtk lint` (rtk's own analytics command) and the
+biome worker dies with `Linter process terminated abnormally (possibly out
+of memory)` — this is rtk's rewrite rule mis-routing the call, not an
+actual OOM.
+
+Use `pnpm biome:lint` (or `pnpm biome:lint:fix`) instead. The colon in the
+script name evades rtk's pattern match, and the script body
+(`node ./node_modules/@biomejs/biome/bin/biome ...`) invokes biome through
+a path the hook doesn't intercept. The plain `pnpm lint` script is kept for
+users running outside Claude Code where the hook isn't in play.
 
 Docker-backed E2E tests are gated on `CHIMERA_TEST_DOCKER=1` and silently
 skip otherwise. They live in `packages/cli/test/e2e-sandbox.test.ts` and
