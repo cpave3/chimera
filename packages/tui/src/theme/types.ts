@@ -41,6 +41,10 @@ export interface StatusTokens {
   warning: AnsiColor;
   error: AnsiColor;
   info?: AnsiColor;
+  /** Background tint for added (`+`) diff rows. */
+  successBg?: AnsiColor;
+  /** Background tint for removed (`-`) diff rows. */
+  errorBg?: AnsiColor;
 }
 
 export interface TextTokens {

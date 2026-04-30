@@ -14,6 +14,8 @@ export const cyberpunk: PartialTheme = {
     warning: '#f2ee12',
     error: '#f37316',
     info: '#66a0d4',
+    successBg: '#173d22',
+    errorBg: '#3d1d10',
   },
   text: {
     primary: '#e0d8ff',

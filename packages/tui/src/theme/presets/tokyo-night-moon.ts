@@ -14,6 +14,8 @@ export const tokyoNightMoon: PartialTheme = {
     warning: '#ffc777',
     error: '#ff757f',
     info: '#86e1fc',
+    successBg: '#1f3a1c',
+    errorBg: '#3a1f24',
   },
   text: {
     primary: '#c8d3f5',

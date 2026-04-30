@@ -4,7 +4,7 @@ import React from 'react';
 import { describe, expect, it } from 'vitest';
 import type { ScrollbackEntry } from '../src/scrollback';
 import { renderToolBody, TOOL_BODY_LIMITS } from '../src/ToolBody';
-import { defaultTheme } from '../src/theme/tokens';
+import { defaultTheme, plainTheme } from '../src/theme/tokens';
 
 const ctx = { width: 80, prefixLen: 7, theme: defaultTheme };
 
@@ -110,6 +110,219 @@ describe('renderToolBody', () => {
 
     it('returns nothing when toolArgs is missing', () => {
       expect(renderToolBody(makeEntry({ toolName: 'edit' }), ctx)).toEqual([]);
+    });
+
+    describe('with hunk metadata', () => {
+      function hunkEntry(over: {
+        old: string;
+        new: string;
+        startLine: number;
+        before?: string[];
+        after?: string[];
+      }): ScrollbackEntry {
+        return makeEntry({
+          toolName: 'edit',
+          toolArgs: { path: '/x.ts', old_string: over.old, new_string: over.new },
+          toolResult: {
+            replacements: 1,
+            startLine: over.startLine,
+            contextBefore: over.before ?? [],
+            contextAfter: over.after ?? [],
+          },
+        });
+      }
+
+      it('renders pure insertion with surrounding context as a single hunk', () => {
+        const out = frame(
+          makeEntry({
+            toolName: 'edit',
+            toolArgs: {
+              path: '/x.ts',
+              old_string: 'b\nc',
+              new_string: 'b\nNEW\nc',
+            },
+            toolResult: {
+              replacements: 1,
+              startLine: 5,
+              contextBefore: ['line2', 'line3', 'line4'],
+              contextAfter: ['line7', 'line8', 'line9'],
+            },
+          }),
+        );
+        // Context rows (above and below) appear with no +/-.
+        expect(out).toContain('line4');
+        expect(out).toContain('line7');
+        // Exactly one + row, zero - rows in the diff body.
+        const lines = out.split('\n');
+        const plusRows = lines.filter((l) => /\s\+\s/.test(l));
+        const minusRows = lines.filter((l) => /\s-\s/.test(l));
+        expect(plusRows).toHaveLength(1);
+        expect(minusRows).toHaveLength(0);
+        expect(plusRows[0]).toContain('NEW');
+      });
+
+      it('renders pure deletion as one - row surrounded by context', () => {
+        const out = frame(
+          hunkEntry({
+            old: 'b\nGONE\nc',
+            new: 'b\nc',
+            startLine: 5,
+            before: ['line2', 'line3', 'line4'],
+            after: ['line8', 'line9'],
+          }),
+        );
+        const lines = out.split('\n');
+        const plusRows = lines.filter((l) => /\s\+\s/.test(l));
+        const minusRows = lines.filter((l) => /\s-\s/.test(l));
+        expect(minusRows).toHaveLength(1);
+        expect(plusRows).toHaveLength(0);
+        expect(minusRows[0]).toContain('GONE');
+        expect(out).toContain('line4');
+        expect(out).toContain('line8');
+      });
+
+      it('renders interior unchanged lines as context, not as -/+ pairs', () => {
+        const out = frame(
+          hunkEntry({
+            old: 'shared1\nold-middle\nshared2',
+            new: 'shared1\nnew-middle\nshared2',
+            startLine: 10,
+          }),
+        );
+        const lines = out.split('\n');
+        const plusRows = lines.filter((l) => /\s\+\s/.test(l));
+        const minusRows = lines.filter((l) => /\s-\s/.test(l));
+        expect(plusRows).toHaveLength(1);
+        expect(minusRows).toHaveLength(1);
+        expect(minusRows[0]).toContain('old-middle');
+        expect(plusRows[0]).toContain('new-middle');
+        const shared1Rows = lines.filter((l) => l.includes('shared1'));
+        const shared2Rows = lines.filter((l) => l.includes('shared2'));
+        expect(shared1Rows).toHaveLength(1);
+        expect(shared2Rows).toHaveLength(1);
+        expect(/\s[+-]\s/.test(shared1Rows[0]!)).toBe(false);
+        expect(/\s[+-]\s/.test(shared2Rows[0]!)).toBe(false);
+        // Gutter line numbers: shared1 is line 10, both old-middle and new-middle
+        // share line 11 (pre-edit and post-edit respectively), shared2 is line 12.
+        expect(shared1Rows[0]).toMatch(/\b10\s+shared1/);
+        expect(minusRows[0]).toMatch(/\b11\s+-\s+old-middle/);
+        expect(plusRows[0]).toMatch(/\b11\s+\+\s+new-middle/);
+        expect(shared2Rows[0]).toMatch(/\b12\s+shared2/);
+      });
+
+      it('renders multiple change groups with correct line numbers', () => {
+        const out = frame(
+          hunkEntry({
+            old: 'aaa\nbbb\nccc\nddd\neee',
+            new: 'aaa\nBBB\nccc\nDDD\neee',
+            startLine: 10,
+          }),
+        );
+        // Expected sequence: 10 same aaa, 11 - bbb, 11 + BBB, 12 same ccc,
+        // 13 - ddd, 13 + DDD, 14 same eee.
+        expect(out).toMatch(/\b10\s+aaa/);
+        expect(out).toMatch(/\b11\s+-\s+bbb/);
+        expect(out).toMatch(/\b11\s+\+\s+BBB/);
+        expect(out).toMatch(/\b12\s+ccc/);
+        expect(out).toMatch(/\b13\s+-\s+ddd/);
+        expect(out).toMatch(/\b13\s+\+\s+DDD/);
+        expect(out).toMatch(/\b14\s+eee/);
+      });
+
+      it('clips hunk rows wider than the available width with an ellipsis', () => {
+        const narrowCtx = { width: 30, prefixLen: 2, theme: defaultTheme };
+        const longLine = 'x'.repeat(200);
+        const els = renderToolBody(
+          hunkEntry({ old: longLine, new: 'short', startLine: 1 }),
+          narrowCtx,
+        );
+        const { lastFrame, unmount } = render(<Box flexDirection="column">{els}</Box>);
+        const out = lastFrame() ?? '';
+        unmount();
+        expect(out).toMatch(/x+…/);
+        const longest = Math.max(...out.split('\n').map((l) => l.length));
+        expect(longest).toBeLessThanOrEqual(narrowCtx.width);
+      });
+
+      it('omits leading rows when contextBefore is empty (top-of-file match)', () => {
+        const out = frame(
+          hunkEntry({
+            old: 'first',
+            new: 'FIRST',
+            startLine: 1,
+            before: [],
+            after: ['second', 'third'],
+          }),
+        );
+        // Body should start with the diff body (- first / + FIRST), not a context row.
+        const lines = out.split('\n').filter((l) => l.trim().length > 0);
+        expect(lines[0]).toContain('first');
+        expect(/\s-\s/.test(lines[0]!)).toBe(true);
+      });
+
+      it('omits trailing rows when contextAfter is empty (end-of-file match)', () => {
+        const out = frame(
+          hunkEntry({
+            old: 'final',
+            new: 'FINAL',
+            startLine: 99,
+            before: ['line96', 'line97', 'line98'],
+            after: [],
+          }),
+        );
+        const lines = out.split('\n').filter((l) => l.trim().length > 0);
+        expect(lines.at(-1)).toContain('FINAL');
+        expect(/\s\+\s/.test(lines.at(-1)!)).toBe(true);
+      });
+
+      it('caps total rendered rows at editDiffLines and appends a more-lines row', () => {
+        const cap = TOOL_BODY_LIMITS.editDiffLines;
+        const oldLines = Array.from({ length: cap + 10 }, (_, i) => `o${i}`);
+        const out = frame(
+          hunkEntry({
+            old: oldLines.join('\n'),
+            new: 'replaced',
+            startLine: 5,
+            before: ['c1', 'c2', 'c3'],
+            after: ['c4', 'c5', 'c6'],
+          }),
+        );
+        // Total intended rows = 3 (before) + (cap+10) (del) + 1 (add) + 3 (after) = cap+17.
+        // Visible rows = cap content + 1 sep row.
+        const overflow = 3 + (cap + 10) + 1 + 3 - cap;
+        expect(out).toContain(`${overflow} more lines`);
+      });
+
+      it('renders cleanly under plainTheme (NO_COLOR mode) with no bg tokens', () => {
+        const els = renderToolBody(
+          hunkEntry({
+            old: 'a',
+            new: 'b',
+            startLine: 1,
+            after: ['c'],
+          }),
+          { width: 80, prefixLen: 7, theme: plainTheme },
+        );
+        const { lastFrame, unmount } = render(<Box flexDirection="column">{els}</Box>);
+        const out = lastFrame() ?? '';
+        unmount();
+        expect(out).toContain('a');
+        expect(out).toContain('b');
+        expect(out).toContain('c');
+      });
+
+      it('falls back to legacy -/+ rendering when toolResult lacks startLine', () => {
+        const out = frame(
+          makeEntry({
+            toolName: 'edit',
+            toolArgs: { path: '/x.ts', old_string: 'foo', new_string: 'bar' },
+            // No toolResult: legacy fallback.
+          }),
+        );
+        const lines = out.split('\n');
+        expect(lines.some((l) => /^\s*- foo\s*$/.test(l))).toBe(true);
+        expect(lines.some((l) => /^\s*\+ bar\s*$/.test(l))).toBe(true);
+      });
     });
   });
 

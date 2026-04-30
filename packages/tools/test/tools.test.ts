@@ -112,6 +112,9 @@ describe('buildTools', () => {
       {},
     );
     expect(result.replacements).toBe(1);
+    expect(result.startLine).toBe(1);
+    expect(result.contextBefore).toEqual([]);
+    expect(result.contextAfter).toEqual([]);
     expect(await readFile(join(root, 'f.txt'), 'utf8')).toBe('hello chimera');
   });
 
@@ -135,5 +138,69 @@ describe('buildTools', () => {
     );
     expect(result.replacements).toBe(3);
     expect(await readFile(join(root, 'f.txt'), 'utf8')).toBe('b\nb\nb');
+  });
+
+  it('edit captures three context lines on each side of a middle-of-file match', async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `line${i + 1}`);
+    await writeFile(join(root, 'big.txt'), lines.join('\n'));
+    const toolset = tools();
+    const result = await toolset.edit!.execute(
+      { path: 'big.txt', old_string: 'line10', new_string: 'line10-edited' },
+      {},
+    );
+    expect(result.replacements).toBe(1);
+    expect(result.startLine).toBe(10);
+    expect(result.contextBefore).toEqual(['line7', 'line8', 'line9']);
+    expect(result.contextAfter).toEqual(['line11', 'line12', 'line13']);
+  });
+
+  it('edit returns empty contextBefore for a match on line 1', async () => {
+    await writeFile(join(root, 'top.txt'), 'first\nsecond\nthird\nfourth\nfifth');
+    const toolset = tools();
+    const result = await toolset.edit!.execute(
+      { path: 'top.txt', old_string: 'first', new_string: 'FIRST' },
+      {},
+    );
+    expect(result.startLine).toBe(1);
+    expect(result.contextBefore).toEqual([]);
+    expect(result.contextAfter).toEqual(['second', 'third', 'fourth']);
+  });
+
+  it('edit returns empty contextAfter for a match ending on the final line', async () => {
+    await writeFile(join(root, 'bot.txt'), 'first\nsecond\nthird\nfourth\nfifth');
+    const toolset = tools();
+    const result = await toolset.edit!.execute(
+      { path: 'bot.txt', old_string: 'fifth', new_string: 'FIFTH' },
+      {},
+    );
+    expect(result.startLine).toBe(5);
+    expect(result.contextBefore).toEqual(['second', 'third', 'fourth']);
+    expect(result.contextAfter).toEqual([]);
+  });
+
+  it('edit captures contextAfter when new_string ends with a newline', async () => {
+    await writeFile(join(root, 'nl.txt'), 'a\nb\nc\nd\ne\n');
+    const toolset = tools();
+    const result = await toolset.edit!.execute(
+      { path: 'nl.txt', old_string: 'b\n', new_string: 'B\n' },
+      {},
+    );
+    expect(result.contextAfter).toEqual(['c', 'd', 'e']);
+  });
+
+  it('edit with replace_all reports the line of the first match', async () => {
+    await writeFile(
+      join(root, 'multi.txt'),
+      'one\ntwo\nthree\nNEEDLE\nfive\nsix\nNEEDLE\neight\nnine\nNEEDLE\n',
+    );
+    const toolset = tools();
+    const result = await toolset.edit!.execute(
+      { path: 'multi.txt', old_string: 'NEEDLE', new_string: 'X', replace_all: true },
+      {},
+    );
+    expect(result.replacements).toBe(3);
+    expect(result.startLine).toBe(4);
+    expect(result.contextBefore).toEqual(['one', 'two', 'three']);
+    expect(result.contextAfter).toEqual(['five', 'six', 'X']);
   });
 });

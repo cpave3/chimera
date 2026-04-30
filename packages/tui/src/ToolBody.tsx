@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import React from 'react';
+import { lineDiff } from './diff';
 import type { ScrollbackEntry } from './scrollback';
 import type { Theme } from './theme/types';
 
@@ -30,12 +31,100 @@ export function renderToolBody(entry: ScrollbackEntry, ctx: ToolBodyProps): Reac
   }
 }
 
+type EditHunkResult = {
+  startLine?: number;
+  contextBefore?: string[];
+  contextAfter?: string[];
+};
+
+type HunkRow =
+  | { kind: 'same' | 'del' | 'add'; lineNumber: number; content: string }
+  | { kind: 'sep'; count: number };
+
 function renderEditBody(
   entry: ScrollbackEntry,
   { width, prefixLen, theme }: ToolBodyProps,
 ): React.ReactElement[] {
   const args = entry.toolArgs as { old_string?: string; new_string?: string } | undefined;
   if (!args) return [];
+  const result = entry.toolResult as EditHunkResult | undefined;
+  if (!result || typeof result.startLine !== 'number') {
+    return renderEditBodyLegacy(args, { width, prefixLen, theme });
+  }
+
+  const oldLines = args.old_string ? stripTrailingNewline(args.old_string).split('\n') : [];
+  const newLines = args.new_string ? stripTrailingNewline(args.new_string).split('\n') : [];
+  const before = result.contextBefore ?? [];
+  const after = result.contextAfter ?? [];
+  const startLine = result.startLine;
+
+  const rows: HunkRow[] = [];
+  before.forEach((line, idx) => {
+    rows.push({ kind: 'same', lineNumber: startLine - before.length + idx, content: line });
+  });
+
+  const diff = lineDiff(oldLines, newLines);
+  let oldOffset = 0;
+  let newOffset = 0;
+  for (const entryDiff of diff) {
+    if (entryDiff.kind === 'same') {
+      rows.push({
+        kind: 'same',
+        lineNumber: startLine + newOffset,
+        content: entryDiff.line,
+      });
+      oldOffset += 1;
+      newOffset += 1;
+    } else if (entryDiff.kind === 'del') {
+      rows.push({
+        kind: 'del',
+        lineNumber: startLine + oldOffset,
+        content: entryDiff.line,
+      });
+      oldOffset += 1;
+    } else {
+      rows.push({
+        kind: 'add',
+        lineNumber: startLine + newOffset,
+        content: entryDiff.line,
+      });
+      newOffset += 1;
+    }
+  }
+
+  const lastBodyLine = startLine + newOffset;
+  after.forEach((line, idx) => {
+    rows.push({ kind: 'same', lineNumber: lastBodyLine + idx, content: line });
+  });
+
+  const cap = TOOL_BODY_LIMITS.editDiffLines;
+  let truncated = 0;
+  let visible: HunkRow[] = rows;
+  if (rows.length > cap) {
+    visible = rows.slice(0, cap);
+    truncated = rows.length - cap;
+  }
+  if (truncated > 0) visible.push({ kind: 'sep', count: truncated });
+
+  const maxLineNumber = visible.reduce(
+    (acc, row) => (row.kind === 'sep' ? acc : Math.max(acc, row.lineNumber)),
+    0,
+  );
+  const gutterWidth = String(maxLineNumber).length + 1;
+  const innerWidth = bodyInnerWidth(width, prefixLen, gutterWidth + 2);
+
+  return visible.map((row, i) => {
+    if (row.kind === 'sep') {
+      return moreLinesRow(`d${i}`, row.count, prefixLen, theme);
+    }
+    return hunkRow(`d${i}`, row, gutterWidth, innerWidth, prefixLen, theme);
+  });
+}
+
+function renderEditBodyLegacy(
+  args: { old_string?: string; new_string?: string },
+  { width, prefixLen, theme }: ToolBodyProps,
+): React.ReactElement[] {
   const oldLines = args.old_string ? stripTrailingNewline(args.old_string).split('\n') : [];
   const newLines = args.new_string ? stripTrailingNewline(args.new_string).split('\n') : [];
   const cap = TOOL_BODY_LIMITS.editDiffLines;
@@ -151,6 +240,40 @@ function diffRow(
       <Text>
         <Text color={bodyColor}>{prefix}</Text>
         <Text color={bodyColor}>{clip(body, innerWidth)}</Text>
+      </Text>
+    </Box>
+  );
+}
+
+function hunkRow(
+  key: string,
+  row: { kind: 'same' | 'del' | 'add'; lineNumber: number; content: string },
+  gutterWidth: number,
+  innerWidth: number,
+  prefixLen: number,
+  theme: Theme,
+): React.ReactElement {
+  const sigil = row.kind === 'same' ? ' ' : row.kind === 'del' ? '-' : '+';
+  const fg =
+    row.kind === 'same'
+      ? theme.text.muted
+      : row.kind === 'del'
+        ? theme.status.error
+        : theme.status.success;
+  const bg =
+    row.kind === 'del'
+      ? theme.status.errorBg
+      : row.kind === 'add'
+        ? theme.status.successBg
+        : undefined;
+  const gutter = String(row.lineNumber).padStart(gutterWidth - 1, ' ');
+  const clipped = clip(row.content, innerWidth);
+  const padded = clipped.padEnd(innerWidth, ' ');
+  return (
+    <Box key={key} paddingLeft={prefixLen}>
+      <Text>
+        <Text color={theme.text.muted}>{`${gutter} `}</Text>
+        <Text color={fg} backgroundColor={bg}>{`${sigil} ${padded}`}</Text>
       </Text>
     </Box>
   );

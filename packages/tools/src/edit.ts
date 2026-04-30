@@ -10,7 +10,19 @@ const EDIT_SCHEMA = z.object({
   replace_all: z.boolean().optional(),
 });
 type EditArgs = z.infer<typeof EDIT_SCHEMA>;
-type EditResult = { replacements: number };
+/**
+ * `startLine` and `contextBefore` come from the **pre-edit** file (so the TUI
+ * can show what was replaced and where it lived); `contextAfter` comes from
+ * the **post-edit** file (so the trailing context matches what's now on disk).
+ */
+type EditResult = {
+  replacements: number;
+  startLine: number;
+  contextBefore: string[];
+  contextAfter: string[];
+};
+
+const CONTEXT_LINES = 3;
 
 export function buildEditTool(ctx: ToolContext) {
   const cwd = ctx.sandboxExecutor.cwd();
@@ -30,11 +42,16 @@ export function buildEditTool(ctx: ToolContext) {
           `old_string matches ${count} occurrences; pass replace_all=true or disambiguate`,
         );
       }
+      const matchIndex = content.indexOf(args.old_string);
+      const startLine = lineNumberAt(content, matchIndex);
+      const contextBefore = linesAbove(content, matchIndex, CONTEXT_LINES);
       const next = args.replace_all
         ? content.split(args.old_string).join(args.new_string)
         : content.replace(args.old_string, args.new_string);
       await ctx.sandboxExecutor.writeFile(args.path, next);
-      return { replacements: count };
+      const afterEnd = matchIndex + args.new_string.length;
+      const contextAfter = linesBelow(next, afterEnd, CONTEXT_LINES);
+      return { replacements: count, startLine, contextBefore, contextAfter };
     },
     formatScrollback: (args, result) => {
       const head = relPath(args.path, cwd);
@@ -55,4 +72,43 @@ function countOccurrences(haystack: string, needle: string): number {
     count += 1;
     idx = found + needle.length;
   }
+}
+
+function lineNumberAt(content: string, byteOffset: number): number {
+  let line = 1;
+  for (let i = 0; i < byteOffset && i < content.length; i++) {
+    if (content.charCodeAt(i) === 10) line += 1;
+  }
+  return line;
+}
+
+function linesAbove(content: string, matchStart: number, count: number): string[] {
+  if (matchStart === 0) return [];
+  const prefix = content.slice(0, matchStart);
+  const lines = prefix.split('\n');
+  // The final element is the partial line where the match starts (everything
+  // on the line before the match). Drop it; we want full lines preceding it.
+  lines.pop();
+  return lines.slice(Math.max(0, lines.length - count));
+}
+
+function linesBelow(content: string, afterEnd: number, count: number): string[] {
+  if (afterEnd >= content.length) return [];
+  // If the replaced span ended at a line boundary (because new_string ends
+  // with `\n`, or the span was at offset 0), the next full line starts at
+  // `afterEnd` itself. Otherwise we need to skip the remainder of the line
+  // the span landed inside.
+  const atLineStart = afterEnd === 0 || content.charCodeAt(afterEnd - 1) === 10;
+  let rest: string;
+  if (atLineStart) {
+    rest = content.slice(afterEnd);
+  } else {
+    const suffix = content.slice(afterEnd);
+    const newline = suffix.indexOf('\n');
+    if (newline === -1) return [];
+    rest = suffix.slice(newline + 1);
+  }
+  const stripped = rest.endsWith('\n') ? rest.slice(0, -1) : rest;
+  if (stripped.length === 0) return [];
+  return stripped.split('\n').slice(0, count);
 }

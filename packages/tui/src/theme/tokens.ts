@@ -15,6 +15,8 @@ export const defaultStatusTokens: StatusTokens = {
   warning: 'yellow',
   error: 'red',
   info: 'blue',
+  successBg: '#0f3a14',
+  errorBg: '#3a1212',
 };
 
 export const defaultTextTokens: TextTokens = {

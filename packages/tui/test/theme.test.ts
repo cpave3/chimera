@@ -55,6 +55,8 @@ describe('theme tokens', () => {
   it('plainTheme has neutral values for all tokens', () => {
     expect(plainTheme.accent.primary).toBe('white');
     expect(plainTheme.status.error).toBe('white');
+    expect(plainTheme.status.successBg).toBeUndefined();
+    expect(plainTheme.status.errorBg).toBeUndefined();
   });
 });
 
