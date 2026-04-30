@@ -6,6 +6,7 @@ import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import React from 'react';
 import { App, type OverlayHandlers } from './App';
+import type { Formatter } from './scrollback';
 import { createFilteredStdin } from './input/stdin-filter';
 import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
@@ -33,6 +34,13 @@ export interface MountOptions {
    * to send to the server.
    */
   reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
+  /**
+   * Per-tool scrollback formatters keyed by tool name. Used by `Scrollback`
+   * to render tool entries during session rehydration (resume / fork /
+   * `/sessions` switch). Live tool calls already carry `display` on their
+   * events so they don't depend on this map.
+   */
+  formatters?: Record<string, Formatter>;
 }
 
 export interface TuiHandle {
@@ -135,6 +143,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         sandboxMode={opts.sandboxMode}
         overlay={opts.overlay}
         reloadSystemPrompt={opts.reloadSystemPrompt}
+        formatters={opts.formatters}
       />
     </ThemeProvider>,
     {

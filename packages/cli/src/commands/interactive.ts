@@ -151,6 +151,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     commands,
     skills,
     modes,
+    formatters: factory.getFormatters(),
     // Default cycle = every discovered mode (alphabetical). If a user wants
     // a smaller cycle they set `cycleModes: ["build", "plan"]` explicitly.
     cycleModes: config.cycleModes ?? modes.all().map((mode) => mode.name),

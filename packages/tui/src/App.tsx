@@ -33,7 +33,12 @@ import { openInEditor as openInEditorImpl, type OpenInEditorResult } from './inp
 import { renderMarkdown } from './markdown';
 import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
-import { Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
+import {
+  type Formatter,
+  Scrollback,
+  type ScrollbackEntry,
+  type SubagentEntry,
+} from './scrollback';
 import { SessionPicker, buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import {
@@ -77,6 +82,12 @@ export interface AppProps {
    * to send to the server.
    */
   reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
+  /**
+   * Per-tool scrollback formatters keyed by tool name. Passed to `Scrollback`
+   * so it can render formatter summaries during session rehydration. Live
+   * tool calls already carry `display` on their events.
+   */
+  formatters?: Record<string, Formatter>;
   /**
    * Injection point for the Ctrl+G editor handoff. Defaults to the real
    * implementation that uses `process.stdin`/`process.stdout` and treats the
@@ -125,7 +136,7 @@ export function App(props: AppProps): React.ReactElement {
   const themeCtx = useThemeContext();
   const app = useApp();
   const { stdout } = useStdout();
-  const scrollback = useMemo(() => new Scrollback(), []);
+  const scrollback = useMemo(() => new Scrollback(props.formatters), [props.formatters]);
   const [entries, setEntries] = useState<ScrollbackEntry[]>([]);
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [pending, setPending] = useState<PendingPermission | null>(null);

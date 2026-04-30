@@ -1,4 +1,11 @@
-import type { AgentEvent, CallId, Session, ToolCallRecord } from '@chimera/core';
+import type { AgentEvent, CallId, Session, ToolCallRecord, ToolDisplay } from '@chimera/core';
+
+/**
+ * Structural type matching `@chimera/tools`' `FormatScrollback<I, O>`. Defined
+ * locally so `@chimera/tui` does not need a dependency on `@chimera/tools` —
+ * the CLI passes the formatter map in as a prop at mount time.
+ */
+export type Formatter = (args: unknown, result?: unknown) => ToolDisplay;
 
 interface BaseEntry {
   id: string;
@@ -93,6 +100,21 @@ export class Scrollback {
   private subagentToolsByCallId = new Map<string, Map<CallId, SubagentEntry>>();
   private idSeq = 0;
   private suppressUserContent: string | null = null;
+  private formatters: Record<string, Formatter>;
+
+  constructor(formatters: Record<string, Formatter> = {}) {
+    this.formatters = formatters;
+  }
+
+  private safeFormat(name: string, args: unknown, result?: unknown): ToolDisplay | undefined {
+    const fmt = this.formatters[name];
+    if (!fmt) return undefined;
+    try {
+      return fmt(args, result);
+    } catch {
+      return undefined;
+    }
+  }
 
   private newId(): string {
     this.idSeq += 1;
@@ -178,6 +200,11 @@ export class Scrollback {
     // default to 'host'.
     type LooseMessage = { role?: string; content?: unknown };
     type LoosePart = { type?: string; [k: string]: unknown };
+    // Map AI-SDK toolCallId → (name, args), populated as we walk assistant
+    // tool-call parts. The matching `tool-result` part later in the session
+    // carries only `toolCallId`, so we use this to recover (name, args) for
+    // the result-side formatter call.
+    const seenCalls = new Map<string, { name: string; args: unknown }>();
     for (const msg of session.messages as LooseMessage[]) {
       if (msg.role === 'system') continue;
       if (msg.role === 'user') {
@@ -201,12 +228,14 @@ export class Scrollback {
             if (!callId || !name) continue;
             const args = part.input ?? part.args;
             const rec = findToolRecord(session.toolCalls, name, args);
+            seenCalls.set(callId, { name, args });
             this.apply({
               type: 'tool_call_start',
               callId,
               name,
               args,
               target: rec?.target ?? 'host',
+              display: this.safeFormat(name, args),
             });
           }
         }
@@ -231,11 +260,13 @@ export class Scrollback {
             const err = typeof result === 'string' ? result : JSON.stringify(result);
             this.apply({ type: 'tool_call_error', callId, error: err });
           } else {
+            const seen = seenCalls.get(callId);
             this.apply({
               type: 'tool_call_result',
               callId,
               result,
               durationMs: 0,
+              display: seen ? this.safeFormat(seen.name, seen.args, result) : undefined,
             });
           }
         }

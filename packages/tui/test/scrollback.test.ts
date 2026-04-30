@@ -624,6 +624,100 @@ describe('Scrollback.rehydrateFromSession', () => {
     expect(toolEntry!.toolTarget).toBe('sandbox');
   });
 
+  it('runs injected formatters during rehydrate so resumed sessions show summaries', () => {
+    const scrollback = new Scrollback({
+      read: (args, result) => {
+        const path = (args as { file_path: string }).file_path;
+        const lines = (result as { total_lines?: number } | undefined)?.total_lines;
+        return {
+          summary: `${path} (${lines ?? '?'} lines)`,
+          detail: 'first detail line',
+        };
+      },
+    });
+    scrollback.rehydrateFromSession({
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'sdk-side-id',
+              toolName: 'read',
+              input: { file_path: 'package.json' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'sdk-side-id',
+              toolName: 'read',
+              output: { type: 'json', value: { content: '...', total_lines: 34 } },
+            },
+          ],
+        },
+      ],
+      toolCalls: [],
+    } as Pick<Session, 'messages' | 'toolCalls'>);
+    const toolEntry = scrollback.all().find((entry) => entry.kind === 'tool');
+    expect(toolEntry).toBeDefined();
+    if (toolEntry?.kind !== 'tool') throw new Error('unreachable');
+    expect(toolEntry.text).toBe('package.json (34 lines)');
+    expect(toolEntry.detail).toBe('first detail line');
+  });
+
+  it('falls back to JSON args when no formatter is injected for the tool', () => {
+    const entries = rehydrate([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'sdk-side-id',
+            toolName: 'read',
+            input: { file_path: 'package.json' },
+          },
+        ],
+      },
+    ]);
+    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    expect(toolEntry).toBeDefined();
+    if (toolEntry?.kind !== 'tool') throw new Error('unreachable');
+    expect(toolEntry.text).toContain('package.json');
+    expect(toolEntry.text).toContain('"file_path"');
+  });
+
+  it('catches formatter exceptions and falls back to JSON args', () => {
+    const scrollback = new Scrollback({
+      read: () => {
+        throw new Error('formatter blew up');
+      },
+    });
+    scrollback.rehydrateFromSession({
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'sdk-side-id',
+              toolName: 'read',
+              input: { file_path: 'package.json' },
+            },
+          ],
+        },
+      ],
+      toolCalls: [],
+    } as Pick<Session, 'messages' | 'toolCalls'>);
+    const toolEntry = scrollback.all().find((entry) => entry.kind === 'tool');
+    expect(toolEntry).toBeDefined();
+    if (toolEntry?.kind !== 'tool') throw new Error('unreachable');
+    expect(toolEntry.text).toContain('"file_path"');
+  });
+
   it('clears prior entries before rehydrating', () => {
     const scrollback = new Scrollback();
     scrollback.addInfo('this should be wiped');

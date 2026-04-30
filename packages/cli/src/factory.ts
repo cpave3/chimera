@@ -15,7 +15,7 @@ import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
 import { type AgentRegistry, buildSpawnAgentTool } from '@chimera/subagents';
-import { buildTools, LocalExecutor } from '@chimera/tools';
+import { buildTools, type FormatScrollback, LocalExecutor } from '@chimera/tools';
 import type { ToolSet } from 'ai';
 import type { CliSandboxOptions } from './sandbox-config';
 
@@ -102,6 +102,14 @@ export class CliAgentFactory implements AgentFactory {
   private readonly providersConfig: ProvidersConfig;
   private readonly modelsConfig: Record<string, { contextWindow?: number }>;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
+  /**
+   * Snapshot of the formatter map produced by the most recent `build()` call.
+   * The TUI consumes this via `getFormatters()` so its scrollback can render
+   * tool entries during session rehydration without reaching across the dep
+   * DAG into `@chimera/tools`. Captured *after* `spawn_agent`'s formatter is
+   * conditionally added — that hook is appended outside `buildTools()`.
+   */
+  private lastFormatters: Record<string, FormatScrollback<any, any>> = {};
 
   constructor(opts: CliAgentFactoryOptions) {
     this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
@@ -118,6 +126,16 @@ export class CliAgentFactory implements AgentFactory {
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
     this.providersConfig = opts.providersConfig;
     this.modelsConfig = opts.models ?? {};
+  }
+
+  /**
+   * Returns the formatter map captured during the most recent `build()` call.
+   * Empty until `build()` runs at least once — the interactive command reads
+   * this after `client.createSession()` resolves, so by mount time the map is
+   * populated.
+   */
+  getFormatters(): Record<string, FormatScrollback<any, any>> {
+    return this.lastFormatters;
   }
 
   async build(init: SessionInit): Promise<BuildResult> {
@@ -266,6 +284,8 @@ export class CliAgentFactory implements AgentFactory {
       tools.spawn_agent = spawn.tool;
       if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
     }
+
+    this.lastFormatters = formatters;
 
     // Apply an agent-definition tools allowlist before mode filtering. The
     // mode filter then intersects: if a mode also restricts tools, the child
