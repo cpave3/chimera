@@ -1,5 +1,14 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { PathEscapeError } from './errors';
@@ -87,8 +96,26 @@ export class LocalExecutor implements Executor {
   async writeFile(path: string, content: string): Promise<void> {
     const abs = this.resolveSafe(path);
     await mkdir(dirname(abs), { recursive: true });
+    // Preserve the existing file's mode across the write-tmp + rename dance.
+    // Without this, replacing an executable script (or any non-default mode)
+    // resets it to umask defaults because the tmp file is created fresh.
+    // lstat (not stat) so we don't follow symlinks: a symlink target's mode
+    // is irrelevant to a path we're about to replace via rename, and copying
+    // it onto the new file would silently mask the symlink-replacement.
+    let priorMode: number | null = null;
+    try {
+      const fileStats = await lstat(abs);
+      if (!fileStats.isSymbolicLink()) {
+        priorMode = fileStats.mode & 0o777;
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     const tmp = `${abs}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tmp, content, 'utf8');
+    if (priorMode !== null) {
+      await chmod(tmp, priorMode);
+    }
     await rename(tmp, abs);
   }
 

@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -110,6 +120,49 @@ describe('LocalExecutor', () => {
     await writeFile(target, 'old');
     await exec.writeFile('out.txt', 'new');
     expect(await readFile(target, 'utf8')).toBe('new');
+  });
+
+  it('writeFile preserves mode of an existing 0o755 file', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    const target = join(root, 'script.sh');
+    await writeFile(target, '#!/bin/bash\necho old\n');
+    await chmod(target, 0o755);
+    await exec.writeFile('script.sh', '#!/bin/bash\necho new\n');
+    const fileStats = await stat(target);
+    expect(fileStats.mode & 0o777).toBe(0o755);
+    expect(await readFile(target, 'utf8')).toBe('#!/bin/bash\necho new\n');
+  });
+
+  it('writeFile preserves mode of an existing 0o644 file', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    const target = join(root, 'data.txt');
+    await writeFile(target, 'old');
+    await chmod(target, 0o644);
+    await exec.writeFile('data.txt', 'new');
+    expect((await stat(target)).mode & 0o777).toBe(0o644);
+  });
+
+  it('writeFile creates new file at default mode when target does not exist', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    await exec.writeFile('new.txt', 'hello');
+    // The exec bits must NOT be set on a freshly created file. Catches the
+    // regression where priorMode leaks across calls or a stale 0o755 is applied.
+    expect((await stat(join(root, 'new.txt'))).mode & 0o111).toBe(0);
+  });
+
+  it('writeFile through a symlink does not copy target mode onto the replacement', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    const realFile = join(root, 'real.txt');
+    const linkPath = join(root, 'link.txt');
+    await writeFile(realFile, 'real');
+    await chmod(realFile, 0o755);
+    await symlink(realFile, linkPath);
+    await exec.writeFile('link.txt', 'via-link');
+    const linkStats = await lstat(linkPath);
+    expect(linkStats.isSymbolicLink()).toBe(false);
+    expect(linkStats.mode & 0o111).toBe(0);
+    expect((await stat(realFile)).mode & 0o777).toBe(0o755);
+    expect(await readFile(realFile, 'utf8')).toBe('real');
   });
 
   it('exec caps stdout at maxOutputBytes and reports stdoutTruncated', async () => {
