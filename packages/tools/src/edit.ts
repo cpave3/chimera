@@ -45,9 +45,14 @@ export function buildEditTool(ctx: ToolContext) {
       const matchIndex = content.indexOf(args.old_string);
       const startLine = lineNumberAt(content, matchIndex);
       const contextBefore = linesAbove(content, matchIndex, CONTEXT_LINES);
+      // String.prototype.replace expands $&, $`, $', $$ in the replacement string
+      // even when the search argument is a string. That's a silent corruption hazard
+      // when new_string contains shell regex anchors like '^foo$'.
       const next = args.replace_all
         ? content.split(args.old_string).join(args.new_string)
-        : content.replace(args.old_string, args.new_string);
+        : content.slice(0, matchIndex) +
+          args.new_string +
+          content.slice(matchIndex + args.old_string.length);
       await ctx.sandboxExecutor.writeFile(args.path, next);
       const afterEnd = matchIndex + args.new_string.length;
       const contextAfter = linesBelow(next, afterEnd, CONTEXT_LINES);

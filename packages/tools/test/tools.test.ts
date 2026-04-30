@@ -188,6 +188,38 @@ describe('buildTools', () => {
     expect(result.contextAfter).toEqual(['c', 'd', 'e']);
   });
 
+  it('edit treats $-sequences in new_string literally (regression: shell regex anchors)', async () => {
+    // Regression for a doubling bug where String.prototype.replace expanded $'
+    // (and $&, $`, $$) in the replacement, even with a string search argument.
+    // A new_string containing a shell regex pattern like '^name$' has the
+    // literal characters $' and would silently inline "everything after the
+    // matched span" into the file.
+    const head = 'HEAD\n';
+    const matched = 'PATTERN: ^name$\n';
+    const tail = 'TAIL_LINE_1\nTAIL_LINE_2\n';
+    await writeFile(join(root, 'regex.txt'), head + matched + tail);
+    const toolset = tools();
+    const replacement = "PATTERN: '^name$'\nNEW_LINE\n";
+    const result = await toolset.edit!.execute(
+      { path: 'regex.txt', old_string: matched, new_string: replacement },
+      {},
+    );
+    expect(result.replacements).toBe(1);
+    expect(await readFile(join(root, 'regex.txt'), 'utf8')).toBe(head + replacement + tail);
+  });
+
+  it("edit preserves $&, $`, $', $$ in new_string verbatim", async () => {
+    await writeFile(join(root, 'sigils.txt'), 'A\nMATCH\nB\n');
+    const toolset = tools();
+    const replacement = "lit-$&-and-$`-and-$'-and-$$";
+    const result = await toolset.edit!.execute(
+      { path: 'sigils.txt', old_string: 'MATCH', new_string: replacement },
+      {},
+    );
+    expect(result.replacements).toBe(1);
+    expect(await readFile(join(root, 'sigils.txt'), 'utf8')).toBe(`A\n${replacement}\nB\n`);
+  });
+
   it('edit with replace_all reports the line of the first match', async () => {
     await writeFile(
       join(root, 'multi.txt'),
