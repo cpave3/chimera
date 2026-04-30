@@ -49,7 +49,7 @@ describe('App', () => {
     const { lastFrame, unmount } = render(
       <App client={stubClient()} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
     );
-    expect(lastFrame()).toContain('Ctrl+C interrupt');
+    expect(lastFrame()).toContain('Ctrl+Z');
     expect(lastFrame()).toContain('/ commands');
     unmount();
   });

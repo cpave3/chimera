@@ -41,11 +41,61 @@ export interface TuiHandle {
 }
 
 /**
+ * Install handlers to exit raw mode on SIGTSTP and restore on SIGCONT.
+ * Returns a cleanup function to remove the handlers.
+ */
+function installSuspendHandlers(stdin: NodeJS.ReadStream): () => void {
+  let sigtstpHandler: (() => void) | undefined;
+  let sigcontHandler: (() => void) | undefined;
+
+  const install = () => {
+    sigtstpHandler = () => {
+      try {
+        stdin.setRawMode?.(false);
+      } catch {
+        // Ignore errors if terminal is already closed/disconnected
+      }
+      process.kill(process.pid, 'SIGTSTP');
+    };
+    process.once('SIGTSTP', sigtstpHandler);
+  };
+
+  install();
+
+  sigcontHandler = () => {
+    try {
+      stdin.setRawMode?.(true);
+    } catch {
+      // Ignore errors if terminal is closed/disconnected
+    }
+    install();
+    // Emit a resize event to force Ink to redraw. Without this, the TUI
+    // stays blank until the next keystroke because React does not know the
+    // terminal state may have changed while we were suspended.
+    if (process.stdout.isTTY) {
+      process.stdout.emit('resize');
+    }
+  };
+  process.on('SIGCONT', sigcontHandler);
+
+  return () => {
+    if (sigtstpHandler) {
+      process.removeListener('SIGTSTP', sigtstpHandler);
+    }
+    if (sigcontHandler) {
+      process.removeListener('SIGCONT', sigcontHandler);
+    }
+  };
+}
+
+/**
  * Inline render: no alt-screen, no mouse tracking. Committed scrollback
  * entries are written to stdout via <Static>, so the terminal's native
  * scrollback + click-drag selection + wheel scroll all work normally.
  */
 export function mountTui(opts: MountOptions): TuiHandle {
+  const cleanupSuspendHandlers = installSuspendHandlers(process.stdin);
+
   // Disable terminal keyboard-protocol extensions that emit byte
   // sequences Ink's keypress parser doesn't understand. Without these,
   // Shift+Enter / modified-Enter chords leak as literal `[27;<mod>;13~`
@@ -95,6 +145,9 @@ export function mountTui(opts: MountOptions): TuiHandle {
 
   return {
     waitUntilExit: () => instance.waitUntilExit(),
-    unmount: () => instance.unmount(),
+    unmount: () => {
+      cleanupSuspendHandlers();
+      instance.unmount();
+    },
   };
 }

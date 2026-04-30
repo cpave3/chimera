@@ -457,6 +457,14 @@ export function App(props: AppProps): React.ReactElement {
       app.exit();
       return;
     }
+    if (key.ctrl && char === 'z') {
+      if (process.platform === 'win32') {
+        // Windows doesn't support SIGTSTP; ignore the key.
+        return;
+      }
+      process.kill(process.pid, 'SIGTSTP');
+      return;
+    }
 
     if (key.shift && key.tab) {
       // When `cycleModes` isn't supplied, default to every discovered
@@ -1317,6 +1325,7 @@ export function App(props: AppProps): React.ReactElement {
   const hintsLeft: StatusBarWidget[] = [
     <Text color={theme.text.muted}>{'\\<Enter> newline'}</Text>,
     <Text color={theme.text.muted}>Ctrl+G editor</Text>,
+    <Text color={theme.text.muted}>Ctrl+Z suspend</Text>,
     <Text color={theme.text.muted}>Esc/Ctrl+C interrupt</Text>,
     <Text color={theme.text.muted}>/ commands</Text>,
     <Text color={theme.text.muted}>Shift+Tab cycle mode</Text>,
