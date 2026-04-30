@@ -150,5 +150,15 @@ describe('buildTools formatters', () => {
       );
       expect(out.summary).toBe('huge.txt (5000 lines, truncated)');
     });
+
+    it('reports slice size when a line range is requested', () => {
+      const f = fmts().read!;
+      const sliceContent = ['430\tfoo', '431\tbar', '432\tbaz'].join('\n');
+      const out = f(
+        { path: join(root, 'src/foo.ts'), start_line: 430, end_line: 432 },
+        { content: sliceContent, total_lines: 1703, truncated: false },
+      );
+      expect(out.summary).toBe('src/foo.ts:430-432 (3 of 1703 lines)');
+    });
   });
 });

@@ -92,9 +92,12 @@ export function buildReadTool(ctx: ToolContext) {
           : ` (${result.entries.length} entries)`;
         return { summary: `${head}/${tail}` };
       }
-      const tail = result.truncated
-        ? ` (${result.total_lines} lines, truncated)`
-        : ` (${result.total_lines} lines)`;
+      const isSlice = args.start_line !== undefined || args.end_line !== undefined;
+      const returned = result.content === '' ? 0 : result.content.split('\n').length;
+      const lines = isSlice
+        ? `${returned} of ${result.total_lines} lines`
+        : `${result.total_lines} lines`;
+      const tail = result.truncated ? ` (${lines}, truncated)` : ` (${lines})`;
       return { summary: `${head}${tail}` };
     },
   });
