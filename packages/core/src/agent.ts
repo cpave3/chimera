@@ -538,6 +538,12 @@ export class Agent {
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
     const textStreams = new Map<string, string>();
+    // Text-ids whose text-end has already fired this run. The AI SDK re-emits
+    // the same text-id (text-start/text-delta*/text-end) across step
+    // boundaries when `response.messages` consolidates the parts; suppress the
+    // re-emission at source so the TUI doesn't visibly stream a duplicate
+    // entry that the consumer-side dedup would later pop.
+    const finalizedTextIds = new Set<string>();
     // Map AI SDK tool call id → our CallId, name, target for tool-result correlation.
     const callInfo = new Map<
       string,
@@ -571,17 +577,21 @@ export class Agent {
       for await (const part of stream.fullStream) {
         switch (part.type) {
           case 'text-start':
+            if (finalizedTextIds.has(part.id)) break;
             textStreams.set(part.id, '');
             break;
           case 'text-delta':
+            if (finalizedTextIds.has(part.id)) break;
             textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
             queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
             break;
           case 'text-end': {
+            if (finalizedTextIds.has(part.id)) break;
             const full = textStreams.get(part.id) ?? '';
             textStreams.delete(part.id);
             if (full.length > 0) {
               queue.push({ type: 'assistant_text_done', id: part.id, text: full });
+              finalizedTextIds.add(part.id);
             }
             break;
           }

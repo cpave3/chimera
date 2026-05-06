@@ -106,6 +106,54 @@ describe('Agent', () => {
     expect(doneIds).toEqual(['t1']);
   });
 
+  it('suppresses re-emitted text-start/text-delta/text-end for an already-finalized text-id', async () => {
+    // The AI SDK can replay the same text-id across step boundaries when
+    // `response.messages` consolidates multiple emitted parts back into one.
+    // The agent must drop the second cycle so the TUI doesn't visibly stream
+    // a duplicate entry.
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'hello ' },
+            { type: 'text-delta', id: 't1', delta: 'world' },
+            { type: 'text-end', id: 't1' },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'hello ' },
+            { type: 'text-delta', id: 't1', delta: 'world' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const deltas: string[] = [];
+    const dones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'assistant_text_delta') deltas.push(ev.delta);
+      if (ev.type === 'assistant_text_done') dones.push(ev.text);
+    }
+    expect(deltas).toEqual(['hello ', 'world']);
+    expect(dones).toEqual(['hello world']);
+  });
+
   it('interrupt during run yields run_finished with reason interrupted', async () => {
     // A stream that never finishes naturally (long delay).
     const model = new MockLanguageModelV3({
