@@ -9,7 +9,14 @@ export interface ModelConfig {
   providerId: string;
   modelId: string;
   maxSteps: number;
-  maxTokens?: number;
+  /**
+   * Per-step output cap forwarded to the AI SDK's `maxOutputTokens`. When
+   * unset, no cap is sent and the provider applies its server-side default —
+   * which for some endpoints (e.g. synthetic.new) is 2048 tokens, low enough
+   * to truncate long syntheses mid-output. Configure via `models[ref]` in
+   * `~/.chimera/config.json`.
+   */
+  maxOutputTokens?: number;
   temperature?: number;
 }
 

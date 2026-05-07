@@ -1,5 +1,5 @@
 import { ChimeraClient } from '@chimera/client';
-import type { SandboxMode } from '@chimera/core';
+import type { ModelConfig, SandboxMode } from '@chimera/core';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
@@ -35,7 +35,7 @@ export interface RunOptions {
   /** Test hook: bypass provider loading and supply a pre-built factory. */
   factoryOverride?: AgentFactory;
   /** Test hook: override model config when `factoryOverride` is supplied. */
-  modelOverride?: { providerId: string; modelId: string; maxSteps: number };
+  modelOverride?: ModelConfig;
   /** Raw sandbox flags from commander. */
   sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
   /** Default true; commander populates `false` when `--no-subagents` is passed. */
@@ -53,7 +53,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     : null;
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
-  let model: { providerId: string; modelId: string; maxSteps: number };
+  let model: ModelConfig;
   let factory: AgentFactory;
   let cliFactory: CliAgentFactory | undefined;
   const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);

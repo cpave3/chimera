@@ -103,6 +103,43 @@ describe('CliAgentFactory', () => {
     expect(opts.contextWindowIsApproximate).toBe(true);
   });
 
+  it('advertises configured models in the spawn_agent tool description, default first', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      models: {
+        'anthropic/claude-haiku-4-5': {},
+        'anthropic/claude-sonnet-4-5': { contextWindow: 1_000_000 },
+      },
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+
+    const tools = (
+      agent as unknown as {
+        opts: { tools: Record<string, { description: string }> };
+      }
+    ).opts.tools;
+    const description = tools.spawn_agent.description;
+    expect(description).toMatch(/Available models/);
+    expect(description).toMatch(/anthropic\/claude-opus-4-7 \(default\)/);
+    expect(description).toContain('anthropic/claude-haiku-4-5');
+    expect(description).toContain('anthropic/claude-sonnet-4-5');
+  });
+
   it('honors a per-model contextWindow override from config', async () => {
     const factory = new CliAgentFactory({
       providersConfig: {

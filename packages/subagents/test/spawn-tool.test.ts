@@ -20,6 +20,27 @@ function baseCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolConte
   };
 }
 
+describe('buildSpawnAgentTool — model index in description', () => {
+  it('lists availableModels in the tool description with the first marked as default', () => {
+    const ctx = baseCtx({
+      availableModels: ['anthropic/claude-opus-4-7', 'anthropic/claude-haiku-4-5', 'openai/gpt-5'],
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as { description: string };
+    expect(tool.description).toMatch(/Available models/);
+    expect(tool.description).toMatch(/anthropic\/claude-opus-4-7 \(default\)/);
+    expect(tool.description).toContain('anthropic/claude-haiku-4-5');
+    expect(tool.description).toContain('openai/gpt-5');
+  });
+
+  it('omits the models block when availableModels is empty or undefined', () => {
+    const tool = buildSpawnAgentTool(baseCtx()).tool as unknown as { description: string };
+    expect(tool.description).not.toMatch(/Available models/);
+    const toolEmpty = buildSpawnAgentTool(baseCtx({ availableModels: [] }))
+      .tool as unknown as { description: string };
+    expect(toolEmpty.description).not.toMatch(/Available models/);
+  });
+});
+
 describe('buildSpawnAgentTool — depth enforcement', () => {
   it('returns an error result when currentDepth >= maxDepth', async () => {
     const events: AgentEvent[] = [];
@@ -123,6 +144,62 @@ describe('buildSpawnAgentTool — in-process happy path', () => {
       'step_finished',
       'run_finished',
     ]);
+  });
+
+  it('forwards modelOptions[ref].maxOutputTokens onto the child ModelConfig', async () => {
+    let receivedModel: ModelConfig | undefined;
+    const builder: InProcessAgentBuilder = async ({ model }) => {
+      receivedModel = model;
+      return {
+        sessionId: 'cs',
+        send: () =>
+          (async function* (): AsyncGenerator<AgentEvent> {
+            yield { type: 'run_finished', reason: 'stop' };
+          })(),
+        interrupt: () => {},
+        dispose: async () => {},
+      };
+    };
+    const ctx = baseCtx({
+      inProcess: builder,
+      modelOptions: { 'anthropic/claude-haiku-4-5': { maxOutputTokens: 16_384 } },
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: any, c: any) => Promise<any>;
+    };
+    await tool.execute(
+      { prompt: 'go', purpose: 'p', in_process: true },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    expect(receivedModel?.maxOutputTokens).toBe(16_384);
+  });
+
+  it('leaves maxOutputTokens undefined on the child when not configured for that ref', async () => {
+    let receivedModel: ModelConfig | undefined;
+    const builder: InProcessAgentBuilder = async ({ model }) => {
+      receivedModel = model;
+      return {
+        sessionId: 'cs',
+        send: () =>
+          (async function* (): AsyncGenerator<AgentEvent> {
+            yield { type: 'run_finished', reason: 'stop' };
+          })(),
+        interrupt: () => {},
+        dispose: async () => {},
+      };
+    };
+    const ctx = baseCtx({
+      inProcess: builder,
+      modelOptions: { 'other/model': { maxOutputTokens: 9999 } },
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: any, c: any) => Promise<any>;
+    };
+    await tool.execute(
+      { prompt: 'go', purpose: 'p', in_process: true },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    expect(receivedModel?.maxOutputTokens).toBeUndefined();
   });
 
   it('returns reason="timeout" when timeout_ms elapses before run_finished', async () => {

@@ -12,6 +12,8 @@ function makeModel(): ModelConfig {
   return { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 }
 
+let currentAgentRef: Agent | undefined;
+
 function textOnlyModel(text: string): LanguageModel {
   return new MockLanguageModelV3({
     doStream: async () => ({
@@ -104,6 +106,223 @@ describe('Agent', () => {
     }
     expect(deltaIds).toEqual(['t1']);
     expect(doneIds).toEqual(['t1']);
+  });
+
+  it('forwards model.maxOutputTokens to the language model call options', async () => {
+    const mock = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'ok' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 10, maxOutputTokens: 12_345 },
+      languageModel: mock as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    for await (const _ev of agent.run('hi')) {
+      // drain
+    }
+    expect(mock.doStreamCalls.length).toBeGreaterThan(0);
+    expect(mock.doStreamCalls[0].maxOutputTokens).toBe(12_345);
+  });
+
+  it('omits maxOutputTokens from the call when the model config does not set it', async () => {
+    const mock = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'ok' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: mock as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    for await (const _ev of agent.run('hi')) {
+      // drain
+    }
+    expect(mock.doStreamCalls[0].maxOutputTokens).toBeUndefined();
+  });
+
+  it('awaitCallId resolves to distinct CallIds for parallel tool-calls (resolveCallId races)', async () => {
+    const lookups: Array<{
+      aiSdkId: string;
+      sync: string | undefined;
+      async: string | undefined;
+    }> = [];
+    const captureTool = tool({
+      description: 'capture',
+      inputSchema: z.object({ tag: z.string() }),
+      execute: async (input, opts) => {
+        const aiSdkId = (opts as { toolCallId?: string }).toolCallId ?? 'unknown';
+        const agentRef = currentAgentRef;
+        // Sync lookup mirrors the legacy spawn-tool fast-path: a single
+        // microtask yield, then `resolveCallId`. Demonstrates the race —
+        // expected to be `undefined` for at least one of two parallel calls.
+        await Promise.resolve();
+        const sync = agentRef?.resolveCallId(aiSdkId);
+        // Async lookup is the deterministic fix.
+        const asyncResolved = agentRef ? await agentRef.awaitCallId(aiSdkId) : undefined;
+        lookups.push({ aiSdkId, sync, async: asyncResolved });
+        return { tag: (input as { tag: string }).tag };
+      },
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'ai-1',
+              toolName: 'capture',
+              input: JSON.stringify({ tag: 'A' }),
+            },
+            {
+              type: 'tool-call',
+              toolCallId: 'ai-2',
+              toolName: 'capture',
+              input: JSON.stringify({ tag: 'B' }),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 1 },
+      languageModel: model,
+      tools: { capture: captureTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    currentAgentRef = agent;
+    try {
+      for await (const _ev of agent.run('go')) {
+        // drain
+      }
+    } finally {
+      currentAgentRef = undefined;
+    }
+    // Both lookups must succeed and return DISTINCT CallIds.
+    expect(lookups).toHaveLength(2);
+    const a = lookups.find((l) => l.aiSdkId === 'ai-1');
+    const b = lookups.find((l) => l.aiSdkId === 'ai-2');
+    // Async-resolved CallIds are always defined and distinct.
+    expect(a?.async).toBeDefined();
+    expect(b?.async).toBeDefined();
+    expect(a?.async).not.toBe(b?.async);
+  });
+
+  it('does NOT swallow text in step 2 when the provider reuses the step-1 text-id', async () => {
+    // Regression: 54480b0 added a per-run `finalizedTextIds` Set to suppress
+    // intra-stream replay of the same text-id. Some OpenAI-shape providers
+    // (notably synthetic.new + Kimi-K2.5/GLM-5.1) restart text-id numbering
+    // at each step's `doStream`, so step-2 text legitimately uses the same
+    // id as step-1. The dedup must NOT drop that — it's new content.
+    const readTool = tool({
+      description: 'read',
+      inputSchema: z.object({ path: z.string() }),
+      execute: async () => ({ content: 'ok', total_lines: 1, truncated: false }),
+    });
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                { type: 'text-start', id: '0' },
+                { type: 'text-delta', id: '0', delta: 'first step text' },
+                { type: 'text-end', id: '0' },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'read',
+                  input: JSON.stringify({ path: 'x' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: '0' },
+              { type: 'text-delta', id: '0', delta: 'second step synthesis' },
+              { type: 'text-end', id: '0' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+      languageModel: model,
+      tools: { read: readTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const dones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'assistant_text_done') dones.push(ev.text);
+    }
+    expect(dones).toEqual(['first step text', 'second step synthesis']);
   });
 
   it('suppresses re-emitted text-start/text-delta/text-end for an already-finalized text-id', async () => {

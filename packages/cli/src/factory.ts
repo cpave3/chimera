@@ -17,6 +17,7 @@ import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills'
 import { type AgentRegistry, buildSpawnAgentTool } from '@chimera/subagents';
 import { buildTools, type FormatScrollback, LocalExecutor } from '@chimera/tools';
 import type { ToolSet } from 'ai';
+import type { ModelOptions } from './config';
 import type { CliSandboxOptions } from './sandbox-config';
 
 export interface CliAgentFactoryOptions {
@@ -25,10 +26,11 @@ export interface CliAgentFactoryOptions {
   warn?: (msg: string) => void;
   home?: string;
   /**
-   * Per-model overrides keyed by `<providerId>/<modelId>`. Currently only
-   * `contextWindow` is honored.
+   * Per-model overrides keyed by `<providerId>/<modelId>`. Honored fields:
+   * `contextWindow` (token-budget UI) and `maxOutputTokens` (per-step output
+   * cap forwarded to the AI SDK).
    */
-  models?: Record<string, { contextWindow?: number }>;
+  models?: Record<string, ModelOptions>;
   /**
    * Optional skill registry. When present, the factory wires its index into
    * the system prompt and registers activation detection on the Agent.
@@ -100,7 +102,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly subagents: NonNullable<CliAgentFactoryOptions['subagents']>;
   private readonly warn: (msg: string) => void;
   private readonly providersConfig: ProvidersConfig;
-  private readonly modelsConfig: Record<string, { contextWindow?: number }>;
+  private readonly modelsConfig: Record<string, ModelOptions>;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
@@ -262,16 +264,22 @@ export class CliAgentFactory implements AgentFactory {
 
     if (this.subagents.enabled !== false) {
       const invocation = resolveChimeraInvocation();
+      const defaultModelRef =
+        this.subagents.defaultModelRef ?? `${init.model.providerId}/${init.model.modelId}`;
+      const advertisedModels = [
+        defaultModelRef,
+        ...Object.keys(this.modelsConfig).filter((ref) => ref !== defaultModelRef),
+      ];
       const spawn = buildSpawnAgentTool({
         emit: (ev) => agent.pushEvent(ev),
         resolveCallId: (id) => agent.resolveCallId(id),
+        awaitCallId: (id, signal) => agent.awaitCallId(id, signal),
         get parentAbortSignal() {
           return agent.signal;
         },
         parentSessionId: agent.session.id,
         cwd: init.cwd,
-        defaultModelRef:
-          this.subagents.defaultModelRef ?? `${init.model.providerId}/${init.model.modelId}`,
+        defaultModelRef,
         sandboxMode: init.sandboxMode,
         autoApprove: this.autoApprove,
         currentDepth: this.subagents.currentDepth ?? 0,
@@ -280,6 +288,8 @@ export class CliAgentFactory implements AgentFactory {
         chimeraBinArgs: invocation.preArgs,
         parentHasTty: this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
         agents: this.agents,
+        availableModels: advertisedModels,
+        modelOptions: this.modelsConfig,
       });
       tools.spawn_agent = spawn.tool;
       if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;

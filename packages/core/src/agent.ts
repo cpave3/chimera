@@ -91,6 +91,17 @@ export class Agent {
    */
   private callIdByToolCallId = new Map<string, CallId>();
   /**
+   * Resolvers waiting for `toolCallId → CallId` to be registered. The AI SDK
+   * fires `tool-call` events into `fullStream` in the same async tick that it
+   * kicks off `execute()`, and when multiple tool calls land in parallel a
+   * single microtask yield in the tool body isn't enough to guarantee the
+   * agent's for-await consumer has populated `callIdByToolCallId` for *every*
+   * pending call. Tools that need the mapping (notably `spawn_agent`, for
+   * `subagent_spawned`'s `parentCallId`) use `awaitCallId(toolCallId)` to
+   * block until the agent registers it.
+   */
+  private callIdWaiters = new Map<string, Array<(callId: CallId) => void>>();
+  /**
    * Single-slot pending mode switch. Drained at the top of each run() so
    * mid-run requests take effect on the next turn (last-writer-wins).
    */
@@ -428,6 +439,36 @@ export class Agent {
     return this.callIdByToolCallId.get(toolCallId);
   }
 
+  /**
+   * Wait for the agent to register `toolCallId → CallId`. Resolves immediately
+   * if already mapped. Used by tools that fire out-of-band events whose
+   * `parentCallId` must reference the in-flight call — without this, parallel
+   * tool calls race the for-await consumer and one of them gets `undefined`
+   * from `resolveCallId`, leaving the parent row orphaned in the TUI.
+   */
+  awaitCallId(toolCallId: string, signal?: AbortSignal): Promise<CallId> {
+    const existing = this.callIdByToolCallId.get(toolCallId);
+    if (existing) return Promise.resolve(existing);
+    return new Promise<CallId>((resolve, reject) => {
+      const list = this.callIdWaiters.get(toolCallId) ?? [];
+      list.push(resolve);
+      this.callIdWaiters.set(toolCallId, list);
+      if (signal) {
+        const onAbort = () => {
+          const current = this.callIdWaiters.get(toolCallId);
+          if (current) {
+            const idx = current.indexOf(resolve);
+            if (idx >= 0) current.splice(idx, 1);
+            if (current.length === 0) this.callIdWaiters.delete(toolCallId);
+          }
+          reject(new Error('aborted'));
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+  }
+
   private safeFormat(name: string, args: unknown, result?: unknown): ToolDisplay | undefined {
     const fmt = this.toolFormatters[name];
     if (!fmt) return undefined;
@@ -538,11 +579,14 @@ export class Agent {
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
     const textStreams = new Map<string, string>();
-    // Text-ids whose text-end has already fired this run. The AI SDK re-emits
-    // the same text-id (text-start/text-delta*/text-end) across step
-    // boundaries when `response.messages` consolidates the parts; suppress the
-    // re-emission at source so the TUI doesn't visibly stream a duplicate
-    // entry that the consumer-side dedup would later pop.
+    // Text-ids whose text-end has already fired *within the current step*.
+    // The AI SDK occasionally replays a text-start/delta*/end cycle for an
+    // id whose text was already emitted (e.g. when `response.messages`
+    // consolidates the parts); suppress the replay at source so the TUI
+    // doesn't visibly stream a duplicate entry. Cleared at every
+    // `finish-step` because OpenAI-shape providers can — and synthetic.new +
+    // Kimi/GLM do — restart text-id numbering at each `doStream` call, so
+    // step N+1 may legitimately reuse step N's id for genuinely new content.
     const finalizedTextIds = new Set<string>();
     // Map AI SDK tool call id → our CallId, name, target for tool-result correlation.
     const callInfo = new Map<
@@ -572,6 +616,7 @@ export class Agent {
         stopWhen: stepCountIs(this.opts.model.maxSteps),
         abortSignal: this.abortController.signal,
         temperature: this.opts.model.temperature,
+        maxOutputTokens: this.opts.model.maxOutputTokens,
       });
 
       for await (const part of stream.fullStream) {
@@ -614,6 +659,11 @@ export class Agent {
               startedAt: record.startedAt,
             });
             this.callIdByToolCallId.set(part.toolCallId, callId);
+            const waiters = this.callIdWaiters.get(part.toolCallId);
+            if (waiters) {
+              this.callIdWaiters.delete(part.toolCallId);
+              for (const w of waiters) w(callId);
+            }
             queue.push({
               type: 'tool_call_start',
               callId,
@@ -676,6 +726,10 @@ export class Agent {
           }
           case 'finish-step': {
             stepNumber += 1;
+            // Reset text-id dedup state — the next step's `doStream` may reuse
+            // ids from this step (OpenAI-shape providers often restart at id
+            // `0`), and that's genuinely new content, not a replay.
+            finalizedTextIds.clear();
             queue.push({
               type: 'step_finished',
               stepNumber,

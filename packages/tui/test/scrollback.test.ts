@@ -411,6 +411,89 @@ describe('Scrollback', () => {
     expect(child.text).toBe('read: src/x.ts (87 lines)');
   });
 
+  it('routes children of two parallel spawns to their own parents (no cross-talk)', () => {
+    const scrollback = new Scrollback();
+    // Two spawn_agent tool calls fire in the same assistant message
+    // (this is what `/review` does once it's gathered context).
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'pc1',
+      name: 'spawn_agent',
+      args: { prompt: 'A', purpose: 'consistency review' },
+      target: 'host',
+      display: { summary: 'consistency review' },
+    });
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'pc2',
+      name: 'spawn_agent',
+      args: { prompt: 'B', purpose: 'tests/docs review' },
+      target: 'host',
+      display: { summary: 'tests/docs review' },
+    });
+    // Two subagent_spawned events follow, each pointing to its own parent.
+    scrollback.apply({
+      type: 'subagent_spawned',
+      subagentId: 'saA',
+      parentCallId: 'pc1',
+      childSessionId: 'csA',
+      url: '',
+      purpose: 'consistency review',
+    });
+    scrollback.apply({
+      type: 'subagent_spawned',
+      subagentId: 'saB',
+      parentCallId: 'pc2',
+      childSessionId: 'csB',
+      url: '',
+      purpose: 'tests/docs review',
+    });
+    // Each subagent emits a distinct child tool call.
+    scrollback.apply({
+      type: 'subagent_event',
+      subagentId: 'saA',
+      event: {
+        type: 'tool_call_start',
+        callId: 'ca1',
+        name: 'grep',
+        args: { pattern: 'foo' },
+        target: 'host',
+        display: { summary: 'foo' },
+      },
+    });
+    scrollback.apply({
+      type: 'subagent_event',
+      subagentId: 'saB',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cb1',
+        name: 'bash',
+        args: { command: 'npm test' },
+        target: 'host',
+        display: { summary: 'npm test' },
+      },
+    });
+
+    const rows = scrollback.all();
+    const parents = rows.filter((row) => row.kind === 'tool');
+    expect(parents).toHaveLength(2);
+    const [parentA, parentB] = parents as [typeof parents[number], typeof parents[number]];
+    expect(parentA.subagentId).toBe('saA');
+    expect(parentB.subagentId).toBe('saB');
+
+    const subagentRows = rows.filter((row) => row.kind === 'subagent');
+    const childA = subagentRows.find((row) => row.text.includes('grep'));
+    const childB = subagentRows.find((row) => row.text.includes('bash'));
+    expect(childA).toBeDefined();
+    expect(childB).toBeDefined();
+    // The grep child must nest under parent A, not B.
+    expect((childA as { parentEntryId?: string }).parentEntryId).toBe(parentA.id);
+    expect((childB as { parentEntryId?: string }).parentEntryId).toBe(parentB.id);
+    // And the parents must keep their own purpose labels.
+    expect(parentA.subagentPurpose).toBe('consistency review');
+    expect(parentB.subagentPurpose).toBe('tests/docs review');
+  });
+
   it('falls back to a stand-alone row when subagent_spawned has no matching parent', () => {
     const scrollback = new Scrollback();
     scrollback.apply({

@@ -1,3 +1,4 @@
+import type { CallId } from '@chimera/core';
 import { newCallId } from '@chimera/core';
 import { defineTool } from '@chimera/tools';
 import { z } from 'zod';
@@ -67,7 +68,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
     "Returns the subagent's final answer as a string. Use for sub-investigations, " +
     'research, or parallelizable tool work where keeping the parent context clean matters.';
   const agentIndex = ctx.agents?.buildDescriptionIndex() ?? '';
-  const description = agentIndex ? `${baseDescription}\n\n${agentIndex}` : baseDescription;
+  const modelIndex = buildModelIndex(ctx.availableModels);
+  const description = [baseDescription, agentIndex, modelIndex].filter((s) => s).join('\n\n');
 
   return defineTool<SpawnAgentArgs, SubagentResult>({
     description,
@@ -83,14 +85,28 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       const { abortSignal } = opts;
       const aiSdkToolCallId = (opts as { toolCallId?: string }).toolCallId;
       const subagentId = newCallId();
-      // AI SDK invokes `execute` from inside the same transformer tick that
-      // emits the `tool-call` stream event, so the agent's for-await consumer
-      // hasn't yet populated `callIdByToolCallId` for this call. Yield one
-      // microtask so the consumer's tool-call branch runs first; only then is
-      // the resolver guaranteed to find our entry.
-      await Promise.resolve();
-      const parentCallId =
-        (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ?? newCallId();
+      // The AI SDK calls `execute` in the same async tick that emits the
+      // matching `tool-call` event onto `fullStream`. With one tool call a
+      // single microtask yield was enough — but parallel calls (the SDK fires
+      // them via `Promise.all`) race the agent's for-await consumer, and a
+      // microtask hack drops the mapping for at least one. Prefer the
+      // deterministic async resolver: the agent populates
+      // `callIdByToolCallId` and wakes anyone awaiting that toolCallId. If
+      // the host doesn't supply `awaitCallId`, fall back to the legacy
+      // microtask + sync `resolveCallId` (still good enough for serial
+      // calls).
+      let parentCallId: CallId;
+      if (aiSdkToolCallId && ctx.awaitCallId) {
+        try {
+          parentCallId = await ctx.awaitCallId(aiSdkToolCallId, ctx.parentAbortSignal);
+        } catch {
+          parentCallId = newCallId();
+        }
+      } else {
+        await Promise.resolve();
+        parentCallId =
+          (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ?? newCallId();
+      }
       const childCwd = args.cwd ?? ctx.cwd;
 
       // Resolve agent definition (if any). Explicit args override frontmatter.
@@ -151,7 +167,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
             message: 'in_process subagents are not enabled in this runtime',
           });
         }
-        const parsedModel = parseModelRef(modelRef);
+        const parsedModel = parseModelRef(modelRef, ctx.modelOptions);
         const desiredSandboxMode = inheritSandboxMode(ctx.sandboxMode, args);
         try {
           const handle = await spawnInProcessChild({
@@ -303,6 +319,15 @@ function errorResult(opts: { subagentId: string; message: string }): SubagentRes
   };
 }
 
+function buildModelIndex(refs: string[] | undefined): string {
+  if (!refs || refs.length === 0) return '';
+  const lines: string[] = ['Available models (pass via the `model` arg, default first):'];
+  refs.forEach((ref, idx) => {
+    lines.push(idx === 0 ? `- ${ref} (default)` : `- ${ref}`);
+  });
+  return lines.join('\n');
+}
+
 function inheritSandboxMode(
   parent: 'off' | 'bind' | 'overlay' | 'ephemeral',
   args: SpawnAgentArgs,
@@ -313,10 +338,14 @@ function inheritSandboxMode(
   return parent;
 }
 
-function parseModelRef(ref: string): {
+function parseModelRef(
+  ref: string,
+  modelOptions?: Record<string, { maxOutputTokens?: number }>,
+): {
   providerId: string;
   modelId: string;
   maxSteps: number;
+  maxOutputTokens?: number;
 } {
   const slash = ref.indexOf('/');
   if (slash <= 0) {
@@ -326,6 +355,7 @@ function parseModelRef(ref: string): {
     providerId: ref.slice(0, slash),
     modelId: ref.slice(slash + 1),
     maxSteps: 50,
+    maxOutputTokens: modelOptions?.[ref]?.maxOutputTokens,
   };
 }
 

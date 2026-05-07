@@ -94,11 +94,33 @@ export interface SpawnAgentToolContext {
    */
   resolveCallId?: (toolCallId: string) => CallId | undefined;
   /**
+   * Async variant of `resolveCallId`: resolves when the agent registers the
+   * mapping. The spawn tool prefers this over `resolveCallId` so that two
+   * `spawn_agent` calls firing in the same step (parallel `Promise.all`)
+   * each get a deterministic `parentCallId` instead of racing the agent's
+   * for-await consumer. The CLI factory wires this to `agent.awaitCallId`.
+   */
+  awaitCallId?: (toolCallId: string, signal?: AbortSignal) => Promise<CallId>;
+  /**
    * Optional agent-definition registry. When set, the spawn tool resolves
    * its `agent` arg against this registry and surfaces available agents in
    * the tool description so the model can pick a definition by name.
    */
   agents?: AgentRegistry;
+  /**
+   * Model refs (`provider/model`) to advertise in the tool description so
+   * the parent agent knows what it can pass via the `model` arg. The first
+   * entry is rendered as the default. Empty/undefined skips the section.
+   */
+  availableModels?: string[];
+  /**
+   * Per-model options keyed by `<providerId>/<modelId>`. Used by spawned
+   * children so per-model `maxOutputTokens` from `~/.chimera/config.json`
+   * applies to the subagent's run too — without it, the child would fall
+   * back to the provider's server-side default (e.g. synthetic.new caps at
+   * 2048, which truncates long syntheses mid-output).
+   */
+  modelOptions?: Record<string, { maxOutputTokens?: number }>;
 }
 
 export type SpawnEmit = (event: AgentEvent) => void;

@@ -5,6 +5,11 @@ import type { ModelConfig } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { ProvidersConfig, ProviderSpec } from '@chimera/providers';
 
+export interface ModelOptions {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 export interface ChimeraConfig {
   defaultModel?: string;
   providers?: Record<string, ProviderSpec>;
@@ -22,10 +27,14 @@ export interface ChimeraConfig {
     claudeCompat?: boolean;
   };
   /**
-   * Per-model overrides. Keyed by `<providerId>/<modelId>`. Currently only
-   * `contextWindow` is honored — see `resolveContextWindow`.
+   * Per-model overrides. Keyed by `<providerId>/<modelId>`.
+   *
+   * - `contextWindow` — honored by `resolveContextWindow`.
+   * - `maxOutputTokens` — forwarded to the AI SDK's `maxOutputTokens` so the
+   *   model is not capped by the provider's small default (synthetic.new
+   *   defaults to 2048, which truncates long final syntheses).
    */
-  models?: Record<string, { contextWindow?: number }>;
+  models?: Record<string, ModelOptions>;
   modes?: {
     enabled?: boolean;
     claudeCompat?: boolean;
@@ -80,9 +89,15 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
       `Model references provider '${providerId}' but no such provider is configured in ~/.chimera/config.json.`,
     );
   }
+  const modelOpts = opts.config.models?.[ref];
   return {
     ref,
-    model: { providerId, modelId, maxSteps: opts.maxSteps ?? 100 },
+    model: {
+      providerId,
+      modelId,
+      maxSteps: opts.maxSteps ?? 100,
+      maxOutputTokens: modelOpts?.maxOutputTokens,
+    },
     providersConfig: { providers, defaultModel: opts.config.defaultModel },
   };
 }

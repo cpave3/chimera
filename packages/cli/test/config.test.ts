@@ -38,4 +38,25 @@ describe('resolveModel', () => {
     });
     expect(r.model.maxSteps).toBe(100);
   });
+
+  it('forwards models[ref].maxOutputTokens to ModelConfig', () => {
+    const r = resolveModel({
+      cliModel: 'synthetic/k',
+      config: {
+        providers: { synthetic: { shape: 'openai', baseUrl: 'x', apiKey: 'env:S' } },
+        models: { 'synthetic/k': { maxOutputTokens: 32_768 } },
+      },
+    });
+    expect(r.model.maxOutputTokens).toBe(32_768);
+  });
+
+  it('leaves maxOutputTokens undefined when not configured', () => {
+    const r = resolveModel({
+      cliModel: 'synthetic/k',
+      config: {
+        providers: { synthetic: { shape: 'openai', baseUrl: 'x', apiKey: 'env:S' } },
+      },
+    });
+    expect(r.model.maxOutputTokens).toBeUndefined();
+  });
 });

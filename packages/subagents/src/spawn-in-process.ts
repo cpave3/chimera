@@ -12,7 +12,12 @@ export async function spawnInProcessChild(args: {
   builder: InProcessAgentBuilder;
   cwd: string;
   modelRef: string;
-  parsedModel: { providerId: string; modelId: string; maxSteps: number };
+  parsedModel: {
+    providerId: string;
+    modelId: string;
+    maxSteps: number;
+    maxOutputTokens?: number;
+  };
   sandboxMode: 'off' | 'bind' | 'overlay' | 'ephemeral';
   parentAbortSignal: AbortSignal;
   systemPrompt?: string;
