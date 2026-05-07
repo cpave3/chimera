@@ -325,6 +325,82 @@ describe('Agent', () => {
     expect(dones).toEqual(['first step text', 'second step synthesis']);
   });
 
+  it('does NOT swallow a second text block in the same step that reuses an already-finalized text-id with new content', async () => {
+    // Regression: synthetic.new providers (Kimi/GLM) sometimes emit a final
+    // summary text within the same step as initial reasoning text — both
+    // sharing the same text-id, with a tool call between them. The agent
+    // must emit the second block as new content, not suppress it as a
+    // replay. Pre-fix, `finalizedTextIds` retained the id past the
+    // tool-call boundary and only cleared on `finish-step`, so the final
+    // text was silently dropped during streaming (showing up only in the
+    // persisted session log on resume).
+    const noopTool = tool({
+      description: 'noop',
+      inputSchema: z.object({}),
+      execute: async () => ({ ok: true }),
+    });
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: "I'll check..." },
+                { type: 'text-end', id: 't1' },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'noop',
+                  input: JSON.stringify({}),
+                },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: 'Done!' },
+                { type: 'text-end', id: 't1' },
+                {
+                  type: 'finish',
+                  finishReason: 'stop',
+                  usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: { noop: noopTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const dones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'assistant_text_done') dones.push(ev.text);
+    }
+    expect(dones).toEqual(["I'll check...", 'Done!']);
+  });
+
   it('suppresses re-emitted text-start/text-delta/text-end for an already-finalized text-id', async () => {
     // The AI SDK can replay the same text-id across step boundaries when
     // `response.messages` consolidates multiple emitted parts back into one.

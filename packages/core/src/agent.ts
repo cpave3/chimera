@@ -579,15 +579,22 @@ export class Agent {
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
     const textStreams = new Map<string, string>();
-    // Text-ids whose text-end has already fired *within the current step*.
-    // The AI SDK occasionally replays a text-start/delta*/end cycle for an
-    // id whose text was already emitted (e.g. when `response.messages`
-    // consolidates the parts); suppress the replay at source so the TUI
-    // doesn't visibly stream a duplicate entry. Cleared at every
-    // `finish-step` because OpenAI-shape providers can — and synthetic.new +
-    // Kimi/GLM do — restart text-id numbering at each `doStream` call, so
-    // step N+1 may legitimately reuse step N's id for genuinely new content.
-    const finalizedTextIds = new Set<string>();
+    // Most recent fully-emitted text content per text-id. Used to detect
+    // replays: when a text-start arrives for an id whose content was already
+    // emitted, we enter "shadow" mode and compare the new content against the
+    // stored content. Identical → silently suppressed. Different → emitted
+    // under a synthetic id so the TUI's id-aware dedup doesn't pop it.
+    //
+    // This handles two distinct cases that both surface as "missing final
+    // text" in the TUI:
+    //   - Cross-step id reuse (synthetic.new + Kimi/GLM restart ids at each
+    //     `doStream`, so step N+1 legitimately reuses step N's id).
+    //   - Same-step text → tool-call → text where the model emits both text
+    //     blocks under the same id.
+    const emittedTextById = new Map<string, string>();
+    type ShadowState = { buf: string; syntheticId?: string };
+    const shadows = new Map<string, ShadowState>();
+    let syntheticTextCounter = 0;
     // Map AI SDK tool call id → our CallId, name, target for tool-result correlation.
     const callInfo = new Map<
       string,
@@ -622,21 +629,78 @@ export class Agent {
       for await (const part of stream.fullStream) {
         switch (part.type) {
           case 'text-start':
-            if (finalizedTextIds.has(part.id)) break;
-            textStreams.set(part.id, '');
+            if (emittedTextById.has(part.id)) {
+              shadows.set(part.id, { buf: '' });
+            } else {
+              textStreams.set(part.id, '');
+            }
             break;
-          case 'text-delta':
-            if (finalizedTextIds.has(part.id)) break;
+          case 'text-delta': {
+            const shadow = shadows.get(part.id);
+            if (shadow) {
+              shadow.buf += part.text;
+              if (shadow.syntheticId) {
+                queue.push({
+                  type: 'assistant_text_delta',
+                  id: shadow.syntheticId,
+                  delta: part.text,
+                });
+              } else {
+                const stored = emittedTextById.get(part.id) ?? '';
+                if (!stored.startsWith(shadow.buf)) {
+                  syntheticTextCounter += 1;
+                  shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                  queue.push({
+                    type: 'assistant_text_delta',
+                    id: shadow.syntheticId,
+                    delta: shadow.buf,
+                  });
+                }
+              }
+              break;
+            }
             textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
             queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
             break;
+          }
           case 'text-end': {
-            if (finalizedTextIds.has(part.id)) break;
+            const shadow = shadows.get(part.id);
+            if (shadow) {
+              shadows.delete(part.id);
+              if (shadow.syntheticId) {
+                queue.push({
+                  type: 'assistant_text_done',
+                  id: shadow.syntheticId,
+                  text: shadow.buf,
+                });
+                emittedTextById.set(part.id, shadow.buf);
+              } else if (
+                shadow.buf.length > 0 &&
+                shadow.buf !== emittedTextById.get(part.id)
+              ) {
+                // Buf is a strict prefix of stored content — model emitted a
+                // shorter "new" text under the same id. Surface it as new.
+                syntheticTextCounter += 1;
+                const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                queue.push({
+                  type: 'assistant_text_delta',
+                  id: syntheticId,
+                  delta: shadow.buf,
+                });
+                queue.push({
+                  type: 'assistant_text_done',
+                  id: syntheticId,
+                  text: shadow.buf,
+                });
+                emittedTextById.set(part.id, shadow.buf);
+              }
+              break;
+            }
             const full = textStreams.get(part.id) ?? '';
             textStreams.delete(part.id);
             if (full.length > 0) {
               queue.push({ type: 'assistant_text_done', id: part.id, text: full });
-              finalizedTextIds.add(part.id);
+              emittedTextById.set(part.id, full);
             }
             break;
           }
@@ -726,10 +790,6 @@ export class Agent {
           }
           case 'finish-step': {
             stepNumber += 1;
-            // Reset text-id dedup state — the next step's `doStream` may reuse
-            // ids from this step (OpenAI-shape providers often restart at id
-            // `0`), and that's genuinely new content, not a replay.
-            finalizedTextIds.clear();
             queue.push({
               type: 'step_finished',
               stepNumber,
