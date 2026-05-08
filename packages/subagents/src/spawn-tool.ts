@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { parseToolsCsv } from './agents/frontmatter';
 import {
   driveChild,
-  interruptChild,
   spawnChimeraChild,
   teardownChild,
   type ChildHandle,
@@ -82,6 +81,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       return { summary: `${head} (${tag})` };
     },
     execute: async (args, opts): Promise<SubagentResult> => {
+      const validated = ARGS_SCHEMA.parse(args);
       const { abortSignal } = opts;
       const aiSdkToolCallId = (opts as { toolCallId?: string }).toolCallId;
       const subagentId = newCallId();
@@ -107,20 +107,20 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         parentCallId =
           (aiSdkToolCallId ? ctx.resolveCallId?.(aiSdkToolCallId) : undefined) ?? newCallId();
       }
-      const childCwd = args.cwd ?? ctx.cwd;
+      const childCwd = validated.cwd ?? ctx.cwd;
 
       // Resolve agent definition (if any). Explicit args override frontmatter.
       let agentSystemPrompt: string | undefined;
       let agentTools: string[] | undefined;
       let agentModelRef: string | undefined;
-      if (args.agent) {
+      if (validated.agent) {
         if (!ctx.agents) {
           return errorResult({
             subagentId,
-            message: `agent "${args.agent}" requested but no agent registry is configured`,
+            message: `agent "${validated.agent}" requested but no agent registry is configured`,
           });
         }
-        const def = ctx.agents.find(args.agent);
+        const def = ctx.agents.find(validated.agent);
         if (!def) {
           const available = ctx.agents
             .all()
@@ -129,8 +129,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           return errorResult({
             subagentId,
             message: available
-              ? `unknown agent "${args.agent}"; available: ${available}`
-              : `unknown agent "${args.agent}" (no agent definitions discovered)`,
+              ? `unknown agent "${validated.agent}"; available: ${available}`
+              : `unknown agent "${validated.agent}" (no agent definitions discovered)`,
           });
         }
         agentSystemPrompt = def.body;
@@ -141,12 +141,12 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         }
       }
 
-      const effectiveSystemPrompt = args.system_prompt ?? agentSystemPrompt;
+      const effectiveSystemPrompt = validated.system_prompt ?? agentSystemPrompt;
       const effectiveTools =
-        args.tools ?? (agentTools && agentTools.length > 0 ? agentTools : undefined);
-      const modelRef = args.model ?? agentModelRef ?? ctx.defaultModelRef;
-      const inProcess = args.in_process === true;
-      const timeoutMs = args.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+        validated.tools ?? (agentTools && agentTools.length > 0 ? agentTools : undefined);
+      const modelRef = validated.model ?? agentModelRef ?? ctx.defaultModelRef;
+      const inProcess = validated.in_process === true;
+      const timeoutMs = validated.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
       // Effective signal: combine the AI SDK's per-call abortSignal with the
       // parent agent's own signal so either can interrupt the child.
@@ -168,7 +168,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           });
         }
         const parsedModel = parseModelRef(modelRef, ctx.modelOptions);
-        const desiredSandboxMode = inheritSandboxMode(ctx.sandboxMode, args);
+        const desiredSandboxMode = inheritSandboxMode(ctx.sandboxMode, validated);
         try {
           const handle = await spawnInProcessChild({
             builder: ctx.inProcess,
@@ -189,12 +189,12 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
             parentCallId,
             childSessionId: handle.childSessionId,
             url: '',
-            purpose: args.purpose,
+            purpose: validated.purpose,
           });
 
           const driven = await driveInProcess(
             handle,
-            args.prompt,
+            validated.prompt,
             (ev) => ctx.emit({ type: 'subagent_event', subagentId, event: ev }),
             { signal: effectiveSignal, timeoutMs },
           );
@@ -240,8 +240,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           parentSessionId: ctx.parentSessionId,
           modelRef,
           autoApprove: ctx.autoApprove,
-          sandbox: args.sandbox === undefined ? ctx.sandboxMode !== 'off' : args.sandbox,
-          sandboxMode: args.sandbox_mode,
+          sandbox: validated.sandbox === undefined ? ctx.sandboxMode !== 'off' : validated.sandbox,
+          sandboxMode: validated.sandbox_mode,
           parentHasTty: ctx.parentHasTty,
           currentSubagentDepth: ctx.currentDepth + 1,
           maxSubagentDepth: ctx.maxDepth,
@@ -254,31 +254,21 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         return errorResult({ subagentId, message: msg });
       }
 
-      const onAbort = () => {
-        if (handle) void interruptChild(handle).catch(() => {});
-      };
-      effectiveSignal.addEventListener('abort', onAbort, { once: true });
-
       ctx.emit({
         type: 'subagent_spawned',
         subagentId,
         parentCallId,
         childSessionId: handle.childSessionId,
         url: handle.url,
-        purpose: args.purpose,
+        purpose: validated.purpose,
       });
 
-      let driven;
-      try {
-        driven = await driveChild(
-          handle,
-          args.prompt,
-          (ev) => ctx.emit({ type: 'subagent_event', subagentId, event: ev }),
-          { signal: effectiveSignal, timeoutMs },
-        );
-      } finally {
-        effectiveSignal.removeEventListener('abort', onAbort);
-      }
+      const driven = await driveChild(
+        handle,
+        validated.prompt,
+        (ev) => ctx.emit({ type: 'subagent_event', subagentId, event: ev }),
+        { signal: effectiveSignal, timeoutMs },
+      );
 
       await teardownChild(handle);
 

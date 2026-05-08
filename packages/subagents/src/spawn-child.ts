@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
-import type { AgentEvent, SessionId } from '@chimera/core';
+import type { SessionId } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import { HandshakeError, readHandshakeLine } from './handshake';
 
@@ -11,6 +11,7 @@ const HANDSHAKE_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3_000;
 const SIGTERM_GRACE_MS = 2_000;
 const INTERRUPT_GRACE_MS = 5_000;
+const STDERR_BUF_MAX = 4096;
 
 export interface SpawnChildArgs {
   /** The executable to spawn (e.g. `/usr/local/bin/chimera` or `node`). */
@@ -112,12 +113,16 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
     throw new Error('child process missing stdio pipes');
   }
 
-  // Buffer stderr for diagnostic on early failure.
-  let stderrBuf = '';
+  // Buffer stderr for diagnostic on early failure. Accumulate chunks in a
+  // bounded array to avoid O(n²) string concatenation on chatty children.
+  const stderrChunks: string[] = [];
+  let stderrByteTotal = 0;
   proc.stderr.on('data', (d: Buffer) => {
-    stderrBuf += d.toString('utf8');
-    if (stderrBuf.length > 4096) {
-      stderrBuf = stderrBuf.slice(-4096);
+    const chunk = d.toString('utf8');
+    stderrChunks.push(chunk);
+    stderrByteTotal += chunk.length;
+    while (stderrByteTotal > STDERR_BUF_MAX && stderrChunks.length > 0) {
+      stderrByteTotal -= stderrChunks.shift()!.length;
     }
   });
 
@@ -151,7 +156,8 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
     const exitCtx = observed
       ? ` (child exit code=${observed.code ?? 'null'} signal=${observed.signal ?? 'null'})`
       : '';
-    const stderrCtx = stderrBuf ? ` stderr: ${stderrBuf.slice(0, 500).trim()}` : '';
+    const stderrJoined = stderrChunks.join('');
+    const stderrCtx = stderrJoined ? ` stderr: ${stderrJoined.slice(-500).trim()}` : '';
     if (err instanceof HandshakeError) {
       throw new HandshakeError(`${err.message}${exitCtx}.${stderrCtx}`, err.diagnostic);
     }
@@ -198,16 +204,26 @@ async function waitForHealth(client: ChimeraClient, timeoutMs: number): Promise<
   return false;
 }
 
-/**
- * Drive a child's run from start to finish, forwarding events. Returns the
- * collected result.
- */
-export interface DriveChildResult {
-  finalText: string;
-  reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout';
-  errorMessage?: string;
-  steps: number;
-  toolCallsCount: number;
+import type { AgentEvent } from '@chimera/core';
+import { driveSubagent, type DriveResult, type SubagentTransport } from './subagent-driver';
+
+export type DriveChildResult = DriveResult;
+
+class ChildTransport implements SubagentTransport {
+  constructor(private handle: ChildHandle) {}
+
+  send(prompt: string, opts: { signal: AbortSignal }) {
+    // ChimeraClient.send is loosely typed; cast to AgentEvent for downstream.
+    return (async function* (client, sessionId, signal) {
+      for await (const ev of client.send(sessionId, prompt, { signal })) {
+        yield ev as AgentEvent;
+      }
+    })(this.handle.client, this.handle.childSessionId, opts.signal);
+  }
+
+  interrupt() {
+    return interruptChild(this.handle);
+  }
 }
 
 export async function driveChild(
@@ -216,70 +232,7 @@ export async function driveChild(
   onChildEvent: (event: AgentEvent) => void,
   opts: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<DriveChildResult> {
-  let finalText = '';
-  let reason: DriveChildResult['reason'] = 'stop';
-  let errorMessage: string | undefined;
-  let steps = 0;
-  let toolCallsCount = 0;
-  let timedOut = false;
-
-  const sendController = new AbortController();
-  const onParentAbort = () => sendController.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) sendController.abort();
-    else opts.signal.addEventListener('abort', onParentAbort, { once: true });
-  }
-
-  let timeoutHandle: NodeJS.Timeout | undefined;
-  if (opts.timeoutMs && opts.timeoutMs > 0) {
-    timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      sendController.abort();
-    }, opts.timeoutMs);
-  }
-
-  try {
-    for await (const ev of handle.client.send(handle.childSessionId, prompt, {
-      signal: sendController.signal,
-    })) {
-      // Re-emit verbatim through caller. (Caller wraps as subagent_event.)
-      onChildEvent(ev as AgentEvent);
-
-      if (ev.type === 'assistant_text_done') {
-        finalText = ev.text;
-      } else if (ev.type === 'tool_call_start') {
-        toolCallsCount += 1;
-      } else if (ev.type === 'step_finished') {
-        steps += 1;
-      } else if (ev.type === 'run_finished') {
-        if (ev.reason === 'stop') reason = 'stop';
-        else if (ev.reason === 'max_steps') reason = 'max_steps';
-        else if (ev.reason === 'interrupted') reason = 'interrupted';
-        else {
-          reason = 'error';
-          errorMessage = ev.error;
-        }
-      }
-    }
-  } catch (err) {
-    if (timedOut) {
-      reason = 'timeout';
-    } else if (sendController.signal.aborted) {
-      reason = 'interrupted';
-    } else {
-      reason = 'error';
-      errorMessage = err instanceof Error ? err.message : String(err);
-    }
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-    if (opts.signal) opts.signal.removeEventListener('abort', onParentAbort);
-  }
-
-  // Override with `timeout` when the per-call timer fired, even if the child
-  // surfaced its own clean run_finished afterwards.
-  if (timedOut) reason = 'timeout';
-
-  return { finalText, reason, errorMessage, steps, toolCallsCount };
+  return driveSubagent(new ChildTransport(handle), prompt, onChildEvent, opts);
 }
 
 /**
