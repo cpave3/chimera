@@ -62,7 +62,7 @@ export function buildGrepTool(ctx: ToolContext) {
       }
       const searchPath = args.path && args.path.length > 0 ? args.path : '.';
       const cmd = `rg ${flags.join(' ')} -e ${shellQuote(args.pattern)} -- ${shellQuote(searchPath)}`;
-      const result = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal });
+      const result = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal, toolName: 'grep' });
 
       if (result.exitCode === 127) {
         throw new Error(

@@ -7,6 +7,11 @@ export interface ExecOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   stdin?: string;
+  /**
+   * Tool name that triggered this exec call, forwarded to the permission gate
+   * so rule matching works correctly (e.g. `glob`, `grep`, `bash`).
+   */
+  toolName?: string;
 }
 
 export interface ExecResult {

@@ -27,7 +27,7 @@ export function buildGlobTool(ctx: ToolContext) {
     execute: async (args, { abortSignal }) => {
       const searchPath = args.path && args.path.length > 0 ? args.path : '.';
       const cmd = `rg --files --hidden --glob ${shellQuote(args.pattern)} -- ${shellQuote(searchPath)}`;
-      const result = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal });
+      const result = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal, toolName: 'glob' });
 
       if (result.exitCode === 127) {
         throw new Error(
