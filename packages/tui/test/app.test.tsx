@@ -357,6 +357,340 @@ describe('App', () => {
     childResolveSpy.mockRestore();
     unmount();
   });
+  it('preserves all subagent child tool rows when the parent spawn_agent commits to <Static>', async () => {
+    // When the parent spawn_agent's tool_call_result lands, the parent entry
+    // transitions from inFlight (re-rendered every tick) into <Static>
+    // (rendered once and never re-emitted). The children list MUST be
+    // captured at commit time and rendered alongside the parent — otherwise
+    // the user sees the parent line with only the final assistant_text_done
+    // child, with all the subagent's tool rows missing.
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    pushEvent!({
+      type: 'tool_call_start',
+      callId: 'pc1',
+      name: 'spawn_agent',
+      args: { prompt: 'investigate', purpose: 'investigate' },
+      target: 'host',
+      display: { summary: 'investigate' },
+    });
+    pushEvent!({
+      type: 'subagent_spawned',
+      subagentId: 'sa1',
+      parentCallId: 'pc1',
+      childSessionId: 'cs',
+      url: '',
+      purpose: 'investigate',
+    });
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cc1',
+        name: 'read',
+        args: { path: 'a.ts' },
+        target: 'sandbox',
+        display: { summary: 'a.ts' },
+      },
+    });
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_result',
+        callId: 'cc1',
+        result: { content: 'x', total_lines: 1, truncated: false },
+        durationMs: 1,
+        display: { summary: 'a.ts (1 lines)' },
+      },
+    });
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cc2',
+        name: 'grep',
+        args: { pattern: 'foo' },
+        target: 'sandbox',
+        display: { summary: 'pattern foo' },
+      },
+    });
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_result',
+        callId: 'cc2',
+        result: { matches: [] },
+        durationMs: 1,
+        display: { summary: '0 matches' },
+      },
+    });
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: { type: 'assistant_text_done', text: 'final summary text' },
+    });
+    pushEvent!({
+      type: 'subagent_finished',
+      subagentId: 'sa1',
+      parentCallId: 'pc1',
+      result: 'final summary text',
+      reason: 'stop',
+    });
+    // Parent's tool_call_result — this transitions the parent into <Static>.
+    pushEvent!({
+      type: 'tool_call_result',
+      callId: 'pc1',
+      result: { result: 'final summary text', reason: 'stop' },
+      durationMs: 5,
+      display: { summary: 'investigate (done)' },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const frame = lastFrame()!;
+    // Parent badge + summary always shows.
+    expect(frame).toContain('spawn_agent');
+    expect(frame).toContain('(done)');
+    // The final assistant text shows.
+    expect(frame).toContain('final summary text');
+    // BUG hypothesis: child tool rows should still be visible after commit.
+    expect(frame).toMatch(/read:.*a\.ts/);
+    expect(frame).toMatch(/grep:.*0 matches/);
+    unmount();
+  });
+
+  it('preserves children of two parallel spawn_agents when one commits before the other has finished', async () => {
+    // Reproduces the reported bug: with multiple parallel spawn_agent calls
+    // (e.g. /review fans out to several reviewers), one subagent finishes
+    // first and its parent commits to <Static>, while the other subagent is
+    // still running and emitting child events. Those late-arriving events
+    // must still nest under the slower parent, and the slower parent must
+    // commit with all of them — none should be silently dropped.
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    // Both spawn_agents fire in the same assistant message.
+    pushEvent!({
+      type: 'tool_call_start',
+      callId: 'pcA',
+      name: 'spawn_agent',
+      args: { purpose: 'reviewA' },
+      target: 'host',
+      display: { summary: 'reviewA' },
+    });
+    pushEvent!({
+      type: 'tool_call_start',
+      callId: 'pcB',
+      name: 'spawn_agent',
+      args: { purpose: 'reviewB' },
+      target: 'host',
+      display: { summary: 'reviewB' },
+    });
+    pushEvent!({
+      type: 'subagent_spawned',
+      subagentId: 'saA',
+      parentCallId: 'pcA',
+      childSessionId: 'csA',
+      url: '',
+      purpose: 'reviewA',
+    });
+    pushEvent!({
+      type: 'subagent_spawned',
+      subagentId: 'saB',
+      parentCallId: 'pcB',
+      childSessionId: 'csB',
+      url: '',
+      purpose: 'reviewB',
+    });
+    // Both subagents emit some child tool calls (interleaved).
+    for (const sub of ['saA', 'saB']) {
+      for (let i = 0; i < 3; i++) {
+        pushEvent!({
+          type: 'subagent_event',
+          subagentId: sub,
+          event: {
+            type: 'tool_call_start',
+            callId: `${sub}-cc${i}`,
+            name: 'read',
+            args: { path: `${sub}/${i}.ts` },
+            target: 'sandbox',
+            display: { summary: `${sub}/${i}.ts` },
+          },
+        });
+        pushEvent!({
+          type: 'subagent_event',
+          subagentId: sub,
+          event: {
+            type: 'tool_call_result',
+            callId: `${sub}-cc${i}`,
+            result: { content: 'x', total_lines: 1, truncated: false },
+            durationMs: 1,
+            display: { summary: `${sub}/${i}.ts (read)` },
+          },
+        });
+      }
+    }
+    // A finishes first.
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'saA',
+      event: { type: 'assistant_text_done', text: 'A summary' },
+    });
+    pushEvent!({
+      type: 'subagent_finished',
+      subagentId: 'saA',
+      parentCallId: 'pcA',
+      result: 'A summary',
+      reason: 'stop',
+    });
+    pushEvent!({
+      type: 'tool_call_result',
+      callId: 'pcA',
+      result: { result: 'A summary', reason: 'stop' },
+      durationMs: 5,
+      display: { summary: 'reviewA (done)' },
+    });
+    // B emits MORE child tool calls AFTER A's parent has committed.
+    for (let i = 3; i < 6; i++) {
+      pushEvent!({
+        type: 'subagent_event',
+        subagentId: 'saB',
+        event: {
+          type: 'tool_call_start',
+          callId: `saB-cc${i}`,
+          name: 'grep',
+          args: { pattern: `late${i}` },
+          target: 'sandbox',
+          display: { summary: `late${i}` },
+        },
+      });
+      pushEvent!({
+        type: 'subagent_event',
+        subagentId: 'saB',
+        event: {
+          type: 'tool_call_result',
+          callId: `saB-cc${i}`,
+          result: { matches: [] },
+          durationMs: 1,
+          display: { summary: `late${i} done` },
+        },
+      });
+    }
+    pushEvent!({
+      type: 'subagent_event',
+      subagentId: 'saB',
+      event: { type: 'assistant_text_done', text: 'B summary' },
+    });
+    pushEvent!({
+      type: 'subagent_finished',
+      subagentId: 'saB',
+      parentCallId: 'pcB',
+      result: 'B summary',
+      reason: 'stop',
+    });
+    pushEvent!({
+      type: 'tool_call_result',
+      callId: 'pcB',
+      result: { result: 'B summary', reason: 'stop' },
+      durationMs: 5,
+      display: { summary: 'reviewB (done)' },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const frame = lastFrame()!;
+    // A's children should all be present (they were all in entries when A committed).
+    expect(frame).toMatch(/saA\/0\.ts/);
+    expect(frame).toMatch(/saA\/1\.ts/);
+    expect(frame).toMatch(/saA\/2\.ts/);
+    expect(frame).toContain('A summary');
+    // B's children should all be present too.
+    expect(frame).toMatch(/saB\/0\.ts/);
+    expect(frame).toMatch(/saB\/1\.ts/);
+    expect(frame).toMatch(/saB\/2\.ts/);
+    expect(frame).toContain('late3');
+    expect(frame).toContain('late4');
+    expect(frame).toContain('late5');
+    expect(frame).toContain('B summary');
+    unmount();
+  });
+
+  it('submits initialPrompt automatically on mount', async () => {
+    const sends: string[] = [];
+    const client = stubClient({
+      send: async function* (id: string, text: string) {
+        void id;
+        sends.push(text);
+        // Stay pending so running remains true for the assertion window.
+        await new Promise(() => undefined);
+      } as unknown as ChimeraClient['send'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App
+        client={client}
+        sessionId="01ABCDEFGH"
+        modelRef="m/m"
+        cwd="/tmp"
+        initialPrompt="bootstrap task"
+      />,
+    );
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sends).toEqual(['bootstrap task']);
+    // Frame shows spinner because the run is pending with no events yet.
+    expect(lastFrame()).toContain('waiting');
+    unmount();
+  });
 });
 
 afterEach(() => {

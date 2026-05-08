@@ -46,6 +46,12 @@ describe('chimera CLI smoke', () => {
     expect(helpResult.stdout).toMatch(/--resume \[id\]/);
   });
 
+  it('--help advertises --prompt on the default command', () => {
+    const helpResult = spawnSync('node', [BIN, '--help'], { encoding: 'utf8' });
+    expect(helpResult.status).toBe(0);
+    expect(helpResult.stdout).toMatch(/--prompt/);
+  });
+
   it('continue with no sessions in cwd exits non-zero', () => {
     const isolatedHome = '/tmp/chimera-continue-empty-' + Date.now();
     const continueResult = spawnSync('node', [BIN, 'continue'], {

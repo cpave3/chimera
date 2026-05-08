@@ -377,6 +377,7 @@ export function buildProgram(): Command {
           .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
           .option('--auto-approve <level>', 'none|sandbox|host|all')
           .option('--session <id>', 'Resume a persisted session')
+          .option('--prompt <text>', 'Send an initial message on session start')
           .option(
             '--resume [id]',
             'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
@@ -443,6 +444,7 @@ export function buildProgram(): Command {
       maxSteps: opts.maxSteps,
       autoApprove: opts.autoApprove,
       session,
+      initialPrompt: opts.prompt,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
       modes: opts.modes,

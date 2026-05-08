@@ -41,6 +41,12 @@ export interface MountOptions {
    * events so they don't depend on this map.
    */
   formatters?: Record<string, Formatter>;
+  /**
+   * Initial message to submit when the TUI mounts (e.g. from `--prompt <text>`).
+   * Goes through the same handling as if the user typed it and pressed Enter,
+   * so slash commands are respected.
+   */
+  initialPrompt?: string;
 }
 
 export interface TuiHandle {
@@ -144,6 +150,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         overlay={opts.overlay}
         reloadSystemPrompt={opts.reloadSystemPrompt}
         formatters={opts.formatters}
+        initialPrompt={opts.initialPrompt}
       />
     </ThemeProvider>,
     {

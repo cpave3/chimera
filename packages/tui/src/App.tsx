@@ -94,6 +94,11 @@ export interface AppProps {
    * mouse as inactive (the inline TUI does not enable mouse tracking).
    */
   openInEditor?: (args: { initialText: string }) => Promise<OpenInEditorResult>;
+  /**
+   * Initial message to submit when the TUI mounts (e.g. from `--prompt <text>`).
+   * Goes through the same handling as if the user typed it and pressed Enter.
+   */
+  initialPrompt?: string;
 }
 
 interface PendingPermission {
@@ -366,9 +371,41 @@ export function App(props: AppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSession.client, activeSession.sessionId]);
 
+  // Auto-submit the initial prompt once on mount, if provided.
+  const initialPromptSentRef = useRef(false);
+  useEffect(() => {
+    if (props.initialPrompt && !initialPromptSentRef.current) {
+      initialPromptSentRef.current = true;
+      void handleSubmit(props.initialPrompt);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function apply(ev: AgentEvent | { type: 'permission_timeout'; requestId: string }): void {
+    if (process.env.CHIMERA_DEBUG_SUBAGENTS) {
+      const compact: Record<string, unknown> = { type: ev.type };
+      if ('callId' in ev) compact.callId = ev.callId;
+      if ('subagentId' in ev) compact.subagentId = ev.subagentId;
+      if ('parentCallId' in ev) compact.parentCallId = ev.parentCallId;
+      if (ev.type === 'subagent_event') {
+        compact.inner = (ev as { event: { type: string } }).event.type;
+        const inner = (ev as { event: Record<string, unknown> }).event;
+        if ('callId' in inner) compact.innerCallId = inner.callId;
+        if ('name' in inner) compact.innerName = inner.name;
+      }
+      if (ev.type === 'tool_call_start') compact.name = (ev as { name: string }).name;
+      process.stderr.write(`[chimera-tui-apply] ${JSON.stringify(compact)}\n`);
+    }
     scrollback.apply(ev as AgentEvent);
     const all = scrollback.all();
+    if (process.env.CHIMERA_DEBUG_SUBAGENTS && ev.type === 'tool_call_result') {
+      const childCount = all.filter(
+        (e) => e.kind === 'subagent' && e.parentEntryId !== undefined,
+      ).length;
+      process.stderr.write(
+        `[chimera-tui-apply]   after tool_call_result: total entries=${all.length}, subagent-children=${childCount}\n`,
+      );
+    }
     setEntries(all);
     if (ev.type === 'assistant_text_delta') {
       setStreaming(true);

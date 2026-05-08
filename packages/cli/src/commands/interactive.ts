@@ -31,6 +31,8 @@ export interface InteractiveOptions {
   sandboxFlags?: Omit<ParseSandboxFlagsInput, 'cliVersion'>;
   subagents?: boolean;
   maxSubagentDepth?: number;
+  /** Initial message to submit when the TUI mounts (from `--prompt <text>`). */
+  initialPrompt?: string;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -152,6 +154,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     skills,
     modes,
     formatters: factory.getFormatters(),
+    initialPrompt: opts.initialPrompt,
     // Default cycle = every discovered mode (alphabetical). If a user wants
     // a smaller cycle they set `cycleModes: ["build", "plan"]` explicitly.
     cycleModes: config.cycleModes ?? modes.all().map((mode) => mode.name),
