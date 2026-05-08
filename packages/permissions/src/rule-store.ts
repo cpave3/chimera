@@ -23,8 +23,12 @@ export class RuleStore {
       if (parsed.version === FILE_VERSION && Array.isArray(parsed.rules)) {
         this.projectRules = parsed.rules;
       }
-    } catch {
+    } catch (err) {
       // leave projectRules empty on parse error
+      console.warn(
+        `[rule-store] failed to parse ${this.projectPath}:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 

@@ -55,9 +55,10 @@ export class GatedExecutor implements Executor {
   }
 
   async exec(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
+    const toolName = opts?.toolName ?? 'bash';
     const resolution = await this.gate.request({
       requestId: newRequestId(),
-      tool: 'bash',
+      tool: toolName,
       target: 'host',
       command: cmd,
       cwd: this.inner.cwd(),
