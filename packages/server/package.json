@@ -30,7 +30,8 @@
     "@chimera/skills": "workspace:*",
     "@chimera/tools": "workspace:*",
     "@hono/node-server": "^1.13.7",
-    "hono": "^4.12.14"
+    "hono": "^4.12.14",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "ai": "^6.0.168",

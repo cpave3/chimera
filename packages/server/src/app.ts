@@ -8,6 +8,7 @@ import {
 } from '@chimera/core';
 import { streamSSE } from 'hono/streaming';
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { AgentRegistry } from './agent-registry';
 
 export interface AppOptions {
@@ -27,6 +28,61 @@ const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 function isValidUlid(id: string): boolean {
   return ULID_RE.test(id);
 }
+
+const createSessionSchema = z.object({
+  cwd: z.string(),
+  model: z.object({
+    providerId: z.string(),
+    modelId: z.string(),
+    maxSteps: z.number(),
+    maxOutputTokens: z.number().optional(),
+    temperature: z.number().optional(),
+  }),
+  sandboxMode: z.enum(['off', 'bind', 'overlay', 'ephemeral']).optional(),
+  sessionId: z.string().optional(),
+});
+
+const messageSchema = z.object({
+  content: z.string(),
+});
+
+const forkSchema = z.object({
+  purpose: z.string().optional(),
+});
+
+const reloadSchema = z.object({
+  systemPrompt: z.string().optional(),
+});
+
+const modeSchema = z.object({
+  mode: z.string(),
+});
+
+const permissionRuleSchema = z.object({
+  rule: z.object({
+    tool: z.string(),
+    target: z.enum(['host', 'sandbox']),
+    pattern: z.string(),
+    patternKind: z.enum(['exact', 'glob']),
+    decision: z.enum(['allow', 'deny']),
+    createdAt: z.number(),
+  }),
+  scope: z.enum(['session', 'project']),
+});
+
+const permissionResolveSchema = z.object({
+  decision: z.enum(['allow', 'deny']),
+  remember: z
+    .union([
+      z.object({ scope: z.literal('session') }),
+      z.object({
+        scope: z.literal('project'),
+        pattern: z.string(),
+        patternKind: z.enum(['exact', 'glob']),
+      }),
+    ])
+    .optional(),
+});
 
 export function buildApp(opts: AppOptions): Hono {
   const { registry, home, onFork } = opts;
@@ -48,12 +104,21 @@ export function buildApp(opts: AppOptions): Hono {
 
   // --- Sessions ----------------------------------------------------------
   app.post('/v1/sessions', async (c) => {
-    const body = await c.req.json();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = createSessionSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
     const { sessionId } = await registry.create({
-      cwd: body.cwd,
-      model: body.model,
-      sandboxMode: body.sandboxMode ?? 'off',
-      sessionId: body.sessionId,
+      cwd: parseResult.data.cwd,
+      model: parseResult.data.model,
+      sandboxMode: parseResult.data.sandboxMode ?? 'off',
+      sessionId: parseResult.data.sessionId,
     });
     invalidateListCache();
     return c.json({ sessionId }, 201);
@@ -128,8 +193,17 @@ export function buildApp(opts: AppOptions): Hono {
   app.post('/v1/sessions/:id/fork', async (c) => {
     const parentId = c.req.param('id');
     if (!isValidUlid(parentId)) return c.json({ error: 'not found' }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as { purpose?: unknown };
-    const purpose = typeof body.purpose === 'string' ? body.purpose : undefined;
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = forkSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    const purpose = parseResult.data.purpose;
     const sessions = await listSessionsOnDisk(home);
     const parent = sessions.find((s) => s.id === parentId);
     if (!parent) {
@@ -186,8 +260,17 @@ export function buildApp(opts: AppOptions): Hono {
   // --- Messages / interrupt ---------------------------------------------
   app.post('/v1/sessions/:id/messages', async (c) => {
     const id = c.req.param('id');
-    const body = await c.req.json();
-    const state = await registry.run(id, String(body.content ?? ''));
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = messageSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    const state = await registry.run(id, parseResult.data.content);
     if (state === 'missing') return c.json({ error: 'not found' }, 404);
     if (state === 'already-running') {
       return c.json({ error: 'run already in progress' }, 409);
@@ -206,10 +289,18 @@ export function buildApp(opts: AppOptions): Hono {
   app.post('/v1/sessions/:id/reload', async (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
-    const body = await c.req.json();
-    const systemPrompt = body.systemPrompt;
-    if (typeof systemPrompt === 'string') {
-      entry.agent.setSystemPrompt(systemPrompt);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = reloadSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    if (parseResult.data.systemPrompt !== undefined) {
+      entry.agent.setSystemPrompt(parseResult.data.systemPrompt);
     }
     return c.json({ ok: true });
   });
@@ -218,13 +309,19 @@ export function buildApp(opts: AppOptions): Hono {
   app.post('/v1/sessions/:id/mode', async (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
-    const body = await c.req.json();
-    if (typeof body?.mode !== 'string' || body.mode.length === 0) {
-      return c.json({ error: 'mode is required' }, 400);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
     }
-    const result = entry.agent.queueModeSwitch(body.mode);
+    const parseResult = modeSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    const result = entry.agent.queueModeSwitch(parseResult.data.mode);
     if (result.status === 'invalid') {
-      return c.json({ error: result.error }, 404);
+      return c.json({ error: result.error }, 400);
     }
     if (result.status === 'applied') {
       // Idle agent — switch landed immediately. Publish the event on the
@@ -255,8 +352,17 @@ export function buildApp(opts: AppOptions): Hono {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
     if (!entry.gate) return c.json({ error: 'no permission gate configured' }, 501);
-    const body = await c.req.json();
-    entry.gate.addRule(body.rule, body.scope);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = permissionRuleSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    entry.gate.addRule(parseResult.data.rule, parseResult.data.scope);
     return c.json({ ok: true }, 201);
   });
 
@@ -282,6 +388,16 @@ export function buildApp(opts: AppOptions): Hono {
   app.post('/v1/sessions/:id/permissions/:requestId', async (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = permissionResolveSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
     const requestId = c.req.param('requestId');
     if (
       entry.resolvedPermissionIds.has(requestId) ||
@@ -289,15 +405,15 @@ export function buildApp(opts: AppOptions): Hono {
     ) {
       return c.json({ error: 'already resolved' }, 409);
     }
-    const body = await c.req.json();
-    const decision: 'allow' | 'deny' = body.decision;
-    const remember = body.remember as RememberScope | undefined;
     try {
-      entry.agent.resolvePermission(requestId, decision, remember);
+      entry.agent.resolvePermission(requestId, parseResult.data.decision, parseResult.data.remember);
       entry.resolvedPermissionIds.add(requestId);
       return c.body(null, 204);
-    } catch {
-      return c.json({ error: 'already resolved' }, 409);
+    } catch (err) {
+      if (err instanceof Error && err.message === `No pending permission request: ${requestId}`) {
+        return c.json({ error: 'already resolved' }, 409);
+      }
+      throw err;
     }
   });
 

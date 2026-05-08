@@ -330,4 +330,590 @@ describe('server app', () => {
     });
     expect(reloadResponse.status).toBe(404);
   });
+
+  describe('negative input validation', () => {
+    async function createSession(app: ReturnType<typeof buildApp>): Promise<string> {
+      const response = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      });
+      const { sessionId } = await response.json();
+      return sessionId;
+    }
+
+    it('POST /v1/sessions rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const response = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{broken',
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions rejects missing required fields', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const response = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions rejects wrong sandboxMode type', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const response = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 123 }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/messages rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/messages rejects missing content', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/messages rejects non-string content', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 123 }),
+      });
+      expect(response.status).toBe(400);
+    });
+
+    it('POST /v1/sessions/:id/fork rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const { sessionId } = await (
+        await app.request('/v1/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+        })
+      ).json();
+
+      const response = await app.request(`/v1/sessions/${sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{broken',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/fork rejects non-string purpose', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const { sessionId } = await (
+        await app.request('/v1/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+        })
+      ).json();
+
+      const response = await app.request(`/v1/sessions/${sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 123 }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/reload rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/reload`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/reload rejects wrong systemPrompt type', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/reload`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ systemPrompt: 123 }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/mode rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/mode`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/mode rejects non-string mode', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/mode`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 123 }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/mode returns 400 for invalid mode names', async () => {
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          agent.setModeResolver((name) => {
+            if (name !== 'build') throw new Error(`Unknown mode "${name}"`);
+            return {
+              systemPrompt: 'test',
+              tools: {} as ToolSet,
+              effectiveModel: 'mock/m',
+              effectiveModelChanged: false,
+            };
+          });
+          return { agent };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/mode`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'not-a-real-mode' }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBeDefined();
+    });
+
+    it('POST /v1/sessions/:id/permissions/rules rejects malformed JSON', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/permissions/rules rejects missing fields', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rule: { tool: 'bash' } }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/permissions/rules rejects wrong enum values', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/rules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          rule: {
+            tool: 'bash',
+            target: 'host',
+            pattern: 'pnpm *',
+            patternKind: 'invalid-kind',
+            decision: 'allow',
+            createdAt: Date.now(),
+          },
+          scope: 'session',
+        }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/permissions/:requestId rejects malformed JSON', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/r1`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/permissions/:requestId rejects invalid decision', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/r1`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'maybe' }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/permissions/:requestId rejects invalid remember shape', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/r1`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'allow', remember: { scope: 'project' } }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+
+    it('POST /v1/sessions/:id/permissions/:requestId returns 409 for already resolved', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/permissions/r1`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'allow' }),
+      });
+      // r1 is not a pending request, so it returns 409
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toBe('already resolved');
+    });
+
+    it('POST /v1/sessions/:id/permissions/:requestId propagates unexpected errors as 500', async () => {
+      const { DefaultPermissionGate } = await import('@chimera/permissions');
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          const gate = new DefaultPermissionGate({
+            cwd: init.cwd,
+            autoApprove: 'none',
+            raiseRequest: (req) => agent.raisePermissionRequest(req),
+          });
+          return { agent, gate };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const entry = registry.get(sessionId);
+      // Force the hasPendingPermission check to pass but resolvePermission to throw something unexpected
+      const originalHasPending = entry!.agent.hasPendingPermission.bind(entry!.agent);
+      entry!.agent.hasPendingPermission = () => true;
+      const originalResolve = entry!.agent.resolvePermission.bind(entry!.agent);
+      entry!.agent.resolvePermission = () => {
+        throw new Error('something unexpected');
+      };
+      try {
+        const response = await app.request(`/v1/sessions/${sessionId}/permissions/r1`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ decision: 'allow' }),
+        });
+        expect(response.status).toBe(500);
+      } finally {
+        entry!.agent.hasPendingPermission = originalHasPending;
+        entry!.agent.resolvePermission = originalResolve;
+      }
+    });
+  });
 });
