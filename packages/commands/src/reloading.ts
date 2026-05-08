@@ -1,5 +1,5 @@
 import { type FSWatcher, watch } from 'node:fs';
-import { buildTiers } from './discover';
+import { buildTiers } from '@chimera/core';
 import { loadCommands } from './load';
 import type {
   Command,
@@ -87,7 +87,12 @@ export class ReloadingCommandRegistry implements CommandRegistry {
   }
 
   private installWatchers(): void {
-    const tiers = buildTiers(this.opts);
+    const tiers = buildTiers({
+      cwd: this.opts.cwd,
+      userHome: this.opts.userHome,
+      includeClaudeCompat: this.opts.includeClaudeCompat,
+      assetType: 'commands',
+    });
     for (const tier of tiers) {
       try {
         const w = watch(tier.dir, { recursive: true }, (_event, filename) => {
