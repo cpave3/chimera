@@ -9,3 +9,6 @@ pnpm-debug.log*
 .vitest-cache/
 *.tsbuildinfo
 **/*.tsbuildinfo
+.legato/
+*.plan.yaml
+zod-worker-feedback.txt
