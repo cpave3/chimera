@@ -8,3 +8,4 @@ export * from './prompts/compose';
 export { ROLE_PROMPT } from './prompts/role';
 export { EventQueue } from './event-queue';
 export * from './logging';
+export * from './discovery';
