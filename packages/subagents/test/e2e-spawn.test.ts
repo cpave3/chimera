@@ -78,9 +78,9 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
-    let stderrBuf = '';
+    const stderrChunks: string[] = [];
     proc.stderr!.on('data', (d: Buffer) => {
-      stderrBuf += d.toString('utf8');
+      stderrChunks.push(d.toString('utf8'));
     });
 
     try {
@@ -105,6 +105,7 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
       expect(subs).toEqual([]);
     } catch (err) {
       // Surface stderr to make E2E diagnostics tractable.
+      const stderrBuf = stderrChunks.join('');
       throw new Error(`${(err as Error).message}\n--- child stderr ---\n${stderrBuf}`);
     } finally {
       try {
@@ -145,9 +146,9 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
-    let stderrBuf = '';
+    const stderrChunks: string[] = [];
     proc.stderr!.on('data', (d: Buffer) => {
-      stderrBuf += d.toString('utf8');
+      stderrChunks.push(d.toString('utf8'));
     });
 
     try {
@@ -160,6 +161,7 @@ describeE2E('subagent E2E (CHIMERA_TEST_E2E)', () => {
       // actually filtered) is exercised in unit tests where we capture builder
       // arguments directly.
     } catch (err) {
+      const stderrBuf = stderrChunks.join('');
       throw new Error(`${(err as Error).message}\n--- child stderr ---\n${stderrBuf}`);
     } finally {
       try {

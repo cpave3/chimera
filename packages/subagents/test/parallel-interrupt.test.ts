@@ -1,7 +1,8 @@
-import type { AgentEvent } from '@chimera/core';
-import { describe, expect, it } from 'vitest';
+import type { AgentEvent, SessionId } from '@chimera/core';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSpawnAgentTool } from '../src/spawn-tool';
-import type { InProcessAgentBuilder, SpawnAgentToolContext } from '../src/types';
+import * as spawnChildMod from '../src/spawn-child';
+import type { SpawnAgentToolContext } from '../src/types';
 
 function makeCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolContext {
   return {
@@ -19,6 +20,50 @@ function makeCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolConte
     ...over,
   };
 }
+
+const mockSpawnChimeraChild = vi.fn();
+const mockTeardownChild = vi.fn();
+
+vi.mock('../src/spawn-child', async () => {
+  const actual = await vi.importActual<typeof import('../src/spawn-child')>('../src/spawn-child');
+  return {
+    ...actual,
+    spawnChimeraChild: (...args: Parameters<typeof actual.spawnChimeraChild>) =>
+      mockSpawnChimeraChild(...args),
+    teardownChild: (...args: Parameters<typeof actual.teardownChild>) =>
+      mockTeardownChild(...args),
+  };
+});
+
+function makeMockChildHandle(opts: {
+  sessionId: SessionId;
+  send?: (prompt: string, options: { signal: AbortSignal }) => AsyncIterable<AgentEvent>;
+  interrupt?: () => Promise<void>;
+}): spawnChildMod.ChildHandle {
+  return {
+    proc: { pid: 123, exitCode: null, signalCode: null } as unknown as import('node:child_process').ChildProcess,
+    client: {
+      send: (_sessionId: SessionId, _prompt: string, options: { signal: AbortSignal }) =>
+        opts.send!(_prompt, options),
+      interrupt: async (_sessionId: SessionId) => {
+        if (opts.interrupt) await opts.interrupt();
+      },
+    } as unknown as import('@chimera/client').ChimeraClient,
+    url: 'http://127.0.0.1:9999',
+    childSessionId: opts.sessionId,
+    pid: 123,
+  };
+}
+
+beforeEach(() => {
+  mockSpawnChimeraChild.mockReset();
+  mockTeardownChild.mockReset();
+  mockTeardownChild.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('parallel spawn_agent emission integrity', () => {
   it('emits distinct subagentId/parentCallId per parallel execute() call (single tool, shared ctx)', async () => {
@@ -81,7 +126,7 @@ describe('parallel spawn_agent interrupt cascade', () => {
   it('aborts both in-flight children when the parent signal fires', async () => {
     const interrupts: string[] = [];
     const builder =
-      (label: string): InProcessAgentBuilder =>
+      (label: string) =>
       async () => {
         const send = async function* (
           _p: string,
@@ -125,6 +170,56 @@ describe('parallel spawn_agent interrupt cascade', () => {
     );
 
     // Let both start.
+    await new Promise((r) => setTimeout(r, 20));
+    parentCtl.abort();
+    const [rA, rB] = await Promise.all([pA, pB]);
+
+    expect(rA.reason).toBe('interrupted');
+    expect(rB.reason).toBe('interrupted');
+    expect(interrupts.sort()).toEqual(['a', 'b']);
+  });
+
+  it('aborts both in-flight child-process children when the parent signal fires', async () => {
+    const interrupts: string[] = [];
+    const makeChild = (label: string) =>
+      makeMockChildHandle({
+        sessionId: `child-${label}` as SessionId,
+        send: async function* (_prompt, opts) {
+          await new Promise<void>((resolve) => {
+            if (opts.signal.aborted) return resolve();
+            opts.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          yield { type: 'run_finished', reason: 'interrupted' };
+        },
+        interrupt: async () => {
+          interrupts.push(label);
+        },
+      });
+
+    const parentCtl = new AbortController();
+    const ctxA = makeCtx({ parentAbortSignal: parentCtl.signal });
+    const ctxB = makeCtx({ parentAbortSignal: parentCtl.signal });
+
+    mockSpawnChimeraChild.mockImplementation(async (args) => {
+      // Distinguish which child by matching parentSessionId which is per-ctx
+      return args.parentSessionId === 'p' && mockSpawnChimeraChild.mock.calls.length === 1
+        ? makeChild('a')
+        : makeChild('b');
+    });
+
+    type Anyx = { execute: (a: any, c: any) => Promise<any> };
+    const toolA = buildSpawnAgentTool(ctxA).tool as unknown as Anyx;
+    const toolB = buildSpawnAgentTool(ctxB).tool as unknown as Anyx;
+
+    const pA = toolA.execute(
+      { prompt: 'a', purpose: 'a' },
+      { abortSignal: new AbortController().signal, toolCallId: 'a', messages: [] },
+    );
+    const pB = toolB.execute(
+      { prompt: 'b', purpose: 'b' },
+      { abortSignal: new AbortController().signal, toolCallId: 'b', messages: [] },
+    );
+
     await new Promise((r) => setTimeout(r, 20));
     parentCtl.abort();
     const [rA, rB] = await Promise.all([pA, pB]);

@@ -1,7 +1,22 @@
 import type { AgentEvent, ModelConfig, SandboxMode, SessionId } from '@chimera/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSpawnAgentTool } from '../src/spawn-tool';
-import type { InProcessAgentBuilder, SpawnAgentToolContext } from '../src/types';
+import * as spawnChildMod from '../src/spawn-child';
+import type { SpawnAgentToolContext } from '../src/types';
+
+const mockSpawnChimeraChild = vi.fn();
+const mockTeardownChild = vi.fn();
+
+vi.mock('../src/spawn-child', async () => {
+  const actual = await vi.importActual<typeof import('../src/spawn-child')>('../src/spawn-child');
+  return {
+    ...actual,
+    spawnChimeraChild: (...args: Parameters<typeof actual.spawnChimeraChild>) =>
+      mockSpawnChimeraChild(...args),
+    teardownChild: (...args: Parameters<typeof actual.teardownChild>) =>
+      mockTeardownChild(...args),
+  };
+});
 
 function baseCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolContext {
   return {
@@ -19,6 +34,36 @@ function baseCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolConte
     ...over,
   };
 }
+
+function makeMockChildHandle(opts: {
+  sessionId: SessionId;
+  send?: (prompt: string, options: { signal: AbortSignal }) => AsyncIterable<AgentEvent>;
+  interrupt?: () => Promise<void>;
+}): spawnChildMod.ChildHandle {
+  return {
+    proc: { pid: 123, exitCode: null, signalCode: null } as unknown as import('node:child_process').ChildProcess,
+    client: {
+      send: (_sessionId: SessionId, _prompt: string, options: { signal: AbortSignal }) =>
+        opts.send!(_prompt, options),
+      interrupt: async (_sessionId: SessionId) => {
+        if (opts.interrupt) await opts.interrupt();
+      },
+    } as unknown as import('@chimera/client').ChimeraClient,
+    url: 'http://127.0.0.1:9999',
+    childSessionId: opts.sessionId,
+    pid: 123,
+  };
+}
+
+beforeEach(() => {
+  mockSpawnChimeraChild.mockReset();
+  mockTeardownChild.mockReset();
+  mockTeardownChild.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('buildSpawnAgentTool — model index in description', () => {
   it('lists availableModels in the tool description with the first marked as default', () => {
@@ -347,6 +392,95 @@ describe('buildSpawnAgentTool — parent CallId resolution', () => {
     );
     const spawned = events.find((e) => e.type === 'subagent_spawned');
     expect((spawned as { parentCallId: string }).parentCallId).toBeTruthy();
+  });
+});
+
+describe('buildSpawnAgentTool — child-process happy path (mocked)', () => {
+  it('spawns child, drives events, tears down, and returns result', async () => {
+    const events: AgentEvent[] = [];
+    const childSessionId: SessionId = 'child-sess-c1';
+    mockSpawnChimeraChild.mockImplementation(async () =>
+      makeMockChildHandle({
+        sessionId: childSessionId,
+        send: async function* (_prompt, _opts) {
+          yield { type: 'assistant_text_delta', delta: 'hello' };
+          yield { type: 'assistant_text_done', text: 'hello from child' };
+          yield { type: 'step_finished', stepNumber: 1, finishReason: 'stop' };
+          yield { type: 'run_finished', reason: 'stop' };
+        },
+      }),
+    );
+
+    const ctx = baseCtx({ emit: (ev) => events.push(ev) });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: any, c: any) => Promise<any>;
+    };
+    const result = await tool.execute(
+      { prompt: 'do', purpose: 'test' },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    expect(result.reason).toBe('stop');
+    expect(result.result).toBe('hello from child');
+    expect(result.session_id).toBe(childSessionId);
+    expect(result.steps).toBe(1);
+    expect(mockTeardownChild).toHaveBeenCalled();
+    expect(events.filter((e) => e.type === 'subagent_spawned')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'subagent_finished')).toHaveLength(1);
+  });
+
+  it('returns error when spawnChimeraChild throws (handshake failure)', async () => {
+    const events: AgentEvent[] = [];
+    mockSpawnChimeraChild.mockRejectedValue(new Error(' handshake timed out '));
+    const ctx = baseCtx({ emit: (ev) => events.push(ev) });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: any, c: any) => Promise<any>;
+    };
+    const result = await tool.execute(
+      { prompt: 'do', purpose: 'test' },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    expect(result.reason).toBe('error');
+    expect(result.result).toMatch(/handshake timed out/);
+    expect(events.find((e) => e.type === 'subagent_spawned')).toBeUndefined();
+  });
+
+  it('propagates parent abort to child interrupt()', async () => {
+    const events: AgentEvent[] = [];
+    const parentCtl = new AbortController();
+    let interrupted = false;
+    const childSessionId: SessionId = 'child-sess-c2';
+    mockSpawnChimeraChild.mockImplementation(async () =>
+      makeMockChildHandle({
+        sessionId: childSessionId,
+        send: async function* (_prompt, opts) {
+          yield { type: 'assistant_text_delta', delta: '...' };
+          await new Promise<void>((resolve) => {
+            if (opts.signal.aborted) return resolve();
+            opts.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          yield { type: 'run_finished', reason: 'interrupted' };
+        },
+        interrupt: async () => {
+          interrupted = true;
+        },
+      }),
+    );
+    const ctx = baseCtx({
+      emit: (ev) => events.push(ev),
+      parentAbortSignal: parentCtl.signal,
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: any, c: any) => Promise<any>;
+    };
+    const promise = tool.execute(
+      { prompt: 'do', purpose: 'test' },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    parentCtl.abort();
+    const result = await promise;
+    expect(result.reason).toBe('interrupted');
+    expect(interrupted).toBe(true);
   });
 });
 
