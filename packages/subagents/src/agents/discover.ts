@@ -1,74 +1,22 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
-import { parseFrontmatter } from './frontmatter';
+import { basename, join } from 'node:path';
+import { buildTiers, parseFrontmatter, parseToolsCsv } from '@chimera/core';
 import type { AgentCollision, AgentDefinition, AgentSource, LoadAgentsOptions } from './types';
-
-interface Tier {
-  source: AgentSource;
-  dir: string;
-}
 
 export interface DiscoverResult {
   agents: AgentDefinition[];
   collisions: AgentCollision[];
 }
 
-export function buildTiers(opts: LoadAgentsOptions): Tier[] {
-  const cwd = resolve(opts.cwd);
-  const userHome = resolve(opts.userHome ?? homedir());
-  const includeClaudeCompat = opts.includeClaudeCompat !== false;
-
-  const ancestors = ancestorsBetween(cwd, userHome);
-
-  const tiers: Tier[] = [];
-  tiers.push({ source: 'project', dir: join(cwd, '.chimera', 'agents') });
-  for (const anc of ancestors) {
-    tiers.push({ source: 'ancestor', dir: join(anc, '.chimera', 'agents') });
-  }
-  tiers.push({ source: 'user', dir: join(userHome, '.chimera', 'agents') });
-
-  if (includeClaudeCompat) {
-    tiers.push({ source: 'claude-project', dir: join(cwd, '.claude', 'agents') });
-    for (const anc of ancestors) {
-      tiers.push({ source: 'claude-ancestor', dir: join(anc, '.claude', 'agents') });
-    }
-    tiers.push({ source: 'claude-user', dir: join(userHome, '.claude', 'agents') });
-  }
-
-  return tiers;
-}
-
-function ancestorsBetween(start: string, stopAt: string): string[] {
-  const out: string[] = [];
-  let dir = start;
-  const seen = new Set<string>();
-  while (true) {
-    const parent = dirname(dir);
-    if (parent === dir || seen.has(parent)) break;
-    seen.add(parent);
-
-    if (isGitRoot(dir)) break;
-
-    if (parent === stopAt) break;
-    if (parent !== start) out.push(parent);
-    dir = parent;
-    if (isGitRoot(dir)) break;
-  }
-  return out;
-}
-
-function isGitRoot(dir: string): boolean {
-  try {
-    const st = statSync(join(dir, '.git'));
-    return st.isDirectory() || st.isFile();
-  } catch {
-    return false;
-  }
-}
+export { parseToolsCsv };
 
 export function discover(opts: LoadAgentsOptions): DiscoverResult {
-  const tiers = buildTiers(opts);
+  const tiers = buildTiers({
+    cwd: opts.cwd,
+    userHome: opts.userHome,
+    includeClaudeCompat: opts.includeClaudeCompat,
+    assetType: 'agents',
+  });
   const byName = new Map<string, AgentDefinition>();
   const collisions: AgentCollision[] = [];
   const warn = opts.onWarning ?? (() => {});
@@ -114,7 +62,7 @@ export function discover(opts: LoadAgentsOptions): DiscoverResult {
         description,
         body: parsed.body,
         path: filePath,
-        source: tier.source,
+        source: tier.source as AgentSource,
         frontmatter: parsed.frontmatter,
       };
       const existing = byName.get(name);

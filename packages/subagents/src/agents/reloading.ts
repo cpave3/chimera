@@ -1,5 +1,5 @@
 import { type FSWatcher, watch } from 'node:fs';
-import { buildTiers } from './discover';
+import { buildTiers } from '@chimera/core';
 import { loadAgents } from './load';
 import type { AgentCollision, AgentDefinition, AgentRegistry, LoadAgentsOptions } from './types';
 
@@ -76,7 +76,12 @@ export class ReloadingAgentRegistry implements AgentRegistry {
   }
 
   private installWatchers(): void {
-    const tiers = buildTiers(this.opts);
+    const tiers = buildTiers({
+      cwd: this.opts.cwd,
+      userHome: this.opts.userHome,
+      includeClaudeCompat: this.opts.includeClaudeCompat,
+      assetType: 'agents',
+    });
     for (const tier of tiers) {
       try {
         const watcher = watch(tier.dir, { recursive: true }, (_event, filename) => {

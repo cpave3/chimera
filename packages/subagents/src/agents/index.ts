@@ -1,7 +1,8 @@
-export { discover, buildTiers } from './discover';
+export { discover } from './discover';
 export type { DiscoverResult } from './discover';
-export { parseFrontmatter, parseToolsCsv } from './frontmatter';
-export type { ParsedDocument } from './frontmatter';
+export { parseFrontmatter } from './frontmatter';
+export { parseToolsCsv } from '@chimera/core';
+export type { ParsedDocument } from '@chimera/core';
 export { loadAgents } from './load';
 export { InMemoryAgentRegistry } from './registry';
 export { ReloadingAgentRegistry } from './reloading';
