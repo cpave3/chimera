@@ -212,7 +212,11 @@ async function countLines(path: string): Promise<number> {
     }
     if (raw.charCodeAt(raw.length - 1) !== 10) count += 1;
     return count;
-  } catch {
+  } catch (err) {
+    console.debug(
+      `[persistence] countLines(${path}):`,
+      err instanceof Error ? err.message : String(err),
+    );
     return 0;
   }
 }
@@ -305,7 +309,11 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
+  } catch (err) {
+    console.debug(
+      `[persistence] listSessionsOnDisk readdir failed:`,
+      err instanceof Error ? err.message : String(err),
+    );
     return [];
   }
   const out: SessionInfo[] = [];
@@ -315,7 +323,11 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
     try {
       const st = await stat(entryPath);
       isDir = st.isDirectory();
-    } catch {
+    } catch (err) {
+      console.debug(
+        `[persistence] listSessionsOnDisk stat(${entryPath}):`,
+        err instanceof Error ? err.message : String(err),
+      );
       continue;
     }
     if (!isDir) continue;
@@ -346,8 +358,12 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
         usage: parsed.usage ?? emptyUsage(),
         messageCount,
       });
-    } catch {
+    } catch (err) {
       // skip corrupt/missing session.json
+      console.debug(
+        `[persistence] listSessionsOnDisk metadata read(${metaPath}):`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
   return out;

@@ -181,15 +181,23 @@ export class AgentRegistry {
     if (entry.activeRun) {
       try {
         await entry.activeRun;
-      } catch {
+      } catch (err) {
         // run errors already surfaced via the event bus; we only need it done
+        console.debug(
+          `[agent-registry] delete(${id}): activeRun rejection swallowed:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
     if (entry.hookRunner) {
       try {
         await entry.hookRunner.fire({ event: 'SessionEnd' });
-      } catch {
+      } catch (err) {
         // Hook failures must not abort the session lifecycle.
+        console.debug(
+          `[agent-registry] delete(${id}): SessionEnd hook rejection swallowed:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
     this.entries.delete(id);

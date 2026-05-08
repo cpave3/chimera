@@ -96,11 +96,29 @@ export class SpawnDockerRunner implements DockerRunner {
             timedOut = true;
             try {
               child.kill('SIGTERM');
-            } catch {}
+            } catch (err) {
+              const error = err as NodeJS.ErrnoException;
+              if (error.code === 'EPERM') {
+                console.debug(
+                  `[docker-runner] SIGTERM failed (EPERM):`,
+                  error.message,
+                );
+              }
+              // ESRCH → process already gone, benign; ignore silently.
+            }
             killTimer = setTimeout(() => {
               try {
                 child.kill('SIGKILL');
-              } catch {}
+              } catch (err) {
+                const error = err as NodeJS.ErrnoException;
+                if (error.code === 'EPERM') {
+                  console.debug(
+                    `[docker-runner] SIGKILL failed (EPERM):`,
+                    error.message,
+                  );
+                }
+                // ESRCH → process already gone, benign; ignore silently.
+              }
             }, 2000);
           }, opts.timeoutMs)
         : null;

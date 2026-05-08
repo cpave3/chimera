@@ -33,13 +33,18 @@ export async function* parseSSE(
   } finally {
     try {
       await reader.cancel();
-    } catch {
+    } catch (err) {
       // best-effort
+      console.debug(`[sse] reader.cancel threw:`, err instanceof Error ? err.message : String(err));
     }
     try {
       reader.releaseLock();
-    } catch {
+    } catch (err) {
       // best-effort
+      console.debug(
+        `[sse] reader.releaseLock threw:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 }

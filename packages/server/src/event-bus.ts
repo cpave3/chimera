@@ -28,8 +28,12 @@ export class EventBus {
     for (const sub of this.subscribers) {
       try {
         sub(envelope);
-      } catch {
+      } catch (err) {
         // never let one slow subscriber break the bus
+        console.debug(
+          `[event-bus] subscriber threw:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
     return envelope;

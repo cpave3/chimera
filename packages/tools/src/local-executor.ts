@@ -172,14 +172,28 @@ export class LocalExecutor implements Executor {
         timedOut = true;
         try {
           child.kill('SIGTERM');
-        } catch {
-          // already exited
+        } catch (err) {
+          const error = err as NodeJS.ErrnoException;
+          if (error.code === 'EPERM') {
+            console.debug(
+              `[local-executor] SIGTERM failed (EPERM):`,
+              error.message,
+            );
+          }
+          // ESRCH → process already gone, benign; ignore silently.
         }
         killTimer = setTimeout(() => {
           try {
             child.kill('SIGKILL');
-          } catch {
-            // already exited
+          } catch (err) {
+            const error = err as NodeJS.ErrnoException;
+            if (error.code === 'EPERM') {
+              console.debug(
+                `[local-executor] SIGKILL failed (EPERM):`,
+                error.message,
+              );
+            }
+            // ESRCH → process already gone, benign; ignore silently.
           }
         }, SIGKILL_DELAY_MS);
       }, timeoutMs);
