@@ -17,6 +17,8 @@ function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
     removeRule: async () => {},
     resolvePermission: async () => {},
     listSubagents: async () => [],
+    createSession: async () => ({ sessionId: '01HZNEWSESS00000000000000000' }),
+    listSessions: async () => [],
     ...overrides,
   } as unknown as ChimeraClient;
 }
@@ -691,6 +693,80 @@ describe('App', () => {
     expect(lastFrame()).toContain('waiting');
     unmount();
   });
+
+  it('/new invokes createSession and switches to the new session', async () => {
+    let createCalled = false;
+    const client = stubClient({
+      createSession: async () => {
+        createCalled = true;
+        return { sessionId: '01HZNEWSESS00000000000000000' };
+      },
+    });
+
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    const write = (s: string): void => {
+      (stdin as unknown as { write: (s: string) => void }).write(s);
+    };
+
+    for (const ch of '/new\r') {
+      write(ch);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(createCalled).toBe(true);
+    expect(lastFrame()).toContain('new session');
+    unmount();
+  });
+
+  it('/sessions opens the interactive picker when sessions exist', async () => {
+    const sessions = [
+      {
+        id: '01HZAAAAAAAAAAAAAAAAAAAAAA',
+        parentId: null,
+        children: [],
+        createdAt: 1700000000000,
+        lastActivityAt: 1700000000000,
+        cwd: '/tmp',
+        model: { providerId: 'mock', modelId: 'mock', maxSteps: 10 },
+        sandboxMode: 'off' as const,
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedInputTokens: 0,
+          totalTokens: 0,
+          stepCount: 0,
+        },
+        messageCount: 2,
+      },
+    ];
+
+    const client = stubClient({
+      listSessions: async () => sessions,
+    });
+
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    const write = (s: string): void => {
+      (stdin as unknown as { write: (s: string) => void }).write(s);
+    };
+
+    for (const ch of '/sessions\r') {
+      write(ch);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(lastFrame()).toContain('Sessions (1)');
+    expect(lastFrame()).toContain('navigate');
+    expect(lastFrame()).toContain('AAAAAAAA');
+    unmount();
+  });
 });
 
 afterEach(() => {
@@ -720,6 +796,125 @@ describe('PermissionModal', () => {
       />,
     );
     expect(lastFrame()).toContain('integration tests');
+    unmount();
+  });
+
+  it('choose → scope: allow + session remembers with session scope only', async () => {
+    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const { stdin, lastFrame, unmount } = render(
+      <PermissionModal
+        command="rm -rf /tmp"
+        target="host"
+        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+      />,
+    );
+
+    (stdin as unknown as { write: (s: string) => void }).write('A');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lastFrame()).toContain('Remember for [s]ession');
+
+    (stdin as unknown as { write: (s: string) => void }).write('s');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toEqual([{ decision: 'allow', remember: { scope: 'session' } }]);
+
+    unmount();
+  });
+
+  it('choose → scope: allow + project remembers with exact pattern', async () => {
+    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const { stdin, lastFrame, unmount } = render(
+      <PermissionModal
+        command="rm -rf /tmp"
+        target="host"
+        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+      />,
+    );
+
+    (stdin as unknown as { write: (s: string) => void }).write('A');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lastFrame()).toContain('Remember for [s]ession');
+
+    (stdin as unknown as { write: (s: string) => void }).write('p');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toEqual([
+      {
+        decision: 'allow',
+        remember: { scope: 'project', pattern: 'rm -rf /tmp', patternKind: 'exact' },
+      },
+    ]);
+
+    unmount();
+  });
+
+  it('choose → pattern → scope: allow uses pattern from editing mode', async () => {
+    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const { stdin, lastFrame, unmount } = render(
+      <PermissionModal
+        command="rm -rf /tmp"
+        target="host"
+        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+      />,
+    );
+
+    // Transition from choose to pattern editing.
+    (stdin as unknown as { write: (s: string) => void }).write('g');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lastFrame()).toContain('Edit pattern');
+
+    // Confirm default pattern with Enter (tests that pattern mode carries the
+    // command forward into scope mode even though no edits were made).
+    (stdin as unknown as { write: (s: string) => void }).write('\r');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(lastFrame()).toContain('Remember for [s]ession');
+
+    // Press 'p' for project scope; default command becomes exact pattern.
+    (stdin as unknown as { write: (s: string) => void }).write('p');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toEqual([
+      {
+        decision: 'allow',
+        remember: { scope: 'project', pattern: 'rm -rf /tmp', patternKind: 'exact' },
+      },
+    ]);
+
+    unmount();
+  });
+
+  it('choose → scope: deny + session remembers with session scope only', async () => {
+    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const { stdin, lastFrame, unmount } = render(
+      <PermissionModal
+        command="rm -rf /tmp"
+        target="host"
+        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+      />,
+    );
+
+    (stdin as unknown as { write: (s: string) => void }).write('D');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lastFrame()).toContain('Remember for [s]ession');
+
+    (stdin as unknown as { write: (s: string) => void }).write('s');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toEqual([{ decision: 'deny', remember: { scope: 'session' } }]);
+
+    unmount();
+  });
+
+  it('resolve emits plain allow (no remember) on [a]', () => {
+    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const { stdin, unmount } = render(
+      <PermissionModal
+        command="clear"
+        target="host"
+        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+      />,
+    );
+
+    (stdin as unknown as { write: (s: string) => void }).write('a');
+    expect(calls).toEqual([{ decision: 'allow' }]);
+
     unmount();
   });
 });
