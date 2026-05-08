@@ -6,6 +6,7 @@ import type { CommandRegistry } from '@chimera/commands';
 import type {
   AgentEvent,
   ModelConfig,
+  RememberScope,
   SandboxMode,
   SessionId,
   SessionInfo,
@@ -1262,7 +1263,7 @@ export function App(props: AppProps): React.ReactElement {
       : activeSession.client;
     const targetSessionId = subagent ? subagent.sessionId : activeSession.sessionId;
     void targetClient
-      .resolvePermission(targetSessionId, requestId, decision, remember as any)
+      .resolvePermission(targetSessionId, requestId, decision, remember)
       .catch((err) => {
         scrollback.addError(`resolvePermission: ${(err as Error).message}`);
         setEntries(scrollback.all());

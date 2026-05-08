@@ -51,22 +51,15 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       return;
     }
     if (mode.kind === 'scope') {
-      if (input === 's' || input === 'p') {
-        if (mode.pattern) {
-          props.onResolve(mode.decision, {
-            scope: input === 's' ? 'session' : 'project',
-            pattern: mode.pattern,
-            patternKind: mode.pattern === props.command ? 'exact' : 'glob',
-          } as
-            | { scope: 'project'; pattern: string; patternKind: 'exact' | 'glob' }
-            | { scope: 'session' });
-          if (input === 's' && mode.pattern === props.command) {
-            // Pure session-scope: no pattern stored, just session flag.
-            // The resolve callback interprets it.
-          }
-        } else {
-          props.onResolve(mode.decision, { scope: input === 's' ? 'session' : 'project' } as any);
-        }
+      if (input === 's') {
+        props.onResolve(mode.decision, { scope: 'session' });
+      } else if (input === 'p') {
+        const pat = mode.pattern ?? props.command;
+        props.onResolve(mode.decision, {
+          scope: 'project',
+          pattern: pat,
+          patternKind: pat === props.command ? 'exact' : 'glob',
+        });
       }
     }
   });
