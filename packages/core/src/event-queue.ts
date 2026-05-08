@@ -20,10 +20,11 @@ export class EventQueue<T> {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    for (const resolver of this.resolvers) {
+    const waiters = this.resolvers;
+    this.resolvers = [];
+    for (const resolver of waiters) {
       resolver({ value: undefined as unknown as T, done: true });
     }
-    this.resolvers = [];
   }
 
   next(): Promise<IteratorResult<T>> {
