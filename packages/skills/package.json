@@ -21,9 +21,10 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@chimera/core": "workspace:*"
+  },
   "devDependencies": {
-    "@chimera/core": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"

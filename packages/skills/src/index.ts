@@ -1,7 +1,7 @@
 export * from './types';
 export { loadSkills } from './load';
 export { InMemorySkillRegistry } from './registry';
-export { parseFrontmatter } from './frontmatter';
+export { parseFrontmatter, parseToolsCsv } from '@chimera/core';
 export {
   buildSkillActivationLookup,
   categorize as categorizeSkillSource,
