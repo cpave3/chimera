@@ -1,83 +1,13 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildTiers, parseFrontmatter, parseToolsCsv } from '@chimera/core';
 import { colorFor, isValidHex } from './color';
-import { parseFrontmatter } from './frontmatter';
 import type { LoadModesOptions, Mode, ModeCollision, ModeSource } from './types';
-
-interface Tier {
-  source: ModeSource;
-  dir: string;
-}
 
 export interface DiscoverResult {
   modes: Mode[];
   collisions: ModeCollision[];
-}
-
-export function buildTiers(opts: LoadModesOptions): Tier[] {
-  const cwd = resolve(opts.cwd);
-  const userHome = resolve(opts.userHome ?? homedir());
-  const includeClaudeCompat = opts.includeClaudeCompat !== false;
-
-  const ancestors = ancestorsBetween(cwd, userHome);
-
-  const tiers: Tier[] = [];
-  tiers.push({ source: 'project', dir: join(cwd, '.chimera', 'modes') });
-  for (const ancestor of ancestors) {
-    tiers.push({ source: 'ancestor', dir: join(ancestor, '.chimera', 'modes') });
-  }
-  tiers.push({ source: 'user', dir: join(userHome, '.chimera', 'modes') });
-
-  if (includeClaudeCompat) {
-    tiers.push({ source: 'claude-project', dir: join(cwd, '.claude', 'modes') });
-    for (const ancestor of ancestors) {
-      tiers.push({ source: 'claude-ancestor', dir: join(ancestor, '.claude', 'modes') });
-    }
-    tiers.push({ source: 'claude-user', dir: join(userHome, '.claude', 'modes') });
-  }
-
-  const builtinDir = builtinModesDir();
-  if (builtinDir) tiers.push({ source: 'builtin', dir: builtinDir });
-
-  return tiers;
-}
-
-/**
- * Walk from `start`'s parent up toward the nearest .git/ marker (or `stopAt`
- * if no git root is found). Returns intermediate directories (exclusive of
- * `start`, inclusive of the git root itself).
- */
-function ancestorsBetween(start: string, stopAt: string): string[] {
-  const out: string[] = [];
-  let dir = start;
-  const seen = new Set<string>();
-  while (true) {
-    const parent = dirname(dir);
-    if (parent === dir || seen.has(parent)) break;
-    seen.add(parent);
-
-    if (isGitRoot(dir)) break;
-
-    // Stop at userHome without including it — the dedicated `user` tier
-    // handles `<userHome>/.chimera/modes/` directly, so listing it here
-    // would double-count and give the ancestor tier undeserved priority.
-    if (parent === stopAt) break;
-    if (parent !== start) out.push(parent);
-    dir = parent;
-    if (isGitRoot(dir)) break;
-  }
-  return out;
-}
-
-function isGitRoot(dir: string): boolean {
-  try {
-    const st = statSync(join(dir, '.git'));
-    return st.isDirectory() || st.isFile();
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -89,7 +19,7 @@ function isGitRoot(dir: string): boolean {
 function builtinModesDir(): string | undefined {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
-    const candidate = resolve(here, '..', 'builtin');
+    const candidate = join(here, '..', 'builtin');
     const st = statSync(candidate);
     if (st.isDirectory()) return candidate;
   } catch {
@@ -99,7 +29,13 @@ function builtinModesDir(): string | undefined {
 }
 
 export function discover(opts: LoadModesOptions): DiscoverResult {
-  const tiers = buildTiers(opts);
+  const tiers = buildTiers({
+    cwd: opts.cwd,
+    userHome: opts.userHome,
+    includeClaudeCompat: opts.includeClaudeCompat,
+    assetType: 'modes',
+    builtinDir: builtinModesDir(),
+  });
   const byName = new Map<string, Mode>();
   const collisions: ModeCollision[] = [];
   const warn = opts.onWarning ?? (() => {});
@@ -134,12 +70,44 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
 
       const parsed = parseFrontmatter(raw);
       const fm = parsed.frontmatter;
-      for (const error of fm.errors) {
-        warn(`modes: ${filePath} — ${error}`);
+
+      // Validate cycle boolean if present.
+      let cycleParsed: boolean | undefined = undefined;
+      const cycleRaw = fm['cycle'];
+      if (cycleRaw !== undefined) {
+        const lower = cycleRaw.toLowerCase();
+        if (lower === 'true' || lower === 'yes') cycleParsed = true;
+        else if (lower === 'false' || lower === 'no') cycleParsed = false;
+        else warn(`modes: ${filePath} — cycle: expected boolean, got "${cycleRaw}"`);
       }
 
-      const name = (fm.name ?? '').trim();
-      const description = (fm.description ?? '').trim();
+      // Validate inline tools array if present.
+      let toolsParsed: string[] | undefined = undefined;
+      const toolsRaw = fm['tools'];
+      if (toolsRaw !== undefined) {
+        const trimmed = toolsRaw.trim();
+        if (trimmed.length === 0) {
+          // Handle empty value followed by block-list form not supported in core parser.
+          // The subagent/skills block scalar `|` form works via parseFrontmatter,
+          // but the mode-specific indented-list form is handled here.
+          toolsParsed = parseToolsCsv(toolsRaw);
+        } else if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          const inner = trimmed.slice(1, -1).trim();
+          if (inner.length === 0) {
+            toolsParsed = [];
+          } else {
+            toolsParsed = inner.split(',').map((item) => unquote(item.trim()));
+          }
+        } else if (/^\s*-\s*/.test(trimmed)) {
+          // Single-line `- item` not expected; treat as CSV.
+          toolsParsed = parseToolsCsv(toolsRaw);
+        } else {
+          toolsParsed = parseToolsCsv(toolsRaw);
+        }
+      }
+
+      const name = (fm['name'] ?? '').trim();
+      const description = (fm['description'] ?? '').trim();
       if (!name || name !== stem) {
         warn(`modes: ${filePath} skipped — frontmatter "name" missing or does not match filename`);
         continue;
@@ -149,7 +117,7 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         continue;
       }
 
-      let rawColor = fm.color;
+      let rawColor = fm['color'];
       if (rawColor !== undefined && !isValidHex(rawColor)) {
         warn(`modes: ${filePath} has invalid color "${rawColor}"; falling back to derived color`);
         rawColor = undefined;
@@ -160,13 +128,13 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         name,
         description,
         body: parsed.body,
-        tools: fm.tools,
-        model: fm.model,
-        rawColor: fm.color,
+        tools: toolsParsed,
+        model: fm['model'],
+        rawColor,
         colorHex,
         path: filePath,
-        source: tier.source,
-        cycle: fm.cycle ?? true,
+        source: tier.source as ModeSource,
+        cycle: cycleParsed ?? true,
       };
 
       const existing = byName.get(name);
@@ -186,4 +154,15 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
   }
 
   return { modes: [...byName.values()], collisions };
+}
+
+function unquote(value: string): string {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
 }
