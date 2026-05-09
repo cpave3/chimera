@@ -65,12 +65,13 @@ The compactor SHALL use `fileOps` to populate the `<files>` block, not by re-par
 
 ### Requirement: Compaction events
 
-During compaction the session event stream SHALL emit, in order:
+The compactor does not emit events directly; it returns metrics (`{ summary, tokensBefore, tokensAfter, messagesReplaced }`) via its `compact()` method. The caller SHALL yield events into the session event stream as follows:
 
-- `compaction_started { reason: "threshold" | "manual" }`
-- `compaction_finished { summary: string, tokensBefore: number, tokensAfter: number, messagesReplaced: number }`
+- Immediately before `await compactor.compact()`: yield `compaction_started { reason: "threshold" | "manual" }`
+- After `compact()` resolves: yield `compaction_finished { summary, tokensBefore, tokensAfter, messagesReplaced }` populated from the return value
+- If `compact()` rejects: yield `compaction_failed { error: string }`
 
-If compaction fails (model error, invariant violation), the stream SHALL emit `compaction_failed { error: string }` and the session messages SHALL remain unchanged — the agent loop then continues and, if the window is exceeded, the next step's model call SHALL surface the provider error as usual.
+In all failure cases the session messages SHALL remain unchanged — the agent loop then continues and, if the window is exceeded, the next step's model call SHALL surface the provider error as usual.
 
 #### Scenario: Manual trigger emits correct reason
 
@@ -99,7 +100,7 @@ The TUI SHALL recognize `/compact` as a new built-in slash command that calls `P
 #### Scenario: Manual compact from TUI
 
 - **WHEN** a user types `/compact` and presses Enter
-- **THEN** a `compaction_started { reason: "manual" }` event SHALL be emitted within one event tick, and the TUI SHALL render an inline "compacting…" indicator that clears on `compaction_finished`
+- **THEN** `compaction_started { reason: "manual" }` SHALL be yielded immediately (before the compaction LLM call begins) so the TUI shows an inline "compacting…" indicator; the indicator clears on `compaction_finished`. If the user types a normal message during compaction, it SHALL queue and auto-send when compaction ends, the same way queued messages behave during a normal run.
 
 ### Requirement: Configuration
 

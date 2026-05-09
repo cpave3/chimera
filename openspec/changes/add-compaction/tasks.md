@@ -26,7 +26,7 @@
 ## 5. Agent loop integration
 
 - [x] 5.1 In `@chimera/core`, invoke `compactor.maybeCompact` at the start of each step.
-- [x] 5.2 On successful compaction, replace `session.messages`, emit `compaction_started` / `compaction_finished` events before the next `streamText` call.
+- [x] 5.2 On successful compaction, replace `session.messages`. `compaction_started` is yielded immediately by `Agent.compactSession()` (or pushed to the run queue by `Agent.run()`); `compaction_finished` is yielded after the call resolves, populated from `Compactor.compact()` return value.
 - [x] 5.3 On compaction failure, emit `compaction_failed`, keep messages unchanged, proceed — the next provider call will error normally if the window is actually exceeded.
 
 ## 6. Persisted log
@@ -48,16 +48,21 @@
 - [x] 8.3 Expose `--no-compaction` CLI flag as a per-session override.
 - [x] 8.4 Allow `compaction.model` to resolve through the `ProviderRegistry` like the main model.
 
-## 9. TUI
+## 9. Hooks
 
-- [x] 9.1 Add `/compact` built-in handler that POSTs `/compact`.
-- [x] 9.2 Render `compaction_started` as an inline "compacting…" spinner; clear on `compaction_finished`.
-- [x] 9.3 Surface the `tokensBefore → tokensAfter` delta in a one-line confirmation.
-- [x] 9.4 Snapshot tests for the inline indicator.
+- [x] 9.1 Add `CompactionStart` and `CompactionEnd` to `HookEvent` union and `FirePayload`.
+- [x] 9.2 Bridge `compaction_started` / `compaction_finished` / `compaction_failed` events to hook firings in `packages/server/src/hook-bridge.ts`.
 
-## 10. Documentation / E2E
+## 10. TUI
 
-- [x] 10.1 Write `COMPACTION.md`: summary format, configuration, tradeoffs.
-- [x] 10.2 E2E: synthetic conversation long enough to trigger threshold compaction against a stub model that returns a canned summary; assert section headers present, `<files>` block correct, tail preserved.
-- [x] 10.3 E2E: `/compact` manual trigger against a short session succeeds and emits the expected event pair.
-- [x] 10.4 E2E: invariant violation on bad config → CLI exits non-zero before creating a session.
+- [x] 10.1 Add `/compact` built-in handler that POSTs `/compact`; sets `compacting=true` immediately for instant spinner feedback, queues messages behind compaction.
+- [x] 10.2 Render `compaction_started` as an inline "compacting…" spinner; clear on `compaction_finished`.
+- [x] 10.3 Surface the `tokensBefore → tokensAfter` delta in a one-line confirmation.
+- [x] 10.4 Snapshot tests for the inline indicator.
+
+## 11. Documentation / E2E
+
+- [x] 11.1 Write `COMPACTION.md`: summary format, configuration, tradeoffs.
+- [x] 11.2 E2E: synthetic conversation long enough to trigger threshold compaction against a stub model that returns a canned summary; assert section headers present, `<files>` block correct, tail preserved.
+- [x] 11.3 E2E: `/compact` manual trigger against a short session succeeds and emits the expected event pair.
+- [x] 11.4 E2E: invariant violation on bad config → CLI exits non-zero before creating a session.

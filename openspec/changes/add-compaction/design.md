@@ -73,13 +73,25 @@ Compaction is the difference between an agent that politely dies at 200K tokens 
 
 **Why:** Keeps file tracking fast (no re-parse) and correct across compactions. The tracking is independent of whether compaction ever runs.
 
-### D6. Persist the compaction log
+### D6. Compactor returns metrics; Agent emits events
+
+**Decision:** `Compactor.compact()` is a plain async function that returns `{ summary, tokensBefore, tokensAfter, messagesReplaced }`. It does NOT emit events internally. The caller (`Agent.compactSession()`) yields `compaction_started` immediately, awaits `compact()`, then yields `compaction_finished` with the result object. On error it yields `compaction_failed`.
+
+**Why:** Separates the compactor (pure model call + log write) from the event lifecycle. The async generator pattern also means the SSE consumer sees `compaction_started` before the potentially slow LLM call begins, so the spinner/indicate appears right away.
+
+### D7. Persist the compaction log
 
 **Decision:** Append one JSON line per compaction to `~/.chimera/sessions/<id>.compactions.jsonl` with `{ ts, tokensBefore, tokensAfter, summary, messagesReplaced: { count, firstIndex, lastIndex } }`.
 
 **Why:** Debuggability. Users can inspect "why did the agent forget X" by reading the log. Append-only avoids rewrite cost.
 
-### D7. Manual `/compact` is a first-class path
+### D8. Compaction lifecycle hooks
+
+**Decision:** The hook bridge fires `CompactionStart` on `compaction_started` and `CompactionEnd` on `compaction_finished` / `compaction_failed`.
+
+**Why:** Users can trigger external notifications (e.g., flash a terminal bell) when a long compaction completes, just like they do with `Stop` on `run_finished`.
+
+### D8. Manual `/compact` is a first-class path
 
 **Decision:** `POST /v1/sessions/:id/compact` forces a compaction regardless of threshold. TUI surfaces this as `/compact`.
 
