@@ -458,23 +458,9 @@ export class Agent {
       yield { type: 'compaction_failed', error: 'not configured' };
       return;
     }
-    const events: AgentEvent[] = [];
-    if (compactor.setEmit) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      compactor.setEmit!((event: AgentEvent) => {
-        events.push(event);
-      });
-    }
+    yield { type: 'compaction_started', reason: 'manual' };
     try {
       const result = await compactor.compact(this.session, 'manual');
-      for (const event of events) {
-        yield event;
-      }
-      // For mock compactors that don't emit internally, emit defaults derived
-      // from the returned result so the consumer always sees a finished event.
-      if (events.length === 0) {
-        yield { type: 'compaction_started', reason: 'manual' };
-      }
       yield {
         type: 'compaction_finished',
         summary: result.summary,
@@ -652,19 +638,11 @@ export class Agent {
 
     queue.push({ type: 'user_message', content: userMessage });
 
-    // Compaction: if configured, run before streamText.  Wire the
-    // compactor's emit into the current run queue so that events land on
-    // `this.currentQueue` rather than whatever callback was wired at factory
-    // construction time.
+    // Compaction: if configured, run before streamText.
     const compactor = this.opts.compactor;
     const compactionEnabled = this.opts.compaction?.enabled ?? false;
     if (compactionEnabled && compactor) {
       try {
-        if (typeof compactor.setEmit === 'function') {
-          compactor.setEmit((event: AgentEvent) => {
-            queue.push(event);
-          });
-        }
         await compactor.maybeCompact(this.session);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

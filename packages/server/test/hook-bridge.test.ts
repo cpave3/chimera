@@ -98,6 +98,39 @@ describe('bridgeHooksToBus', () => {
     expect(r.fired).toEqual([{ event: 'Stop', reason: 'stop' }]);
   });
 
+  it('translates compaction_started → CompactionStart', async () => {
+    const bus = new EventBus(sid);
+    const r = recorder();
+    bridgeHooksToBus(bus, r);
+    bus.publish({ type: 'compaction_started', reason: 'threshold' });
+    await flush();
+    expect(r.fired).toEqual([{ event: 'CompactionStart', reason: 'threshold' }]);
+  });
+
+  it('translates compaction_finished → CompactionEnd success', async () => {
+    const bus = new EventBus(sid);
+    const r = recorder();
+    bridgeHooksToBus(bus, r);
+    bus.publish({
+      type: 'compaction_finished',
+      summary: 'compacted',
+      tokensBefore: 1000,
+      tokensAfter: 500,
+      messagesReplaced: 20,
+    });
+    await flush();
+    expect(r.fired).toEqual([{ event: 'CompactionEnd', success: true }]);
+  });
+
+  it('translates compaction_failed → CompactionEnd failure', async () => {
+    const bus = new EventBus(sid);
+    const r = recorder();
+    bridgeHooksToBus(bus, r);
+    bus.publish({ type: 'compaction_failed', error: 'model refused' });
+    await flush();
+    expect(r.fired).toEqual([{ event: 'CompactionEnd', success: false, error: 'model refused' }]);
+  });
+
   it('does not fire for events with no hook mapping', async () => {
     const bus = new EventBus(sid);
     const r = recorder();

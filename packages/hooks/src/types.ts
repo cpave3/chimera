@@ -3,7 +3,9 @@ export type HookEvent =
   | 'PostToolUse'
   | 'PermissionRequest'
   | 'Stop'
-  | 'SessionEnd';
+  | 'SessionEnd'
+  | 'CompactionStart'
+  | 'CompactionEnd';
 
 export const PRE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(['PermissionRequest']);
 
@@ -13,6 +15,8 @@ export const ALL_HOOK_EVENTS: readonly HookEvent[] = [
   'PermissionRequest',
   'Stop',
   'SessionEnd',
+  'CompactionStart',
+  'CompactionEnd',
 ];
 
 export interface HookPayloadBase {
@@ -51,12 +55,25 @@ export interface SessionEndPayload extends HookPayloadBase {
   event: 'SessionEnd';
 }
 
+export interface CompactionStartPayload extends HookPayloadBase {
+  event: 'CompactionStart';
+  reason: string;
+}
+
+export interface CompactionEndPayload extends HookPayloadBase {
+  event: 'CompactionEnd';
+  success: boolean;
+  error?: string;
+}
+
 export type HookPayload =
   | UserPromptSubmitPayload
   | PostToolUsePayload
   | PermissionRequestPayload
   | StopPayload
-  | SessionEndPayload;
+  | SessionEndPayload
+  | CompactionStartPayload
+  | CompactionEndPayload;
 
 export type FirePayload =
   | { event: 'UserPromptSubmit'; user_message: string }
@@ -75,7 +92,9 @@ export type FirePayload =
       command?: string;
     }
   | { event: 'Stop'; reason: string }
-  | { event: 'SessionEnd' };
+  | { event: 'SessionEnd' }
+  | { event: 'CompactionStart'; reason: string }
+  | { event: 'CompactionEnd'; success: boolean; error?: string };
 
 export interface HookFireResult {
   /** True only if a pre-event hook exited with code 2. */

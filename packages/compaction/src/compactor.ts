@@ -2,7 +2,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { generateText } from 'ai';
-import type { AgentEvent, FileOps, Session } from '@chimera/core';
+import type { FileOps, Session } from '@chimera/core';
 import type { LanguageModel, ModelMessage } from 'ai';
 import { estimateTokens } from './token-estimate';
 import { buildCompactionPrompt, formatFilesBlock } from './prompt';
@@ -16,10 +16,6 @@ export interface CompactorOptions {
    * `LanguageModel`. Injected so tests can stub the LLM.
    */
   resolveModel(modelRef: string): Promise<LanguageModel>;
-  /**
-   * Optional callback to emit compaction events into the session event stream.
-   */
-  emit?: (event: AgentEvent) => void | Promise<void>;
   /** Home directory for log writes. Defaults to `homedir()`. */
   home?: string;
 }
@@ -29,11 +25,6 @@ export class Compactor {
 
   constructor(opts: CompactorOptions) {
     this.opts = opts;
-  }
-
-  /** Rebind the event emitter so the agent can pipe compaction events into the current run queue. */
-  setEmit(emit: CompactorOptions['emit']): void {
-    this.opts = { ...this.opts, emit };
   }
 
   /**
@@ -60,77 +51,60 @@ export class Compactor {
     session: Session,
     reason: 'threshold' | 'manual',
   ): Promise<{ summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }> {
-    const emit = this.opts.emit ?? (() => undefined);
     const tokensBefore = estimateTokens(session.messages);
 
-    emit({ type: 'compaction_started', reason });
+    const adjusted = computeBoundary(session.messages, this.opts.config.keepRecentTokens);
+    const keepStart = adjusted.keepStart;
+    const toSummarize = keepStart === 0 ? [] : session.messages.slice(0, keepStart);
+    const tailMessages = keepStart === session.messages.length ? [] : session.messages.slice(keepStart);
 
-    try {
-      const adjusted = computeBoundary(session.messages, this.opts.config.keepRecentTokens);
-      const keepStart = adjusted.keepStart;
-      const toSummarize = keepStart === 0 ? [] : session.messages.slice(0, keepStart);
-      const tailMessages = keepStart === session.messages.length ? [] : session.messages.slice(keepStart);
-
-      let summaryText: string;
-      if (toSummarize.length === 0) {
-        // Nothing to replace; previous summary if any can be preserved.
-        // Build a fresh summary with just the current file context.
-        summaryText = buildFallbackSummary('', session.fileOps);
-      } else {
-        const modelRef = this.resolveModelRef(session);
-        const model = await this.opts.resolveModel(modelRef);
-        const previousSummary = this.extractPreviousSummary(session.messages);
-        const prompt = buildCompactionPrompt({
-          toSummarize,
-          previousSummaryContent: previousSummary ?? undefined,
-          fileOps: session.fileOps,
-        });
-        const result = await generateText({
-          model,
-          messages: [{ role: 'user', content: prompt }],
-        });
-        summaryText = this.ensureFilesBlock(result.text, session.fileOps);
-      }
-
-      const summaryMessage: ModelMessage = { role: 'assistant', content: summaryText };
-      const newMessages =
-        toSummarize.length === 0
-          ? [...tailMessages]
-          : [summaryMessage, ...tailMessages];
-
-      const tokensAfter = estimateTokens(newMessages);
-      const messagesReplaced = keepStart;
-
-      // Mutate the session in place
-      session.messages.splice(0, session.messages.length, ...newMessages);
-
-      emit({
-        type: 'compaction_finished',
-        summary: summaryText,
-        tokensBefore,
-        tokensAfter,
-        messagesReplaced,
+    let summaryText: string;
+    if (toSummarize.length === 0) {
+      // Nothing to replace; previous summary if any can be preserved.
+      // Build a fresh summary with just the current file context.
+      summaryText = buildFallbackSummary('', session.fileOps);
+    } else {
+      const modelRef = this.resolveModelRef(session);
+      const model = await this.opts.resolveModel(modelRef);
+      const previousSummary = this.extractPreviousSummary(session.messages);
+      const prompt = buildCompactionPrompt({
+        toSummarize,
+        previousSummaryContent: previousSummary ?? undefined,
+        fileOps: session.fileOps,
       });
-
-      await this.appendLog(session.id, {
-        ts: Date.now(),
-        reason,
-        tokensBefore,
-        tokensAfter,
-        summary: summaryText,
-        messagesReplaced: {
-          count: messagesReplaced,
-          firstIndex: 0,
-          lastIndex: messagesReplaced === 0 ? 0 : messagesReplaced - 1,
-        },
+      const result = await generateText({
+        model,
+        messages: [{ role: 'user', content: prompt }],
       });
-
-      return { summary: summaryText, tokensBefore, tokensAfter, messagesReplaced };
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      emit({ type: 'compaction_failed', error });
-      throw err;
+      summaryText = this.ensureFilesBlock(result.text, session.fileOps);
     }
+
+    const summaryMessage: ModelMessage = { role: 'assistant', content: summaryText };
+    const newMessages =
+      toSummarize.length === 0
+        ? [...tailMessages]
+        : [summaryMessage, ...tailMessages];
+
+    const tokensAfter = estimateTokens(newMessages);
+    const messagesReplaced = keepStart;
+
+    // Mutate the session in place
+    session.messages.splice(0, session.messages.length, ...newMessages);
+
+    await this.appendLog(session.id, {
+      ts: Date.now(),
+      reason,
+      tokensBefore,
+      tokensAfter,
+      summary: summaryText,
+      messagesReplaced: {
+        count: messagesReplaced,
+        firstIndex: 0,
+        lastIndex: messagesReplaced === 0 ? 0 : messagesReplaced - 1,
+      },
+    });
+
+    return { summary: summaryText, tokensBefore, tokensAfter, messagesReplaced };
   }
 
   private resolveModelRef(session: Session): string {

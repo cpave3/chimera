@@ -815,6 +815,72 @@ describe('App', () => {
     unmount();
   });
 
+  it('/compact handler sets compacting immediately, and queued messages auto-send after compaction_finished', async () => {
+    const sends: string[] = [];
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      send: async function* (id: string, text: string) {
+        void id;
+        sends.push(text);
+      } as unknown as ChimeraClient['send'],
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    // Start compacting.
+    pushEvent!({ type: 'compaction_started', reason: 'manual' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()!).toContain('compacting');
+
+    // Queue a message while compacting.
+    const write = (s: string): void => {
+      (stdin as unknown as { write: (s: string) => void }).write(s);
+    };
+    for (const ch of 'hello during compact\r') {
+      write(ch);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()!).toContain('queued (1)');
+    expect(sends).toEqual([]);
+
+    // End compaction.
+    pushEvent!({
+      type: 'compaction_finished',
+      summary: 'synthetic',
+      tokensBefore: 1000,
+      tokensAfter: 200,
+      messagesReplaced: 5,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()!).not.toContain('queued (');
+    expect(lastFrame()!).not.toContain('compacting');
+    expect(lastFrame()!).toContain('compaction done');
+    expect(sends).toEqual(['hello during compact']);
+
+    unmount();
+  });
+
   it('renders a compaction error line on compaction_failed', async () => {
     let pushEvent: ((ev: unknown) => void) | null = null;
     const client = stubClient({

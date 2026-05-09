@@ -63,7 +63,7 @@ function emptySession(id: string): Session {
   };
 }
 
-function stubClient(opts: StubClientOpts = {}): ChimeraClient {
+function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev: AgentEvent) => void } {
   const queue: AgentEvent[] = [];
   let wake: (() => void) | null = null;
   const getSessionImpl = opts.getSessionImpl ?? emptySession;
@@ -113,7 +113,12 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient {
     compact: async (_id: string) => {
       opts.compactSpy?.(_id);
     },
-  } as unknown as ChimeraClient;
+    pushEvent: (ev: AgentEvent) => {
+      queue.push(ev);
+      wake?.();
+      wake = null;
+    },
+  } as unknown as ChimeraClient & { pushEvent: (ev: AgentEvent) => void };
 }
 
 const TEST_MODEL: ModelConfig = {
@@ -801,6 +806,37 @@ describe('TUI /theme slash dispatch', () => {
     );
     await type(stdin, '/compact\r');
     expect(compactCalls).toEqual(['SESS001']);
+    unmount();
+  });
+
+  it('typing a message while compacting=true queues it', async () => {
+    const client = stubClient({});
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    // Inject compaction_started so compacting flips to true.
+    client.pushEvent({ type: 'compaction_started', reason: 'threshold' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()).toContain('compacting');
+
+    // Type a message while compacting.
+    await type(stdin, 'hello while compacting\r');
+    await new Promise((r) => setTimeout(r, 30));
+    const frame = lastFrame();
+    expect(frame).toContain('queued (1)');
+    expect(frame).toContain('hello while compacting');
+
+    // End compaction.
+    client.pushEvent({
+      type: 'compaction_finished',
+      summary: 'done',
+      tokensBefore: 1000,
+      tokensAfter: 200,
+      messagesReplaced: 5,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()).not.toContain('queued (');
+
     unmount();
   });
 });

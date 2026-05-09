@@ -162,6 +162,7 @@ export function App(props: AppProps): React.ReactElement {
   const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
   const [running, setRunning] = useState(false);
   const [compacting, setCompacting] = useState(false);
+  const busy = running || compacting;
   const [activeModeName, setActiveModeName] = useState<string>(props.initialMode ?? 'build');
   const [pendingModeName, setPendingModeName] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
@@ -175,7 +176,7 @@ export function App(props: AppProps): React.ReactElement {
     usedContextTokens: number;
     unknownWindow: boolean;
   } | null>(null);
-  const wasRunningRef = useRef(false);
+  const wasBusyRef = useRef(false);
   // Id of the assistant entry currently receiving text deltas. Held out of
   // <Static> so its text can keep updating; committed once text_done fires.
   const [streamingEntryId, setStreamingEntryId] = useState<string | null>(null);
@@ -342,15 +343,15 @@ export function App(props: AppProps): React.ReactElement {
 
   // When a run ends with queued messages, concatenate and send as one turn.
   useEffect(() => {
-    if (wasRunningRef.current && !running && queue.length > 0) {
+    if (wasBusyRef.current && !busy && queue.length > 0) {
       const combined = queue.join('\n\n');
       setQueue([]);
-      void sendUserMessage(combined);
+      void handleSubmit(combined);
     }
-    wasRunningRef.current = running;
-    // sendUserMessage is a stable closure for this purpose; intentional deps.
+    wasBusyRef.current = busy;
+    // handleSubmit is a stable closure for this purpose; intentional deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, queue]);
+  }, [busy, queue]);
 
   // Subscribe to events on the active session — re-subscribes when /attach swaps it.
   useEffect(() => {
@@ -711,7 +712,7 @@ export function App(props: AppProps): React.ReactElement {
       handleSlash(text.trim());
       return;
     }
-    if (running) {
+    if (busy) {
       setQueue((q) => [...q, text]);
       scrollback.addInfo(`queued: ${previewLine(text)}`);
       setEntries(scrollback.all());
@@ -1037,10 +1038,20 @@ export function App(props: AppProps): React.ReactElement {
         return;
       }
       case '/compact': {
+        if (busy) {
+          setQueue((q) => [...q, raw]);
+          scrollback.addInfo(`queued: ${previewLine(raw)}`);
+          setEntries(scrollback.all());
+          return;
+        }
+        setCompacting(true);
+        scrollback.addInfo('compacting...');
+        setEntries(scrollback.all());
         void (async () => {
           try {
             await activeSession.client.compact(activeSession.sessionId);
           } catch (err) {
+            setCompacting(false);
             scrollback.addError(`/compact: ${(err as Error).message}`);
             setEntries(scrollback.all());
           }

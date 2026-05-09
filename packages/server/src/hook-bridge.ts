@@ -8,6 +8,9 @@ import type { EventBus } from './event-bus';
  *  - `tool_call_result`    → `PostToolUse` (success path)
  *  - `tool_call_error`     → `PostToolUse` (error path)
  *  - `run_finished`        → `Stop`
+ *  - `compaction_started`  → `CompactionStart`
+ *  - `compaction_finished` → `CompactionEnd` (success)
+ *  - `compaction_failed`   → `CompactionEnd` (failure)
  *
  * `tool_call_start` is consumed only to remember the tool's name + args so
  * the matching `tool_call_result` / `tool_call_error` event can be enriched
@@ -55,6 +58,15 @@ export function bridgeHooksToBus(bus: EventBus, runner: HookRunner): () => void 
       }
       case 'run_finished':
         void runner.fire({ event: 'Stop', reason: env.reason });
+        return;
+      case 'compaction_started':
+        void runner.fire({ event: 'CompactionStart', reason: env.reason });
+        return;
+      case 'compaction_finished':
+        void runner.fire({ event: 'CompactionEnd', success: true });
+        return;
+      case 'compaction_failed':
+        void runner.fire({ event: 'CompactionEnd', success: false, error: env.error });
         return;
     }
   });

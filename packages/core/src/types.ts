@@ -120,14 +120,6 @@ export interface CompactorApi {
     session: Session,
     reason: 'threshold' | 'manual',
   ): Promise<{ summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }>;
-  /**
-   * Rebind the event emitter so the agent can pipe compaction events into the
-   * current run queue.  Implementations (e.g. `Compactor`) should accept an
-   * optional emit callback and replace whatever was wired at construction time.
-   */
-  setEmit?(
-    emit: (event: AgentEvent) => void | Promise<void>,
-  ): void;
 }
 
 export type RememberScope =

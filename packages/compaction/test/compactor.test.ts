@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ModelMessage } from 'ai';
-import type { AgentEvent, Session } from '@chimera/core';
+import type { Session } from '@chimera/core';
 import { Compactor, computeBoundary, estimateTokens } from '../src';
 import { newSessionId } from '@chimera/core';
 
@@ -96,13 +96,11 @@ describe('computeBoundary', () => {
 
 describe('Compactor', () => {
   let home: string;
-  let emittedEvents: AgentEvent[];
   let resolveModelCalls: { ref: string; count: number };
 
   beforeEach(async () => {
     home = await (await import('node:fs/promises')).mkdtemp(join(tmpdir(), 'chimera-compaction-'));
     await mkdir(join(home, '.chimera', 'sessions'), { recursive: true });
-    emittedEvents = [];
     resolveModelCalls = { ref: '', count: 0 };
   });
 
@@ -137,7 +135,7 @@ describe('Compactor', () => {
     };
   }
 
-  function makeCompactor(enabled = true, overrides: Partial<Parameters<typeof Compactor.prototype.compact>[0]> = {}) {
+  function makeCompactor(enabled = true) {
     return new Compactor({
       config: {
         enabled,
@@ -145,9 +143,6 @@ describe('Compactor', () => {
         keepRecentTokens: 30,
       },
       contextWindow: 100,
-      emit: async (event: AgentEvent) => {
-        emittedEvents.push(event);
-      },
       resolveModel: async (ref: string) => {
         resolveModelCalls.ref = ref;
         resolveModelCalls.count += 1;
@@ -165,7 +160,6 @@ describe('Compactor', () => {
     const ran = await compactor.maybeCompact(session);
     expect(ran).toBe(false);
     expect(session.messages).toHaveLength(1);
-    expect(emittedEvents).toHaveLength(0);
   });
 
   it('maybeCompact is a no-op when below threshold', async () => {
@@ -176,67 +170,40 @@ describe('Compactor', () => {
     expect(session.messages).toHaveLength(1);
   });
 
-  it('maybeCompact runs when overflow passes threshold', async () => {
+  it('maybeCompact throws when compaction runs and resolveModel fails', async () => {
     // ceil(500/4) + 16 = 141 tokens. threshold = 100 - 10 = 90. 141 > 90.
     const session = makeSession([{ role: 'user', content: 'x'.repeat(500) }]);
     const compactor = makeCompactor(true);
     // Because toSummarize will be calculated and since our stub resolveModel
-    // returns null, generateText will throw. We therefore expect
-    // compaction_failed.
-    try {
-      await compactor.maybeCompact(session);
-    } catch {
-      // ignore
-    }
-    expect(emittedEvents.some((e) => e.type === 'compaction_started')).toBe(true);
-    expect(emittedEvents.some((e) => e.type === 'compaction_failed')).toBe(true);
+    // returns null, generateText will throw.
+    await expect(compactor.maybeCompact(session)).rejects.toThrow();
   });
 
-  it('manual compact with no messages produces empty summary but emits finished', async () => {
+  it('manual compact with no messages returns empty summary and keeps tail', async () => {
     const session = makeSession([]);
     const compactor = makeCompactor(true);
-    await compactor.compact(session, 'manual');
-
-    const started = emittedEvents[0];
-    expect(started!.type).toBe('compaction_started');
-    expect((started as Extract<AgentEvent, { type: 'compaction_started' }>).reason).toBe('manual');
-
-    expect(emittedEvents.some((e) => e.type === 'compaction_finished')).toBe(true);
+    const result = await compactor.compact(session, 'manual');
     expect(session.messages).toHaveLength(0);
+    expect(result.summary).toBeTruthy();
+    expect(result.tokensBefore).toBe(0);
+    expect(result.messagesReplaced).toBe(0);
   });
 
-  it('manual compact with one message produces summary and keeps tail', async () => {
+  it('manual compact with one message returns summary and keeps tail', async () => {
     const session = makeSession([{ role: 'user', content: 'hello world' }]);
     const compactor = makeCompactor(true);
-    await compactor.compact(session, 'manual');
-
-    const finished = emittedEvents.find((e) => e.type === 'compaction_finished') as
-      | Extract<AgentEvent, { type: 'compaction_finished' }>
-      | undefined;
-    expect(finished).toBeDefined();
+    const result = await compactor.compact(session, 'manual');
     // messages replaced = keepStart index (all fit in keepRecentTokens)
-    expect(finished!.messagesReplaced).toBe(0);
-  });
-
-  it('emits events in order: started -> finished', async () => {
-    const session = makeSession([]);
-    const compactor = makeCompactor(true);
-    await compactor.compact(session, 'manual');
-    expect(emittedEvents[0]!.type).toBe('compaction_started');
-    expect(emittedEvents[1]!.type).toBe('compaction_finished');
+    expect(result.messagesReplaced).toBe(0);
+    expect(result.tokensBefore).toBeGreaterThan(0);
   });
 
   describe('structured summary headers', () => {
     it('includes all required headers in fallback summary', async () => {
       const session = makeSession([]);
       const compactor = makeCompactor(true);
-      await compactor.compact(session, 'manual');
-
-      const finished = emittedEvents.find((e) => e.type === 'compaction_finished') as
-        | Extract<AgentEvent, { type: 'compaction_finished' }>
-        | undefined;
-      expect(finished).toBeDefined();
-      const text = finished!.summary;
+      const result = await compactor.compact(session, 'manual');
+      const text = result.summary;
       expect(text).toContain('## Goal');
       expect(text).toContain('## Constraints');
       expect(text).toContain('## Progress');
@@ -258,12 +225,8 @@ describe('Compactor', () => {
       session.fileOps.reads.add('/src/bar.ts');
 
       const compactor = makeCompactor(true);
-      await compactor.compact(session, 'manual');
-
-      const finished = emittedEvents.find((e) => e.type === 'compaction_finished') as
-        | Extract<AgentEvent, { type: 'compaction_finished' }>
-        | undefined;
-      const summary = finished!.summary;
+      const result = await compactor.compact(session, 'manual');
+      const summary = result.summary;
       // modified should appear
       expect(summary).toContain('<modified>/src/foo.ts</modified>');
       // read-only should appear
