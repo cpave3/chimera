@@ -25,6 +25,7 @@
   "dependencies": {
     "@chimera/client": "workspace:*",
     "@chimera/commands": "workspace:*",
+    "@chimera/compaction": "workspace:*",
     "@chimera/core": "workspace:*",
     "@chimera/hooks": "workspace:*",
     "@chimera/modes": "workspace:*",

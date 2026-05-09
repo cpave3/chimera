@@ -16,6 +16,7 @@ function stub(): ChimeraClient {
     addRule: async () => {},
     removeRule: async () => {},
     resolvePermission: async () => {},
+    compact: async () => {},
   } as unknown as ChimeraClient;
 }
 

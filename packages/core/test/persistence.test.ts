@@ -38,6 +38,7 @@ describe('persistence', () => {
       model: { providerId: 'p', modelId: 'm', maxSteps: 100 },
       sandboxMode: 'off',
       usage: emptyUsage(),
+      fileOps: { reads: new Set(), writes: new Set() },
       ...overrides,
     };
   }

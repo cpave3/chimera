@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   deleteSession as coreDeleteSession,
   forkSession as coreForkSession,
@@ -129,12 +132,40 @@ export function buildApp(opts: AppOptions): Hono {
     return c.json(await listCache);
   });
 
-  app.get('/v1/sessions/:id', (c) => {
+  app.get('/v1/sessions/:id', async (c) => {
     const id = c.req.param('id');
     if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
     const entry = registry.get(id);
     if (!entry) return c.json({ error: 'not found' }, 404);
-    return c.json(entry.agent.session);
+
+    const sessionsHome = home ?? homedir();
+    const logPath = join(sessionsHome, '.chimera', 'sessions', `${id}.compactions.jsonl`);
+    let compactionCount = entry.compactionCount;
+    let lastCompactedAt = entry.lastCompactedAt;
+    try {
+      const raw = await readFile(logPath, 'utf8');
+      const lines = raw.split('\n').filter(Boolean);
+      if (lines.length > 0) {
+        compactionCount = lines.length;
+        let maxTs = 0;
+        for (const line of lines) {
+          const parsed = JSON.parse(line) as { ts?: number };
+          if (typeof parsed.ts === 'number' && parsed.ts > maxTs) {
+            maxTs = parsed.ts;
+          }
+        }
+        lastCompactedAt = maxTs;
+      }
+    } catch {
+      // File doesn't exist; fall back to in-memory values.
+    }
+
+    return c.json({
+      ...entry.agent.session,
+      compactionActive: entry.compactionActive,
+      compactionCount,
+      lastCompactedAt,
+    });
   });
 
   app.delete('/v1/sessions/:id', async (c) => {
@@ -283,6 +314,17 @@ export function buildApp(opts: AppOptions): Hono {
     if (!entry) return c.body(null, 204);
     entry.agent.interrupt();
     return c.body(null, 204);
+  });
+
+  app.post('/v1/sessions/:id/compact', (c) => {
+    const id = c.req.param('id');
+    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    const state = registry.compact(id);
+    if (state === 'missing') return c.json({ error: 'not found' }, 404);
+    if (state === 'already-running') {
+      return c.json({ error: 'run already in progress' }, 409);
+    }
+    return c.body(null, 202);
   });
 
   // --- Reload (AGENTS.md/CLAUDE.md, etc.) ----------------------------------

@@ -2,6 +2,7 @@ export * from './config';
 export * from './lockfile';
 export * from './factory';
 export * from './program';
+export * from './compaction';
 export { runOneShot, type RunOptions } from './commands/run';
 export { runServe, type ServeOptions } from './commands/serve';
 export { runLs } from './commands/ls';

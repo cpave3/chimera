@@ -8,6 +8,7 @@ describe('slash commands', () => {
       [
         '/attach',
         '/clear',
+        '/compact',
         '/detach',
         '/exit',
         '/fork',

@@ -1,4 +1,5 @@
 import { stepCountIs, streamText, type ModelMessage, type LanguageModel, type ToolSet } from 'ai';
+import { resolve } from 'node:path';
 import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
 
@@ -14,6 +15,8 @@ import {
 } from './persistence';
 import {
   DEFAULT_SESSION_MODE,
+  type CompactionConfig,
+  type CompactorApi,
   type ExecutionTarget,
   type ModelConfig,
   type RememberScope,
@@ -63,6 +66,17 @@ export interface AgentOptions {
   initialMode?: string;
   /** Initial sticky user model override. Defaults to null. */
   initialUserModelOverride?: string | null;
+  /**
+   * Optional compaction configuration. When provided, the agent will invoke
+   * `compactor.maybeCompact` before each `streamText` call.
+   */
+  compaction?: CompactionConfig;
+  /**
+   * Optional compactor instance. If `compaction` is also provided, this must
+   * be set to the concrete compactor built from that config.  Used by
+   * `compactSession()`.
+   */
+  compactor?: CompactorApi;
 }
 
 export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<PermissionResolution>;
@@ -132,6 +146,7 @@ export class Agent {
         usage: opts.session.usage ?? emptyUsage(),
         mode: opts.session.mode ?? DEFAULT_SESSION_MODE,
         userModelOverride: opts.session.userModelOverride ?? null,
+        fileOps: opts.session.fileOps ?? { reads: new Set(), writes: new Set() },
       };
     } else {
       this.session = {
@@ -148,6 +163,7 @@ export class Agent {
         usage: emptyUsage(),
         mode: opts.initialMode ?? DEFAULT_SESSION_MODE,
         userModelOverride: opts.initialUserModelOverride ?? null,
+        fileOps: { reads: new Set(), writes: new Set() },
       };
     }
   }
@@ -429,6 +445,65 @@ export class Agent {
   }
 
   /**
+   * Manually trigger a compaction on this session. Emits
+   * `compaction_started`/`compaction_finished` (or `compaction_failed`) into
+   * the returned event stream. Requires `opts.compactor` to be set.
+   *
+   * If no compactor is available (config disabled), the stream immediately
+   * yields `compaction_failed { error: 'not configured' }`.
+   */
+  async *compactSession(): AsyncIterable<AgentEvent> {
+    const compactor = this.opts.compactor;
+    if (!compactor) {
+      yield { type: 'compaction_failed', error: 'not configured' };
+      return;
+    }
+    const events: AgentEvent[] = [];
+    if (compactor.setEmit) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      compactor.setEmit!((event: AgentEvent) => {
+        events.push(event);
+      });
+    }
+    try {
+      const result = await compactor.compact(this.session, 'manual');
+      for (const event of events) {
+        yield event;
+      }
+      // For mock compactors that don't emit internally, emit defaults derived
+      // from the returned result so the consumer always sees a finished event.
+      if (events.length === 0) {
+        yield { type: 'compaction_started', reason: 'manual' };
+      }
+      yield {
+        type: 'compaction_finished',
+        summary: result.summary,
+        tokensBefore: result.tokensBefore,
+        tokensAfter: result.tokensAfter,
+        messagesReplaced: result.messagesReplaced,
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      yield { type: 'compaction_failed', error };
+    }
+  }
+
+  /**
+   * Resolve a path relative to session.cwd, then track it in fileOps.  Called
+   * after a read/write/edit tool result arrives.
+   */
+  private resolveAndTrackPath(args: unknown, write: boolean): void {
+    const path = extractPathFromToolArgs(args);
+    if (!path) return;
+    const abs = resolve(this.session.cwd, path);
+    if (write) {
+      this.session.fileOps.writes.add(abs);
+    } else {
+      this.session.fileOps.reads.add(abs);
+    }
+  }
+
+  /**
    * Translate an AI SDK `toolCallId` into the agent's `CallId` for the same
    * in-flight tool invocation. Returns `undefined` when no mapping exists
    * (e.g. the tool call has already produced its result/error and been
@@ -576,6 +651,26 @@ export class Agent {
     }
 
     queue.push({ type: 'user_message', content: userMessage });
+
+    // Compaction: if configured, run before streamText.  Wire the
+    // compactor's emit into the current run queue so that events land on
+    // `this.currentQueue` rather than whatever callback was wired at factory
+    // construction time.
+    const compactor = this.opts.compactor;
+    const compactionEnabled = this.opts.compaction?.enabled ?? false;
+    if (compactionEnabled && compactor) {
+      try {
+        if (typeof compactor.setEmit === 'function') {
+          compactor.setEmit((event: AgentEvent) => {
+            queue.push(event);
+          });
+        }
+        await compactor.maybeCompact(this.session);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        queue.push({ type: 'compaction_failed', error: message });
+      }
+    }
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
     const textStreams = new Map<string, string>();
@@ -767,6 +862,11 @@ export class Agent {
                 }
               }
             }
+            if (info.name === 'read') {
+              this.resolveAndTrackPath(rec?.args, false);
+            } else if (info.name === 'write' || info.name === 'edit') {
+              this.resolveAndTrackPath(rec?.args, true);
+            }
             callInfo.delete(part.toolCallId);
             this.callIdByToolCallId.delete(part.toolCallId);
             break;
@@ -944,6 +1044,10 @@ function extractReadPath(args: unknown): string | undefined {
     if (typeof pathValue === 'string' && pathValue.length > 0) return pathValue;
   }
   return undefined;
+}
+
+function extractPathFromToolArgs(args: unknown): string | undefined {
+  return extractReadPath(args);
 }
 
 function extractTarget(args: unknown, sandboxMode: SandboxMode): ExecutionTarget {

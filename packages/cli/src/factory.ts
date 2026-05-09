@@ -1,6 +1,7 @@
 import { dirname } from 'node:path';
+import { Compactor } from '@chimera/compaction';
 import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
-import type { Executor, SessionId } from '@chimera/core';
+import type { CompactionConfig, Executor, SessionId } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
 import {
   applyAllowlist,
@@ -86,6 +87,13 @@ export interface CliAgentFactoryOptions {
     /** Whether the parent process has a TTY. Defaults to `process.stdin.isTTY`. */
     parentHasTty?: boolean;
   };
+  /** Compaction config and optional concrete compactor wired into every Agent built by this factory. */
+  compaction?: CompactionConfig;
+  /**
+   * Optional compactor instance. When both `compaction` and this are set, the
+   * factory threads them into the Agent's constructor.
+   */
+  compactor?: Compactor;
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -104,6 +112,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly providersConfig: ProvidersConfig;
   private readonly modelsConfig: Record<string, ModelOptions>;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
+  private readonly compaction: CompactionConfig | undefined;
+  private readonly compactor: Compactor | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
    * The TUI consumes this via `getFormatters()` so its scrollback can render
@@ -128,6 +138,8 @@ export class CliAgentFactory implements AgentFactory {
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
     this.providersConfig = opts.providersConfig;
     this.modelsConfig = opts.models ?? {};
+    this.compaction = opts.compaction;
+    this.compactor = opts.compactor;
   }
 
   /**
@@ -199,6 +211,8 @@ export class CliAgentFactory implements AgentFactory {
       contextWindow: resolvedWindow.value,
       contextWindowIsApproximate: resolvedWindow.source === 'fallback',
       initialMode: activeMode?.name ?? requestedMode,
+      compaction: this.compaction,
+      compactor: this.compactor,
     });
 
     // Persist metadata immediately so the session appears in disk-scanned

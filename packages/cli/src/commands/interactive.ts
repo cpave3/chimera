@@ -1,12 +1,15 @@
 import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
+import { Compactor } from '@chimera/compaction';
 import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
+import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import type { ReloadingAgentRegistry } from '@chimera/subagents';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
+import { checkCompactionInvariant, resolveCompactionConfig } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';
@@ -33,6 +36,11 @@ export interface InteractiveOptions {
   maxSubagentDepth?: number;
   /** Initial message to submit when the TUI mounts (from `--prompt <text>`). */
   initialPrompt?: string;
+  /**
+   * Per-session override for compaction. When `false` (from `--no-compaction`),
+   * compaction is disabled for this invocation.
+   */
+  compaction?: boolean;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -76,6 +84,32 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     claudeCompatOverride: opts.claudeCompat,
   });
 
+  const compactionConfig = resolveCompactionConfig({ cliOverride: opts.compaction, config });
+  const resolvedWindow = resolveContextWindow({
+    providerShape: providersConfig.providers[model.providerId]?.shape ?? 'openai',
+    providerId: model.providerId,
+    modelId: model.modelId,
+    override: config.models?.[ref]?.contextWindow,
+  });
+  const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.value);
+  if (!invariant.ok) {
+    process.stderr.write(`${invariant.error}\n`);
+    process.exit(1);
+  }
+
+  let compactor: Compactor | undefined;
+  if (compactionConfig.enabled) {
+    const registry = loadProviders(providersConfig);
+    const compactionRef = compactionConfig.model ?? ref;
+    const { provider, modelId } = registry.resolve(compactionRef);
+    compactor = new Compactor({
+      config: compactionConfig,
+      contextWindow: resolvedWindow.value,
+      resolveModel: async () => provider.getModel(modelId),
+      home: opts.home,
+    });
+  }
+
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
@@ -90,6 +124,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       maxDepth: opts.maxSubagentDepth,
     },
     models: config.models,
+    compaction: compactionConfig,
+    compactor,
   });
 
   const commands = loadReloadingCommandsFromConfig({

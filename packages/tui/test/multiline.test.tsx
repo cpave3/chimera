@@ -29,6 +29,9 @@ function emptySession(id: string): Session {
       totalTokens: 0,
       stepCount: 0,
     },
+    mode: 'build',
+    userModelOverride: null,
+    fileOps: { reads: new Set(), writes: new Set() },
   };
 }
 
@@ -60,6 +63,7 @@ function stubClient(opts: StubOpts = {}): ChimeraClient {
     createSession: async () => ({ sessionId: 'x' }),
     resumeSession: async (id: string) => ({ sessionId: id }),
     forkSession: async (id: string) => ({ sessionId: 'c', parentId: id }),
+    compact: async (_id: string) => {},
   } as unknown as ChimeraClient;
 }
 

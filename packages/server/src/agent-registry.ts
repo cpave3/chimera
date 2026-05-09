@@ -59,6 +59,15 @@ export interface AgentEntry {
    * caller tears down the session directory.
    */
   activeRun: Promise<void> | null;
+  compactionActive: boolean;
+  /**
+   * Promise tracking the currently active compaction, if any. Awaited by
+   * `delete()` so compaction completes before the session directory is torn
+   * down.
+   */
+  activeCompaction: Promise<void> | null;
+  compactionCount: number;
+  lastCompactedAt: number | null;
   resolvedPermissionIds: Set<string>;
   /**
    * Commands bound to this session at creation time. Captured once so that
@@ -136,6 +145,10 @@ export class AgentRegistry {
       bus,
       runActive: false,
       activeRun: null,
+      compactionActive: false,
+      activeCompaction: null,
+      compactionCount: 0,
+      lastCompactedAt: null,
       resolvedPermissionIds: new Set(),
       commands,
       skills,
@@ -189,6 +202,17 @@ export class AgentRegistry {
         );
       }
     }
+    // Also wait for any active compaction to finish before tearing down.
+    if (entry.activeCompaction) {
+      try {
+        await entry.activeCompaction;
+      } catch (err) {
+        console.debug(
+          `[agent-registry] delete(${id}): activeCompaction rejection swallowed:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
     if (entry.hookRunner) {
       try {
         await entry.hookRunner.fire({ event: 'SessionEnd' });
@@ -205,13 +229,15 @@ export class AgentRegistry {
   }
 
   /**
-   * Start a message run for a session. Returns true on queued, false if a run
-   * is already active.
+   * Start a message run for a session. Returns `'queued'` on success,
+   * `'already-running'` if a run is already active, and `'missing'` if the
+   * session is not in the registry. Also returns `'already-running'` if a
+   * compaction is currently active.
    */
   async run(id: SessionId, content: string): Promise<'queued' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive) return 'already-running';
+    if (entry.runActive || entry.compactionActive) return 'already-running';
     entry.runActive = true;
     entry.activeRun = (async () => {
       try {
@@ -230,6 +256,42 @@ export class AgentRegistry {
       } finally {
         entry.runActive = false;
         entry.activeRun = null;
+      }
+    })();
+    return 'queued';
+  }
+
+  /**
+   * Force a compaction on a session. Returns `'queued'` on success,
+   * `'already-running'` if a run or compaction is already active, and
+   * `'missing'` if the session is not in the registry.
+   */
+  compact(id: SessionId): 'queued' | 'already-running' | 'missing' {
+    const entry = this.entries.get(id);
+    if (!entry) return 'missing';
+    if (entry.runActive || entry.compactionActive) return 'already-running';
+    entry.compactionActive = true;
+    entry.activeCompaction = (async () => {
+      let success = false;
+      try {
+        for await (const event of entry.agent.compactSession()) {
+          entry.bus.publish(event);
+          if (event.type === 'compaction_finished') {
+            success = true;
+            break;
+          }
+          if (event.type === 'compaction_failed') break;
+        }
+        if (success) {
+          entry.compactionCount += 1;
+          entry.lastCompactedAt = Date.now();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        entry.bus.publish({ type: 'compaction_failed', error: message });
+      } finally {
+        entry.compactionActive = false;
+        entry.activeCompaction = null;
       }
     })();
     return 'queued';

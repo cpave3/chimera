@@ -1,9 +1,12 @@
 import { ChimeraClient } from '@chimera/client';
+import { Compactor } from '@chimera/compaction';
 import type { ModelConfig, SandboxMode } from '@chimera/core';
+import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
+import { checkCompactionInvariant, resolveCompactionConfig } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';
@@ -41,6 +44,11 @@ export interface RunOptions {
   /** Default true; commander populates `false` when `--no-subagents` is passed. */
   subagents?: boolean;
   maxSubagentDepth?: number;
+  /**
+   * Per-session override for compaction. When `false` (from `--no-compaction`),
+   * compaction is disabled for this invocation.
+   */
+  compaction?: boolean;
 }
 
 export interface RunResult {
@@ -91,6 +99,33 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       config,
     });
     model = resolved.model;
+
+    const compactionConfig = resolveCompactionConfig({ cliOverride: opts.compaction, config });
+    const resolvedWindow = resolveContextWindow({
+      providerShape: resolved.providersConfig.providers[model.providerId]?.shape ?? 'openai',
+      providerId: model.providerId,
+      modelId: model.modelId,
+      override: config.models?.[`${model.providerId}/${model.modelId}`]?.contextWindow,
+    });
+    const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.value);
+    if (!invariant.ok) {
+      process.stderr.write(`${invariant.error}\n`);
+      return { exitCode: 1 };
+    }
+
+    let compactor: Compactor | undefined;
+    if (compactionConfig.enabled) {
+      const registry = loadProviders(resolved.providersConfig);
+      const compactionRef = compactionConfig.model ?? `${model.providerId}/${model.modelId}`;
+      const { provider, modelId } = registry.resolve(compactionRef);
+      compactor = new Compactor({
+        config: compactionConfig,
+        contextWindow: resolvedWindow.value,
+        resolveModel: async () => provider.getModel(modelId),
+        home: opts.home,
+      });
+    }
+
     cliFactory = new CliAgentFactory({
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
@@ -105,6 +140,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         maxDepth: opts.maxSubagentDepth,
       },
       models: config.models,
+      compaction: compactionConfig,
+      compactor,
     });
     factory = cliFactory;
   }

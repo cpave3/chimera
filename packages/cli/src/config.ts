@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ModelConfig } from '@chimera/core';
+import type { CompactionConfig, ModelConfig } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { ProvidersConfig, ProviderSpec } from '@chimera/providers';
 
@@ -43,6 +43,14 @@ export interface ChimeraConfig {
   defaultMode?: string;
   /** Ordered list cycled by Shift+Tab in the TUI. Defaults to ["build", "plan"]. */
   cycleModes?: string[];
+  /**
+   * Optional compaction settings for context-window management.
+   * Defaults are `enabled: true`, `reserveTokens: 16384`, `keepRecentTokens: 20000`.
+   */
+  compaction?: Partial<Pick<CompactionConfig, 'enabled' | 'reserveTokens' | 'keepRecentTokens'>> & {
+    /** Model override for compaction summaries (providerId/modelId). */
+    model?: string;
+  };
 }
 
 export function configPath(home = homedir()): string {

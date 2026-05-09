@@ -46,6 +46,16 @@ describe('chimera CLI smoke', () => {
     expect(helpResult.stdout).toMatch(/--resume \[id\]/);
   });
 
+  it('--help advertises --no-compaction on run and default command', () => {
+    const runResult = spawnSync('node', [BIN, 'run', '--help'], { encoding: 'utf8' });
+    expect(runResult.status).toBe(0);
+    expect(runResult.stdout).toMatch(/--no-compaction/);
+
+    const defaultResult = spawnSync('node', [BIN, '--help'], { encoding: 'utf8' });
+    expect(defaultResult.status).toBe(0);
+    expect(defaultResult.stdout).toMatch(/--no-compaction/);
+  });
+
   it('--help advertises --prompt on the default command', () => {
     const helpResult = spawnSync('node', [BIN, '--help'], { encoding: 'utf8' });
     expect(helpResult.status).toBe(0);

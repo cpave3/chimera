@@ -33,6 +33,10 @@ function applyModeOptions(cmd: Command): Command {
     .option('--no-modes', 'Skip mode discovery — sessions run with no mode block');
 }
 
+function applyCompactionOptions(cmd: Command): Command {
+  return cmd.option('--no-compaction', 'Disable automatic context-window compaction');
+}
+
 function applySandboxOptions(cmd: Command): Command {
   return cmd
     .option('--sandbox', 'Run tools inside a Docker sandbox', false)
@@ -63,23 +67,25 @@ export function buildProgram(): Command {
 
   applyModeOptions(
     applySubagentOptions(
-      applySandboxOptions(
-        program
-          .command('run [prompt...]', { isDefault: false })
-          .description('Run a one-shot prompt non-interactively.')
-          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-          .option('--cwd <path>', 'Working directory', process.cwd())
-          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-          .option('--auto-approve <level>', 'none|sandbox|host|all')
-          .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
-          .option('--session <id>', 'Resume a persisted session')
-          .option('--stdin', 'Read prompt from stdin', false)
-          .option('--command <name>', 'Run a user command template by name')
-          .option('--args <args>', 'Arguments for --command (quoted string)')
-          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-          .option('--no-skills', 'Skip skill discovery and system-prompt injection')
-          .option('-v, --verbose', 'Verbose logging', false)
-          .option('-q, --quiet', 'Suppress non-essential logging', false),
+      applyCompactionOptions(
+        applySandboxOptions(
+          program
+            .command('run [prompt...]', { isDefault: false })
+            .description('Run a one-shot prompt non-interactively.')
+            .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+            .option('--cwd <path>', 'Working directory', process.cwd())
+            .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+            .option('--auto-approve <level>', 'none|sandbox|host|all')
+            .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
+            .option('--session <id>', 'Resume a persisted session')
+            .option('--stdin', 'Read prompt from stdin', false)
+            .option('--command <name>', 'Run a user command template by name')
+            .option('--args <args>', 'Arguments for --command (quoted string)')
+            .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+            .option('--no-skills', 'Skip skill discovery and system-prompt injection')
+            .option('-v, --verbose', 'Verbose logging', false)
+            .option('-q, --quiet', 'Suppress non-essential logging', false),
+        ),
       ),
     ),
   ).action(async (promptArgs: string[], opts) => {
@@ -112,6 +118,7 @@ export function buildProgram(): Command {
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
+      compaction: opts.compaction,
     });
     process.exit(exitCode);
   });
@@ -170,36 +177,38 @@ export function buildProgram(): Command {
 
   applyModeOptions(
     applySubagentOptions(
-      applySandboxOptions(
-        program
-          .command('serve')
-          .description('Start only the HTTP/SSE server.')
-          .option('-m, --model <modelRef>', 'Default model')
-          .option('--cwd <path>', 'Working directory', process.cwd())
-          .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
-          .option('--host <addr>', 'Bind address', '127.0.0.1')
-          .option('--machine-handshake', 'Emit a single JSON line on ready', false)
-          .option('--parent <sessionId>', 'Parent session id (for subagents)')
-          .option(
-            '--current-subagent-depth <n>',
-            'Internal: nesting depth of this child agent',
-            (v) => Number.parseInt(v, 10),
-          )
-          .option(
-            '--headless-permission-auto-deny',
-            'Internal: auto-deny host-target permission requests instead of prompting',
-            false,
-          )
-          .option('--auto-approve <level>', 'none|sandbox|host|all')
-          .option(
-            '--system-prompt-file <path>',
-            'Internal: read file contents as the session system prompt (overrides composed default)',
-          )
-          .option(
-            '--tools <list>',
-            'Internal: comma-separated tool allowlist for the session (e.g. "read,grep,glob")',
-          )
-          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+      applyCompactionOptions(
+        applySandboxOptions(
+          program
+            .command('serve')
+            .description('Start only the HTTP/SSE server.')
+            .option('-m, --model <modelRef>', 'Default model')
+            .option('--cwd <path>', 'Working directory', process.cwd())
+            .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
+            .option('--host <addr>', 'Bind address', '127.0.0.1')
+            .option('--machine-handshake', 'Emit a single JSON line on ready', false)
+            .option('--parent <sessionId>', 'Parent session id (for subagents)')
+            .option(
+              '--current-subagent-depth <n>',
+              'Internal: nesting depth of this child agent',
+              (v) => Number.parseInt(v, 10),
+            )
+            .option(
+              '--headless-permission-auto-deny',
+              'Internal: auto-deny host-target permission requests instead of prompting',
+              false,
+            )
+            .option('--auto-approve <level>', 'none|sandbox|host|all')
+            .option(
+              '--system-prompt-file <path>',
+              'Internal: read file contents as the session system prompt (overrides composed default)',
+            )
+            .option(
+              '--tools <list>',
+              'Internal: comma-separated tool allowlist for the session (e.g. "read,grep,glob")',
+            )
+            .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+        ),
       ),
     ),
   ).action(async (opts) => {
@@ -221,6 +230,7 @@ export function buildProgram(): Command {
       modes: opts.modes,
       systemPromptFile: opts.systemPromptFile,
       tools: opts.tools,
+      compaction: opts.compaction,
     });
   });
 
@@ -261,18 +271,20 @@ export function buildProgram(): Command {
 
   applyModeOptions(
     applySubagentOptions(
-      applySandboxOptions(
-        program
-          .command('resume [id]')
-          .description(
-            'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
-          )
-          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-          .option('--cwd <path>', 'Working directory', process.cwd())
-          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-          .option('--auto-approve <level>', 'none|sandbox|host|all')
-          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-          .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+      applyCompactionOptions(
+        applySandboxOptions(
+          program
+            .command('resume [id]')
+            .description(
+              'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
+            )
+            .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+            .option('--cwd <path>', 'Working directory', process.cwd())
+            .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+            .option('--auto-approve <level>', 'none|sandbox|host|all')
+            .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+            .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+        ),
       ),
     ),
   ).action(async (id: string | undefined, opts) => {
@@ -305,22 +317,25 @@ export function buildProgram(): Command {
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
+      compaction: opts.compaction,
     });
   });
 
   applyModeOptions(
     applySubagentOptions(
-      applySandboxOptions(
-        program
-          .command('continue')
-          .alias('c')
-          .description('Resume the most-recently-active session in the current directory.')
-          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-          .option('--cwd <path>', 'Working directory', process.cwd())
-          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-          .option('--auto-approve <level>', 'none|sandbox|host|all')
-          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-          .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+      applyCompactionOptions(
+        applySandboxOptions(
+          program
+            .command('continue')
+            .alias('c')
+            .description('Resume the most-recently-active session in the current directory.')
+            .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+            .option('--cwd <path>', 'Working directory', process.cwd())
+            .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+            .option('--auto-approve <level>', 'none|sandbox|host|all')
+            .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+            .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+        ),
       ),
     ),
   ).action(async (opts) => {
@@ -343,6 +358,7 @@ export function buildProgram(): Command {
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
+      compaction: opts.compaction,
     });
   });
 
@@ -370,25 +386,27 @@ export function buildProgram(): Command {
   // Default (no subcommand): interactive TUI session.
   applyModeOptions(
     applySubagentOptions(
-      applySandboxOptions(
-        program
-          .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-          .option('--cwd <path>', 'Working directory', process.cwd())
-          .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-          .option('--auto-approve <level>', 'none|sandbox|host|all')
-          .option('--session <id>', 'Resume a persisted session')
-          .option('--prompt <text>', 'Send an initial message on session start')
-          .option(
-            '--resume [id]',
-            'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
-          )
-          .option(
-            '-c, --continue',
-            'Resume the most-recently-active session in the current directory.',
-            false,
-          )
-          .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-          .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+      applyCompactionOptions(
+        applySandboxOptions(
+          program
+            .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+            .option('--cwd <path>', 'Working directory', process.cwd())
+            .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+            .option('--auto-approve <level>', 'none|sandbox|host|all')
+            .option('--session <id>', 'Resume a persisted session')
+            .option('--prompt <text>', 'Send an initial message on session start')
+            .option(
+              '--resume [id]',
+              'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
+            )
+            .option(
+              '-c, --continue',
+              'Resume the most-recently-active session in the current directory.',
+              false,
+            )
+            .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
+            .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+        ),
       ),
     ),
   ).action(async (opts) => {
@@ -452,6 +470,7 @@ export function buildProgram(): Command {
       sandboxFlags: opts,
       subagents: opts.subagents,
       maxSubagentDepth: opts.maxSubagentDepth,
+      compaction: opts.compaction,
     });
   });
 

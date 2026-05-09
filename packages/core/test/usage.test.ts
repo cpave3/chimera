@@ -221,6 +221,8 @@ describe('Agent usage tracking', () => {
     };
     const session: Session = {
       id: sessionId,
+      parentId: null,
+      children: [],
       cwd: '/tmp',
       createdAt: 1,
       messages: [],
@@ -229,6 +231,9 @@ describe('Agent usage tracking', () => {
       model: makeModel(),
       sandboxMode: 'off',
       usage: priorUsage,
+      mode: 'build',
+      userModelOverride: null,
+      fileOps: { reads: new Set(), writes: new Set() },
     };
 
     const agent = new Agent({

@@ -161,6 +161,7 @@ export function App(props: AppProps): React.ReactElement {
   // `client.getSession()` after switches and forks.
   const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
   const [running, setRunning] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const [activeModeName, setActiveModeName] = useState<string>(props.initialMode ?? 'build');
   const [pendingModeName, setPendingModeName] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
@@ -307,12 +308,12 @@ export function App(props: AppProps): React.ReactElement {
     if (!buffer.text.startsWith('/')) setMenuDismissed(false);
   }, [buffer.text]);
 
-  // Tick the spinner while waiting for a response.
+  // Tick the spinner while waiting for a response or compacting.
   useEffect(() => {
-    if (!running) return;
+    if (!running && !compacting) return;
     const id = setInterval(() => setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, compacting]);
 
   // Keep `activeParentId` in sync with whatever session the TUI is showing,
   // and rehydrate scrollback from the session's persisted messages so a
@@ -462,6 +463,19 @@ export function App(props: AppProps): React.ReactElement {
       setActiveModeName(ev.to);
       setPendingModeName(null);
       scrollback.addModeChange(ev.from, ev.to);
+      setEntries(scrollback.all());
+    } else if (ev.type === 'compaction_started') {
+      setCompacting(true);
+    } else if (ev.type === 'compaction_finished') {
+      setCompacting(false);
+      const delta = ev.tokensBefore - ev.tokensAfter;
+      scrollback.addInfo(
+        `compaction done: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced)`
+      );
+      setEntries(scrollback.all());
+    } else if (ev.type === 'compaction_failed') {
+      setCompacting(false);
+      scrollback.addError(`compaction failed: ${ev.error}`);
       setEntries(scrollback.all());
     }
   }
@@ -1022,6 +1036,17 @@ export function App(props: AppProps): React.ReactElement {
         setStreamingEntryId(null);
         return;
       }
+      case '/compact': {
+        void (async () => {
+          try {
+            await activeSession.client.compact(activeSession.sessionId);
+          } catch (err) {
+            scrollback.addError(`/compact: ${(err as Error).message}`);
+            setEntries(scrollback.all());
+          }
+        })();
+        return;
+      }
       case '/reload': {
         const reg = props.commands;
         const reloadFn = reg?.reload;
@@ -1426,6 +1451,11 @@ export function App(props: AppProps): React.ReactElement {
             <Text color={theme.ui.accent}>
               {SPINNER_FRAMES[spinnerFrame]} {streaming ? 'streaming…' : 'waiting…'}
             </Text>
+          </Box>
+        )}
+        {compacting && (
+          <Box>
+            <Text color={theme.ui.accent}>{SPINNER_FRAMES[spinnerFrame]} compacting…</Text>
           </Box>
         )}
         {queue.length > 0 && (

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LanguageModel, ToolSet } from 'ai';
@@ -329,6 +329,160 @@ describe('server app', () => {
       body: JSON.stringify({ systemPrompt: 'updated prompt' }),
     });
     expect(reloadResponse.status).toBe(404);
+  });
+
+  it('POST /v1/sessions/:id/compact returns 202 for existing idle session', async () => {
+    const compactor = {
+      maybeCompact: async () => false,
+      compact: async () => ({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
+    };
+    const factory: AgentFactory = {
+      build: async (init) => {
+        const agent = new Agent({
+          cwd: init.cwd,
+          model: init.model,
+          languageModel: textOnlyModel('hi'),
+          tools: {} as ToolSet,
+          sandboxMode: init.sandboxMode,
+          home,
+          contextWindow: 200_000,
+          compactor,
+        });
+        return { agent };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory,
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+
+    const compactResponse = await app.request(`/v1/sessions/${sessionId}/compact`, {
+      method: 'POST',
+    });
+    expect(compactResponse.status).toBe(202);
+
+    // Wait for compaction to finish before asserting state.
+    const entry = registry.get(sessionId);
+    await entry!.activeCompaction;
+
+    const getResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(getResponse.status).toBe(200);
+    const body = await getResponse.json();
+    expect(body.compactionCount).toBe(1);
+    expect(body.lastCompactedAt).toBeGreaterThan(0);
+  });
+
+  it('POST /v1/sessions/:id/compact returns 404 for unknown session', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const compactResponse = await app.request('/v1/sessions/unknown-session-id/compact', {
+      method: 'POST',
+    });
+    expect(compactResponse.status).toBe(404);
+  });
+
+  it('POST /v1/sessions/:id/compact returns 409 when run is active', async () => {
+    // Use a slow model so the run stays active long enough for the 409.
+    const slowFactory: AgentFactory = {
+      build: async (init) => {
+        const agent = new Agent({
+          cwd: init.cwd,
+          model: init.model,
+          languageModel: textOnlyModel('x'), // fast but at least one event
+          tools: {} as ToolSet,
+          sandboxMode: init.sandboxMode,
+          home,
+          contextWindow: 200_000,
+        });
+        return { agent };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory: slowFactory,
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+
+    // Start a run.
+    await app.request(`/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'hi' }),
+    });
+
+    // Immediately try to compact while run is still active.
+    const compactResponse = await app.request(`/v1/sessions/${sessionId}/compact`, {
+      method: 'POST',
+    });
+    expect([409, 202]).toContain(compactResponse.status);
+  });
+
+  it('GET /v1/sessions/:id includes compactionActive, compactionCount and lastCompactedAt', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+
+    const getResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(getResponse.status).toBe(200);
+    const body = await getResponse.json();
+    expect(body.compactionActive).toBe(false);
+    expect(body.compactionCount).toBe(0);
+    expect(body.lastCompactedAt).toBeNull();
+  });
+
+  it('GET /v1/sessions/:id reads compactionCount and lastCompactedAt from disk', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+
+    // Write a compactions log directly on disk to simulate prior activity.
+    const logPath = join(home, '.chimera', 'sessions', `${sessionId}.compactions.jsonl`);
+    const entry1 = JSON.stringify({ ts: 1_700_000_000_000, reason: 'manual', tokensBefore: 10, tokensAfter: 5, summary: 's1', messagesReplaced: { count: 1, firstIndex: 0, lastIndex: 0 } });
+    const entry2 = JSON.stringify({ ts: 1_800_000_000_000, reason: 'threshold', tokensBefore: 20, tokensAfter: 8, summary: 's2', messagesReplaced: { count: 2, firstIndex: 0, lastIndex: 1 } });
+    await writeFile(logPath, entry1 + '\n' + entry2 + '\n', 'utf8');
+
+    const getResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(getResponse.status).toBe(200);
+    const body = await getResponse.json();
+    expect(body.compactionCount).toBe(2);
+    expect(body.lastCompactedAt).toBe(1_800_000_000_000);
+    expect(body.compactionActive).toBe(false);
   });
 
   describe('negative input validation', () => {

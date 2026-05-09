@@ -16,6 +16,11 @@ import type { Skill } from '@chimera/skills';
 import { ChimeraHttpError, PermissionAlreadyResolvedError } from './errors';
 import { parseSSE } from './sse';
 
+export interface SessionWithCompaction extends Session {
+  compactionCount: number;
+  lastCompactedAt: number | null;
+}
+
 export interface ChimeraClientOptions {
   baseUrl: string;
   fetch?: typeof fetch;
@@ -106,8 +111,8 @@ export class ChimeraClient {
     return this.json<SessionInfo[]>('/v1/sessions');
   }
 
-  async getSession(id: SessionId): Promise<Session> {
-    return this.json<Session>(`/v1/sessions/${id}`);
+  async getSession(id: SessionId): Promise<SessionWithCompaction> {
+    return this.json<SessionWithCompaction>(`/v1/sessions/${id}`);
   }
 
   async deleteSession(id: SessionId): Promise<void> {
@@ -132,6 +137,15 @@ export class ChimeraClient {
 
   async interrupt(id: SessionId): Promise<void> {
     await this.json<void>(`/v1/sessions/${id}/interrupt`, { method: 'POST' });
+  }
+
+  async compact(sessionId: SessionId): Promise<void> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/sessions/${sessionId}/compact`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      throw new ChimeraHttpError(response.status, await safeBody(response));
+    }
   }
 
   /**

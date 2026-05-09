@@ -133,4 +133,31 @@ describe('ChimeraClient end-to-end', () => {
     }
     expect(types[types.length - 1]).toBe('run_finished');
   });
+
+  it('compact triggers compaction and getSession reflects compaction fields', async () => {
+    const client = new ChimeraClient({ baseUrl: server.url });
+    const { sessionId } = await client.createSession({
+      cwd: '/tmp',
+      model,
+      sandboxMode: 'off',
+    });
+
+    // Before compaction
+    const before = await client.getSession(sessionId);
+    expect(before.compactionCount).toBe(0);
+    expect(before.lastCompactedAt).toBeNull();
+
+    await client.compact(sessionId);
+
+    const after = await client.getSession(sessionId);
+    expect(after.compactionCount).toBe(0); // no compactor configured, so failed
+    expect(after.lastCompactedAt).toBeNull();
+  });
+
+  it('compact surfaces 404 for nonexistent session', async () => {
+    const client = new ChimeraClient({ baseUrl: server.url });
+    await expect(client.compact('nonexistent-session')).rejects.toMatchObject({
+      status: 404,
+    });
+  });
 });

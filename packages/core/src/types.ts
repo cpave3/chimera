@@ -1,4 +1,5 @@
 import type { ModelMessage } from 'ai';
+import type { AgentEvent } from './events';
 import type { CallId, SessionId } from './ids';
 
 export type SandboxMode = 'off' | 'bind' | 'overlay' | 'ephemeral';
@@ -64,6 +65,11 @@ export type SessionStatus =
   | 'waiting_for_permission'
   | 'error';
 
+export interface FileOps {
+  reads: Set<string>;
+  writes: Set<string>;
+}
+
 export interface Session {
   id: SessionId;
   parentId: SessionId | null;
@@ -87,10 +93,42 @@ export interface Session {
    * override is active.
    */
   userModelOverride: string | null;
+  /**
+   * File-operation tracking (reads, writes), updated by tool completion and
+   * persisted as sorted arrays in session metadata.
+   */
+  fileOps: FileOps;
 }
 
 /** Default mode for new sessions. Mirrored in `@chimera/modes`. */
 export const DEFAULT_SESSION_MODE = 'build';
+
+export interface CompactionConfig {
+  enabled: boolean;
+  reserveTokens: number;
+  keepRecentTokens: number;
+  model?: string;
+}
+
+/**
+ * Minimal interface for the compactor injected by the factory.
+ * The concrete implementation lives in `@chimera/compaction`.
+ */
+export interface CompactorApi {
+  maybeCompact(session: Session): Promise<boolean>;
+  compact(
+    session: Session,
+    reason: 'threshold' | 'manual',
+  ): Promise<{ summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }>;
+  /**
+   * Rebind the event emitter so the agent can pipe compaction events into the
+   * current run queue.  Implementations (e.g. `Compactor`) should accept an
+   * optional emit callback and replace whatever was wired at construction time.
+   */
+  setEmit?(
+    emit: (event: AgentEvent) => void | Promise<void>,
+  ): void;
+}
 
 export type RememberScope =
   | { scope: 'session' }

@@ -19,6 +19,7 @@ function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
     listSubagents: async () => [],
     createSession: async () => ({ sessionId: '01HZNEWSESS00000000000000000' }),
     listSessions: async () => [],
+    compact: async () => {},
     ...overrides,
   } as unknown as ChimeraClient;
 }
@@ -765,6 +766,91 @@ describe('App', () => {
     expect(lastFrame()).toContain('Sessions (1)');
     expect(lastFrame()).toContain('navigate');
     expect(lastFrame()).toContain('AAAAAAAA');
+    unmount();
+  });
+
+  it('renders a compaction spinner on compaction_started and clears on compaction_finished', async () => {
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    pushEvent!({ type: 'compaction_started', reason: 'manual' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lastFrame()!).toContain('compacting');
+
+    pushEvent!({
+      type: 'compaction_finished',
+      summary: 'synthetic',
+      tokensBefore: 1000,
+      tokensAfter: 200,
+      messagesReplaced: 5,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lastFrame()!).not.toContain('compacting');
+    expect(lastFrame()!).toContain('compaction done: -800 tokens');
+    expect(lastFrame()!).toContain('5 messages replaced');
+
+    unmount();
+  });
+
+  it('renders a compaction error line on compaction_failed', async () => {
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    pushEvent!({ type: 'compaction_started', reason: 'threshold' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()!).toContain('compacting');
+
+    pushEvent!({ type: 'compaction_failed', error: 'model refused' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()!).not.toContain('compacting');
+    expect(lastFrame()!).toContain('compaction failed: model refused');
+
     unmount();
   });
 });

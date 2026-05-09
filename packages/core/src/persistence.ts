@@ -49,6 +49,9 @@ interface SessionMetadata {
   usage: Usage;
   mode: string;
   userModelOverride: string | null;
+  /** Sorted arrays derived from fileOps Sets for JSON serialisation */
+  fileOpsReads?: string[];
+  fileOpsWrites?: string[];
 }
 
 function toMetadata(session: Session): SessionMetadata {
@@ -63,7 +66,13 @@ function toMetadata(session: Session): SessionMetadata {
     usage: session.usage,
     mode: session.mode,
     userModelOverride: session.userModelOverride,
+    fileOpsReads: sortedArray(session.fileOps.reads),
+    fileOpsWrites: sortedArray(session.fileOps.writes),
   };
+}
+
+function sortedArray(set: Set<string>): string[] {
+  return Array.from(set).sort();
 }
 
 let tmpCounter = 0;
@@ -144,6 +153,10 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
         : DEFAULT_SESSION_MODE,
     userModelOverride:
       typeof parsed.userModelOverride === 'string' ? parsed.userModelOverride : null,
+    fileOps: {
+      reads: new Set(Array.isArray(parsed.fileOpsReads) ? parsed.fileOpsReads : []),
+      writes: new Set(Array.isArray(parsed.fileOpsWrites) ? parsed.fileOpsWrites : []),
+    },
   };
 
   const snapshot = await readLatestStepSnapshot(sessionId, home);
@@ -275,6 +288,10 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     // read-only allowlist on its child.
     mode: DEFAULT_SESSION_MODE,
     userModelOverride: null,
+    fileOps: {
+      reads: new Set(parent.fileOps.reads),
+      writes: new Set(parent.fileOps.writes),
+    },
   };
   await writeSessionMetadata(child, home);
 

@@ -18,6 +18,9 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     model: { providerId: 'p', modelId: 'm', maxSteps: 100 },
     sandboxMode: 'off',
     usage: emptyUsage(),
+    userModelOverride: null,
+    mode: 'build',
+    fileOps: { reads: new Set(), writes: new Set() },
     ...overrides,
   };
 }

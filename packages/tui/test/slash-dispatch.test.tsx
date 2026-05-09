@@ -35,6 +35,7 @@ interface StubClientOpts {
   createSessionSpy?: (opts: unknown) => void;
   resumeSessionSpy?: (id: string) => void;
   forkSessionSpy?: (id: string, purpose?: string) => void;
+  compactSpy?: (id: string) => void;
 }
 
 function emptySession(id: string): Session {
@@ -56,6 +57,9 @@ function emptySession(id: string): Session {
       totalTokens: 0,
       stepCount: 0,
     },
+    mode: 'build',
+    userModelOverride: null,
+    fileOps: { reads: new Set(), writes: new Set() },
   };
 }
 
@@ -105,6 +109,9 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient {
         sessionId: '01HZFORKEDCHILD0000000000000',
         parentId: id,
       };
+    },
+    compact: async (_id: string) => {
+      opts.compactSpy?.(_id);
     },
   } as unknown as ChimeraClient;
 }
@@ -777,6 +784,23 @@ describe('TUI /theme slash dispatch', () => {
     );
     await type(stdin, '/fork\r');
     expect(forkCalls).toEqual([{ id: '01HZPARENT0000000000000000AB', purpose: undefined }]);
+    unmount();
+  });
+
+  it('/compact calls compact(sessionId)', async () => {
+    const compactCalls: string[] = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({
+          compactSpy: (id) => compactCalls.push(id),
+        })}
+        sessionId="SESS001"
+        modelRef="mock/mock"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/compact\r');
+    expect(compactCalls).toEqual(['SESS001']);
     unmount();
   });
 });

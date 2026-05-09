@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { Compactor } from '@chimera/compaction';
 import type { SandboxMode } from '@chimera/core';
+import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
+import { checkCompactionInvariant, resolveCompactionConfig } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
@@ -45,6 +48,11 @@ export interface ServeOptions {
    * spawning children with an agent-definition `tools:` field.
    */
   tools?: string;
+  /**
+   * Per-session override for compaction. When `false` (from `--no-compaction`),
+   * compaction is disabled for this invocation.
+   */
+  compaction?: boolean;
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
@@ -99,6 +107,32 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   });
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
 
+  const compactionConfig = resolveCompactionConfig({ cliOverride: opts.compaction, config });
+  const resolvedWindow = resolveContextWindow({
+    providerShape: providersConfig.providers[model.providerId]?.shape ?? 'openai',
+    providerId: model.providerId,
+    modelId: model.modelId,
+    override: config.models?.[`${model.providerId}/${model.modelId}`]?.contextWindow,
+  });
+  const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.value);
+  if (!invariant.ok) {
+    process.stderr.write(`${invariant.error}\n`);
+    process.exit(1);
+  }
+
+  let compactor: Compactor | undefined;
+  if (compactionConfig.enabled) {
+    const registry = loadProviders(providersConfig);
+    const compactionRef = compactionConfig.model ?? `${model.providerId}/${model.modelId}`;
+    const { provider, modelId } = registry.resolve(compactionRef);
+    compactor = new Compactor({
+      config: compactionConfig,
+      contextWindow: resolvedWindow.value,
+      resolveModel: async () => provider.getModel(modelId),
+      home: opts.home,
+    });
+  }
+
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
@@ -117,6 +151,8 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     systemPromptOverride,
     toolsAllowlist,
     models: config.models,
+    compaction: compactionConfig,
+    compactor,
   });
 
   const registry = new AgentRegistry({

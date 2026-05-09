@@ -98,6 +98,21 @@ export type AgentEvent =
       error?: string;
     }
   | {
+      type: 'compaction_started';
+      reason: 'threshold' | 'manual';
+    }
+  | {
+      type: 'compaction_finished';
+      summary: string;
+      tokensBefore: number;
+      tokensAfter: number;
+      messagesReplaced: number;
+    }
+  | {
+      type: 'compaction_failed';
+      error: string;
+    }
+  | {
       type: 'forked_from';
       parentId: SessionId;
       parentEventCount: number;
