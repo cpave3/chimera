@@ -1,5 +1,11 @@
 import type { AgentEventEnvelope } from '@chimera/core';
 
+function isAbortError(err: unknown): boolean {
+  if (err == null || typeof err !== 'object') return false;
+  const { name, message } = err as { name?: unknown; message?: unknown };
+  return name === 'AbortError' || message === 'This operation was aborted';
+}
+
 /**
  * Parses an SSE stream body into an async iterable of AgentEventEnvelopes.
  * Tracks the last observed eventId.
@@ -34,17 +40,19 @@ export async function* parseSSE(
     try {
       await reader.cancel();
     } catch (err) {
-      // best-effort
-      console.debug(`[sse] reader.cancel threw:`, err instanceof Error ? err.message : String(err));
+      if (!isAbortError(err)) {
+        console.debug(`[sse] reader.cancel threw:`, err instanceof Error ? err.message : String(err));
+      }
     }
     try {
       reader.releaseLock();
     } catch (err) {
-      // best-effort
-      console.debug(
-        `[sse] reader.releaseLock threw:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      if (!isAbortError(err)) {
+        console.debug(
+          `[sse] reader.releaseLock threw:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
   }
 }
