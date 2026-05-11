@@ -271,7 +271,7 @@ function hunkRow(
   const padded = clipped.padEnd(innerWidth, ' ');
   return (
     <Box key={key} paddingLeft={prefixLen}>
-      <Text>
+      <Text wrap="truncate">
         <Text color={theme.text.muted}>{`${gutter} `}</Text>
         <Text color={fg} backgroundColor={bg}>{`${sigil} ${padded}`}</Text>
       </Text>
