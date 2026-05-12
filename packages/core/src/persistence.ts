@@ -2,6 +2,7 @@ import {
   appendFile,
   copyFile,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -52,6 +53,8 @@ interface SessionMetadata {
   /** Sorted arrays derived from fileOps Sets for JSON serialisation */
   fileOpsReads?: string[];
   fileOpsWrites?: string[];
+  /** Cached message count so listings avoid reading events.jsonl. */
+  messageCount?: number;
 }
 
 function toMetadata(session: Session): SessionMetadata {
@@ -68,6 +71,7 @@ function toMetadata(session: Session): SessionMetadata {
     userModelOverride: session.userModelOverride,
     fileOpsReads: sortedArray(session.fileOps.reads),
     fileOpsWrites: sortedArray(session.fileOps.writes),
+    messageCount: session.messages.length,
   };
 }
 
@@ -169,50 +173,145 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
   return session;
 }
 
+export interface SessionMetadataReadResult {
+  id: SessionId;
+  cwd: string;
+  model: ModelConfig;
+  sandboxMode: SandboxMode;
+  parentId: SessionId | null;
+  children: SessionId[];
+  createdAt: number;
+  usage: Usage;
+  mode: string;
+  userModelOverride: string | null;
+  messageCount: number;
+}
+
+/**
+ * Read and validate session.json for a known session id.
+ * Throws on ENOENT or malformed data; callers catch and map to 404.
+ */
+export async function readSessionMetadata(
+  sessionId: SessionId,
+  home = homedir(),
+): Promise<SessionMetadataReadResult> {
+  const metaPath = sessionMetadataPath(sessionId, home);
+  const raw = await readFile(metaPath, 'utf8');
+  const parsed = JSON.parse(raw) as Partial<SessionMetadata> & {
+    messages?: unknown;
+    toolCalls?: unknown;
+  };
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error(`Invalid session metadata: ${metaPath}`);
+  }
+  if (typeof parsed.id !== 'string' || parsed.id !== sessionId) {
+    throw new Error(`Session id mismatch in ${metaPath}`);
+  }
+
+  const messageCount =
+    typeof parsed.messageCount === 'number'
+      ? parsed.messageCount
+      : await countLatestMessageCount(sessionId, home);
+
+  return {
+    id: sessionId,
+    cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
+    model: (parsed.model as ModelConfig) ?? {
+      providerId: 'unknown',
+      modelId: 'unknown',
+      maxSteps: 100,
+    },
+    sandboxMode: (parsed.sandboxMode as SandboxMode) ?? 'off',
+    parentId: typeof parsed.parentId === 'string' ? parsed.parentId : null,
+    children: Array.isArray(parsed.children) ? (parsed.children as SessionId[]) : [],
+    createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : Date.now(),
+    usage:
+      parsed.usage && typeof parsed.usage === 'object' ? (parsed.usage as Usage) : emptyUsage(),
+    mode:
+      typeof parsed.mode === 'string' && parsed.mode.length > 0
+        ? parsed.mode
+        : DEFAULT_SESSION_MODE,
+    userModelOverride:
+      typeof parsed.userModelOverride === 'string' ? parsed.userModelOverride : null,
+    messageCount,
+  };
+}
+
 interface StepSnapshot {
   messages: Session['messages'];
   toolCalls: Session['toolCalls'];
   usage: Usage;
 }
 
+const CHUNK_SIZE = 64 * 1024;
+
 async function readLatestStepSnapshot(
   sessionId: SessionId,
   home: string,
 ): Promise<StepSnapshot | null> {
   const path = sessionEventsPath(sessionId, home);
-  let raw: string;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let stats;
   try {
-    raw = await readFile(path, 'utf8');
+    stats = await stat(path);
+    if (stats.size === 0) return null;
+    handle = await open(path, 'r');
   } catch {
     return null;
   }
-  const lines = raw.split('\n');
-  let latest: StepSnapshot | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
-    let parsed: PersistedEvent;
-    try {
-      parsed = JSON.parse(line) as PersistedEvent;
-    } catch {
-      const isLast = i === lines.length - 1;
-      const where = `${path}:${i + 1}`;
-      if (isLast) {
-        process.stderr.write(`[chimera] warn: skipping malformed trailing line at ${where}\n`);
-      } else {
-        process.stderr.write(`[chimera] warn: skipping malformed line at ${where}\n`);
+
+  let chunkSize = Math.min(CHUNK_SIZE, stats.size);
+  let position = stats.size;
+
+  try {
+    while (true) {
+      position = Math.max(0, position - chunkSize);
+      const actualChunkSize = position === 0 ? stats.size - position : chunkSize;
+      const buffer = Buffer.alloc(actualChunkSize);
+      const { bytesRead } = await handle.read(buffer, 0, actualChunkSize, position);
+      const chunk = buffer.subarray(0, bytesRead).toString('utf8');
+      const lines = chunk.split('\n');
+
+      // If this is not the first chunk, the first line is a fragment (the
+      // rest of the line lives in the preceding chunk). Skip it.
+      const skipFirst = position > 0;
+      const start = skipFirst ? 1 : 0;
+      const isLastChunk = position + bytesRead >= stats.size;
+
+      let latest: StepSnapshot | null = null;
+      for (let i = lines.length - 1; i >= start; i--) {
+        const line = lines[i];
+        if (!line) continue;
+        let parsed: PersistedEvent;
+        try {
+          parsed = JSON.parse(line) as PersistedEvent;
+        } catch {
+          // When reading from the tail of the file, warn for any malformed
+          // line so data corruption near the end is still visible.
+          if (isLastChunk) {
+            process.stderr.write(
+              `[chimera] warn: skipping malformed line in ${path}\n`,
+            );
+          }
+          continue;
+        }
+        if (parsed && (parsed.type === 'step_finished' || parsed.type === 'message_appended')) {
+          latest = {
+            messages: parsed.messages,
+            toolCalls: parsed.toolCalls,
+            usage: parsed.usage,
+          };
+          break;
+        }
       }
-      continue;
+      if (latest) return latest;
+      if (position === 0) return null;
+      // Snapshot might span chunk boundary; double chunk and retry.
+      chunkSize = Math.min(chunkSize * 2, stats.size);
     }
-    if (parsed && (parsed.type === 'step_finished' || parsed.type === 'message_appended')) {
-      latest = {
-        messages: parsed.messages,
-        toolCalls: parsed.toolCalls,
-        usage: parsed.usage,
-      };
-    }
+  } finally {
+    await handle?.close();
   }
-  return latest;
 }
 
 async function countLines(path: string): Promise<number> {
@@ -355,7 +454,10 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
       if (!parsed || typeof parsed !== 'object' || parsed.id !== name) {
         continue;
       }
-      const messageCount = await countLatestMessageCount(name, home);
+      const messageCount =
+        typeof parsed.messageCount === 'number'
+          ? parsed.messageCount
+          : await countLatestMessageCount(name, home);
       let lastActivityAt = parsed.createdAt;
       try {
         const evStat = await stat(sessionEventsPath(name, home));

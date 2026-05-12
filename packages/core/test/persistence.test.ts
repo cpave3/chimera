@@ -1,16 +1,19 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { performance } from 'node:perf_hooks';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSessionId } from '../src/ids';
 import {
   forkSession,
   listSessionsOnDisk,
   loadSession,
   persistSession,
+  readSessionMetadata,
   sessionEventsPath,
   sessionMetadataPath,
   sessionsDir,
+  writeSessionMetadata,
 } from '../src/persistence';
 import { emptyUsage, type Session } from '../src/types';
 
@@ -291,29 +294,31 @@ describe('persistence', () => {
   describe('listSessionsOnDisk', () => {
     it('returns persisted sessions with metadata', async () => {
       const firstSession = makeSession();
-      const secondSession = makeSession();
+      firstSession.messages = [{ role: 'user', content: 'a1' }];
       await persistSession(
         firstSession,
         {
           type: 'step_finished',
           stepNumber: 1,
           finishReason: 'stop',
-          messages: [{ role: 'user', content: 'a1' }],
+          messages: firstSession.messages,
           toolCalls: [],
           usage: emptyUsage(),
         },
         home,
       );
+      const secondSession = makeSession();
+      secondSession.messages = [
+        { role: 'user', content: 'b1' },
+        { role: 'assistant', content: 'b2' },
+      ];
       await persistSession(
         secondSession,
         {
           type: 'step_finished',
           stepNumber: 1,
           finishReason: 'stop',
-          messages: [
-            { role: 'user', content: 'b1' },
-            { role: 'assistant', content: 'b2' },
-          ],
+          messages: secondSession.messages,
           toolCalls: [],
           usage: emptyUsage(),
         },
@@ -395,6 +400,203 @@ describe('persistence', () => {
       const secondScan = await listSessionsOnDisk(home);
       const secondActivity = secondScan.find((entry) => entry.id === session.id)!.lastActivityAt;
       expect(secondActivity).toBeGreaterThanOrEqual(firstActivity);
+    });
+
+    it('falls back to events.jsonl when messageCount is absent in metadata', async () => {
+      const session = makeSession();
+      session.messages = [
+        { role: 'user', content: 'a' },
+        { role: 'assistant', content: 'b' },
+        { role: 'user', content: 'c' },
+      ];
+      await persistSession(
+        session,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: session.messages,
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+      // Strip messageCount to simulate pre-change metadata.
+      const metaPath = sessionMetadataPath(session.id, home);
+      const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+      delete meta.messageCount;
+      await writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+
+      const list = await listSessionsOnDisk(home);
+      const info = list.find((s) => s.id === session.id)!;
+      expect(info.messageCount).toEqual(3);
+    });
+  });
+
+  describe('readSessionMetadata', () => {
+    it('round-trips metadata for a persisted session', async () => {
+      const session = makeSession();
+      session.messages = [{ role: 'user', content: 'hi' }];
+      await persistSession(
+        session,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: session.messages,
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+      const meta = await readSessionMetadata(session.id, home);
+      expect(meta.id).toEqual(session.id);
+      expect(meta.cwd).toEqual(session.cwd);
+      expect(meta.messageCount).toEqual(1);
+      expect(meta.children).toEqual([]);
+      expect(meta.parentId).toBeNull();
+    });
+
+    it('throws for an unknown session id', async () => {
+      await expect(readSessionMetadata('01HZZZZZZZZZZZZZZZZZZZZZZZ', home)).rejects.toThrow();
+    });
+
+    it('falls back to events.jsonl when messageCount is absent', async () => {
+      const session = makeSession();
+      session.messages = [{ role: 'user', content: 'one' }];
+      await persistSession(
+        session,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: session.messages,
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+      const metaPath = sessionMetadataPath(session.id, home);
+      const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+      delete meta.messageCount;
+      await writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+
+      const result = await readSessionMetadata(session.id, home);
+      expect(result.messageCount).toEqual(1);
+    });
+  });
+
+  describe('loadSession backward read', () => {
+    it('finds snapshot in large events.jsonl quickly', async () => {
+      const session = makeSession();
+      const lines: string[] = [];
+      for (let i = 0; i < 9999; i++) {
+        lines.push(JSON.stringify({ type: 'user_message', content: String(i) }));
+      }
+      lines.push(
+        JSON.stringify({
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [
+            { role: 'user', content: 'a' },
+            { role: 'assistant', content: 'b' },
+          ],
+          toolCalls: [],
+          usage: emptyUsage(),
+        }),
+      );
+      await writeSessionMetadata(session, home);
+      await writeFile(sessionEventsPath(session.id, home), lines.join('\n') + '\n', 'utf8');
+
+      const start = performance.now();
+      const loaded = await loadSession(session.id, home);
+      const elapsed = performance.now() - start;
+
+      expect(loaded.messages).toHaveLength(2);
+      expect(loaded.messages[1]!.content).toBe('b');
+      expect(elapsed).toBeLessThan(50);
+      console.log(`  loadSession on ${lines.length} events: ${elapsed.toFixed(1)}ms`);
+    });
+
+    it('returns empty messages when events.jsonl has no snapshot', async () => {
+      const session = makeSession();
+      const lines = Array.from({ length: 100 }, (_, i) =>
+        JSON.stringify({ type: 'user_message', content: String(i) }),
+      );
+      await writeSessionMetadata(session, home);
+      await writeFile(sessionEventsPath(session.id, home), lines.join('\n') + '\n', 'utf8');
+
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toHaveLength(0);
+    });
+
+    it('reads whole file when it fits in one chunk', async () => {
+      const session = makeSession();
+      const lines = [
+        JSON.stringify({ type: 'user_message', content: 'noise' }),
+        JSON.stringify({
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [{ role: 'user', content: 'small' }],
+          toolCalls: [],
+          usage: emptyUsage(),
+        }),
+      ];
+      await writeSessionMetadata(session, home);
+      await writeFile(sessionEventsPath(session.id, home), lines.join('\n') + '\n', 'utf8');
+
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toHaveLength(1);
+      expect(loaded.messages[0]!.content).toBe('small');
+    });
+
+    it('doubles chunk size when snapshot spans chunk boundary', async () => {
+      const session = makeSession();
+      // Write events so the snapshot line starts before the first chunk boundary.
+      const bigPrefix = 'x'.repeat(50_000);
+      const noise = JSON.stringify({ type: 'user_message', content: bigPrefix });
+      const snapshot = JSON.stringify({
+        type: 'step_finished',
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [{ role: 'user', content: 'spans-chunk' }],
+        toolCalls: [],
+        usage: emptyUsage(),
+      });
+      await writeSessionMetadata(session, home);
+      await writeFile(sessionEventsPath(session.id, home), noise + '\n' + snapshot + '\n', 'utf8');
+
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toHaveLength(1);
+      expect(loaded.messages[0]!.content).toBe('spans-chunk');
+    });
+
+    it('warns on malformed line in the last chunk', async () => {
+      const session = makeSession();
+      const lines = [
+        JSON.stringify({
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [{ role: 'user', content: 'ok' }],
+          toolCalls: [],
+          usage: emptyUsage(),
+        }),
+        '{ this is not json',
+      ];
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      await writeSessionMetadata(session, home);
+      // No trailing newline so the malformed line IS the last line.
+      await writeFile(sessionEventsPath(session.id, home), lines.join('\n'), 'utf8');
+
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toHaveLength(1);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining('skipping malformed line'),
+      );
+      stderrSpy.mockRestore();
     });
   });
 });
