@@ -291,6 +291,7 @@ export function buildApp(opts: AppOptions): Hono {
   // --- Messages / interrupt ---------------------------------------------
   app.post('/v1/sessions/:id/messages', async (c) => {
     const id = c.req.param('id');
+    const append = c.req.query('append') === 'true';
     let body: unknown;
     try {
       body = await c.req.json();
@@ -300,6 +301,14 @@ export function buildApp(opts: AppOptions): Hono {
     const parseResult = messageSchema.safeParse(body);
     if (!parseResult.success) {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    if (append) {
+      const state = await registry.injectMessage(id, parseResult.data.content);
+      if (state === 'missing') return c.json({ error: 'not found' }, 404);
+      if (state === 'already-running') {
+        return c.json({ error: 'run already in progress' }, 409);
+      }
+      return c.body(null, 204);
     }
     const state = await registry.run(id, parseResult.data.content);
     if (state === 'missing') return c.json({ error: 'not found' }, 404);

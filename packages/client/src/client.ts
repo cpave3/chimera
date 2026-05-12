@@ -235,6 +235,23 @@ export class ChimeraClient {
   }
 
   /**
+   * Append a user message to the session history without invoking the LLM.
+   */
+  async appendMessage(sessionId: SessionId, content: string): Promise<void> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/sessions/${sessionId}/messages?append=true`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content }),
+      },
+    );
+    if (!response.ok) {
+      throw new ChimeraHttpError(response.status, await safeBody(response));
+    }
+  }
+
+  /**
    * Subscribe to the event stream first to avoid missing events, POST the
    * message once the SSE connection is established, then yield events until
    * `run_finished`.

@@ -159,4 +159,10 @@ export type PersistedEvent =
       parentId: SessionId;
       parentEventCount: number;
       purpose?: string;
+    }
+  | {
+      type: 'message_appended';
+      messages: ModelMessage[];
+      toolCalls: ToolCallRecord[];
+      usage: Usage;
     };

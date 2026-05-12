@@ -204,7 +204,7 @@ async function readLatestStepSnapshot(
       }
       continue;
     }
-    if (parsed && parsed.type === 'step_finished') {
+    if (parsed && (parsed.type === 'step_finished' || parsed.type === 'message_appended')) {
       latest = {
         messages: parsed.messages,
         toolCalls: parsed.toolCalls,

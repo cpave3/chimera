@@ -36,6 +36,7 @@ interface StubClientOpts {
   resumeSessionSpy?: (id: string) => void;
   forkSessionSpy?: (id: string, purpose?: string) => void;
   compactSpy?: (id: string) => void;
+  appendSpy?: (content: string) => void;
 }
 
 function emptySession(id: string): Session {
@@ -112,6 +113,12 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev
     },
     compact: async (_id: string) => {
       opts.compactSpy?.(_id);
+    },
+    appendMessage: async (_id: string, content: string) => {
+      opts.appendSpy?.(content);
+      queue.push({ type: 'user_message', content });
+      wake?.();
+      wake = null;
     },
     pushEvent: (ev: AgentEvent) => {
       queue.push(ev);
@@ -836,6 +843,190 @@ describe('TUI /theme slash dispatch', () => {
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(lastFrame()).not.toContain('queued (');
+
+    unmount();
+  });
+});
+
+describe('TUI bang dispatch', () => {
+  it('!command runs locally and appends output without invoking the model', async () => {
+    const sent: string[] = [];
+    const appended: string[] = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ sendSpy: (m) => sent.push(m), appendSpy: (c) => appended.push(c) })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '!echo hello\r');
+    await new Promise((r) => setTimeout(r, 200));
+    // No LLM message sent — bang is appended to history, not sent to model.
+    expect(sent).toEqual([]);
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toContain('!echo hello');
+    expect(appended[0]).toContain('hello');
+    const frame = lastFrame()!;
+    expect(frame).toContain('running: echo hello');
+
+    // A real message is sent as-is, not prepended.
+    await type(stdin, 'now ask\r');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBe('now ask');
+
+    unmount();
+  });
+
+  it('! with no command is a no-op', async () => {
+    const sent: string[] = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({ sendSpy: (m) => sent.push(m) })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '!\r');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toEqual([]);
+    unmount();
+  });
+
+  it('!false reports non-zero exit code in scrollback without sending to model', async () => {
+    const sent: string[] = [];
+    const appended: string[] = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ sendSpy: (m) => sent.push(m), appendSpy: (c) => appended.push(c) })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '!false\r');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toContain('!false');
+    expect(appended[0]).toContain('(exit 1)');
+    expect(sent).toEqual([]);
+
+    // Allow time for the subscribe stream to render the user_message.
+    await new Promise((r) => setTimeout(r, 300));
+    const frame = lastFrame()!;
+    expect(frame).toContain('exit 1');
+
+    // A real message is sent as-is, not prepended.
+    await type(stdin, 'ask\r');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBe('ask');
+
+    unmount();
+  });
+
+  it('shows bash > prompt prefix when buffer starts with !', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    // Before entering, normal prompt.
+    expect(lastFrame()).toContain('> ');
+    expect(lastFrame()).not.toContain('bash >');
+
+    await type(stdin, '!echo hello');
+    await new Promise((r) => setTimeout(r, 50));
+    const frame = lastFrame()!;
+    expect(frame).toContain('bash > !echo hello');
+    unmount();
+  });
+
+  it('!command queues when busy, drains, and appends without invoking model', async () => {
+    const sent: string[] = [];
+    const appended: string[] = [];
+    const client = stubClient({
+      sendSpy: (m) => sent.push(m),
+      appendSpy: (c) => appended.push(c),
+      echoOnSend: (content) => [{ type: 'user_message', content }],
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    // Make the agent busy with compaction.
+    client.pushEvent({ type: 'compaction_started', reason: 'threshold' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()).toContain('compacting');
+
+    // Bang queues while busy.
+    await type(stdin, '!echo hello\r');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()).toContain('queued (1)');
+
+    // Release busy - bang drains and appends to history without model.
+    client.pushEvent({
+      type: 'compaction_finished',
+      summary: 'done',
+      tokensBefore: 1000,
+      tokensAfter: 200,
+      messagesReplaced: 5,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toContain('!echo hello');
+    expect(sent).toEqual([]);
+
+    // A real message is sent without prepended bang output.
+    await type(stdin, 'summarize\r');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBe('summarize');
+
+    unmount();
+  });
+
+  it('multiple queued !commands are appended in order without invoking model', async () => {
+    const sent: string[] = [];
+    const appended: string[] = [];
+    const client = stubClient({
+      sendSpy: (m) => sent.push(m),
+      appendSpy: (c) => appended.push(c),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    client.pushEvent({ type: 'compaction_started', reason: 'threshold' });
+    await new Promise((r) => setTimeout(r, 30));
+
+    await type(stdin, '!echo a\r');
+    await new Promise((r) => setTimeout(r, 20));
+    await type(stdin, '!echo b\r');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(lastFrame()).toContain('queued (2)');
+
+    client.pushEvent({
+      type: 'compaction_finished',
+      summary: 'done',
+      tokensBefore: 1000,
+      tokensAfter: 200,
+      messagesReplaced: 5,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(lastFrame()).not.toContain('queued (');
+    expect(appended).toHaveLength(2);
+    expect(appended[0]).toContain('!echo a');
+    expect(appended[1]).toContain('!echo b');
+    expect(sent).toEqual([]);
+
+    // A real message goes to the model without prepended content.
+    await type(stdin, 'analysis\r');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBe('analysis');
 
     unmount();
   });

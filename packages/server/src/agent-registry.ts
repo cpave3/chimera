@@ -59,6 +59,7 @@ export interface AgentEntry {
    * caller tears down the session directory.
    */
   activeRun: Promise<void> | null;
+  injectActive: boolean;
   compactionActive: boolean;
   /**
    * Promise tracking the currently active compaction, if any. Awaited by
@@ -145,6 +146,7 @@ export class AgentRegistry {
       bus,
       runActive: false,
       activeRun: null,
+      injectActive: false,
       compactionActive: false,
       activeCompaction: null,
       compactionCount: 0,
@@ -259,6 +261,32 @@ export class AgentRegistry {
       }
     })();
     return 'queued';
+  }
+
+  /**
+   * Append a user message to the session history without invoking the LLM.
+   * Returns `'injected'` on success, `'missing'` if the session is not found,
+   * and `'already-running'` if a run is currently active.
+   */
+  async injectMessage(
+    id: SessionId,
+    content: string,
+  ): Promise<'injected' | 'already-running' | 'missing'> {
+    const entry = this.entries.get(id);
+    if (!entry) return 'missing';
+    if (entry.runActive || entry.compactionActive || entry.injectActive)
+      return 'already-running';
+    entry.injectActive = true;
+    try {
+      await entry.agent.appendMessage(content);
+    } catch (err) {
+      if ((err as Error).message === 'Agent is already running') return 'already-running';
+      throw err;
+    } finally {
+      entry.injectActive = false;
+    }
+    entry.bus.publish({ type: 'user_message', content });
+    return 'injected';
   }
 
   /**

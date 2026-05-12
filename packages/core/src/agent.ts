@@ -544,6 +544,32 @@ export class Agent {
     return JSON.parse(JSON.stringify(this.session)) as Session;
   }
 
+  /**
+   * Append a user message to the session without invoking the LLM.
+   * Requires the agent to be idle (not running) to avoid corrupting
+   * the message array the AI SDK may be reading.
+   */
+  async appendMessage(content: string): Promise<void> {
+    if (this.running) {
+      throw new Error('Agent is already running');
+    }
+    this.session.messages.push({ role: 'user', content });
+    try {
+      await persistSession(
+        this.session,
+        {
+          type: 'message_appended',
+          messages: this.session.messages,
+          toolCalls: this.session.toolCalls,
+          usage: cloneUsage(this.session.usage),
+        },
+        this.opts.home,
+      );
+    } catch {
+      // best-effort persistence
+    }
+  }
+
   run(userMessage: string): AsyncIterable<AgentEvent> {
     if (this.running) {
       throw new Error('Agent is already running');

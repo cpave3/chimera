@@ -2,6 +2,7 @@ import { resolve as resolvePath } from 'node:path';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChimeraClient } from '@chimera/client';
+import { runBangCommand } from './bang';
 import type { CommandRegistry } from '@chimera/commands';
 import type {
   AgentEvent,
@@ -162,7 +163,8 @@ export function App(props: AppProps): React.ReactElement {
   const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
   const [running, setRunning] = useState(false);
   const [compacting, setCompacting] = useState(false);
-  const busy = running || compacting;
+  const [bangRunning, setBangRunning] = useState(false);
+  const busy = running || compacting || bangRunning;
   const [activeModeName, setActiveModeName] = useState<string>(props.initialMode ?? 'build');
   const [pendingModeName, setPendingModeName] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
@@ -342,11 +344,29 @@ export function App(props: AppProps): React.ReactElement {
   }, [activeSession.client, activeSession.sessionId, scrollback]);
 
   // When a run ends with queued messages, concatenate and send as one turn.
+  // When a run ends with queued messages, drain them. Consecutive regular
+  // messages are merged into one turn; `!` commands run individually.
   useEffect(() => {
     if (wasBusyRef.current && !busy && queue.length > 0) {
-      const combined = queue.join('\n\n');
+      const items = queue;
       setQueue([]);
-      void handleSubmit(combined);
+      (async () => {
+        const regulars: string[] = [];
+        for (const item of items) {
+          if (item.startsWith('!')) {
+            if (regulars.length > 0) {
+              await sendUserMessage(regulars.join('\n\n'));
+              regulars.length = 0;
+            }
+            await handleBang(item.slice(1).trim());
+          } else {
+            regulars.push(item);
+          }
+        }
+        if (regulars.length > 0) {
+          await sendUserMessage(regulars.join('\n\n'));
+        }
+      })();
     }
     wasBusyRef.current = busy;
     // handleSubmit is a stable closure for this purpose; intentional deps.
@@ -708,6 +728,18 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   async function handleSubmit(text: string): Promise<void> {
+    if (text.startsWith('!')) {
+      const command = text.slice(1).trim();
+      if (command.length === 0) return;
+      if (busy) {
+        setQueue((q) => [...q, text]);
+        scrollback.addInfo(`queued: ${previewLine(text)}`);
+        setEntries(scrollback.all());
+        return;
+      }
+      await handleBang(command);
+      return;
+    }
     if (text.startsWith('/')) {
       handleSlash(text.trim());
       return;
@@ -719,6 +751,29 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
     await sendUserMessage(text);
+  }
+
+  async function handleBang(command: string): Promise<void> {
+    scrollback.addInfo(`running: ${previewLine(command)}`);
+    setEntries(scrollback.all());
+    setBangRunning(true);
+    try {
+      const result = await runBangCommand(command, props.cwd);
+      const lines: string[] = [];
+      if (result.stdout) lines.push(result.stdout);
+      if (result.stderr) lines.push(result.stderr);
+      if (!result.stdout && !result.stderr) lines.push('(no output)');
+      const summary = `!${command} (exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}${result.killedByBuffer ? ', truncated' : ''})`;
+      const outputLines: string[] = [summary];
+      if (lines.length > 0) outputLines.push(...lines);
+      const output = outputLines.join('\n');
+      await activeSession.client.appendMessage(activeSession.sessionId, output);
+    } catch (err) {
+      scrollback.addError(`! failed: ${(err as Error).message}`);
+      setEntries(scrollback.all());
+    } finally {
+      setBangRunning(false);
+    }
   }
 
   async function sendUserMessage(text: string): Promise<void> {
@@ -1423,9 +1478,10 @@ export function App(props: AppProps): React.ReactElement {
   // dynamic frame's height stays exactly 1 — matching the pre-multiline
   // structure that did not flicker.
   const isMultilineBuffer = buffer.text.includes('\n');
+  const isBangBuffer = buffer.text.startsWith('!');
   const promptBody = useMemo(
-    () => renderPromptLines(buffer, theme.accent.primary, editorOpen),
-    [buffer, editorOpen, theme.accent.primary],
+    () => renderPromptLines(buffer, theme.accent.primary, theme.accent.secondary, editorOpen, isBangBuffer),
+    [buffer, editorOpen, theme.accent.primary, theme.accent.secondary, isBangBuffer],
   );
 
   return (
@@ -1590,18 +1646,21 @@ function previewLine(text: string): string {
 function renderPromptLines(
   buffer: MultilineBuffer,
   accentColor: string,
+  bangColor: string,
   editorOpen: boolean,
+  isBang: boolean,
 ): React.ReactElement[] {
   const allLines = buffer.text.split('\n');
   const { line: cursorLine, col: cursorCol } = cursorLineCol(buffer);
   return allLines.map((lineText, idx) => {
     const isFirst = idx === 0;
-    const prefix = isFirst ? '> ' : '  ';
+    const prefix = isFirst ? (isBang ? 'bash > ' : '> ') : '  ';
+    const color = isBang ? bangColor : accentColor;
     const showCursor = idx === cursorLine && !editorOpen;
     if (!showCursor) {
       return (
         <Box key={idx}>
-          <Text color={isFirst ? accentColor : undefined}>{prefix}</Text>
+          <Text color={isFirst ? color : undefined}>{prefix}</Text>
           <Text>{lineText}</Text>
         </Box>
       );
@@ -1611,7 +1670,7 @@ function renderPromptLines(
     const post = cursorCol < lineText.length ? lineText.slice(cursorCol + 1) : '';
     return (
       <Box key={idx}>
-        <Text color={isFirst ? accentColor : undefined}>{prefix}</Text>
+        <Text color={isFirst ? color : undefined}>{prefix}</Text>
         <Text>{pre}</Text>
         <Text inverse>{atChar}</Text>
         <Text>{post}</Text>
