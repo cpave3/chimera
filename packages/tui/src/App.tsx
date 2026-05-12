@@ -1668,12 +1668,15 @@ function renderPromptLines(
     const pre = lineText.slice(0, cursorCol);
     const atChar = cursorCol < lineText.length ? lineText[cursorCol]! : ' ';
     const post = cursorCol < lineText.length ? lineText.slice(cursorCol + 1) : '';
+    // Render the cursor line as a single <Text> with embedded SGR inverse
+    // escapes so the terminal wraps continuously. Three sibling <Text>
+    // nodes (pre / inverse / post) detach the cursor from the text flow
+    // because Ink treats each as a separate flex item.
+    const lineWithCursor = `${pre}\x1b[7m${atChar}\x1b[27m${post}`;
     return (
       <Box key={idx}>
         <Text color={isFirst ? color : undefined}>{prefix}</Text>
-        <Text>{pre}</Text>
-        <Text inverse>{atChar}</Text>
-        <Text>{post}</Text>
+        <Text>{lineWithCursor}</Text>
       </Box>
     );
   });
