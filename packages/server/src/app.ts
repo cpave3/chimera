@@ -5,6 +5,7 @@ import {
   deleteSession as coreDeleteSession,
   forkSession as coreForkSession,
   listSessionsOnDisk,
+  readSessionMetadata,
   type RememberScope,
   type SessionId,
   type SessionInfo,
@@ -174,24 +175,28 @@ export function buildApp(opts: AppOptions): Hono {
     try {
       // Refuse if the persisted record has children. The in-memory registry
       // doesn't track child links, so we always check disk metadata first.
-      const onDisk = await listSessionsOnDisk(home);
-      const target = onDisk.find((s) => s.id === id);
-      if (target && target.children.length > 0) {
+      let onDisk;
+      try {
+        onDisk = await readSessionMetadata(id, home);
+      } catch {
+        onDisk = undefined;
+      }
+      if (onDisk && onDisk.children.length > 0) {
         return c.json(
           {
             error: 'session has children; delete children first',
-            children: target.children,
+            children: onDisk.children,
           },
           409,
         );
       }
       const inRegistry = registry.get(id) !== null;
       await registry.delete(id);
-      if (target) {
+      if (onDisk) {
         await coreDeleteSession(id, home);
       }
       invalidateListCache();
-      if (!target && !inRegistry) {
+      if (!onDisk && !inRegistry) {
         return c.json({ error: 'not found' }, 404);
       }
       return c.body(null, 204);
@@ -207,15 +212,16 @@ export function buildApp(opts: AppOptions): Hono {
     if (existing) {
       return c.json({ sessionId: id });
     }
-    const sessions = await listSessionsOnDisk(home);
-    const onDisk = sessions.find((s) => s.id === id);
-    if (!onDisk) {
+    let meta;
+    try {
+      meta = await readSessionMetadata(id, home);
+    } catch {
       return c.json({ error: `session ${id} not found on disk` }, 404);
     }
     const { sessionId } = await registry.create({
-      cwd: onDisk.cwd,
-      model: onDisk.model,
-      sandboxMode: onDisk.sandboxMode,
+      cwd: meta.cwd,
+      model: meta.model,
+      sandboxMode: meta.sandboxMode,
       sessionId: id,
     });
     return c.json({ sessionId });
@@ -235,15 +241,21 @@ export function buildApp(opts: AppOptions): Hono {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
     const purpose = parseResult.data.purpose;
-    const sessions = await listSessionsOnDisk(home);
-    const parent = sessions.find((s) => s.id === parentId);
-    if (!parent) {
+    let meta;
+    try {
+      meta = await readSessionMetadata(parentId, home);
+    } catch {
       return c.json({ error: `parent session ${parentId} not found` }, 404);
     }
     const { childId } = await coreForkSession({ parentId, purpose, home });
     if (onFork) {
       try {
-        await onFork(parent, childId);
+        // Satisfy the SessionInfo contract expected by onFork.
+        const parentInfo: SessionInfo = {
+          ...meta,
+          lastActivityAt: meta.createdAt,
+        };
+        await onFork(parentInfo, childId);
       } catch (err) {
         return c.json(
           {
@@ -255,9 +267,9 @@ export function buildApp(opts: AppOptions): Hono {
       }
     }
     const { sessionId } = await registry.create({
-      cwd: parent.cwd,
-      model: parent.model,
-      sandboxMode: parent.sandboxMode,
+      cwd: meta.cwd,
+      model: meta.model,
+      sandboxMode: meta.sandboxMode,
       sessionId: childId,
     });
     invalidateListCache();

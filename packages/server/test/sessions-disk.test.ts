@@ -276,12 +276,83 @@ describe('disk-aware session routes', () => {
     });
     const app = buildApp({ registry, home });
     // Use a syntactically valid ULID (26 chars Crockford base32) that's never been created
-    const resumeResponse = await app.request('/v1/sessions/01HZZZZZZZZZZZZZZZZZZZZZZZ/resume', {
+    const resumeResponse = await app.request('/v1/sessions/01HZZZZZZZZZ3ZZZZZZZZZZZZZZ/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: '{}',
     });
     expect(resumeResponse.status).toBe(404);
+  });
+
+  it('resume reads metadata directly without scanning all sessions', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    // Create multiple sessions so a full scan would be expensive.
+    const targetCreate = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+    });
+    const { sessionId: targetId } = (await targetCreate.json()) as { sessionId: string };
+
+    for (let i = 0; i < 10; i++) {
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      });
+    }
+
+    const freshRegistry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const freshApp = buildApp({ registry: freshRegistry, home });
+
+    const resumeResponse = await freshApp.request(`/v1/sessions/${targetId}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(resumeResponse.status).toBe(200);
+    const body = (await resumeResponse.json()) as { sessionId: string };
+    expect(body.sessionId).toBe(targetId);
+    expect(freshRegistry.get(targetId)).not.toBeNull();
+  });
+
+  it('fork reads metadata directly without scanning all sessions', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const parentCreate = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+    });
+    const { sessionId: parentId } = (await parentCreate.json()) as { sessionId: string };
+
+    for (let i = 0; i < 10; i++) {
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      });
+    }
+
+    const forkResponse = await app.request(`/v1/sessions/${parentId}/fork`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(forkResponse.status).toBe(201);
+    const body = (await forkResponse.json()) as { sessionId: string; parentId: string };
+    expect(body.parentId).toBe(parentId);
+    expect(body.sessionId).not.toBe(parentId);
   });
 
   it('fork onFork hook fires for overlay-mode parents', async () => {
