@@ -1,7 +1,13 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { deleteSession, listSessionsOnDisk, sessionDir, type SessionInfo } from '@chimera/core';
+import {
+  deleteSession,
+  listSessionsOnDisk,
+  readSessionMetadata,
+  sessionDir,
+  type SessionInfo,
+} from '@chimera/core';
 
 export interface RunSessionsListOpts {
   /** Default cwd for filtering. Required unless `all` is true. */
@@ -44,9 +50,14 @@ export async function runSessionsRm(sessionId: string, home = homedir()): Promis
     process.stderr.write(`No such session: ${sessionId}\n`);
     process.exit(1);
   }
-  const sessions = await listSessionsOnDisk(home);
-  const target = sessions.find((s) => s.id === sessionId);
-  if (target && target.children.length > 0) {
+  let target;
+  try {
+    target = await readSessionMetadata(sessionId, home);
+  } catch {
+    process.stderr.write(`No such session: ${sessionId}\n`);
+    process.exit(1);
+  }
+  if (target.children.length > 0) {
     process.stderr.write(
       `Cannot delete ${sessionId}: has ${target.children.length} child session(s). Delete children first.\n`,
     );
@@ -84,10 +95,22 @@ export interface ResolveSessionIdOptions {
   cwd?: string;
 }
 
+const ULID_RE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+
 export async function resolveSessionId(
   idOrSuffix: string,
   options: ResolveSessionIdOptions = {},
 ): Promise<string> {
+  // Fast path: full ULID → direct metadata read, no scan.
+  if (ULID_RE.test(idOrSuffix)) {
+    try {
+      const meta = await readSessionMetadata(idOrSuffix, options.home);
+      return meta.id;
+    } catch {
+      // Not found on disk — fall through to produce a clean error below.
+    }
+  }
+
   const allSessions = await listSessionsOnDisk(options.home);
   const exactMatch = allSessions.find((session) => session.id === idOrSuffix);
   if (exactMatch) return exactMatch.id;

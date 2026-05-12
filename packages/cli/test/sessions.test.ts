@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as core from '@chimera/core';
 import { emptyUsage, newSessionId, persistSession, type Session } from '@chimera/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findLatestSessionInCwd, resolveSessionId } from '../src/commands/sessions';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -121,6 +122,16 @@ describe('resolveSessionId', () => {
       cwd: '/tmp/proj-a',
     });
     expect(resolved).toBe(sessionInOtherDir.id);
+  });
+
+  it('uses direct metadata read for a full ULID without scanning', async () => {
+    const targetSession = makeSession({ cwd: '/tmp/proj-a' });
+    await persistEmptySession(targetSession, home);
+    const spy = vi.spyOn(core, 'listSessionsOnDisk').mockImplementation(async () => []);
+    const resolved = await resolveSessionId(targetSession.id, { home });
+    expect(spy).not.toHaveBeenCalled();
+    expect(resolved).toBe(targetSession.id);
+    spy.mockRestore();
   });
 });
 
