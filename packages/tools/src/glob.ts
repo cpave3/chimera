@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
+import { blockedDirGlobs } from './search-config';
 
 const MAX_FILES = 1000;
 
@@ -14,9 +15,19 @@ const GLOB_SCHEMA = z.object({
     .string()
     .optional()
     .describe('Subdirectory to search under (relative to cwd). Defaults to the working directory.'),
+  no_blocklist: z
+    .boolean()
+    .optional()
+    .describe('Disable the default directory blocklist (node_modules, dist, .git, etc.).'),
+  output_file: z
+    .string()
+    .optional()
+    .describe(
+      'If results are truncated, write the full un-truncated list to this file path before returning.',
+    ),
 });
 type GlobArgs = z.infer<typeof GLOB_SCHEMA>;
-type GlobResult = { files: string[]; truncated: boolean };
+type GlobResult = { files: string[]; truncated: boolean; spillFile?: string };
 
 export function buildGlobTool(ctx: ToolContext) {
   return defineTool<GlobArgs, GlobResult>({
@@ -26,7 +37,10 @@ export function buildGlobTool(ctx: ToolContext) {
     inputSchema: GLOB_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const searchPath = args.path && args.path.length > 0 ? args.path : '.';
-      const cmd = `rg --files --hidden --glob ${shellQuote(args.pattern)} -- ${shellQuote(searchPath)}`;
+      const blockFlags = blockedDirGlobs(args.no_blocklist)
+        .map((g) => `--glob ${shellQuote(g)}`)
+        .join(' ');
+      const cmd = `rg --files --hidden --no-messages --glob ${shellQuote(args.pattern)} ${blockFlags} -- ${shellQuote(searchPath)}`;
       const result = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal, toolName: 'glob' });
 
       if (result.exitCode === 127) {
@@ -35,16 +49,20 @@ export function buildGlobTool(ctx: ToolContext) {
             'Install it (https://github.com/BurntSushi/ripgrep) and retry.',
         );
       }
-      // rg exits 1 when no files match; that's not an error for us.
-      if (result.exitCode !== 0 && result.exitCode !== 1) {
+      // rg exits 1 when no files match and 2 when there were suppressed
+      // read errors (e.g. permission denied); neither is fatal for us.
+      if (result.exitCode !== 0 && result.exitCode !== 1 && result.exitCode !== 2) {
         const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
         throw new Error(`glob: ${stderr}`);
       }
 
       const lines = result.stdout.split('\n').filter((line) => line.length > 0);
       const truncated = lines.length > MAX_FILES;
+      if (truncated && args.output_file) {
+        await ctx.sandboxExecutor.writeFile(args.output_file, lines.join('\n') + '\n');
+      }
       const files = truncated ? lines.slice(0, MAX_FILES) : lines;
-      return { files, truncated };
+      return { files, truncated, spillFile: truncated && args.output_file ? args.output_file : undefined };
     },
     formatScrollback: (args, result) => {
       const where = args.path ? ` in ${args.path}` : '';
@@ -53,6 +71,7 @@ export function buildGlobTool(ctx: ToolContext) {
       const tail = result.truncated
         ? ` (${result.files.length}+ files, truncated)`
         : ` (${result.files.length} files)`;
+      if (result.spillFile) return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
       return { summary: `${head}${tail}` };
     },
   });

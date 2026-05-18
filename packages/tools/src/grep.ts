@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
+import { blockedDirGlobs } from './search-config';
 
 const DEFAULT_MAX_MATCHES = 200;
 const HARD_MAX_MATCHES = 2000;
@@ -28,6 +29,16 @@ const GREP_SCHEMA = z.object({
     .describe(
       `Cap on results (lines or files). Default ${DEFAULT_MAX_MATCHES}, hard max ${HARD_MAX_MATCHES}.`,
     ),
+  no_blocklist: z
+    .boolean()
+    .optional()
+    .describe('Disable the default directory blocklist (node_modules, dist, .git, etc.).'),
+  output_file: z
+    .string()
+    .optional()
+    .describe(
+      'If results are truncated, write the full un-truncated results to this file path before returning.',
+    ),
 });
 type GrepArgs = z.infer<typeof GREP_SCHEMA>;
 type GrepResult =
@@ -35,8 +46,9 @@ type GrepResult =
       mode: 'content';
       matches: Array<{ file: string; line: number; text: string }>;
       truncated: boolean;
+      spillFile?: string;
     }
-  | { mode: 'files'; files: string[]; truncated: boolean };
+  | { mode: 'files'; files: string[]; truncated: boolean; spillFile?: string };
 
 export function buildGrepTool(ctx: ToolContext) {
   return defineTool<GrepArgs, GrepResult>({
@@ -46,41 +58,55 @@ export function buildGrepTool(ctx: ToolContext) {
     inputSchema: GREP_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const limit = Math.min(args.max_count ?? DEFAULT_MAX_MATCHES, HARD_MAX_MATCHES);
-      const flags: string[] = ['--hidden'];
-      if (args.case_insensitive) flags.push('-i');
-      if (args.glob) flags.push('--glob', shellQuote(args.glob));
-      if (args.files_with_matches) {
-        flags.push('-l');
-      } else {
-        flags.push('--line-number', '--no-heading', '--color', 'never');
-        // Cap per-file matches just over the global limit so a single
-        // match-heavy file can't push our total far past `limit`. The "+1"
-        // preserves the existing truncation signal: if any file returns
-        // >limit lines, the parser hits the `matches.length >= limit` break
-        // and reports truncated=true.
-        flags.push('-m', String(limit + 1));
-      }
+
+      const makeFlags = (capped: boolean): string[] => {
+        const flags: string[] = ['--hidden', '--no-messages'];
+        if (args.case_insensitive) flags.push('-i');
+        if (args.glob) flags.push('--glob', shellQuote(args.glob));
+        blockedDirGlobs(args.no_blocklist).forEach((g) => flags.push('--glob', shellQuote(g)));
+        if (args.files_with_matches) {
+          flags.push('-l');
+        } else {
+          flags.push('--line-number', '--no-heading', '--color', 'never');
+          if (capped) {
+            flags.push('-m', String(limit + 1));
+          }
+        }
+        return flags;
+      };
+
       const searchPath = args.path && args.path.length > 0 ? args.path : '.';
-      const cmd = `rg ${flags.join(' ')} -e ${shellQuote(args.pattern)} -- ${shellQuote(searchPath)}`;
-      const result = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal, toolName: 'grep' });
+      const runRg = async (flags: string[]) => {
+        const cmd = `rg ${flags.join(' ')} -e ${shellQuote(args.pattern)} -- ${shellQuote(searchPath)}`;
+        const res = await ctx.sandboxExecutor.exec(cmd, { signal: abortSignal, toolName: 'grep' });
+        if (res.exitCode === 127) {
+          throw new Error(
+            'grep: ripgrep (`rg`) is not installed in the current execution environment. ' +
+              'Install it (https://github.com/BurntSushi/ripgrep) and retry.',
+          );
+        }
+        if (res.exitCode !== 0 && res.exitCode !== 1 && res.exitCode !== 2) {
+          const stderr = res.stderr.trim() || `exit ${res.exitCode}`;
+          throw new Error(`grep: ${stderr}`);
+        }
+        return res.stdout;
+      };
 
-      if (result.exitCode === 127) {
-        throw new Error(
-          'grep: ripgrep (`rg`) is not installed in the current execution environment. ' +
-            'Install it (https://github.com/BurntSushi/ripgrep) and retry.',
-        );
-      }
-      // rg exits 1 when no matches; that's not an error.
-      if (result.exitCode !== 0 && result.exitCode !== 1) {
-        const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
-        throw new Error(`grep: ${stderr}`);
-      }
-
-      const lines = result.stdout.split('\n').filter((line) => line.length > 0);
+      const boundedStdout = await runRg(makeFlags(true));
+      const lines = boundedStdout.split('\n').filter((line) => line.length > 0);
 
       if (args.files_with_matches) {
         const truncated = lines.length > limit;
-        return { mode: 'files', files: truncated ? lines.slice(0, limit) : lines, truncated };
+        if (truncated && args.output_file) {
+          const full = await runRg(makeFlags(false));
+          await ctx.sandboxExecutor.writeFile(args.output_file, full);
+        }
+        return {
+          mode: 'files',
+          files: truncated ? lines.slice(0, limit) : lines,
+          truncated,
+          spillFile: truncated && args.output_file ? args.output_file : undefined,
+        };
       }
 
       const matches: Array<{ file: string; line: number; text: string }> = [];
@@ -93,7 +119,16 @@ export function buildGrepTool(ctx: ToolContext) {
         const parsed = parseRgLine(raw);
         if (parsed) matches.push(parsed);
       }
-      return { mode: 'content', matches, truncated };
+      if (truncated && args.output_file) {
+        const full = await runRg(makeFlags(false));
+        await ctx.sandboxExecutor.writeFile(args.output_file, full);
+      }
+      return {
+        mode: 'content',
+        matches,
+        truncated,
+        spillFile: truncated && args.output_file ? args.output_file : undefined,
+      };
     },
     formatScrollback: (args, result) => {
       const where = args.path ? ` in ${args.path}` : '';
@@ -104,11 +139,13 @@ export function buildGrepTool(ctx: ToolContext) {
         const tail = result.truncated
           ? ` (${result.files.length}+ files, truncated)`
           : ` (${result.files.length} files)`;
+        if (result.spillFile) return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
         return { summary: `${head}${tail}` };
       }
       const tail = result.truncated
         ? ` (${result.matches.length}+ matches, truncated)`
         : ` (${result.matches.length} matches)`;
+      if (result.spillFile) return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
       return { summary: `${head}${tail}` };
     },
   });
