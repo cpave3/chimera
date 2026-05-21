@@ -37,6 +37,7 @@ interface StubClientOpts {
   forkSessionSpy?: (id: string, purpose?: string) => void;
   compactSpy?: (id: string) => void;
   appendSpy?: (content: string) => void;
+  setModelSpy?: (modelRef: string | null) => void;
 }
 
 function emptySession(id: string): Session {
@@ -117,6 +118,13 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev
     appendMessage: async (_id: string, content: string) => {
       opts.appendSpy?.(content);
       queue.push({ type: 'user_message', content });
+      wake?.();
+      wake = null;
+    },
+    setModel: async (_id: string, modelRef: string | null) => {
+      opts.setModelSpy?.(modelRef);
+      // Echo a model_changed event so the TUI updates its state.
+      queue.push({ type: 'model_changed', from: 'm/m', to: modelRef ?? 'm/m' });
       wake?.();
       wake = null;
     },
@@ -239,6 +247,56 @@ describe('TUI slash dispatch', () => {
     await type(stdin, '/summarize the current branch\r');
     await new Promise((r) => setTimeout(r, 20));
     expect(sent).toEqual(['Summarize: the current branch']);
+    unmount();
+  });
+
+  it('/model without arg shows the current model', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({})} sessionId="s" modelRef="mock/mock" cwd="/tmp" />,
+    );
+    await type(stdin, '/model\r');
+    expect(lastFrame()).toContain('current model: mock/mock');
+    unmount();
+  });
+
+  it('/model with arg calls setModel and reflects the change', async () => {
+    let modelSet: string | null = null;
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({
+          setModelSpy: (ref) => {
+            modelSet = ref;
+          },
+        })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/model other/new\r');
+    expect(modelSet).toBe('other/new');
+    // TUI commits an info line synchronously; the model change event is
+    // pushed asynchronously. The setModelSpy being called is proof the
+    // client method was invoked.
+    unmount();
+  });
+
+  it('/model default clears the override', async () => {
+    let modelSet: string | null = 'not-set';
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({
+          setModelSpy: (ref) => {
+            modelSet = ref;
+          },
+        })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/model default\r');
+    expect(modelSet).toBeNull();
     unmount();
   });
 

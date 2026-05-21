@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import { Compactor } from '@chimera/compaction';
 import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
-import type { CompactionConfig, Executor, SessionId } from '@chimera/core';
+import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
 import {
   applyAllowlist,
@@ -348,7 +348,7 @@ export class CliAgentFactory implements AgentFactory {
         }
         const nextSystemPrompt = composeSystemPrompt({
           cwd: init.cwd,
-          model: init.model,
+          model: agent.session.model,
           sandboxMode: init.sandboxMode,
           extensions,
           mode: { name: next.name, body: next.body },
@@ -375,6 +375,43 @@ export class CliAgentFactory implements AgentFactory {
     } else {
       agent.setTools(tools);
     }
+
+    // Model-change resolver: allows the user to switch models at runtime via
+    // `/model <ref>` (or clear the override with `/model default`).
+    agent.setModelChangeResolver((ref: string) => {
+      const { provider: newProvider, modelId: newModelId } = this.registry.resolve(ref);
+      const newProviderSpec = this.providersConfig.providers[newProvider.id];
+      const newWindow = resolveContextWindow({
+        providerShape: newProviderSpec?.shape ?? newProvider.shape,
+        providerId: newProvider.id,
+        modelId: newModelId,
+        override: this.modelsConfig[ref]?.contextWindow,
+        warn: this.warn,
+      });
+      const modelOpts = this.modelsConfig[ref];
+      const newModel: ModelConfig = {
+        providerId: newProvider.id,
+        modelId: newModelId,
+        maxSteps: agent.session.model.maxSteps,
+        maxOutputTokens: modelOpts?.maxOutputTokens,
+        temperature: agent.session.model.temperature,
+      };
+      const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
+      const newSystemPrompt = composeSystemPrompt({
+        cwd: init.cwd,
+        model: newModel,
+        sandboxMode: init.sandboxMode,
+        extensions,
+        mode: currentMode ? { name: currentMode.name, body: currentMode.body } : undefined,
+      });
+      return {
+        model: newModel,
+        languageModel: newProvider.getModel(newModelId),
+        systemPrompt: newSystemPrompt,
+        contextWindow: newWindow.value,
+        contextWindowIsApproximate: newWindow.source === 'fallback',
+      };
+    });
 
     return { agent, gate, hookRunner };
   }

@@ -62,6 +62,10 @@ const modeSchema = z.object({
   mode: z.string(),
 });
 
+const modelSchema = z.object({
+  model: z.string().nullable(),
+});
+
 const permissionRuleSchema = z.object({
   rule: z.object({
     tool: z.string(),
@@ -406,6 +410,33 @@ export function buildApp(opts: AppOptions): Hono {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
     return c.json({ mode: entry.agent.session.mode, pending: entry.agent.pendingMode });
+  });
+
+  // --- Model --------------------------------------------------------------
+  app.post('/v1/sessions/:id/model', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    const entry = registry.get(id);
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = modelSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    const result = entry.agent.setUserModelOverride(parseResult.data.model);
+    if (result.status === 'invalid') {
+      return c.json({ error: result.error }, 400);
+    }
+    if (result.status === 'running') {
+      return c.json({ error: 'agent is running; model change not allowed mid-run' }, 409);
+    }
+    entry.bus.publish({ type: 'model_changed', from: result.from, to: result.to });
+    return c.json({ from: result.from, to: result.to });
   });
 
   // --- Permissions -------------------------------------------------------

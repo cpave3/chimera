@@ -64,6 +64,11 @@ export type AgentEvent =
       effectiveModelChanged: boolean;
     }
   | {
+      type: 'model_changed';
+      from: string;
+      to: string;
+    }
+  | {
       type: 'subagent_spawned';
       subagentId: string;
       parentCallId: CallId;

@@ -167,6 +167,7 @@ export function App(props: AppProps): React.ReactElement {
   const busy = running || compacting || bangRunning;
   const [activeModeName, setActiveModeName] = useState<string>(props.initialMode ?? 'build');
   const [pendingModeName, setPendingModeName] = useState<string | null>(null);
+  const [currentModelRef, setCurrentModelRef] = useState<string>(props.modelRef);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -328,8 +329,9 @@ export function App(props: AppProps): React.ReactElement {
         const s = await activeSession.client.getSession(activeSession.sessionId);
         if (cancelled) return;
         setActiveParentId(s.parentId ?? null);
-        // Sync the TUI's UI state with the actual session mode.
+        // Sync the TUI's UI state with the actual session mode and model.
         setActiveModeName(s.mode);
+        setCurrentModelRef(`${s.model.providerId}/${s.model.modelId}`);
         // Only rehydrate if the session actually has prior messages — avoids
         // wiping a fresh "/new" session's empty scrollback unnecessarily.
         if (Array.isArray(s.messages) && s.messages.length > 0) {
@@ -486,6 +488,10 @@ export function App(props: AppProps): React.ReactElement {
       setActiveModeName(ev.to);
       setPendingModeName(null);
       scrollback.addModeChange(ev.from, ev.to);
+      setEntries(scrollback.all());
+    } else if (ev.type === 'model_changed') {
+      setCurrentModelRef(ev.to);
+      scrollback.addInfo(`model changed: ${ev.from} → ${ev.to}`);
       setEntries(scrollback.all());
     } else if (ev.type === 'compaction_started') {
       setCompacting(true);
@@ -824,13 +830,22 @@ export function App(props: AppProps): React.ReactElement {
         return;
       case '/model': {
         if (arg) {
-          scrollback.addInfo(
-            `changing model at runtime is not yet implemented; start a new session with -m ${arg}.`,
-          );
+          const target = arg === 'default' || arg === 'reset' ? null : arg;
+          void (async () => {
+            try {
+              await activeSession.client.setModel(activeSession.sessionId, target);
+              scrollback.addInfo(
+                target ? `model set to ${target}` : 'model override cleared',
+              );
+            } catch (error) {
+              scrollback.addError(`/model: ${(error as Error).message}`);
+            }
+            setEntries(scrollback.all());
+          })();
         } else {
-          scrollback.addInfo(`current model: ${props.modelRef}`);
+          scrollback.addInfo(`current model: ${currentModelRef}`);
+          setEntries(scrollback.all());
         }
-        setEntries(scrollback.all());
         return;
       }
       case '/rules': {
@@ -1452,7 +1467,7 @@ export function App(props: AppProps): React.ReactElement {
     );
   const modelLeft: StatusBarWidget[] = [
     modeWidget,
-    <Text color={theme.accent.primary}>{props.modelRef}</Text>,
+    <Text color={theme.accent.primary}>{currentModelRef}</Text>,
     <Text color={theme.text.muted}>{`session ${activeSession.sessionId.slice(-8)}`}</Text>,
     activeParentId ? <Text color={theme.accent.secondary}>(forked)</Text> : null,
   ];

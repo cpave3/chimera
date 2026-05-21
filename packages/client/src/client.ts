@@ -230,6 +230,14 @@ export class ChimeraClient {
     });
   }
 
+  async setModel(sessionId: SessionId, modelRef: string | null): Promise<void> {
+    await this.json<void>(`/v1/sessions/${sessionId}/model`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: modelRef }),
+    });
+  }
+
   async listSubagents(sessionId: SessionId): Promise<SubagentInfo[]> {
     return this.json<SubagentInfo[]>(`/v1/sessions/${sessionId}/subagents`);
   }
