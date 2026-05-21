@@ -157,16 +157,16 @@ describe('Compactor', () => {
   it('maybeCompact is a no-op when disabled', async () => {
     const session = makeSession([{ role: 'user', content: 'x'.repeat(200) }]);
     const compactor = makeCompactor(false);
-    const ran = await compactor.maybeCompact(session);
-    expect(ran).toBe(false);
+    const result = await compactor.maybeCompact(session);
+    expect(result).toEqual({ ran: false });
     expect(session.messages).toHaveLength(1);
   });
 
   it('maybeCompact is a no-op when below threshold', async () => {
     const session = makeSession([{ role: 'user', content: 'short' }]);
     const compactor = makeCompactor(true);
-    const ran = await compactor.maybeCompact(session);
-    expect(ran).toBe(false);
+    const result = await compactor.maybeCompact(session);
+    expect(result).toEqual({ ran: false });
     expect(session.messages).toHaveLength(1);
   });
 

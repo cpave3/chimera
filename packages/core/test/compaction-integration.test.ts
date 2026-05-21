@@ -277,7 +277,7 @@ describe('compaction trigger', () => {
 
   it('invokes maybeCompact before streamText when compaction.enabled is true', async () => {
     const model = textOnlyModel('hi');
-    const maybeCompact = vi.fn().mockResolvedValue(false);
+    const maybeCompact = vi.fn().mockResolvedValue({ ran: false });
     const compactor: CompactorApi = {
       maybeCompact,
       compact: vi.fn().mockResolvedValue({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
@@ -305,7 +305,7 @@ describe('compaction trigger', () => {
 
   it('does not invoke maybeCompact when compaction.enabled is false', async () => {
     const model = textOnlyModel('hi');
-    const maybeCompact = vi.fn().mockResolvedValue(false);
+    const maybeCompact = vi.fn().mockResolvedValue({ ran: false });
     const compactor: CompactorApi = {
       maybeCompact,
       compact: vi.fn().mockResolvedValue({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
@@ -351,13 +351,13 @@ describe('compaction trigger', () => {
     expect(true).toBe(true);
   });
 
-  it('mutates session.messages when maybeCompact returns true', async () => {
+  it('mutates session.messages when maybeCompact returns ran: true', async () => {
     const model = textOnlyModel('hi');
     const compactor: CompactorApi = {
       maybeCompact: vi.fn().mockImplementation(async (session: Session) => {
         // Simulate a successful compaction that replaces messages.
         session.messages = [{ role: 'assistant', content: 'summary' }];
-        return true;
+        return { ran: true, summary: 'summary', tokensBefore: 100, tokensAfter: 10, messagesReplaced: 5 };
       }),
       compact: vi.fn().mockResolvedValue({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
     };

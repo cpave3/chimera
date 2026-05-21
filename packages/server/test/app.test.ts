@@ -333,7 +333,7 @@ describe('server app', () => {
 
   it('POST /v1/sessions/:id/compact returns 202 for existing idle session', async () => {
     const compactor = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false as const }),
       compact: async () => ({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
     };
     const factory: AgentFactory = {
@@ -749,6 +749,99 @@ describe('server app', () => {
       expect(response.status).toBe(400);
       const body = await response.json();
       expect(body.error).toBeDefined();
+    });
+
+    it('POST /v1/sessions/:id/model changes the model and publishes an event', async () => {
+      const factory: AgentFactory = {
+        build: async (init) => {
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('x'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          agent.setModelChangeResolver((ref) => {
+            const [providerId, modelId] = ref.split('/');
+            return {
+              model: { providerId, modelId, maxSteps: 10 },
+              languageModel: textOnlyModel('new'),
+              systemPrompt: `model set to ${ref}`,
+              contextWindow: 128_000,
+              contextWindowIsApproximate: false,
+            };
+          });
+          return { agent };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory,
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/model`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'other/new' }),
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.from).toBe('mock/m');
+      expect(body.to).toBe('other/new');
+    });
+
+    it('POST /v1/sessions/:id/model rejects when no resolver is set', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/model`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'other/new' }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toContain('not registered');
+    });
+
+    it('POST /v1/sessions/:id/model rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/model`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/model rejects non-string model value', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/model`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 123 }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
     });
 
     it('POST /v1/sessions/:id/permissions/rules rejects malformed JSON', async () => {

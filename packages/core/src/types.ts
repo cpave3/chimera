@@ -115,7 +115,10 @@ export interface CompactionConfig {
  * The concrete implementation lives in `@chimera/compaction`.
  */
 export interface CompactorApi {
-  maybeCompact(session: Session): Promise<boolean>;
+  maybeCompact(session: Session): Promise<
+    | { ran: false }
+    | { ran: true; summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }
+  >;
   compact(
     session: Session,
     reason: 'threshold' | 'manual',

@@ -30,17 +30,23 @@ export class Compactor {
   /**
    * If compaction is enabled and the session's messages are estimated to exceed
    * `contextWindow - reserveTokens`, runs a compaction pass and mutates the
-   * session in-place. Returns `true` if compaction ran.
+   * session in-place. Returns `{ ran: true, ... }` with the compaction result
+   * when compaction ran, or `{ ran: false }` otherwise.
    */
-  async maybeCompact(session: Session): Promise<boolean> {
-    if (!this.opts.config.enabled) return false;
+  async maybeCompact(
+    session: Session,
+  ): Promise<
+    | { ran: false }
+    | { ran: true; summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }
+  > {
+    if (!this.opts.config.enabled) return { ran: false };
     const threshold = this.opts.contextWindow - this.opts.config.reserveTokens;
     const estimated = estimateTokens(session.messages);
     if (estimated > threshold) {
-      await this.compact(session, 'threshold');
-      return true;
+      const result = await this.compact(session, 'threshold');
+      return { ran: true, ...result };
     }
-    return false;
+    return { ran: false };
   }
 
   /**

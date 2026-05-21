@@ -88,7 +88,7 @@ describe('AgentRegistry compaction', () => {
 
   it('compact returns already-running when compaction is already active', async () => {
     const compactor: CompactorApi = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false }),
       compact: async () => {
         await new Promise((r) => setTimeout(r, 50));
       },
@@ -106,7 +106,7 @@ describe('AgentRegistry compaction', () => {
 
   it('run returns already-running when compaction is active', async () => {
     const compactor: CompactorApi = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false }),
       compact: async () => {
         await new Promise((r) => setTimeout(r, 50));
       },
@@ -123,7 +123,7 @@ describe('AgentRegistry compaction', () => {
 
   it('compact updates compactionCount and lastCompactedAt on success', async () => {
     const compactor: CompactorApi = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false }),
       compact: async () => ({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
     };
     const registry = makeRegistry(compactor);
@@ -141,7 +141,7 @@ describe('AgentRegistry compaction', () => {
 
   it('multiple compactions increment compactionCount', async () => {
     const compactor: CompactorApi = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false }),
       compact: async () => ({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
     };
     const registry = makeRegistry(compactor);
@@ -160,7 +160,7 @@ describe('AgentRegistry compaction', () => {
 
   it('compact publishes events on the bus', async () => {
     const compactor: CompactorApi = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false }),
       compact: async () => ({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 }),
     };
     const registry = makeRegistry(compactor);
@@ -181,7 +181,7 @@ describe('AgentRegistry compaction', () => {
 
   it('compact publishes compaction_failed when compactor throws', async () => {
     const compactor: CompactorApi = {
-      maybeCompact: async () => false,
+      maybeCompact: async () => ({ ran: false }),
       compact: async () => {
         throw new Error('boom');
       },
