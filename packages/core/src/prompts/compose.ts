@@ -66,12 +66,29 @@ export function discoverAgentsFiles(cwd: string, home = homedir()): string[] {
   let hitGitRoot = false;
 
   while (true) {
-    const candidate = join(dir, 'AGENTS.md');
+    const agentsCandidate = join(dir, 'AGENTS.md');
+    const claudeCandidate = join(dir, 'CLAUDE.md');
+    let foundAtThisLevel = false;
+
     try {
-      const st = statSync(candidate);
-      if (st.isFile()) files.push(candidate);
+      const st = statSync(agentsCandidate);
+      if (st.isFile()) {
+        files.push(agentsCandidate);
+        foundAtThisLevel = true;
+      }
     } catch {
-      // absent
+      // AGENTS.md absent
+    }
+
+    if (!foundAtThisLevel) {
+      try {
+        const st = statSync(claudeCandidate);
+        if (st.isFile()) {
+          files.push(claudeCandidate);
+        }
+      } catch {
+        // CLAUDE.md absent
+      }
     }
 
     try {

@@ -328,6 +328,8 @@ export function App(props: AppProps): React.ReactElement {
         const s = await activeSession.client.getSession(activeSession.sessionId);
         if (cancelled) return;
         setActiveParentId(s.parentId ?? null);
+        // Sync the TUI's UI state with the actual session mode.
+        setActiveModeName(s.mode);
         // Only rehydrate if the session actually has prior messages — avoids
         // wiping a fresh "/new" session's empty scrollback unnecessarily.
         if (Array.isArray(s.messages) && s.messages.length > 0) {
@@ -872,6 +874,7 @@ export function App(props: AppProps): React.ReactElement {
             scrollback.clear();
             setStaticEpoch((n) => n + 1);
             setShowHeader(false);
+            setPendingModeName(null); // Reset pending mode on new session
             setActiveSession({
               client: props.client,
               sessionId: newId,
@@ -1055,6 +1058,7 @@ export function App(props: AppProps): React.ReactElement {
               `attaching to subagent ${match.subagentId} (${match.purpose}) at ${match.url}`,
             );
             setEntries(scrollback.all());
+            setPendingModeName(null); // Reset pending mode on attach
             setActiveSession({
               client: childClient,
               sessionId: match.sessionId,
