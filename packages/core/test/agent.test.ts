@@ -198,31 +198,52 @@ describe('Agent', () => {
         return { tag: (input as { tag: string }).tag };
       },
     });
+    let callCount = 0;
     const model = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'stream-start', warnings: [] },
-            {
-              type: 'tool-call',
-              toolCallId: 'ai-1',
-              toolName: 'capture',
-              input: JSON.stringify({ tag: 'A' }),
-            },
-            {
-              type: 'tool-call',
-              toolCallId: 'ai-2',
-              toolName: 'capture',
-              input: JSON.stringify({ tag: 'B' }),
-            },
-            {
-              type: 'finish',
-              finishReason: 'tool-calls',
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ],
-        }),
-      }),
+      doStream: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'ai-1',
+                  toolName: 'capture',
+                  input: JSON.stringify({ tag: 'A' }),
+                },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'ai-2',
+                  toolName: 'capture',
+                  input: JSON.stringify({ tag: 'B' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'done' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
     }) as unknown as LanguageModel;
 
     const agent = new Agent({
@@ -535,32 +556,51 @@ describe('Agent', () => {
       inputSchema: z.object({ path: z.string() }),
       execute: async () => ({ content: 'ok', total_lines: 1, truncated: false }),
     });
+    let callCount = 0;
     const model = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'stream-start', warnings: [] },
-            {
-              type: 'tool-call',
-              toolCallId: 'call-1',
-              toolName: 'read',
-              input: JSON.stringify({ path: '.chimera/skills/pdf/SKILL.md' }),
-            },
-            {
-              type: 'finish',
-              finishReason: 'tool-calls',
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ],
-        }),
-      }),
+      doStream: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'call-1',
+                  toolName: 'read',
+                  input: JSON.stringify({ path: '.chimera/skills/pdf/SKILL.md' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'done' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
     }) as unknown as LanguageModel;
 
     const hits: Array<{ skillName: string; source: string }> = [];
     const agent = new Agent({
       cwd: '/tmp',
-      // maxSteps: 1 so the mock stream runs one step; otherwise the AI SDK
-      // loops on `tool-calls` finish and the mock replays forever.
       model: { providerId: 'mock', modelId: 'm', maxSteps: 1 },
       languageModel: model,
       tools: { read: readTool } as unknown as ToolSet,
@@ -587,25 +627,46 @@ describe('Agent', () => {
       inputSchema: z.object({ path: z.string() }),
       execute: async () => ({ content: '', total_lines: 0, truncated: false }),
     });
+    let callCount = 0;
     const model = new MockLanguageModelV3({
-      doStream: async () => ({
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'stream-start', warnings: [] },
-            {
-              type: 'tool-call',
-              toolCallId: 'c1',
-              toolName: 'read',
-              input: JSON.stringify({ path: 'src/index.ts' }),
-            },
-            {
-              type: 'finish',
-              finishReason: 'tool-calls',
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ],
-        }),
-      }),
+      doStream: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'read',
+                  input: JSON.stringify({ path: 'src/index.ts' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'done' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
     }) as unknown as LanguageModel;
 
     const events: string[] = [];
@@ -621,6 +682,78 @@ describe('Agent', () => {
     });
     for await (const ev of agent.run('go')) events.push(ev.type);
     expect(events).not.toContain('skill_activated');
+  });
+
+  it('tool-call steps do not count toward maxSteps; only stop steps do', async () => {
+    // With maxSteps: 1 and three iterations (two tool-calls + one stop),
+    // the run should complete without hitting max_steps.
+    const noopTool = tool({
+      description: 'noop',
+      inputSchema: z.object({}),
+      execute: async () => ({ ok: true }),
+    });
+    let callCount = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        callCount += 1;
+        if (callCount <= 2) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: `c${callCount}`,
+                  toolName: 'noop',
+                  input: JSON.stringify({}),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'done' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 1 },
+      languageModel: model,
+      tools: { noop: noopTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const events: string[] = [];
+    for await (const ev of agent.run('go')) events.push(ev.type);
+    const runFinished = events.filter((e) => e === 'run_finished');
+    expect(runFinished.length).toBe(1);
+    // If max_steps were hit after the first stop step (which is the only
+    // terminal step counting toward maxSteps: 1), the run would end with
+    // reason max_steps. With our change, tool-call steps don't count, so
+    // the run completes normally with reason stop.
+    // The last event in the array is guaranteed to be run_finished.
+    expect(events[events.length - 1]).toBe('run_finished');
   });
 
   it('resolvePermission with remember fires the registered handler', async () => {
@@ -795,5 +928,98 @@ describe('Agent.signal', () => {
         e.type === 'run_finished',
     );
     expect(finished?.reason).toBe('interrupted');
+  });
+
+  describe('setUserModelOverride', () => {
+    it('applies a model change on an idle agent', () => {
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('x'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+      });
+      agent.setModelChangeResolver((ref) => {
+        const [providerId, modelId] = ref.split('/');
+        return {
+          model: { providerId, modelId, maxSteps: 5 },
+          languageModel: textOnlyModel('new'),
+          systemPrompt: 'changed',
+          contextWindow: 100_000,
+          contextWindowIsApproximate: false,
+        };
+      });
+      const result = agent.setUserModelOverride('other/new');
+      expect(result.status).toBe('applied');
+      if (result.status === 'applied') {
+        expect(result.from).toBe('mock/m');
+        expect(result.to).toBe('other/new');
+      }
+      expect(agent.session.model.providerId).toBe('other');
+      expect(agent.session.model.modelId).toBe('new');
+      expect(agent.session.userModelOverride).toBe('other/new');
+    });
+
+    it('returns noop when the target matches the current model', () => {
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('x'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+      });
+      const result = agent.setUserModelOverride('mock/m');
+      expect(result.status).toBe('applied');
+      if (result.status === 'applied') {
+        expect(result.from).toBe('mock/m');
+        expect(result.to).toBe('mock/m');
+      }
+    });
+
+    it('returns invalid when the resolver is not registered', () => {
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('x'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+      });
+      // no resolver set
+      const result = agent.setUserModelOverride('other/new');
+      expect(result.status).toBe('invalid');
+      if (result.status === 'invalid') {
+        expect(result.error).toContain('not registered');
+      }
+    });
+
+    it('returns running when the agent is mid-run', async () => {
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('x'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+      });
+
+      const runPromise = (async () => {
+        for await (const _ev of agent.run('go')) {
+          // no-op
+        }
+      })();
+
+      await new Promise((r) => setTimeout(r, 1));
+      const result = agent.setUserModelOverride('other/new');
+      expect(result.status).toBe('running');
+      agent.interrupt();
+      await runPromise;
+    });
   });
 });

@@ -9,25 +9,46 @@ import { Agent } from '../src/agent';
 import type { AgentEvent } from '../src/events';
 
 function makeModelWithEchoCall(): LanguageModel {
+  let callCount = 0;
   return new MockLanguageModelV3({
-    doStream: async () => ({
-      stream: simulateReadableStream({
-        chunks: [
-          { type: 'stream-start', warnings: [] },
-          {
-            type: 'tool-call',
-            toolCallId: 'call-1',
-            toolName: 'echo',
-            input: JSON.stringify({ msg: 'hello' }),
-          },
-          {
-            type: 'finish',
-            finishReason: 'tool-calls',
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          },
-        ],
-      }),
-    }),
+    doStream: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'tool-call',
+                toolCallId: 'call-1',
+                toolName: 'echo',
+                input: JSON.stringify({ msg: 'hello' }),
+              },
+              {
+                type: 'finish',
+                finishReason: 'tool-calls',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      }
+      return {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'done' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      };
+    },
   }) as unknown as LanguageModel;
 }
 

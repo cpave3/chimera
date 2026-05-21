@@ -132,6 +132,20 @@ export class Agent {
     effectiveModel: string;
     effectiveModelChanged: boolean;
   };
+  /**
+   * Optional callback invoked when the user requests a runtime model change.
+   * The factory (or embedder) registers this to resolve a new model ref into
+   * a `LanguageModel`, its associated `ModelConfig` + `contextWindow`, and a
+   * fresh system prompt (so the `# Chimera Session` block shows the current
+   * model name).
+   */
+  private modelChangeResolver?: (ref: string) => {
+    model: ModelConfig;
+    languageModel: LanguageModel;
+    contextWindow: number;
+    contextWindowIsApproximate: boolean;
+    systemPrompt: string;
+  };
 
   constructor(opts: AgentOptions) {
     this.opts = opts;
@@ -354,6 +368,66 @@ export class Agent {
     },
   ): void {
     this.modeResolver = resolver;
+  }
+
+  /**
+   * Register the callback used to resolve a model ref into a concrete
+   * `LanguageModel` + `ModelConfig` + `contextWindow` + fresh `systemPrompt`
+   * at runtime. Called by the factory during session construction.
+   */
+  setModelChangeResolver(
+    resolver: (ref: string) => {
+      model: ModelConfig;
+      languageModel: LanguageModel;
+      contextWindow: number;
+      contextWindowIsApproximate: boolean;
+      systemPrompt: string;
+    },
+  ): void {
+    this.modelChangeResolver = resolver;
+  }
+
+  /**
+   * Set (or clear) the user model override. On an idle agent, this resolves
+   * the new model via the registered `modelChangeResolver`, swaps the
+   * session's model and languageModel, persists metadata, and returns `applied`.
+   * On a running agent, returns `running` so the caller may surface a message.
+   */
+  setUserModelOverride(ref: string | null):
+    | { status: 'applied'; from: string; to: string }
+    | { status: 'running' }
+    | { status: 'invalid'; error: string } {
+    if (this.running) {
+      return { status: 'running' };
+    }
+    const currentRef = `${this.session.model.providerId}/${this.session.model.modelId}`;
+    const targetRef = ref ?? currentRef;
+    if (targetRef === currentRef) {
+      this.session.userModelOverride = ref;
+      void writeSessionMetadata(this.session, this.opts.home).catch(() => {});
+      return { status: 'applied', from: currentRef, to: targetRef };
+    }
+    if (!this.modelChangeResolver) {
+      return { status: 'invalid', error: 'model change resolver not registered' };
+    }
+    let resolved: ReturnType<NonNullable<typeof this.modelChangeResolver>>;
+    try {
+      resolved = this.modelChangeResolver(targetRef);
+    } catch (err) {
+      return { status: 'invalid', error: (err as Error).message };
+    }
+    this.opts = {
+      ...this.opts,
+      model: resolved.model,
+      languageModel: resolved.languageModel,
+      systemPrompt: resolved.systemPrompt,
+      contextWindow: resolved.contextWindow,
+      contextWindowIsApproximate: resolved.contextWindowIsApproximate,
+    };
+    this.session.model = resolved.model;
+    this.session.userModelOverride = ref;
+    void writeSessionMetadata(this.session, this.opts.home).catch(() => {});
+    return { status: 'applied', from: currentRef, to: targetRef };
   }
 
   /**
@@ -669,7 +743,17 @@ export class Agent {
     const compactionEnabled = this.opts.compaction?.enabled ?? false;
     if (compactionEnabled && compactor) {
       try {
-        await compactor.maybeCompact(this.session);
+        const result = await compactor.maybeCompact(this.session);
+        if (result.ran) {
+          queue.push({ type: 'compaction_started', reason: 'threshold' });
+          queue.push({
+            type: 'compaction_finished',
+            summary: result.summary,
+            tokensBefore: result.tokensBefore,
+            tokensAfter: result.tokensAfter,
+            messagesReplaced: result.messagesReplaced,
+          });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         queue.push({ type: 'compaction_failed', error: message });
@@ -681,311 +765,342 @@ export class Agent {
     // Most recent fully-emitted text content per text-id. Used to detect
     // replays: when a text-start arrives for an id whose content was already
     // emitted, we enter "shadow" mode and compare the new content against the
-    // stored content. Identical → silently suppressed. Different → emitted
+    // stored content. Identical -> silently suppressed. Different -> emitted
     // under a synthetic id so the TUI's id-aware dedup doesn't pop it.
     //
     // This handles two distinct cases that both surface as "missing final
     // text" in the TUI:
     //   - Cross-step id reuse (synthetic.new + Kimi/GLM restart ids at each
     //     `doStream`, so step N+1 legitimately reuses step N's id).
-    //   - Same-step text → tool-call → text where the model emits both text
+    //   - Same-step text -> tool-call -> text where the model emits both text
     //     blocks under the same id.
     const emittedTextById = new Map<string, string>();
     type ShadowState = { buf: string; syntheticId?: string };
     const shadows = new Map<string, ShadowState>();
     let syntheticTextCounter = 0;
-    // Map AI SDK tool call id → our CallId, name, target for tool-result correlation.
-    const callInfo = new Map<
-      string,
-      { callId: CallId; name: string; target: ExecutionTarget; startedAt: number }
-    >();
 
     let stepNumber = 0;
+    let terminalStepCount = 0;
     let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' = 'stop';
     let errorMessage: string | undefined;
-    // Run-local accumulator of step deltas, used to reconcile against the
-    // terminal `finish.totalUsage` if the two disagree.
-    const runDelta: UsageStep = {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedInputTokens: 0,
-      totalTokens: 0,
-    };
     let usageMissingLogged = false;
+    const maxTerminalSteps = this.opts.model.maxSteps;
+    const safetyMaxIterations = Math.max(maxTerminalSteps * 5, 200);
+    // True when the loop exhausted its iteration budget without a clean break.
+    let hitSafetyCap = true;
 
     try {
-      const stream = streamText({
-        model: this.opts.languageModel,
-        messages: this.session.messages,
-        tools: this.opts.tools,
-        system: this.opts.systemPrompt,
-        stopWhen: stepCountIs(this.opts.model.maxSteps),
-        abortSignal: this.abortController.signal,
-        temperature: this.opts.model.temperature,
-        maxOutputTokens: this.opts.model.maxOutputTokens,
-      });
+      for (let iteration = 0; iteration < safetyMaxIterations; iteration++) {
+        // Map AI SDK tool call id -> our CallId, name, target for tool-result correlation.
+        const callInfo = new Map<
+          string,
+          { callId: CallId; name: string; target: ExecutionTarget; startedAt: number }
+        >();
+        // True when the current step emitted at least one tool call. Used to
+        // decide whether to loop again: tool-call steps are intermediate (the
+        // model needs to see results), stop/length steps are terminal.
+        let stepHadToolCalls = false;
+        // Run-local accumulator of step deltas, used to reconcile against the
+        // terminal `finish.totalUsage` if the two disagree.
+        const runDelta: UsageStep = {
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedInputTokens: 0,
+          totalTokens: 0,
+        };
 
-      for await (const part of stream.fullStream) {
-        switch (part.type) {
-          case 'text-start':
-            if (emittedTextById.has(part.id)) {
-              shadows.set(part.id, { buf: '' });
-            } else {
-              textStreams.set(part.id, '');
-            }
-            break;
-          case 'text-delta': {
-            const shadow = shadows.get(part.id);
-            if (shadow) {
-              shadow.buf += part.text;
-              if (shadow.syntheticId) {
-                queue.push({
-                  type: 'assistant_text_delta',
-                  id: shadow.syntheticId,
-                  delta: part.text,
-                });
+        const stream = streamText({
+          model: this.opts.languageModel,
+          messages: this.session.messages,
+          tools: this.opts.tools,
+          system: this.opts.systemPrompt,
+          stopWhen: stepCountIs(1),
+          abortSignal: this.abortController.signal,
+          temperature: this.opts.model.temperature,
+          maxOutputTokens: this.opts.model.maxOutputTokens,
+        });
+
+        for await (const part of stream.fullStream) {
+          switch (part.type) {
+            case 'text-start':
+              if (emittedTextById.has(part.id)) {
+                shadows.set(part.id, { buf: '' });
               } else {
-                const stored = emittedTextById.get(part.id) ?? '';
-                if (!stored.startsWith(shadow.buf)) {
-                  syntheticTextCounter += 1;
-                  shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                textStreams.set(part.id, '');
+              }
+              break;
+            case 'text-delta': {
+              const shadow = shadows.get(part.id);
+              if (shadow) {
+                shadow.buf += part.text;
+                if (shadow.syntheticId) {
                   queue.push({
                     type: 'assistant_text_delta',
                     id: shadow.syntheticId,
+                    delta: part.text,
+                  });
+                } else {
+                  const stored = emittedTextById.get(part.id) ?? '';
+                  if (!stored.startsWith(shadow.buf)) {
+                    syntheticTextCounter += 1;
+                    shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                    queue.push({
+                      type: 'assistant_text_delta',
+                      id: shadow.syntheticId,
+                      delta: shadow.buf,
+                    });
+                  }
+                }
+                break;
+              }
+              textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
+              queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
+              break;
+            }
+            case 'text-end': {
+              const shadow = shadows.get(part.id);
+              if (shadow) {
+                shadows.delete(part.id);
+                if (shadow.syntheticId) {
+                  queue.push({
+                    type: 'assistant_text_done',
+                    id: shadow.syntheticId,
+                    text: shadow.buf,
+                  });
+                  emittedTextById.set(part.id, shadow.buf);
+                } else if (
+                  shadow.buf.length > 0 &&
+                  shadow.buf !== emittedTextById.get(part.id)
+                ) {
+                  // Buf is a strict prefix of stored content — model emitted a
+                  // shorter "new" text under the same id. Surface it as new.
+                  syntheticTextCounter += 1;
+                  const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                  queue.push({
+                    type: 'assistant_text_delta',
+                    id: syntheticId,
                     delta: shadow.buf,
                   });
-                }
-              }
-              break;
-            }
-            textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
-            queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
-            break;
-          }
-          case 'text-end': {
-            const shadow = shadows.get(part.id);
-            if (shadow) {
-              shadows.delete(part.id);
-              if (shadow.syntheticId) {
-                queue.push({
-                  type: 'assistant_text_done',
-                  id: shadow.syntheticId,
-                  text: shadow.buf,
-                });
-                emittedTextById.set(part.id, shadow.buf);
-              } else if (
-                shadow.buf.length > 0 &&
-                shadow.buf !== emittedTextById.get(part.id)
-              ) {
-                // Buf is a strict prefix of stored content — model emitted a
-                // shorter "new" text under the same id. Surface it as new.
-                syntheticTextCounter += 1;
-                const syntheticId = `${part.id}#${syntheticTextCounter}`;
-                queue.push({
-                  type: 'assistant_text_delta',
-                  id: syntheticId,
-                  delta: shadow.buf,
-                });
-                queue.push({
-                  type: 'assistant_text_done',
-                  id: syntheticId,
-                  text: shadow.buf,
-                });
-                emittedTextById.set(part.id, shadow.buf);
-              }
-              break;
-            }
-            const full = textStreams.get(part.id) ?? '';
-            textStreams.delete(part.id);
-            if (full.length > 0) {
-              queue.push({ type: 'assistant_text_done', id: part.id, text: full });
-              emittedTextById.set(part.id, full);
-            }
-            break;
-          }
-          case 'tool-call': {
-            const callId = newCallId();
-            const args = (part as { input?: unknown }).input;
-            const target = extractTarget(args, this.session.sandboxMode);
-            const record: ToolCallRecord = {
-              callId,
-              name: part.toolName,
-              args,
-              target,
-              startedAt: Date.now(),
-            };
-            this.session.toolCalls.push(record);
-            callInfo.set(part.toolCallId, {
-              callId,
-              name: part.toolName,
-              target,
-              startedAt: record.startedAt,
-            });
-            this.callIdByToolCallId.set(part.toolCallId, callId);
-            const waiters = this.callIdWaiters.get(part.toolCallId);
-            if (waiters) {
-              this.callIdWaiters.delete(part.toolCallId);
-              for (const w of waiters) w(callId);
-            }
-            queue.push({
-              type: 'tool_call_start',
-              callId,
-              name: part.toolName,
-              args,
-              target,
-              display: this.safeFormat(part.toolName, args),
-            });
-            break;
-          }
-          case 'tool-result': {
-            const info = callInfo.get(part.toolCallId);
-            if (!info) break;
-            const result = (part as { output?: unknown }).output;
-            const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
-            if (rec) {
-              rec.result = result;
-              rec.endedAt = Date.now();
-            }
-            queue.push({
-              type: 'tool_call_result',
-              callId: info.callId,
-              result,
-              durationMs: Date.now() - info.startedAt,
-              display: this.safeFormat(info.name, rec?.args, result),
-            });
-            if (info.name === 'read' && this.opts.skillActivation) {
-              const readPath = extractReadPath(rec?.args);
-              if (readPath) {
-                const hit = this.opts.skillActivation(readPath);
-                if (hit) {
                   queue.push({
-                    type: 'skill_activated',
-                    skillName: hit.skillName,
-                    source: hit.source,
+                    type: 'assistant_text_done',
+                    id: syntheticId,
+                    text: shadow.buf,
                   });
+                  emittedTextById.set(part.id, shadow.buf);
+                }
+                break;
+              }
+              const full = textStreams.get(part.id) ?? '';
+              textStreams.delete(part.id);
+              if (full.length > 0) {
+                queue.push({ type: 'assistant_text_done', id: part.id, text: full });
+                emittedTextById.set(part.id, full);
+              }
+              break;
+            }
+            case 'tool-call': {
+              const callId = newCallId();
+              const args = (part as { input?: unknown }).input;
+              const target = extractTarget(args, this.session.sandboxMode);
+              const record: ToolCallRecord = {
+                callId,
+                name: part.toolName,
+                args,
+                target,
+                startedAt: Date.now(),
+              };
+              this.session.toolCalls.push(record);
+              callInfo.set(part.toolCallId, {
+                callId,
+                name: part.toolName,
+                target,
+                startedAt: record.startedAt,
+              });
+              this.callIdByToolCallId.set(part.toolCallId, callId);
+              const waiters = this.callIdWaiters.get(part.toolCallId);
+              if (waiters) {
+                this.callIdWaiters.delete(part.toolCallId);
+                for (const w of waiters) w(callId);
+              }
+              stepHadToolCalls = true;
+              queue.push({
+                type: 'tool_call_start',
+                callId,
+                name: part.toolName,
+                args,
+                target,
+                display: this.safeFormat(part.toolName, args),
+              });
+              break;
+            }
+            case 'tool-result': {
+              const info = callInfo.get(part.toolCallId);
+              if (!info) break;
+              const result = (part as { output?: unknown }).output;
+              const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
+              if (rec) {
+                rec.result = result;
+                rec.endedAt = Date.now();
+              }
+              queue.push({
+                type: 'tool_call_result',
+                callId: info.callId,
+                result,
+                durationMs: Date.now() - info.startedAt,
+                display: this.safeFormat(info.name, rec?.args, result),
+              });
+              if (info.name === 'read' && this.opts.skillActivation) {
+                const readPath = extractReadPath(rec?.args);
+                if (readPath) {
+                  const hit = this.opts.skillActivation(readPath);
+                  if (hit) {
+                    queue.push({
+                      type: 'skill_activated',
+                      skillName: hit.skillName,
+                      source: hit.source,
+                    });
+                  }
                 }
               }
-            }
-            if (info.name === 'read') {
-              this.resolveAndTrackPath(rec?.args, false);
-            } else if (info.name === 'write' || info.name === 'edit') {
-              this.resolveAndTrackPath(rec?.args, true);
-            }
-            callInfo.delete(part.toolCallId);
-            this.callIdByToolCallId.delete(part.toolCallId);
-            break;
-          }
-          case 'tool-error': {
-            const info = callInfo.get(part.toolCallId);
-            if (!info) break;
-            const errorValue = (part as { error?: unknown }).error;
-            const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-            const record = this.session.toolCalls.find(
-              (toolCall) => toolCall.callId === info.callId,
-            );
-            if (record) {
-              record.error = message;
-              record.endedAt = Date.now();
-            }
-            queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
-            callInfo.delete(part.toolCallId);
-            this.callIdByToolCallId.delete(part.toolCallId);
-            break;
-          }
-          case 'finish-step': {
-            stepNumber += 1;
-            queue.push({
-              type: 'step_finished',
-              stepNumber,
-              finishReason: part.finishReason,
-            });
-            const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
-            if (stepUsage) {
-              applyStepUsage(this.session.usage, stepUsage);
-              runDelta.inputTokens += stepUsage.inputTokens;
-              runDelta.outputTokens += stepUsage.outputTokens;
-              runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
-              runDelta.totalTokens += stepUsage.totalTokens;
-              queue.push({
-                type: 'usage_updated',
-                usage: cloneUsage(this.session.usage),
-                contextWindow: this.opts.contextWindow,
-                usedContextTokens: stepUsage.inputTokens,
-                unknownWindow: this.opts.contextWindowIsApproximate ?? false,
-              });
-            } else if (!usageMissingLogged) {
-              usageMissingLogged = true;
-              // Provider does not report usage on this step. Log once per
-              // session at debug level; the loop continues with stale totals.
-              if (typeof process !== 'undefined' && process.env?.DEBUG) {
-                process.stderr.write(
-                  `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
-                );
+              if (info.name === 'read') {
+                this.resolveAndTrackPath(rec?.args, false);
+              } else if (info.name === 'write' || info.name === 'edit') {
+                this.resolveAndTrackPath(rec?.args, true);
               }
+              callInfo.delete(part.toolCallId);
+              this.callIdByToolCallId.delete(part.toolCallId);
+              break;
             }
-            try {
-              await persistSession(
-                this.session,
-                {
-                  type: 'step_finished',
-                  stepNumber,
-                  finishReason: part.finishReason,
-                  messages: this.session.messages,
-                  toolCalls: this.session.toolCalls,
-                  usage: cloneUsage(this.session.usage),
-                },
-                this.opts.home,
+            case 'tool-error': {
+              const info = callInfo.get(part.toolCallId);
+              if (!info) break;
+              const errorValue = (part as { error?: unknown }).error;
+              const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+              const record = this.session.toolCalls.find(
+                (toolCall) => toolCall.callId === info.callId,
               );
-            } catch (_e) {
-              // persistence errors should not crash the run
+              if (record) {
+                record.error = message;
+                record.endedAt = Date.now();
+              }
+              queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
+              callInfo.delete(part.toolCallId);
+              this.callIdByToolCallId.delete(part.toolCallId);
+              break;
             }
-            break;
-          }
-          case 'finish': {
-            const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
-            if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+            case 'finish-step': {
+              stepNumber += 1;
               queue.push({
-                type: 'usage_updated',
-                usage: cloneUsage(this.session.usage),
-                contextWindow: this.opts.contextWindow,
-                usedContextTokens: this.session.usage.inputTokens,
-                unknownWindow: this.opts.contextWindowIsApproximate ?? false,
+                type: 'step_finished',
+                stepNumber,
+                finishReason: part.finishReason,
               });
+              const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
+              if (stepUsage) {
+                applyStepUsage(this.session.usage, stepUsage);
+                runDelta.inputTokens += stepUsage.inputTokens;
+                runDelta.outputTokens += stepUsage.outputTokens;
+                runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
+                runDelta.totalTokens += stepUsage.totalTokens;
+                queue.push({
+                  type: 'usage_updated',
+                  usage: cloneUsage(this.session.usage),
+                  contextWindow: this.opts.contextWindow,
+                  usedContextTokens: stepUsage.inputTokens,
+                  unknownWindow: this.opts.contextWindowIsApproximate ?? false,
+                });
+              } else if (!usageMissingLogged) {
+                usageMissingLogged = true;
+                // Provider does not report usage on this step. Log once per
+                // session at debug level; the loop continues with stale totals.
+                if (typeof process !== 'undefined' && process.env?.DEBUG) {
+                  process.stderr.write(
+                    `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
+                  );
+                }
+              }
+              try {
+                await persistSession(
+                  this.session,
+                  {
+                    type: 'step_finished',
+                    stepNumber,
+                    finishReason: part.finishReason,
+                    messages: this.session.messages,
+                    toolCalls: this.session.toolCalls,
+                    usage: cloneUsage(this.session.usage),
+                  },
+                  this.opts.home,
+                );
+              } catch (_e) {
+                // persistence errors should not crash the run
+              }
+              break;
             }
-            if (part.finishReason === 'length') {
-              // not treated specially; finish-step already mapped
+            case 'finish': {
+              const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
+              if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+                queue.push({
+                  type: 'usage_updated',
+                  usage: cloneUsage(this.session.usage),
+                  contextWindow: this.opts.contextWindow,
+                  usedContextTokens: this.session.usage.inputTokens,
+                  unknownWindow: this.opts.contextWindowIsApproximate ?? false,
+                });
+              }
+              break;
             }
-            break;
+            case 'abort': {
+              terminalReason = 'interrupted';
+              break;
+            }
+            case 'error': {
+              terminalReason = 'error';
+              errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
+              break;
+            }
+            default:
+              // Ignore reasoning, source, file, tool-input-*, start/start-step, raw.
+              break;
           }
-          case 'abort': {
-            terminalReason = 'interrupted';
-            break;
-          }
-          case 'error': {
-            terminalReason = 'error';
-            errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
-            break;
-          }
-          default:
-            // Ignore reasoning, source, file, tool-input-*, start/start-step, raw.
-            break;
         }
-      }
 
-      // After the stream finishes, attach response messages.
-      const response = await stream.response;
-      if (response && Array.isArray(response.messages)) {
-        this.session.messages.push(...(response.messages as ModelMessage[]));
-      }
+        // After the stream finishes, attach response messages.
+        const response = await stream.response;
+        if (response && Array.isArray(response.messages)) {
+          this.session.messages.push(...(response.messages as ModelMessage[]));
+        }
 
-      if (terminalReason === 'stop') {
+        if (terminalReason !== 'stop') {
+          // Interrupted or errored during the stream
+          break;
+        }
+
         const finishReason = await stream.finishReason;
-        // If we hit the step cap, map to max_steps.
-        if (stepNumber >= this.opts.model.maxSteps && finishReason !== 'stop') {
-          terminalReason = 'max_steps';
-        } else if (finishReason === 'length') {
+
+        if (stepHadToolCalls) {
+          // Intermediate step — the model emitted tool calls and needs to
+          // consume results. Loop again.
+          continue;
+        }
+
+        // Terminal step
+        terminalStepCount += 1;
+
+        if (finishReason === 'length') {
           terminalReason = 'max_steps';
         }
+
+        if (terminalStepCount > maxTerminalSteps) {
+          terminalReason = 'max_steps';
+        }
+
+        hitSafetyCap = false;
+        break;
+      }
+
+      if (hitSafetyCap && terminalReason === 'stop') {
+        terminalReason = 'max_steps';
       }
 
       // The AI SDK only exposes the assistant + tool messages from the run
