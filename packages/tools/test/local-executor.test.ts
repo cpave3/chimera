@@ -114,6 +114,57 @@ describe('LocalExecutor', () => {
     }
   });
 
+  it('writeAllowDirs permits writeFile outside cwd', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-write-allow-'));
+    try {
+      const file = join(outside, 'out.txt');
+      const exec = new LocalExecutor({ cwd: root, writeAllowDirs: [outside] });
+      await exec.writeFile(file, 'hello');
+      expect(await readFile(file, 'utf8')).toBe('hello');
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('writeAllowDirs does NOT permit readFile outside cwd', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-write-read-'));
+    try {
+      const file = join(outside, 'secret.txt');
+      await writeFile(file, 'shh');
+      const exec = new LocalExecutor({ cwd: root, writeAllowDirs: [outside] });
+      await expect(exec.readFile(file)).rejects.toBeInstanceOf(PathEscapeError);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('writeAllowDirs permits exec with cwd outside root', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-exec-allow-'));
+    try {
+      const exec = new LocalExecutor({ cwd: root, writeAllowDirs: [outside] });
+      const result = await exec.exec('pwd', { cwd: outside });
+      expect(result.stdout.trim()).toBe(outside);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects symlink that escapes writeAllowDirs', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-slink-'));
+    const targetDir = await mkdtemp(join(tmpdir(), 'chimera-slink-target-'));
+    try {
+      const realTarget = join(targetDir, 'secret.txt');
+      await writeFile(realTarget, 'secret');
+      const linkPath = join(outside, 'link.txt');
+      await symlink(realTarget, linkPath);
+      const exec = new LocalExecutor({ cwd: root, writeAllowDirs: [outside] });
+      await expect(exec.readFile(linkPath)).rejects.toBeInstanceOf(PathEscapeError);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
+
   it('writeFile is atomic: uses a temp+rename path', async () => {
     const exec = new LocalExecutor({ cwd: root });
     const target = join(root, 'out.txt');

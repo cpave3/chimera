@@ -30,7 +30,7 @@ export function buildReadTool(ctx: ToolContext) {
   const cwd = ctx.sandboxExecutor.cwd();
   return defineTool<ReadArgs, ReadResult>({
     description:
-      'Read a file from the working directory. Returns line-number-prefixed content. ' +
+      'Read a file from the working directory or /tmp. Returns line-number-prefixed content. ' +
       'Limited to 2000 lines or 100 KB (whichever is smaller); specify start_line/end_line to read a slice. ' +
       'When the path is a directory, returns its entries instead — use `glob` for recursive discovery.',
     inputSchema: READ_SCHEMA,

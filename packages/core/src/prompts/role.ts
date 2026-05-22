@@ -9,7 +9,7 @@ You have four built-in tools:
 - write — create or overwrite a file. Takes { path, content }. Creates parent directories as needed.
 - edit — exact-string replace in a file. Takes { path, old_string, new_string, replace_all? }. Errors if old_string is not found or occurs more than once without replace_all.
 
-All file paths are relative to the session's working directory; the file tools reject anything outside it. To read or modify a file outside cwd (the user's home dir, system config, a sibling project), use bash with an absolute path — and when sandboxed, set \`target='host'\` with a short \`reason\` so the command runs against the real filesystem instead of the container.
+All file paths are relative to the session's working directory; the file tools reject anything outside it except /tmp, which can be read and written directly. To read or modify a file outside cwd or /tmp (the user's home dir, system config, a sibling project), use bash with an absolute path — and when sandboxed, set \`target='host'\` with a short \`reason\` so the command runs against the real filesystem instead of the container.
 
 ## Project conventions
 

@@ -15,7 +15,7 @@ export function buildWriteTool(ctx: ToolContext) {
   return defineTool<WriteArgs, WriteResult>({
     description:
       'Create or overwrite a file with the given content. Parent directories are created as needed. ' +
-      'Refuses paths outside the working directory.',
+      'Refuses paths outside the working directory and /tmp.',
     inputSchema: WRITE_SCHEMA,
     execute: async (args) => {
       const existing = await ctx.sandboxExecutor.stat(args.path);

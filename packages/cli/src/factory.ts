@@ -1,4 +1,5 @@
 import { dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Compactor } from '@chimera/compaction';
 import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
 import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
@@ -172,8 +173,10 @@ export class CliAgentFactory implements AgentFactory {
     // Skills often live outside cwd (e.g. `~/.claude/skills/tdd/`). Allow
     // read access to each resolved skill's directory so the model can
     // read the SKILL.md itself and any peer scripts bundled with it.
-    const readAllowDirs = skillsReg ? skillsReg.all().map((s) => dirname(s.path)) : undefined;
-    const local = new LocalExecutor({ cwd: init.cwd, readAllowDirs });
+    const skillDirs = skillsReg ? skillsReg.all().map((s) => dirname(s.path)) : [];
+    const tmpDir = tmpdir();
+    const readAllowDirs = [...skillDirs, tmpDir];
+    const local = new LocalExecutor({ cwd: init.cwd, readAllowDirs, writeAllowDirs: [tmpDir] });
 
     // Build agent first so we can wire its raisePermissionRequest into the gate.
     const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;

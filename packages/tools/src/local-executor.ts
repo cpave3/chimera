@@ -3,6 +3,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  realpath,
   readdir,
   readFile,
   rename,
@@ -27,6 +28,14 @@ export interface LocalExecutorOptions {
    */
   readAllowDirs?: string[];
   /**
+   * Extra absolute directories that are permitted for WRITE operations (and
+   * exec cwd follow-through). Used for out-of-cwd paths the agent needs to
+   * create or modify (e.g. `/tmp`). These do NOT automatically grant read
+   * access; add the same directories to `readAllowDirs` if reads are also
+   * required.
+   */
+  writeAllowDirs?: string[];
+  /**
    * Per-stream byte cap for `exec()`. Once reached, further chunks are dropped
    * and the corresponding `stdoutTruncated`/`stderrTruncated` flag is set.
    * Guards against V8's ~512MB string-length limit when subprocesses emit huge
@@ -38,11 +47,13 @@ export interface LocalExecutorOptions {
 export class LocalExecutor implements Executor {
   private readonly rootCwd: string;
   private readonly readAllowDirs: string[];
+  private readonly writeAllowDirs: string[];
   private readonly maxOutputBytes: number;
 
   constructor(opts: LocalExecutorOptions) {
     this.rootCwd = resolve(opts.cwd);
     this.readAllowDirs = (opts.readAllowDirs ?? []).map((d) => resolve(d));
+    this.writeAllowDirs = (opts.writeAllowDirs ?? []).map((d) => resolve(d));
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
@@ -55,46 +66,64 @@ export class LocalExecutor implements Executor {
   }
 
   /**
-   * Resolve a relative or absolute path against the executor's cwd and
-   * reject any result that falls outside it.
+   * Resolve `path` and reject anything that falls outside `rootCwd` or
+   * the configured `writeAllowDirs`.  Uses `fs.realpath` so symlinks
+   * pointing outside the permitted tree cannot bypass the boundary.
    */
-  private resolveSafe(path: string): string {
+  private async resolveSafe(path: string): Promise<string> {
     const absolute = isAbsolute(path) ? resolve(path) : resolve(this.rootCwd, path);
-    const rel = relative(this.rootCwd, absolute);
-    if (rel.startsWith('..') || isAbsolute(rel)) {
-      throw new PathEscapeError(path, this.rootCwd);
+    const resolved = await realpath(absolute).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    });
+    const effective = resolved ?? absolute;
+    const rel = relative(this.rootCwd, effective);
+    if (!rel.startsWith('..') && !isAbsolute(rel)) {
+      return absolute;
     }
-    return absolute;
+    for (const dir of this.writeAllowDirs) {
+      const relDir = relative(dir, effective);
+      if (!relDir.startsWith('..') && !isAbsolute(relDir)) {
+        return absolute;
+      }
+    }
+    throw new PathEscapeError(path, this.rootCwd);
   }
 
   /**
    * Read-mode path resolution: allow `rootCwd` plus any configured
-   * `readAllowDirs`. Returns the absolute path on success.
+   * `readAllowDirs`.  Uses `fs.realpath` for the same symlink defense
+   * as `resolveSafe`.
    */
-  private resolveReadable(path: string): string {
+  private async resolveReadable(path: string): Promise<string> {
     const absolute = isAbsolute(path) ? resolve(path) : resolve(this.rootCwd, path);
-    const relCwd = relative(this.rootCwd, absolute);
+    const resolved = await realpath(absolute).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    });
+    const effective = resolved ?? absolute;
+    const relCwd = relative(this.rootCwd, effective);
     const underCwd = !relCwd.startsWith('..') && !isAbsolute(relCwd);
     if (underCwd) return absolute;
     for (const dir of this.readAllowDirs) {
-      const rel = relative(dir, absolute);
+      const rel = relative(dir, effective);
       if (!rel.startsWith('..') && !isAbsolute(rel)) return absolute;
     }
     throw new PathEscapeError(path, this.rootCwd);
   }
 
   async readFile(path: string): Promise<string> {
-    const abs = this.resolveReadable(path);
+    const abs = await this.resolveReadable(path);
     return readFile(abs, 'utf8');
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    const abs = this.resolveReadable(path);
+    const abs = await this.resolveReadable(path);
     return readFile(abs);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
-    const abs = this.resolveSafe(path);
+    const abs = await this.resolveSafe(path);
     await mkdir(dirname(abs), { recursive: true });
     // Preserve the existing file's mode across the write-tmp + rename dance.
     // Without this, replacing an executable script (or any non-default mode)
@@ -121,7 +150,7 @@ export class LocalExecutor implements Executor {
 
   async stat(path: string): Promise<StatResult | null> {
     try {
-      const abs = this.resolveReadable(path);
+      const abs = await this.resolveReadable(path);
       const st = await stat(abs);
       return { exists: true, isDir: st.isDirectory(), size: st.size };
     } catch (err) {
@@ -132,7 +161,7 @@ export class LocalExecutor implements Executor {
   }
 
   async readdir(path: string): Promise<DirEntry[]> {
-    const abs = this.resolveReadable(path);
+    const abs = await this.resolveReadable(path);
     const entries = await readdir(abs, { withFileTypes: true });
     return entries
       .map((entry) => ({ name: entry.name, isDir: entry.isDirectory() }))
@@ -141,7 +170,7 @@ export class LocalExecutor implements Executor {
 
   async exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const cwd = opts.cwd ? this.resolveSafe(opts.cwd) : this.rootCwd;
+    const cwd = opts.cwd ? await this.resolveSafe(opts.cwd) : this.rootCwd;
     const maxOutputBytes = this.maxOutputBytes;
 
     return new Promise<ExecResult>((resolvePromise, rejectPromise) => {
