@@ -121,7 +121,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       compactor = new Compactor({
         config: compactionConfig,
         contextWindow: resolvedWindow.value,
-        resolveModel: async () => provider.getModel(modelId),
+        resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
         home: opts.home,
       });
     }

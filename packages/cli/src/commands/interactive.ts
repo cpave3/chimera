@@ -105,7 +105,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     compactor = new Compactor({
       config: compactionConfig,
       contextWindow: resolvedWindow.value,
-      resolveModel: async () => provider.getModel(modelId),
+      resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
       home: opts.home,
     });
   }

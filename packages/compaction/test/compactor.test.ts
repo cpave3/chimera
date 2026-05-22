@@ -143,7 +143,7 @@ describe('Compactor', () => {
         keepRecentTokens: 30,
       },
       contextWindow: 100,
-      resolveModel: async (ref: string) => {
+      resolveModel: async (ref: string, _sessionId?: string) => {
         resolveModelCalls.ref = ref;
         resolveModelCalls.count += 1;
         // Return a NOOP language model — tests that need generateText mock

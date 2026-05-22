@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Compactor } from '@chimera/compaction';
-import { Agent, composeSystemPrompt, loadSession, writeSessionMetadata } from '@chimera/core';
+import { Agent, composeSystemPrompt, loadSession, newSessionId, writeSessionMetadata } from '@chimera/core';
 import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
 import {
@@ -156,7 +156,10 @@ export class CliAgentFactory implements AgentFactory {
   async build(init: SessionInit): Promise<BuildResult> {
     const ref = `${init.model.providerId}/${init.model.modelId}`;
     const { provider, modelId } = this.registry.resolve(ref);
-    const languageModel = provider.getModel(modelId);
+    const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
+    const sessionId = session?.id ?? init.sessionId ?? newSessionId();
+    const languageModel = provider.getModel(modelId, sessionId);
+
     const providerSpec = this.providersConfig.providers[init.model.providerId];
     const resolvedWindow = resolveContextWindow({
       providerShape: providerSpec?.shape ?? provider.shape,
@@ -177,9 +180,6 @@ export class CliAgentFactory implements AgentFactory {
     const tmpDir = tmpdir();
     const readAllowDirs = [...skillDirs, tmpDir];
     const local = new LocalExecutor({ cwd: init.cwd, readAllowDirs, writeAllowDirs: [tmpDir] });
-
-    // Build agent first so we can wire its raisePermissionRequest into the gate.
-    const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
 
     const modesReg = this.modes;
     const requestedMode = session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
@@ -409,7 +409,7 @@ export class CliAgentFactory implements AgentFactory {
       });
       return {
         model: newModel,
-        languageModel: newProvider.getModel(newModelId),
+        languageModel: newProvider.getModel(newModelId, agent.session.id),
         systemPrompt: newSystemPrompt,
         contextWindow: newWindow.value,
         contextWindowIsApproximate: newWindow.source === 'fallback',

@@ -13,9 +13,11 @@ export interface CompactorOptions {
   contextWindow: number;
   /**
    * Resolve a model reference string like `'providerId/modelId'` into a
-   * `LanguageModel`. Injected so tests can stub the LLM.
+   * `LanguageModel`. Injected so tests can stub the LLM. An optional
+   * `sessionId` is forwarded to the provider so request-scoped headers
+   * (e.g. `x-session-id`) can be interpolated.
    */
-  resolveModel(modelRef: string): Promise<LanguageModel>;
+  resolveModel(modelRef: string, sessionId?: string): Promise<LanguageModel>;
   /** Home directory for log writes. Defaults to `homedir()`. */
   home?: string;
 }
@@ -71,7 +73,7 @@ export class Compactor {
       summaryText = buildFallbackSummary('', session.fileOps);
     } else {
       const modelRef = this.resolveModelRef(session);
-      const model = await this.opts.resolveModel(modelRef);
+      const model = await this.opts.resolveModel(modelRef, session.id);
       const previousSummary = this.extractPreviousSummary(session.messages);
       const prompt = buildCompactionPrompt({
         toSummarize,

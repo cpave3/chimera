@@ -8,6 +8,12 @@ export interface ProviderSpec {
   apiKey: string;
   /** Only meaningful for 'openai' shape. Default: 'compatible'. */
   compatibility?: 'strict' | 'compatible';
+  /**
+   * Extra HTTP headers sent on every request to this provider. Values may
+   * contain the literal token `{{session.id}}`; it is replaced with the
+   * current session's id at getModel() time.
+   */
+  headers?: Record<string, string>;
 }
 
 export interface ProvidersConfig {
@@ -18,7 +24,7 @@ export interface ProvidersConfig {
 export interface Provider {
   id: string;
   shape: ProviderShape;
-  getModel(modelId: string): LanguageModel;
+  getModel(modelId: string, sessionId?: string): LanguageModel;
 }
 
 export interface ProviderRegistry {

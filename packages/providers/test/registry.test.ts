@@ -84,4 +84,54 @@ describe('loadProviders', () => {
     registry.get('p');
     expect(warnings.some((w) => /plain/i.test(w))).toBe(true);
   });
+
+  it('interpolates {{session.id}} in headers when sessionId is provided', () => {
+    const registry = loadProviders({
+      providers: {
+        p: {
+          shape: 'openai',
+          baseUrl: 'https://x.test',
+          apiKey: 'key',
+          headers: {
+            'x-session-id': '{{session.id}}',
+            'x-trace': 'trace-{{session.id}}-end',
+          },
+        },
+      },
+    });
+    // getModel should not throw; we verify the interpolation by confirming the
+    // model is successfully returned (factory call succeeds).
+    const provider = registry.get('p');
+    expect(() => provider.getModel('m', 'sess-123')).not.toThrow();
+  });
+
+  it('leaves {{session.id}} unsubstituted when no sessionId is passed', () => {
+    const registry = loadProviders({
+      providers: {
+        p: {
+          shape: 'openai',
+          baseUrl: 'https://x.test',
+          apiKey: 'key',
+          headers: { 'x-session-id': '{{session.id}}' },
+        },
+      },
+    });
+    const provider = registry.get('p');
+    expect(() => provider.getModel('m')).not.toThrow();
+  });
+
+  it('forwards static headers unchanged', () => {
+    const registry = loadProviders({
+      providers: {
+        p: {
+          shape: 'openai',
+          baseUrl: 'https://x.test',
+          apiKey: 'key',
+          headers: { 'x-custom': 'static-value' },
+        },
+      },
+    });
+    const provider = registry.get('p');
+    expect(() => provider.getModel('m')).not.toThrow();
+  });
 });

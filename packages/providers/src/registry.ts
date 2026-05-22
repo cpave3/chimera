@@ -14,13 +14,26 @@ export interface LoadProvidersOptions {
   warn?: (msg: string) => void;
 }
 
+function interpolateHeaders(
+  headers: Record<string, string> | undefined,
+  sessionId: string | undefined,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    result[key] = sessionId ? value.replace(/\{\{session\.id\}\}/g, sessionId) : value;
+  }
+  return result;
+}
+
 function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOptions): Provider {
   const keyResolver = buildKeyResolver(spec.apiKey, { warn: opts.warn, providerId: id });
 
-  const getModel = (modelId: string): LanguageModel => {
+  const getModel = (modelId: string, sessionId?: string): LanguageModel => {
     const apiKey = keyResolver();
+    const headers = interpolateHeaders(spec.headers, sessionId);
     if (spec.shape === 'anthropic') {
-      const factory = createAnthropic({ baseURL: spec.baseUrl, apiKey });
+      const factory = createAnthropic({ baseURL: spec.baseUrl, apiKey, headers });
       return factory(modelId);
     }
     // @ai-sdk/openai v3 removed the top-level `compatibility` option; the
@@ -34,6 +47,7 @@ function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOption
     const factory = createOpenAI({
       baseURL: spec.baseUrl,
       apiKey,
+      headers,
     });
     return factory.chat(modelId);
   };

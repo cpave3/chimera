@@ -128,7 +128,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     compactor = new Compactor({
       config: compactionConfig,
       contextWindow: resolvedWindow.value,
-      resolveModel: async () => provider.getModel(modelId),
+      resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
       home: opts.home,
     });
   }
