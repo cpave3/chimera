@@ -102,6 +102,12 @@ export class Scrollback {
   private suppressUserContent: string | null = null;
   private formatters: Record<string, Formatter>;
 
+  /** Observable-store: cached snapshot and subscriber list for useSyncExternalStore. */
+  private _snapshot: ScrollbackEntry[] = [];
+  private _listeners = new Set<() => void>();
+  private _flushScheduled = false;
+
+
   constructor(formatters: Record<string, Formatter> = {}) {
     this.formatters = formatters;
   }
@@ -125,8 +131,39 @@ export class Scrollback {
     return [...this.entries];
   }
 
+  /** useSyncExternalStore subscribe function. */
+  subscribe(callback: () => void): () => void {
+    this._listeners.add(callback);
+    return () => {
+      this._listeners.delete(callback);
+    };
+  }
+
+  /** useSyncExternalStore getSnapshot function. */
+  getSnapshot(): ScrollbackEntry[] {
+    return this._snapshot;
+  }
+
+  /** Update the cached snapshot and schedule a single notification microtask. */
+  private updateSnapshot(): void {
+    this._snapshot = [...this.entries];
+  }
+
+  private scheduleFlush(): void {
+    if (this._flushScheduled) return;
+    this._flushScheduled = true;
+    queueMicrotask(() => {
+      this._flushScheduled = false;
+      for (const listener of this._listeners) {
+        listener();
+      }
+    });
+  }
+
   addUserMessage(content: string): void {
     this.entries.push({ id: this.newId(), kind: 'user', text: content });
+    this.updateSnapshot();
+    this.scheduleFlush();
   }
 
   /**
@@ -141,10 +178,14 @@ export class Scrollback {
 
   addInfo(text: string): void {
     this.entries.push({ id: this.newId(), kind: 'info', text });
+    this.updateSnapshot();
+    this.scheduleFlush();
   }
 
   addError(text: string): void {
     this.entries.push({ id: this.newId(), kind: 'error', text });
+    this.updateSnapshot();
+    this.scheduleFlush();
   }
 
   /**
@@ -160,6 +201,8 @@ export class Scrollback {
     if (last && last.kind === 'mode_change') {
       last.modeTo = to;
       last.text = `Mode change: ${last.modeFrom} → ${to}`;
+      this.updateSnapshot();
+      this.scheduleFlush();
       return;
     }
     this.entries.push({
@@ -169,6 +212,8 @@ export class Scrollback {
       modeTo: to,
       text: `Mode change: ${from} → ${to}`,
     });
+    this.updateSnapshot();
+    this.scheduleFlush();
   }
 
   clear(): void {
@@ -178,6 +223,8 @@ export class Scrollback {
     this.subagentParents.clear();
     this.subagentToolsByCallId.clear();
     this.suppressUserContent = null;
+    this.updateSnapshot();
+    this.scheduleFlush();
   }
 
   /**
@@ -275,252 +322,256 @@ export class Scrollback {
   }
 
   apply(ev: AgentEvent): void {
-    if (ev.type === 'assistant_text_delta') {
-      if (this.assistantBuf === null) {
-        this.assistantBuf = '';
-        this.entries.push({
-          id: this.newId(),
-          kind: 'assistant',
-          text: '',
-          textId: ev.id,
-        });
+    let dirty = false;
+    try {
+      if (ev.type === 'assistant_text_delta') {
+        if (this.assistantBuf === null) {
+          this.assistantBuf = '';
+          this.entries.push({
+            id: this.newId(),
+            kind: 'assistant',
+            text: '',
+            textId: ev.id,
+          });
+        }
+        this.assistantBuf += ev.delta;
+        this.entries[this.entries.length - 1]!.text = this.assistantBuf;
+        dirty = true;
+        return;
       }
-      this.assistantBuf += ev.delta;
-      this.entries[this.entries.length - 1]!.text = this.assistantBuf;
-      return;
-    }
-    if (ev.type === 'assistant_text_done') {
-      this.assistantBuf = null;
-      const last = this.entries[this.entries.length - 1];
-      if (last && last.kind === 'assistant' && last.text.length > 0) {
-        last.text = ev.text;
-        if (ev.id !== undefined) last.textId = ev.id;
-      } else {
-        this.entries.push({
-          id: this.newId(),
-          kind: 'assistant',
-          text: ev.text,
-          textId: ev.id,
-        });
+      if (ev.type === 'assistant_text_done') {
+        this.assistantBuf = null;
+        const last = this.entries[this.entries.length - 1];
+        if (last && last.kind === 'assistant' && last.text.length > 0) {
+          last.text = ev.text;
+          if (ev.id !== undefined) last.textId = ev.id;
+        } else {
+          this.entries.push({
+            id: this.newId(),
+            kind: 'assistant',
+            text: ev.text,
+            textId: ev.id,
+          });
+        }
+
+        const finalEntry = this.entries[this.entries.length - 1];
+        if (!finalEntry || finalEntry.kind !== 'assistant') return;
+
+        if (ev.id !== undefined) {
+          for (let i = this.entries.length - 2; i >= 0; i -= 1) {
+            const candidate = this.entries[i];
+            if (
+              candidate &&
+              candidate.kind === 'assistant' &&
+              candidate.textId === ev.id &&
+              candidate.text === finalEntry.text
+            ) {
+              this.entries.pop();
+              dirty = true;
+              return;
+            }
+          }
+          dirty = true;
+          return;
+        }
+
+        const above = this.entries[this.entries.length - 2];
+        if (
+          above &&
+          above.kind === 'assistant' &&
+          above.text === finalEntry.text &&
+          above.textId === undefined
+        ) {
+          this.entries.pop();
+        }
+        dirty = true;
+        return;
       }
-
-      const finalEntry = this.entries[this.entries.length - 1];
-      if (!finalEntry || finalEntry.kind !== 'assistant') return;
-
-      if (ev.id !== undefined) {
-        // Id-aware dedup: the AI SDK reuses a `text-id` across step
-        // boundaries when re-emitting a logical text part. Scan back through
-        // prior assistant entries (skipping tool calls etc.) for one with
-        // the same `textId` and `text` — a match means the part was already
-        // rendered, so the just-finalized entry is a duplicate.
-        for (let i = this.entries.length - 2; i >= 0; i -= 1) {
-          const candidate = this.entries[i];
-          if (
-            candidate &&
-            candidate.kind === 'assistant' &&
-            candidate.textId === ev.id &&
-            candidate.text === finalEntry.text
-          ) {
-            this.entries.pop();
+      if (ev.type === 'user_message') {
+        if (this.suppressUserContent !== null) {
+          const expected = this.suppressUserContent;
+          this.suppressUserContent = null;
+          if (expected === ev.content) return;
+        }
+        this.addUserMessage(ev.content);
+        return;
+      }
+      if (ev.type === 'tool_call_start') {
+        const entry: ScrollbackEntry = {
+          id: this.newId(),
+          kind: 'tool',
+          text: ev.display?.summary ?? formatArgs(ev.args),
+          toolName: ev.name,
+          toolTarget: ev.target,
+          toolArgs: ev.args,
+          detail: ev.display?.detail,
+        };
+        this.toolsByCallId.set(ev.callId, entry);
+        this.entries.push(entry);
+        dirty = true;
+        return;
+      }
+      if (ev.type === 'tool_call_result') {
+        const entry = this.toolsByCallId.get(ev.callId);
+        if (entry) {
+          entry.toolResult = ev.result;
+          if (ev.display) {
+            entry.text = ev.display.summary;
+            entry.detail = ev.display.detail;
+          }
+          dirty = true;
+        }
+        return;
+      }
+      if (ev.type === 'tool_call_error') {
+        const entry = this.toolsByCallId.get(ev.callId);
+        if (entry) {
+          entry.toolError = ev.error;
+          dirty = true;
+        } else {
+          this.addError(`tool error: ${ev.error}`);
+        }
+        return;
+      }
+      if (ev.type === 'skill_activated') {
+        for (let i = this.entries.length - 1; i >= 0; i -= 1) {
+          const candidate = this.entries[i]!;
+          if (candidate.kind === 'tool' && candidate.toolName === 'read') {
+            candidate.skillName = ev.skillName;
+            candidate.skillSource = ev.source;
+            dirty = true;
             return;
           }
         }
         return;
       }
-
-      // Id-less fallback: rehydrated history and legacy producers don't
-      // carry `text-id`, so the only available signal is the immediately
-      // preceding entry. Gate on the preceding entry's `textId` being
-      // undefined too — an id-tagged entry deserves the id-aware path's
-      // discrimination, not a content match against an id-less event.
-      const above = this.entries[this.entries.length - 2];
-      if (
-        above &&
-        above.kind === 'assistant' &&
-        above.text === finalEntry.text &&
-        above.textId === undefined
-      ) {
-        this.entries.pop();
-      }
-      return;
-    }
-    if (ev.type === 'user_message') {
-      if (this.suppressUserContent !== null) {
-        const expected = this.suppressUserContent;
-        this.suppressUserContent = null;
-        if (expected === ev.content) return;
-      }
-      this.addUserMessage(ev.content);
-      return;
-    }
-    if (ev.type === 'tool_call_start') {
-      const entry: ScrollbackEntry = {
-        id: this.newId(),
-        kind: 'tool',
-        // Args-only summary; the renderer prepends the tool name itself so
-        // that the prefix style stays consistent across formatters and the
-        // raw-JSON fallback.
-        text: ev.display?.summary ?? formatArgs(ev.args),
-        toolName: ev.name,
-        toolTarget: ev.target,
-        toolArgs: ev.args,
-        detail: ev.display?.detail,
-      };
-      this.toolsByCallId.set(ev.callId, entry);
-      this.entries.push(entry);
-      return;
-    }
-    if (ev.type === 'tool_call_result') {
-      const entry = this.toolsByCallId.get(ev.callId);
-      if (entry) {
-        entry.toolResult = ev.result;
-        if (ev.display) {
-          entry.text = ev.display.summary;
-          entry.detail = ev.display.detail;
-        }
-      }
-      return;
-    }
-    if (ev.type === 'tool_call_error') {
-      const entry = this.toolsByCallId.get(ev.callId);
-      if (entry) entry.toolError = ev.error;
-      else this.addError(`tool error: ${ev.error}`);
-      return;
-    }
-    if (ev.type === 'skill_activated') {
-      // Attach to the most recent `read` tool entry, which is the one that
-      // triggered activation. Walk backwards — there's usually only one
-      // entry between the read and this event.
-      for (let i = this.entries.length - 1; i >= 0; i -= 1) {
-        const candidate = this.entries[i]!;
-        if (candidate.kind === 'tool' && candidate.toolName === 'read') {
-          candidate.skillName = ev.skillName;
-          candidate.skillSource = ev.source;
+      if (ev.type === 'subagent_spawned') {
+        const parent = this.toolsByCallId.get(ev.parentCallId);
+        const parentEntryId = parent?.id;
+        if (parentEntryId) this.subagentParents.set(ev.subagentId, parentEntryId);
+        if (parentEntryId && parent) {
+          parent.subagentId = ev.subagentId;
+          parent.subagentPurpose = ev.purpose;
+          dirty = true;
           return;
         }
-      }
-      return;
-    }
-    if (ev.type === 'subagent_spawned') {
-      const parent = this.toolsByCallId.get(ev.parentCallId);
-      const parentEntryId = parent?.id;
-      if (parentEntryId) this.subagentParents.set(ev.subagentId, parentEntryId);
-      // Stash the parent's purpose label on the parent itself so the renderer
-      // can render the group header. Skip pushing a stand-alone "spawned"
-      // row when we have a parent — the parent tool entry already represents
-      // the spawn — keep the row only as an orphan fallback.
-      if (parentEntryId && parent) {
-        parent.subagentId = ev.subagentId;
-        parent.subagentPurpose = ev.purpose;
-        return;
-      }
-      this.entries.push({
-        id: this.newId(),
-        kind: 'subagent',
-        text: `subagent spawned · ${ev.url || 'in-process'}`,
-        subagentId: ev.subagentId,
-        subagentPurpose: ev.purpose,
-        subagentStatus: 'running',
-      });
-      return;
-    }
-    if (ev.type === 'subagent_finished') {
-      const parentEntryId = this.subagentParents.get(ev.subagentId);
-      // Children are rendered nested under the parent's tool_call_result; the
-      // explicit "finished" row is redundant when grouped, so only add it as
-      // an orphan fallback.
-      if (parentEntryId) {
-        this.subagentParents.delete(ev.subagentId);
-        this.subagentToolsByCallId.delete(ev.subagentId);
-        return;
-      }
-      const summary = ev.reason === 'stop' ? 'subagent finished' : `subagent ${ev.reason}`;
-      this.entries.push({
-        id: this.newId(),
-        kind: 'subagent',
-        text: summary,
-        subagentId: ev.subagentId,
-        subagentStatus: 'finished',
-      });
-      return;
-    }
-    if (ev.type === 'subagent_event') {
-      const inner = ev.event;
-      const id = ev.subagentId;
-      const parentEntryId = this.subagentParents.get(id);
-      if (inner.type === 'assistant_text_done' && inner.text.length > 0) {
         this.entries.push({
           id: this.newId(),
           kind: 'subagent',
-          text: previewLine(inner.text),
-          subagentId: id,
+          text: `subagent spawned · ${ev.url || 'in-process'}`,
+          subagentId: ev.subagentId,
+          subagentPurpose: ev.purpose,
           subagentStatus: 'running',
-          parentEntryId,
         });
+        dirty = true;
         return;
       }
-      if (inner.type === 'tool_call_start') {
-        const childTarget = inner.target === 'host' ? ' [host]' : '';
-        const text = inner.display?.summary
-          ? `${inner.name}: ${inner.display.summary}${childTarget}`
-          : `${inner.name}${childTarget}`;
-        const entry: ScrollbackEntry = {
-          id: this.newId(),
-          kind: 'subagent',
-          text,
-          subagentId: id,
-          subagentStatus: 'running',
-          parentEntryId,
-          toolName: inner.name,
-          detail: inner.display?.detail,
-        };
-        let map = this.subagentToolsByCallId.get(id);
-        if (!map) {
-          map = new Map<CallId, SubagentEntry>();
-          this.subagentToolsByCallId.set(id, map);
+      if (ev.type === 'subagent_finished') {
+        const parentEntryId = this.subagentParents.get(ev.subagentId);
+        if (parentEntryId) {
+          this.subagentParents.delete(ev.subagentId);
+          this.subagentToolsByCallId.delete(ev.subagentId);
+          dirty = true;
+          return;
         }
-        map.set(inner.callId, entry);
-        this.entries.push(entry);
+        const summary = ev.reason === 'stop' ? 'subagent finished' : `subagent ${ev.reason}`;
+        this.entries.push({
+          id: this.newId(),
+          kind: 'subagent',
+          text: summary,
+          subagentId: ev.subagentId,
+          subagentStatus: 'finished',
+        });
+        dirty = true;
         return;
       }
-      if (inner.type === 'tool_call_result') {
-        const map = this.subagentToolsByCallId.get(id);
-        const entry = map?.get(inner.callId);
-        if (entry && inner.display) {
-          const targetTag = entry.text.endsWith('[host]') ? ' [host]' : '';
-          entry.text = `${entry.toolName}: ${inner.display.summary}${targetTag}`;
-          entry.detail = inner.display.detail;
+      if (ev.type === 'subagent_event') {
+        const inner = ev.event;
+        const id = ev.subagentId;
+        const parentEntryId = this.subagentParents.get(id);
+        if (inner.type === 'assistant_text_done' && inner.text.length > 0) {
+          this.entries.push({
+            id: this.newId(),
+            kind: 'subagent',
+            text: previewLine(inner.text),
+            subagentId: id,
+            subagentStatus: 'running',
+            parentEntryId,
+          });
+          dirty = true;
+          return;
+        }
+        if (inner.type === 'tool_call_start') {
+          const childTarget = inner.target === 'host' ? ' [host]' : '';
+          const text = inner.display?.summary
+            ? `${inner.name}: ${inner.display.summary}${childTarget}`
+            : `${inner.name}${childTarget}`;
+          const entry: ScrollbackEntry = {
+            id: this.newId(),
+            kind: 'subagent',
+            text,
+            subagentId: id,
+            subagentStatus: 'running',
+            parentEntryId,
+            toolName: inner.name,
+            detail: inner.display?.detail,
+          };
+          let map = this.subagentToolsByCallId.get(id);
+          if (!map) {
+            map = new Map<CallId, SubagentEntry>();
+            this.subagentToolsByCallId.set(id, map);
+          }
+          map.set(inner.callId, entry);
+          this.entries.push(entry);
+          dirty = true;
+          return;
+        }
+        if (inner.type === 'tool_call_result') {
+          const map = this.subagentToolsByCallId.get(id);
+          const entry = map?.get(inner.callId);
+          if (entry && inner.display) {
+            const targetTag = entry.text.endsWith('[host]') ? ' [host]' : '';
+            entry.text = `${entry.toolName}: ${inner.display.summary}${targetTag}`;
+            entry.detail = inner.display.detail;
+            dirty = true;
+          }
+          return;
+        }
+        if (inner.type === 'tool_call_error') {
+          this.entries.push({
+            id: this.newId(),
+            kind: 'subagent',
+            text: `tool error: ${inner.error}`,
+            subagentId: id,
+            subagentStatus: 'running',
+            parentEntryId,
+          });
+          dirty = true;
+          return;
+        }
+        if (inner.type === 'run_finished' && inner.reason === 'error' && inner.error) {
+          this.entries.push({
+            id: this.newId(),
+            kind: 'subagent',
+            text: `error: ${inner.error}`,
+            subagentId: id,
+            subagentStatus: 'running',
+            parentEntryId,
+          });
+          dirty = true;
+          return;
         }
         return;
       }
-      if (inner.type === 'tool_call_error') {
-        this.entries.push({
-          id: this.newId(),
-          kind: 'subagent',
-          text: `tool error: ${inner.error}`,
-          subagentId: id,
-          subagentStatus: 'running',
-          parentEntryId,
-        });
+      if (ev.type === 'run_finished' && ev.reason === 'error' && ev.error) {
+        this.addError(ev.error);
         return;
       }
-      if (inner.type === 'run_finished' && inner.reason === 'error' && inner.error) {
-        this.entries.push({
-          id: this.newId(),
-          kind: 'subagent',
-          text: `error: ${inner.error}`,
-          subagentId: id,
-          subagentStatus: 'running',
-          parentEntryId,
-        });
-        return;
+    } finally {
+      if (dirty) {
+        this.updateSnapshot();
+        this.scheduleFlush();
       }
-      // Other inner events (deltas, step finishes) are noisy; skip.
-      return;
-    }
-    if (ev.type === 'run_finished' && ev.reason === 'error' && ev.error) {
-      this.addError(ev.error);
-      return;
     }
   }
 }

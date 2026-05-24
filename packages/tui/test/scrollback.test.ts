@@ -1,5 +1,5 @@
 import type { Session, ToolCallRecord } from '@chimera/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Scrollback } from '../src/scrollback';
 
 function rehydrate(messages: unknown[], toolCalls: ToolCallRecord[] = []) {
@@ -846,5 +846,98 @@ describe('Scrollback.rehydrateFromSession', () => {
     expect(first.modeTo).toBe('question');
     expect(second.modeFrom).toBe('question');
     expect(second.modeTo).toBe('build');
+  });
+
+  describe('observable store (subscribe / getSnapshot)', () => {
+    it('getSnapshot returns the current entries', () => {
+      const scrollback = new Scrollback();
+      scrollback.addInfo('first');
+      expect(scrollback.getSnapshot()).toHaveLength(1);
+      expect(scrollback.getSnapshot()[0]!.text).toBe('first');
+    });
+
+    it('subscribers are notified after a microtask batch when entries change', async () => {
+      const scrollback = new Scrollback();
+      const listener = vi.fn();
+      scrollback.subscribe(listener);
+
+      scrollback.addInfo('a');
+      // Before microtask flush: listener should not have been called yet
+      expect(listener).not.toHaveBeenCalled();
+
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('collapses multiple synchronous mutations into a single notification', async () => {
+      const scrollback = new Scrollback();
+      const listener = vi.fn();
+      scrollback.subscribe(listener);
+
+      scrollback.addInfo('a');
+      scrollback.addInfo('b');
+      scrollback.addInfo('c');
+
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(scrollback.getSnapshot()).toHaveLength(3);
+    });
+
+    it('does not notify after unsubscription', async () => {
+      const scrollback = new Scrollback();
+      const listener = vi.fn();
+      const unsub = scrollback.subscribe(listener);
+      unsub();
+
+      scrollback.addInfo('x');
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('apply() batches all inner event mutations into one notification', async () => {
+      const scrollback = new Scrollback();
+      const listener = vi.fn();
+      scrollback.subscribe(listener);
+
+      scrollback.apply({ type: 'assistant_text_delta', delta: 'Hel' });
+      scrollback.apply({ type: 'assistant_text_delta', delta: 'lo' });
+      scrollback.apply({ type: 'tool_call_start', callId: 'c1', name: 'bash', args: {}, target: 'host' });
+
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      const snapshot = scrollback.getSnapshot();
+      expect(snapshot).toHaveLength(2);
+    });
+
+    it('apply() on tool_call_result with inner display notifies once', async () => {
+      const scrollback = new Scrollback();
+      const listener = vi.fn();
+      scrollback.subscribe(listener);
+
+      scrollback.apply({
+        type: 'tool_call_start',
+        callId: 'c1',
+        name: 'bash',
+        args: { command: 'echo hi' },
+        target: 'host',
+      });
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      listener.mockClear();
+
+      scrollback.apply({
+        type: 'tool_call_result',
+        callId: 'c1',
+        result: { output: 'hi' },
+        durationMs: 5,
+      });
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
   });
 });

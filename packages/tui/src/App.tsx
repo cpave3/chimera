@@ -1,6 +1,6 @@
 import { resolve as resolvePath } from 'node:path';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ChimeraClient } from '@chimera/client';
 import { runBangCommand } from './bang';
 import type { CommandRegistry } from '@chimera/commands';
@@ -143,7 +143,10 @@ export function App(props: AppProps): React.ReactElement {
   const app = useApp();
   const { stdout } = useStdout();
   const scrollback = useMemo(() => new Scrollback(props.formatters), [props.formatters]);
-  const [entries, setEntries] = useState<ScrollbackEntry[]>([]);
+  const entries = useSyncExternalStore(
+    scrollback.subscribe.bind(scrollback),
+    scrollback.getSnapshot.bind(scrollback),
+  );
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [pending, setPending] = useState<PendingPermission | null>(null);
   // Active subagents indexed by subagentId. Updated from the parent's stream.
@@ -259,7 +262,6 @@ export function App(props: AppProps): React.ReactElement {
         );
       }
     }
-    setEntries(scrollback.all());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -269,7 +271,6 @@ export function App(props: AppProps): React.ReactElement {
     if (!reg?.onChange) return;
     const unsub = reg.onChange(() => {
       scrollback.addInfo(`commands reloaded (${reg.list().length} total)`);
-      setEntries(scrollback.all());
       setRegistryVersion((v) => v + 1);
     });
     return unsub;
@@ -350,7 +351,6 @@ export function App(props: AppProps): React.ReactElement {
         // wiping a fresh "/new" session's empty scrollback unnecessarily.
         if (Array.isArray(s.messages) && s.messages.length > 0) {
           scrollback.rehydrateFromSession(s);
-          setEntries(scrollback.all());
         }
       } catch {
         if (!cancelled) setActiveParentId(null);
@@ -404,7 +404,6 @@ export function App(props: AppProps): React.ReactElement {
       } catch (err) {
         if (!controller.signal.aborted) {
           scrollback.addError(`event stream error: ${(err as Error).message}`);
-          setEntries(scrollback.all());
         }
       }
     })();
@@ -447,7 +446,6 @@ export function App(props: AppProps): React.ReactElement {
         `[chimera-tui-apply]   after tool_call_result: total entries=${all.length}, subagent-children=${childCount}\n`,
       );
     }
-    setEntries(all);
     if (ev.type === 'assistant_text_delta') {
       setStreaming(true);
       const last = all[all.length - 1];
@@ -502,11 +500,9 @@ export function App(props: AppProps): React.ReactElement {
       setActiveModeName(ev.to);
       setPendingModeName(null);
       scrollback.addModeChange(ev.from, ev.to);
-      setEntries(scrollback.all());
     } else if (ev.type === 'model_changed') {
       setCurrentModelRef(ev.to);
       scrollback.addInfo(`model changed: ${ev.from} → ${ev.to}`);
-      setEntries(scrollback.all());
     } else if (ev.type === 'compaction_started') {
       setCompacting(true);
     } else if (ev.type === 'compaction_finished') {
@@ -515,18 +511,15 @@ export function App(props: AppProps): React.ReactElement {
       scrollback.addInfo(
         `compaction done: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced)`
       );
-      setEntries(scrollback.all());
     } else if (ev.type === 'compaction_failed') {
       setCompacting(false);
       scrollback.addError(`compaction failed: ${ev.error}`);
-      setEntries(scrollback.all());
     }
   }
 
   function interruptRun(): void {
     void activeSession.client.interrupt(activeSession.sessionId);
     scrollback.addInfo('interrupt sent');
-    setEntries(scrollback.all());
   }
 
   function setBufferText(text: string): void {
@@ -552,7 +545,6 @@ export function App(props: AppProps): React.ReactElement {
       }
       setLastCtrlC(now);
       scrollback.addInfo('press Ctrl+C again to exit');
-      setEntries(scrollback.all());
       return;
     }
     if (key.escape && running && !menuOpen) {
@@ -740,7 +732,6 @@ export function App(props: AppProps): React.ReactElement {
         stickyColRef.current = null;
       } else {
         scrollback.addInfo(`editor: ${result.reason}`);
-        setEntries(scrollback.all());
         setBuffer((b) => ({ ...b }));
       }
     } finally {
@@ -756,7 +747,6 @@ export function App(props: AppProps): React.ReactElement {
       if (busy) {
         setQueue((q) => [...q, text]);
         scrollback.addInfo(`queued: ${previewLine(text)}`);
-        setEntries(scrollback.all());
         return;
       }
       await handleBang(command);
@@ -769,7 +759,6 @@ export function App(props: AppProps): React.ReactElement {
     if (busy) {
       setQueue((q) => [...q, text]);
       scrollback.addInfo(`queued: ${previewLine(text)}`);
-      setEntries(scrollback.all());
       return;
     }
     await sendUserMessage(text);
@@ -777,7 +766,6 @@ export function App(props: AppProps): React.ReactElement {
 
   async function handleBang(command: string): Promise<void> {
     scrollback.addInfo(`running: ${previewLine(command)}`);
-    setEntries(scrollback.all());
     setBangRunning(true);
     try {
       const result = await runBangCommand(command, props.cwd);
@@ -792,7 +780,6 @@ export function App(props: AppProps): React.ReactElement {
       await activeSession.client.appendMessage(activeSession.sessionId, output);
     } catch (err) {
       scrollback.addError(`! failed: ${(err as Error).message}`);
-      setEntries(scrollback.all());
     } finally {
       setBangRunning(false);
     }
@@ -807,7 +794,6 @@ export function App(props: AppProps): React.ReactElement {
       }
     } catch (err) {
       scrollback.addError(`send failed: ${(err as Error).message}`);
-      setEntries(scrollback.all());
     }
   }
 
@@ -825,7 +811,6 @@ export function App(props: AppProps): React.ReactElement {
             ? [...builtinLines, '', 'User commands:', ...userLines]
             : builtinLines;
         scrollback.addInfo(all.join('\n'));
-        setEntries(scrollback.all());
         return;
       }
       case '/clear':
@@ -834,7 +819,6 @@ export function App(props: AppProps): React.ReactElement {
         // parks the cursor at home so Ink's next frame draws from the top.
         stdout?.write('\x1b[2J\x1b[3J\x1b[H');
         scrollback.clear();
-        setEntries([]);
         setStreamingEntryId(null);
         setShowHeader(false);
         setStaticEpoch((n) => n + 1);
@@ -854,11 +838,9 @@ export function App(props: AppProps): React.ReactElement {
             } catch (error) {
               scrollback.addError(`/model: ${(error as Error).message}`);
             }
-            setEntries(scrollback.all());
           })();
         } else {
           scrollback.addInfo(`current model: ${currentModelRef}`);
-          setEntries(scrollback.all());
         }
         return;
       }
@@ -887,7 +869,6 @@ export function App(props: AppProps): React.ReactElement {
           } catch (err) {
             scrollback.addError(`/rules: ${(err as Error).message}`);
           }
-          setEntries(scrollback.all());
         })();
         return;
       }
@@ -914,10 +895,8 @@ export function App(props: AppProps): React.ReactElement {
             setStreaming(false);
             setStreamingEntryId(null);
             scrollback.addInfo(`new session ${newId.slice(-8)}`);
-            setEntries(scrollback.all());
           } catch (err) {
             scrollback.addError(`/new: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -948,7 +927,6 @@ export function App(props: AppProps): React.ReactElement {
                 });
                 scrollback.addInfo(`session tree ${scopeLabel}:\n${lines.join('\n')}`);
               }
-              setEntries(scrollback.all());
               return;
             }
             if (sub.length > 0 && sub !== 'all') {
@@ -956,7 +934,6 @@ export function App(props: AppProps): React.ReactElement {
               const target = allSessions.find((s) => s.id === sub || s.id.endsWith(sub));
               if (!target) {
                 scrollback.addError(`/sessions: no session matching ${sub}`);
-                setEntries(scrollback.all());
                 return;
               }
               const ancestry: string[] = [];
@@ -981,7 +958,6 @@ export function App(props: AppProps): React.ReactElement {
                 `ancestry:  ${ancestry.join(' → ')}`,
               ];
               scrollback.addInfo(lines.join('\n'));
-              setEntries(scrollback.all());
               return;
             }
             // No sub-arg (or `all`): open interactive picker
@@ -990,13 +966,11 @@ export function App(props: AppProps): React.ReactElement {
                 `no persisted sessions ${scopeLabel}` +
                   (showAll ? '' : ' — use `/sessions all` to see every session'),
               );
-              setEntries(scrollback.all());
               return;
             }
             setSessionPicker(scoped);
           } catch (err) {
             scrollback.addError(`/sessions: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -1027,10 +1001,8 @@ export function App(props: AppProps): React.ReactElement {
                 purpose.length > 0 ? ` (${purpose})` : ''
               }`,
             );
-            setEntries(scrollback.all());
           } catch (err) {
             scrollback.addError(`/fork: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -1053,7 +1025,6 @@ export function App(props: AppProps): React.ReactElement {
           } catch (err) {
             scrollback.addError(`/subagents: ${(err as Error).message}`);
           }
-          setEntries(scrollback.all());
         })();
         return;
       }
@@ -1061,7 +1032,6 @@ export function App(props: AppProps): React.ReactElement {
         const target = arg.trim();
         if (!target) {
           scrollback.addInfo('usage: /attach <subagentId>');
-          setEntries(scrollback.all());
           return;
         }
         void (async () => {
@@ -1072,21 +1042,18 @@ export function App(props: AppProps): React.ReactElement {
             );
             if (!match) {
               scrollback.addError(`/attach: no subagent matching "${target}"`);
-              setEntries(scrollback.all());
               return;
             }
             if (!match.url) {
               scrollback.addError(
                 `/attach: subagent ${match.subagentId} is in-process and not attachable`,
               );
-              setEntries(scrollback.all());
               return;
             }
             const childClient = new ChimeraClient({ baseUrl: match.url });
             scrollback.addInfo(
               `attaching to subagent ${match.subagentId} (${match.purpose}) at ${match.url}`,
             );
-            setEntries(scrollback.all());
             setPendingModeName(null); // Reset pending mode on attach
             setActiveSession({
               client: childClient,
@@ -1101,7 +1068,6 @@ export function App(props: AppProps): React.ReactElement {
             setStreamingEntryId(null);
           } catch (err) {
             scrollback.addError(`/attach: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -1109,11 +1075,9 @@ export function App(props: AppProps): React.ReactElement {
       case '/detach': {
         if (activeSession.client === props.client && activeSession.sessionId === props.sessionId) {
           scrollback.addInfo('already attached to the parent session');
-          setEntries(scrollback.all());
           return;
         }
         scrollback.addInfo('detaching back to parent session');
-        setEntries(scrollback.all());
         setActiveSession({
           client: props.client,
           sessionId: props.sessionId,
@@ -1129,19 +1093,16 @@ export function App(props: AppProps): React.ReactElement {
         if (busy) {
           setQueue((q) => [...q, raw]);
           scrollback.addInfo(`queued: ${previewLine(raw)}`);
-          setEntries(scrollback.all());
           return;
         }
         setCompacting(true);
         scrollback.addInfo('compacting...');
-        setEntries(scrollback.all());
         void (async () => {
           try {
             await activeSession.client.compact(activeSession.sessionId);
           } catch (err) {
             setCompacting(false);
             scrollback.addError(`/compact: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -1151,7 +1112,6 @@ export function App(props: AppProps): React.ReactElement {
         const reloadFn = reg?.reload;
         if (!reloadFn) {
           scrollback.addInfo('commands: reload not supported in this session.');
-          setEntries(scrollback.all());
           return;
         }
         void (async () => {
@@ -1163,14 +1123,11 @@ export function App(props: AppProps): React.ReactElement {
               const newPrompt = await props.reloadSystemPrompt({ cwd: props.cwd });
               await props.client.reloadSession(props.sessionId, newPrompt);
               scrollback.addInfo('system prompt reloaded.');
-              setEntries(scrollback.all());
             } else {
               scrollback.addInfo('commands reloaded.');
-              setEntries(scrollback.all());
             }
           } catch (err) {
             scrollback.addError(`reload failed: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -1189,13 +1146,11 @@ export function App(props: AppProps): React.ReactElement {
             });
             scrollback.addInfo(`Modes:\n${lines.join('\n')}`);
           }
-          setEntries(scrollback.all());
           return;
         }
         const next = props.modes?.find(target);
         if (!next) {
           scrollback.addError(`unknown mode "${target}"`);
-          setEntries(scrollback.all());
           return;
         }
         const effectiveCurrent = pendingModeName ?? activeModeName;
@@ -1214,7 +1169,6 @@ export function App(props: AppProps): React.ReactElement {
           } catch (err) {
             setPendingModeName(null);
             scrollback.addError(`mode switch failed: ${(err as Error).message}`);
-            setEntries(scrollback.all());
           }
         })();
         return;
@@ -1238,7 +1192,6 @@ export function App(props: AppProps): React.ReactElement {
           } catch (err) {
             scrollback.addError(`/theme: ${(err as Error).message}`);
           }
-          setEntries(scrollback.all());
           return;
         }
         try {
@@ -1250,7 +1203,6 @@ export function App(props: AppProps): React.ReactElement {
         } catch (err) {
           scrollback.addError(`/theme: ${(err as Error).message}`);
         }
-        setEntries(scrollback.all());
         return;
       }
       case '/overlay':
@@ -1258,7 +1210,6 @@ export function App(props: AppProps): React.ReactElement {
       case '/discard': {
         if (!overlayMode || !props.overlay) {
           scrollback.addError(`${name} requires --sandbox-mode overlay`);
-          setEntries(scrollback.all());
           return;
         }
         if (name === '/overlay') {
@@ -1278,7 +1229,6 @@ export function App(props: AppProps): React.ReactElement {
             } catch (err) {
               scrollback.addError(`overlay: ${(err as Error).message}`);
             }
-            setEntries(scrollback.all());
           })();
           return;
         }
@@ -1299,13 +1249,11 @@ export function App(props: AppProps): React.ReactElement {
               ];
               if (entries.length === 0) {
                 scrollback.addInfo('overlay: no pending changes');
-                setEntries(scrollback.all());
                 return;
               }
               setOverlayPicker(entries);
             } catch (err) {
               scrollback.addError(`overlay: ${(err as Error).message}`);
-              setEntries(scrollback.all());
             }
           })();
           return;
@@ -1318,7 +1266,6 @@ export function App(props: AppProps): React.ReactElement {
           } catch (err) {
             scrollback.addError(`discard: ${(err as Error).message}`);
           }
-          setEntries(scrollback.all());
         })();
         return;
       }
@@ -1331,16 +1278,13 @@ export function App(props: AppProps): React.ReactElement {
             expanded = props.commands!.expand(templateName, arg, { cwd: props.cwd });
           } catch (err) {
             scrollback.addError(`/${templateName}: ${(err as Error).message}`);
-            setEntries(scrollback.all());
             return;
           }
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(expanded);
-          setEntries(scrollback.all());
           if (running) {
             setQueue((q) => [...q, expanded]);
             scrollback.addInfo(`queued: ${previewLine(raw)}`);
-            setEntries(scrollback.all());
             return;
           }
           void sendUserMessage(expanded);
@@ -1351,11 +1295,9 @@ export function App(props: AppProps): React.ReactElement {
           const body = expandSkillInvocation(skill.name, skill.path, arg);
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(body);
-          setEntries(scrollback.all());
           if (running) {
             setQueue((q) => [...q, body]);
             scrollback.addInfo(`queued: ${previewLine(raw)}`);
-            setEntries(scrollback.all());
             return;
           }
           void sendUserMessage(body);
@@ -1367,7 +1309,6 @@ export function App(props: AppProps): React.ReactElement {
             ? `unknown command: ${name} — did you mean ${suggestion}?`
             : `unknown command: ${name}`,
         );
-        setEntries(scrollback.all());
       }
     }
   }
@@ -1390,7 +1331,6 @@ export function App(props: AppProps): React.ReactElement {
       .resolvePermission(targetSessionId, requestId, decision, remember)
       .catch((err) => {
         scrollback.addError(`resolvePermission: ${(err as Error).message}`);
-        setEntries(scrollback.all());
       });
   }
 
@@ -1613,7 +1553,6 @@ export function App(props: AppProps): React.ReactElement {
               setOverlayPicker(null);
               if (!selection) {
                 scrollback.addInfo('apply cancelled');
-                setEntries(scrollback.all());
                 return;
               }
               void (async () => {
@@ -1625,7 +1564,6 @@ export function App(props: AppProps): React.ReactElement {
                 } catch (err) {
                   scrollback.addError(`apply: ${(err as Error).message}`);
                 }
-                setEntries(scrollback.all());
               })();
             }}
           />
@@ -1637,13 +1575,11 @@ export function App(props: AppProps): React.ReactElement {
             onCancel={() => {
               setSessionPicker(null);
               scrollback.addInfo('/sessions cancelled');
-              setEntries(scrollback.all());
             }}
             onSelect={(selectedId) => {
               setSessionPicker(null);
               if (selectedId === activeSession.sessionId) {
                 scrollback.addInfo(`already on session ${selectedId.slice(-8)}`);
-                setEntries(scrollback.all());
                 return;
               }
               void (async () => {
@@ -1663,10 +1599,8 @@ export function App(props: AppProps): React.ReactElement {
                   setStreaming(false);
                   setStreamingEntryId(null);
                   scrollback.addInfo(`switched to session ${selectedId.slice(-8)}`);
-                  setEntries(scrollback.all());
                 } catch (err) {
                   scrollback.addError(`/sessions: ${(err as Error).message}`);
-                  setEntries(scrollback.all());
                 }
               })();
             }}
