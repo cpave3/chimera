@@ -253,6 +253,126 @@ exit 0
     body = await readFile(counter, 'utf8');
     expect(body.trim()).toBe('ran');
   });
+
+  it('blocks via JSON decision on exit 0 with decision="block"', async () => {
+    await dropScript(
+      'Stop',
+      'json-block.sh',
+      `#!/bin/sh
+echo '{"decision":"block","reason":"stop rejected"}'
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.blocked).toBe(true);
+    expect(r.reason).toBe('stop rejected');
+    expect(r.parsedDecision).toMatchObject({ decision: 'block', reason: 'stop rejected' });
+  });
+
+  it('allows when exit 0 JSON does not contain decision="block"', async () => {
+    await dropScript(
+      'Stop',
+      'json-info.sh',
+      `#!/bin/sh
+echo '{"additionalContext":"lint passed"}'
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.blocked).toBe(false);
+    expect(r.parsedDecision?.additionalContext).toBe('lint passed');
+  });
+
+  it('allows when exit 0 stdout is empty', async () => {
+    await dropScript(
+      'Stop',
+      'silent.sh',
+      `#!/bin/sh
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.blocked).toBe(false);
+    expect(r.parsedDecision).toBeUndefined();
+  });
+
+  it('allows when exit 0 stdout is non-JSON text', async () => {
+    await dropScript(
+      'Stop',
+      'chatty.sh',
+      `#!/bin/sh
+echo "lint complete"
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.blocked).toBe(false);
+    expect(r.parsedDecision).toBeUndefined();
+  });
+
+  it('parses hookSpecificOutput for Claude compat', async () => {
+    await dropScript(
+      'Stop',
+      'claude-compat.sh',
+      `#!/bin/sh
+echo '{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"remember to test"}}'
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.blocked).toBe(false);
+    expect(r.parsedDecision?.additionalContext).toBe('remember to test');
+    expect(r.parsedDecision?.hookSpecificOutput).toBeDefined();
+  });
+
+  it('top-level fields take precedence over hookSpecificOutput', async () => {
+    await dropScript(
+      'Stop',
+      'precedence.sh',
+      `#!/bin/sh
+echo '{"hookSpecificOutput":{"reason":"inner"},"reason":"outer"}'
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.parsedDecision?.reason).toBe('outer');
+  });
+
+  it('caps large string output at 10,000 chars', async () => {
+    await dropScript(
+      'Stop',
+      'huge.sh',
+      `#!/bin/sh
+python3 -c "import json; print(json.dumps({'additionalContext':'x'*20000}))"
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    expect(r.parsedDecision?.additionalContext?.length).toBe(10_000);
+  });
+
+  it('allows when spawn fails, even if JSON would have blocked', async () => {
+    await dropScript(
+      'Stop',
+      'bad-interpreter.sh',
+      `#!/does/not/exist
+echo '{"decision":"block"}'
+exit 0
+`,
+    );
+
+    const r = await newRunner().fire({ event: 'Stop', reason: 'stop' });
+    // Spawn failure = logged, not blocked
+    expect(r.blocked).toBe(false);
+  });
+
 });
 
 describe('NoopHookRunner', () => {

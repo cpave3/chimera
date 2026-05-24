@@ -96,13 +96,32 @@ export type FirePayload =
   | { event: 'CompactionStart'; reason: string }
   | { event: 'CompactionEnd'; success: boolean; error?: string };
 
+export interface HookDecision {
+  /** `"block"` to block the action; omitted or any other value allows. */
+  decision?: 'block';
+  /** Human-readable reason for a block decision. */
+  reason?: string;
+  /** Context injected into the next model turn. */
+  additionalContext?: string;
+  /** Warning message shown to the user. */
+  systemMessage?: string;
+  /** If true, hide the hook stdout from the transcript. */
+  suppressOutput?: boolean;
+  /** If false, stops the entire session after the hook runs. */
+  continue?: boolean;
+  /** Claude-compatible wrapper for event-specific fields. */
+  hookSpecificOutput?: unknown;
+}
+
 export interface HookFireResult {
-  /** True only if a pre-event hook exited with code 2. */
+  /** True if the hook blocked (exit 2 or JSON decision block). */
   blocked: boolean;
   /** Absolute path of the script that blocked, when `blocked` is true. */
   blockingScript?: string;
-  /** Stderr from the blocking script (trimmed), when `blocked` is true. */
+  /** Stderr from the blocking script (trimmed), or JSON reason if applicable. */
   reason?: string;
+  /** Parsed JSON decision from stdout on exit 0. */
+  parsedDecision?: HookDecision;
 }
 
 export interface HookRunner {

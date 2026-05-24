@@ -89,15 +89,6 @@ describe('bridgeHooksToBus', () => {
     ]);
   });
 
-  it('translates run_finished → Stop', async () => {
-    const bus = new EventBus(sid);
-    const r = recorder();
-    bridgeHooksToBus(bus, r);
-    bus.publish({ type: 'run_finished', reason: 'stop' });
-    await flush();
-    expect(r.fired).toEqual([{ event: 'Stop', reason: 'stop' }]);
-  });
-
   it('translates compaction_started → CompactionStart', async () => {
     const bus = new EventBus(sid);
     const r = recorder();
@@ -138,6 +129,15 @@ describe('bridgeHooksToBus', () => {
     bus.publish({ type: 'session_started', sessionId: sid });
     bus.publish({ type: 'assistant_text_done', text: 'hi' });
     bus.publish({ type: 'step_finished', stepNumber: 1, finishReason: 'stop' });
+    await flush();
+    expect(r.fired).toEqual([]);
+  });
+
+  it('does not translate run_finished into a Stop hook (Stop is handled in Agent.runInternal)', async () => {
+    const bus = new EventBus(sid);
+    const r = recorder();
+    bridgeHooksToBus(bus, r);
+    bus.publish({ type: 'run_finished', reason: 'stop' });
     await flush();
     expect(r.fired).toEqual([]);
   });

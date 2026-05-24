@@ -930,6 +930,174 @@ describe('Agent.signal', () => {
     expect(finished?.reason).toBe('interrupted');
   });
 
+  describe('stop hook', () => {
+    it('blocks stop and retries with a user_message when stop hook returns blocked', async () => {
+      let fireCount = 0;
+      const stopHook = {
+        async fire() {
+          fireCount++;
+          if (fireCount === 1) {
+            return { blocked: true, reason: 'lint failed' };
+          }
+          return { blocked: false };
+        },
+      };
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('hello'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        stopHook,
+      });
+
+      const events: string[] = [];
+      for await (const ev of agent.run('hi')) {
+        events.push(ev.type);
+      }
+
+      // Should see a second user_message from the retry.
+      const userMessages = events.filter((t) => t === 'user_message');
+      expect(userMessages.length).toBe(2); // original + retry
+      expect(fireCount).toBe(2);
+      expect(events[events.length - 1]).toBe('run_finished');
+    });
+
+    it('includes additionalContext in the retry user_message when provided', async () => {
+      let fireCount = 0;
+      const stopHook = {
+        async fire() {
+          fireCount++;
+          if (fireCount === 1) {
+            return {
+              blocked: true,
+              reason: 'lint failed',
+              additionalContext: 'Run pnpm biome:lint',
+            };
+          }
+          return { blocked: false };
+        },
+      };
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('hello'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        stopHook,
+      });
+
+      const userMessages: { content: string }[] = [];
+      for await (const ev of agent.run('hi')) {
+        if (ev.type === 'user_message') {
+          userMessages.push({ content: ev.content });
+        }
+      }
+
+      expect(userMessages.length).toBe(2);
+      expect(userMessages[1]?.content).toContain('lint failed');
+      expect(userMessages[1]?.content).toContain('Run pnpm biome:lint');
+    });
+
+    it('emits run_finished normally when stop hook allows', async () => {
+      const stopHook = {
+        async fire() {
+          return { blocked: false };
+        },
+      };
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('hi'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        stopHook,
+      });
+
+      const events: string[] = [];
+      for await (const ev of agent.run('hi')) {
+        events.push(ev.type);
+      }
+
+      expect(events.filter((t) => t === 'user_message').length).toBe(1);
+      expect(events[events.length - 1]).toBe('run_finished');
+    });
+
+    it('skips stop hook on error terminal reason', async () => {
+      let fireCount = 0;
+      const stopHook = {
+        async fire() {
+          fireCount++;
+          return { blocked: true, reason: 'should not fire' };
+        },
+      };
+
+      const model = new MockLanguageModelV3({
+        doStream: async () => {
+          throw new Error('model failure');
+        },
+      }) as unknown as LanguageModel;
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: model,
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        stopHook,
+      });
+
+      const events: string[] = [];
+      for await (const ev of agent.run('hi')) {
+        events.push(ev.type);
+      }
+
+      expect(fireCount).toBe(0);
+      expect(events[events.length - 1]).toBe('run_finished');
+    });
+
+    it('caps retries at MAX_STOP_RETRIES and emits run_finished with max_steps', async () => {
+      let fireCount = 0;
+      const stopHook = {
+        async fire() {
+          fireCount++;
+          return { blocked: true, reason: 'always blocked' };
+        },
+      };
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: textOnlyModel('hello'),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        stopHook,
+      });
+
+      const events: { type: string; reason?: string }[] = [];
+      for await (const ev of agent.run('hi')) {
+        events.push({ type: ev.type, reason: (ev as { reason?: string }).reason });
+      }
+
+      const finished = events.find((e) => e.type === 'run_finished');
+      expect(finished?.reason).toBe('max_steps');
+      expect(fireCount).toBe(5);
+    });
+  });
+
   describe('setUserModelOverride', () => {
     it('applies a model change on an idle agent', () => {
       const agent = new Agent({

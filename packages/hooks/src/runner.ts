@@ -3,6 +3,7 @@ import { discover, type DiscoveryOptions } from './discovery';
 import {
   PRE_HOOK_EVENTS,
   type FirePayload,
+  type HookDecision,
   type HookEvent,
   type HookFireResult,
   type HookLogger,
@@ -59,16 +60,32 @@ export class DefaultHookRunner implements HookRunner {
     const env = this.buildEnv(event);
 
     let blockResult: HookFireResult | undefined;
+    let lastParsedDecision: HookDecision | undefined;
     for (const script of scripts) {
       const outcome = await this.runOne(script, json, env);
-      if (isPre && outcome.exitCode === BLOCK_EXIT_CODE && !blockResult) {
+
+      if (outcome.exitCode === 0 && outcome.decision) {
+        lastParsedDecision = outcome.decision;
+        if (!blockResult && outcome.decision.decision === 'block') {
+          blockResult = {
+            blocked: true,
+            blockingScript: script,
+            reason: outcome.decision.reason || `blocked by hook: ${script}`,
+            parsedDecision: outcome.decision,
+          };
+        }
+      }
+
+      if (!blockResult && isPre && outcome.exitCode === BLOCK_EXIT_CODE) {
         blockResult = {
           blocked: true,
           blockingScript: script,
           reason: outcome.stderr.trim() || `blocked by hook: ${script}`,
         };
         // Continue running remaining scripts per spec, but don't change outcome.
-      } else if (!outcome.ok) {
+      }
+
+      if (!outcome.ok && outcome.exitCode !== 0) {
         this.log('warn', `hook ${event} failed`, {
           script,
           exitCode: outcome.exitCode,
@@ -77,7 +94,11 @@ export class DefaultHookRunner implements HookRunner {
         });
       }
     }
-    return blockResult ?? { blocked: false };
+
+    if (blockResult) {
+      return blockResult;
+    }
+    return lastParsedDecision ? { blocked: false, parsedDecision: lastParsedDecision } : { blocked: false };
   }
 
   private buildPayload(p: FirePayload): HookPayload {
@@ -100,6 +121,7 @@ export class DefaultHookRunner implements HookRunner {
 
   private runOne(script: string, json: string, env: NodeJS.ProcessEnv): Promise<RunOutcome> {
     return new Promise((resolve) => {
+      let stdout = '';
       let stderr = '';
       let timedOut = false;
       let settled = false;
@@ -124,7 +146,7 @@ export class DefaultHookRunner implements HookRunner {
           script,
           error: (err as Error).message,
         });
-        settle({ ok: false, exitCode: null, timedOut: false, stderr: '' });
+        settle({ ok: false, exitCode: null, timedOut: false, stderr: '', decision: undefined });
         return;
       }
 
@@ -151,32 +173,33 @@ export class DefaultHookRunner implements HookRunner {
           script,
           error: err.message,
         });
-        settle({ ok: false, exitCode: null, timedOut, stderr });
+        settle({ ok: false, exitCode: null, timedOut, stderr, decision: undefined });
       });
 
       child.stderr?.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
       });
-      // Without a stdout consumer the pipe buffer fills, the script blocks
-      // on its next write, and `close` never fires.
-      child.stdout?.on('data', () => {});
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
 
       child.on('close', (code, signal) => {
         clearTimeout(timer);
         if (timedOut) {
           this.log('warn', `hook timed out`, { script, timeoutMs: this.timeoutMs });
-          settle({ ok: false, exitCode: null, timedOut: true, stderr });
+          settle({ ok: false, exitCode: null, timedOut: true, stderr, decision: undefined });
           return;
         }
         if (code === 0) {
-          settle({ ok: true, exitCode: 0, timedOut: false, stderr });
+          const decision = tryParseDecision(stdout);
+          settle({ ok: true, exitCode: 0, timedOut: false, stderr, decision });
           return;
         }
         if (code === null && signal) {
-          settle({ ok: false, exitCode: null, timedOut: false, stderr });
+          settle({ ok: false, exitCode: null, timedOut: false, stderr, decision: undefined });
           return;
         }
-        settle({ ok: false, exitCode: code, timedOut: false, stderr });
+        settle({ ok: false, exitCode: code, timedOut: false, stderr, decision: undefined });
       });
 
       // Hooks may exit before we finish writing, which surfaces as EPIPE on
@@ -198,11 +221,65 @@ export class DefaultHookRunner implements HookRunner {
   }
 }
 
+const MAX_STRING_OUTPUT = 10_000;
+
 interface RunOutcome {
   ok: boolean;
   exitCode: number | null;
   timedOut: boolean;
   stderr: string;
+  decision: HookDecision | undefined;
+}
+
+function tryParseDecision(stdout: string): HookDecision | undefined {
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+
+    // Merge hookSpecificOutput into top-level for convenience
+    let merged = parsed;
+    if (
+      parsed.hookSpecificOutput &&
+      typeof parsed.hookSpecificOutput === 'object' &&
+      !Array.isArray(parsed.hookSpecificOutput)
+    ) {
+      merged = { ...(parsed.hookSpecificOutput as Record<string, unknown>), ...parsed };
+    }
+
+    const decision: HookDecision = {};
+
+    if (merged.decision === 'block') {
+      decision.decision = 'block';
+    }
+
+    const pickString = (key: string): string | undefined => {
+      const value = merged[key];
+      if (typeof value !== 'string') return undefined;
+      return value.length > MAX_STRING_OUTPUT ? value.slice(0, MAX_STRING_OUTPUT) : value;
+    };
+
+    decision.reason = pickString('reason');
+    decision.additionalContext = pickString('additionalContext');
+    decision.systemMessage = pickString('systemMessage');
+
+    if (merged.suppressOutput === true) {
+      decision.suppressOutput = true;
+    }
+
+    if (merged.continue === false) {
+      decision.continue = false;
+    }
+
+    if (parsed.hookSpecificOutput) {
+      decision.hookSpecificOutput = parsed.hookSpecificOutput;
+    }
+
+    return decision;
+  } catch {
+    return undefined;
+  }
 }
 
 function defaultLog(level: 'warn' | 'error', msg: string, meta?: Record<string, unknown>): void {

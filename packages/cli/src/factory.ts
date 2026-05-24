@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Compactor } from '@chimera/compaction';
-import { Agent, composeSystemPrompt, loadSession, newSessionId, writeSessionMetadata } from '@chimera/core';
+import { Agent, composeSystemPrompt, loadSession, newSessionId, writeSessionMetadata, type StopHook } from '@chimera/core';
 import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
 import {
@@ -201,6 +201,22 @@ export class CliAgentFactory implements AgentFactory {
     });
     const effectiveSystemPrompt = this.systemPromptOverride ?? composedSystemPrompt;
 
+    const hookRunner: HookRunner = new DefaultHookRunner({
+      cwd: init.cwd,
+      sessionId,
+    });
+
+    const stopHook: StopHook = {
+      async fire(payload) {
+        const result = await hookRunner.fire({ event: 'Stop', reason: payload.reason });
+        return {
+          blocked: result.blocked,
+          reason: result.reason,
+          additionalContext: result.parsedDecision?.additionalContext,
+        };
+      },
+    };
+
     const agent = new Agent({
       cwd: init.cwd,
       model: init.model,
@@ -216,6 +232,7 @@ export class CliAgentFactory implements AgentFactory {
       initialMode: activeMode?.name ?? requestedMode,
       compaction: this.compaction,
       compactor: this.compactor,
+      stopHook,
     });
 
     // Persist metadata immediately so the session appears in disk-scanned
@@ -225,11 +242,6 @@ export class CliAgentFactory implements AgentFactory {
     } catch {
       // best-effort
     }
-
-    const hookRunner: HookRunner = new DefaultHookRunner({
-      cwd: init.cwd,
-      sessionId: agent.session.id,
-    });
 
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
