@@ -12,3 +12,6 @@ pnpm-debug.log*
 .legato/
 *.plan.yaml
 zod-worker-feedback.txt
+.cerberus/cache/
+.cerberus/sessions/
+

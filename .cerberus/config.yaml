@@ -1,0 +1,40 @@
+checks:
+  - id: biome-lint
+    match: ["packages/**/*.{ts,tsx,js,jsx,json}"]
+    cmd: "node ./node_modules/@biomejs/biome/bin/biome lint {files}"
+    scope: files
+    concurrency_group: biome
+    output_format: raw
+    tags: [lint, typescript, fast]
+
+  - id: ts-typecheck
+    match: ["packages/**/*.{ts,tsx}"]
+    cmd: "pnpm tsc --noEmit"
+    scope: project
+    concurrency_group: ts
+    output_format: raw
+    tags: [build, typescript]
+
+  - id: ts-test
+    match: ["packages/**/*.{ts,tsx}"]
+    cmd: "pnpm -r test"
+    scope: project
+    concurrency_group: vitest
+    output_format: raw
+    tags: [test, typescript, slow]
+    timeout_seconds: 300
+
+profiles:
+  quick:
+    description: "biome lint on touched files"
+    tags:
+      include: [lint, typescript]
+      exclude: [build, test, slow]
+    timeout_seconds: 30
+    fail_fast: true
+
+  standard:
+    description: "biome lint (touched) + typecheck + tests"
+    include_profiles: [quick]
+    additional_checks: [ts-typecheck, ts-test]
+    timeout_seconds: 300

@@ -98,7 +98,9 @@ export class DefaultHookRunner implements HookRunner {
     if (blockResult) {
       return blockResult;
     }
-    return lastParsedDecision ? { blocked: false, parsedDecision: lastParsedDecision } : { blocked: false };
+    return lastParsedDecision
+      ? { blocked: false, parsedDecision: lastParsedDecision }
+      : { blocked: false };
   }
 
   private buildPayload(p: FirePayload): HookPayload {

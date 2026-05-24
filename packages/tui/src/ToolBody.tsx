@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import { lineDiff } from './diff';
-import type { ScrollbackEntry } from './scrollback';
+import type { ScrollbackEntry, ToolEntry } from './scrollback';
 import type { Theme } from './theme/types';
 
 export const TOOL_BODY_LIMITS = {
@@ -18,6 +18,7 @@ export interface ToolBodyProps {
 }
 
 export function renderToolBody(entry: ScrollbackEntry, ctx: ToolBodyProps): React.ReactElement[] {
+  if (entry.kind !== 'tool') return [];
   if (entry.toolError) return [];
   switch (entry.toolName) {
     case 'edit':
@@ -42,7 +43,7 @@ type HunkRow =
   | { kind: 'sep'; count: number };
 
 function renderEditBody(
-  entry: ScrollbackEntry,
+  entry: ToolEntry,
   { width, prefixLen, theme }: ToolBodyProps,
 ): React.ReactElement[] {
   const args = entry.toolArgs as { old_string?: string; new_string?: string } | undefined;
@@ -151,7 +152,7 @@ function renderEditBodyLegacy(
 }
 
 function renderWriteBody(
-  entry: ScrollbackEntry,
+  entry: ToolEntry,
   { width, prefixLen, theme }: ToolBodyProps,
 ): React.ReactElement[] {
   const args = entry.toolArgs as { content?: string } | undefined;
@@ -164,17 +165,20 @@ function renderWriteBody(
   const gutterWidth = String(visible.length).length + 1;
   const innerWidth = bodyInnerWidth(width, prefixLen, gutterWidth);
 
-  const rows: React.ReactElement[] = visible.map((line, i) => {
-    const num = String(i + 1).padStart(gutterWidth - 1, ' ');
-    return (
-      <Box key={`w${i}`} paddingLeft={prefixLen}>
+  const rows: React.ReactElement[] = [];
+  let rowNum = 1;
+  for (const line of visible) {
+    const num = String(rowNum).padStart(gutterWidth - 1, ' ');
+    rows.push(
+      <Box key={`w-${num}`} paddingLeft={prefixLen}>
         <Text>
           <Text color={theme.text.muted}>{num} </Text>
           <Text color={theme.text.muted}>{clip(line, innerWidth)}</Text>
         </Text>
-      </Box>
+      </Box>,
     );
-  });
+    rowNum += 1;
+  }
   if (lines.length > cap) {
     rows.push(moreLinesRow(`w-more`, lines.length - cap, prefixLen, theme));
   }
@@ -182,7 +186,7 @@ function renderWriteBody(
 }
 
 function renderBashBody(
-  entry: ScrollbackEntry,
+  entry: ToolEntry,
   { width, prefixLen, theme }: ToolBodyProps,
 ): React.ReactElement[] {
   const result = entry.toolResult as { stdout?: string; stderr?: string } | undefined;
@@ -199,13 +203,13 @@ function renderBashBody(
   if (stdout.length > 0) {
     const lines = stdout.split('\n');
     const cap = TOOL_BODY_LIMITS.bashStdoutLines;
-    lines.slice(0, cap).forEach((line, i) => {
+    for (let i = 0; i < lines.length && i < cap; i += 1) {
       rows.push(
         <Box key={`bo${i}`} paddingLeft={prefixLen}>
-          <Text color={theme.text.muted}>{clip(line, innerWidth)}</Text>
+          <Text color={theme.text.muted}>{clip(lines[i], innerWidth)}</Text>
         </Box>,
       );
-    });
+    }
     if (lines.length > cap) {
       rows.push(moreLinesRow('bo-more', lines.length - cap, prefixLen, theme));
     }
@@ -213,13 +217,13 @@ function renderBashBody(
   if (stderr.length > 0) {
     const lines = stderr.split('\n');
     const cap = TOOL_BODY_LIMITS.bashStderrLines;
-    lines.slice(0, cap).forEach((line, i) => {
+    for (let i = 0; i < lines.length && i < cap; i += 1) {
       rows.push(
         <Box key={`be${i}`} paddingLeft={prefixLen}>
-          <Text color={theme.status.error}>{clip(line, innerWidth)}</Text>
+          <Text color={theme.status.error}>{clip(lines[i], innerWidth)}</Text>
         </Box>,
       );
-    });
+    }
     if (lines.length > cap) {
       rows.push(moreLinesRow('be-more', lines.length - cap, prefixLen, theme));
     }

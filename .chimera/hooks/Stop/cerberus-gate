@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Cerberus quality gate for Chimera Stop events.
+# Runs the cerberus standard profile against files touched in this session
+# (or git-diff fallback). If any check fails, emits a JSON block decision
+# so the agent retries instead of stopping.
+
+# Allow through silently if cerberus is not installed.
+if ! command -v cerberus >/dev/null 2>&1; then
+    exit 0
+fi
+
+# Consume the JSON payload from stdin.
+cat >/dev/null
+
+# Run the gate against this session's tracked files.
+# Falls back to git diff if no session log exists.
+DECISION=$(cerberus run standard \
+    --session-id "${CHIMERA_SESSION_ID:-default}" \
+    --agent claude-code 2>/dev/null || true)
+
+if [ -n "$DECISION" ]; then
+    echo "$DECISION"
+fi
+
+exit 0

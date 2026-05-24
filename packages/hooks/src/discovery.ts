@@ -55,7 +55,7 @@ async function listExecutables(dir: string): Promise<string[]> {
   const out: string[] = [];
   for (const name of entries) {
     const full = join(dir, name);
-    let info;
+    let info: Awaited<ReturnType<typeof stat>>;
     try {
       info = await stat(full); // follows symlinks; broken symlinks throw
     } catch {

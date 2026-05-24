@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildTiers, parseFrontmatter, parseToolsCsv } from '@chimera/core';
 import { colorFor, isValidHex } from './color';
@@ -72,8 +72,8 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
       const fm = parsed.frontmatter;
 
       // Validate cycle boolean if present.
-      let cycleParsed: boolean | undefined = undefined;
-      const cycleRaw = fm['cycle'];
+      let cycleParsed: boolean | undefined;
+      const cycleRaw = fm.cycle;
       if (cycleRaw !== undefined) {
         const lower = cycleRaw.toLowerCase();
         if (lower === 'true' || lower === 'yes') cycleParsed = true;
@@ -82,8 +82,8 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
       }
 
       // Validate inline tools array if present.
-      let toolsParsed: string[] | undefined = undefined;
-      const toolsRaw = fm['tools'];
+      let toolsParsed: string[] | undefined;
+      const toolsRaw = fm.tools;
       if (toolsRaw !== undefined) {
         const trimmed = toolsRaw.trim();
         if (trimmed.length === 0) {
@@ -106,8 +106,8 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         }
       }
 
-      const name = (fm['name'] ?? '').trim();
-      const description = (fm['description'] ?? '').trim();
+      const name = (fm.name ?? '').trim();
+      const description = (fm.description ?? '').trim();
       if (!name || name !== stem) {
         warn(`modes: ${filePath} skipped — frontmatter "name" missing or does not match filename`);
         continue;
@@ -117,7 +117,7 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         continue;
       }
 
-      let rawColor = fm['color'];
+      let rawColor: string | undefined = fm.color;
       if (rawColor !== undefined && !isValidHex(rawColor)) {
         warn(`modes: ${filePath} has invalid color "${rawColor}"; falling back to derived color`);
         rawColor = undefined;
@@ -129,7 +129,7 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         description,
         body: parsed.body,
         tools: toolsParsed,
-        model: fm['model'],
+        model: fm.model,
         rawColor,
         colorHex,
         path: filePath,

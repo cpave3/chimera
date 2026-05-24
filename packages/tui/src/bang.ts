@@ -23,13 +23,12 @@ export async function runBangCommand(command: string, cwd: string): Promise<Bang
       cwd,
       encoding: 'utf-8',
       maxBuffer: BANG_MAX_BUFFER,
-      // @ts-expect-error - Node 20+ supports signal on exec; older versions ignore it.
       signal: abortController.signal,
     };
     const { stdout, stderr } = await execAsync(command, execOptions);
     return {
-      stdout: stdout ?? '',
-      stderr: stderr ?? '',
+      stdout: (stdout as string) ?? '',
+      stderr: (stderr as string) ?? '',
       exitCode: 0,
       timedOut: false,
       killedByBuffer: false,
@@ -54,7 +53,7 @@ export async function runBangCommand(command: string, cwd: string): Promise<Bang
       stdout: execErr.stdout ?? '',
       stderr: killedByBuffer
         ? `${execErr.stderr ?? ''}\n(truncated: output exceeded ${BANG_MAX_BUFFER} byte limit)`.trim()
-        : execErr.stderr ?? '',
+        : (execErr.stderr ?? ''),
       exitCode: typeof execErr.code === 'number' ? execErr.code : 1,
       timedOut: false,
       killedByBuffer,
