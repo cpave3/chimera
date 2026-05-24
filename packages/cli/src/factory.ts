@@ -1,8 +1,17 @@
-import { dirname } from 'node:path';
 import { tmpdir } from 'node:os';
+import { dirname } from 'node:path';
 import { Compactor } from '@chimera/compaction';
-import { Agent, composeSystemPrompt, loadSession, newSessionId, writeSessionMetadata, type StopHook } from '@chimera/core';
 import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
+import {
+  Agent,
+  composeSystemPrompt,
+  loadSession,
+  newSessionId,
+  type InterruptHook,
+  type StopHook,
+  type TimeoutHook,
+  writeSessionMetadata,
+} from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
 import {
   applyAllowlist,
@@ -11,8 +20,8 @@ import {
   type Mode,
   type ModeRegistry,
 } from '@chimera/modes';
-import { DefaultPermissionGate, GatedExecutor, type AutoApproveLevel } from '@chimera/permissions';
-import { loadProviders, resolveContextWindow, type ProvidersConfig } from '@chimera/providers';
+import { type AutoApproveLevel, DefaultPermissionGate, GatedExecutor } from '@chimera/permissions';
+import { loadProviders, type ProvidersConfig, resolveContextWindow } from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
@@ -95,6 +104,11 @@ export interface CliAgentFactoryOptions {
    * factory threads them into the Agent's constructor.
    */
   compactor?: Compactor;
+  /**
+   * Per-step wall-clock timeout for LLM `streamText` calls (ms).
+   * A value of `0` disables the timeout. Defaults to 120000.
+   */
+  responseTimeoutMs?: number;
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -115,6 +129,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
   private readonly compaction: CompactionConfig | undefined;
   private readonly compactor: Compactor | undefined;
+  private readonly responseTimeoutMs: number | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
    * The TUI consumes this via `getFormatters()` so its scrollback can render
@@ -141,6 +156,7 @@ export class CliAgentFactory implements AgentFactory {
     this.modelsConfig = opts.models ?? {};
     this.compaction = opts.compaction;
     this.compactor = opts.compactor;
+    this.responseTimeoutMs = opts.responseTimeoutMs;
   }
 
   /**
@@ -217,6 +233,17 @@ export class CliAgentFactory implements AgentFactory {
       },
     };
 
+    const timeoutHook: TimeoutHook = {
+      async fire() {
+        await hookRunner.fire({ event: 'Timeout' });
+      },
+    };
+    const interruptHook: InterruptHook = {
+      async fire() {
+        await hookRunner.fire({ event: 'Interrupt' });
+      },
+    };
+
     const agent = new Agent({
       cwd: init.cwd,
       model: init.model,
@@ -233,6 +260,9 @@ export class CliAgentFactory implements AgentFactory {
       compaction: this.compaction,
       compactor: this.compactor,
       stopHook,
+      timeoutHook,
+      interruptHook,
+      responseTimeoutMs: this.responseTimeoutMs,
     });
 
     // Persist metadata immediately so the session appears in disk-scanned
@@ -473,6 +503,6 @@ export function resolveChimeraInvocation(): { bin: string; preArgs: string[] } {
   return { bin: 'chimera', preArgs: [] };
 }
 
-function resolveChimeraBin(): string {
+function _resolveChimeraBin(): string {
   return resolveChimeraInvocation().bin;
 }

@@ -3,7 +3,7 @@ import { Compactor } from '@chimera/compaction';
 import type { ModelConfig, SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
-import { AgentRegistry, buildApp, startServer, type AgentFactory } from '@chimera/server';
+import { type AgentFactory, AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
 import { checkCompactionInvariant, resolveCompactionConfig } from '../compaction';
@@ -11,7 +11,7 @@ import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
-import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
+import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface RunOptions {
@@ -142,6 +142,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       models: config.models,
       compaction: compactionConfig,
       compactor,
+      responseTimeoutMs: config.responseTimeoutMs,
     });
     factory = cliFactory;
   }
@@ -179,24 +180,27 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   const server = await startServer({ app });
 
   const client = new ChimeraClient({ baseUrl: server.url });
+  let sessionId: string | undefined;
   try {
-    const { sessionId } = await client.createSession({
+    const sessionResult = await client.createSession({
       cwd: opts.cwd,
       model,
       sandboxMode,
       sessionId: opts.session,
     });
+    sessionId = sessionResult.sessionId;
 
     let finalText = '';
     let exitReason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout' = 'stop';
     let errorMessage: string | undefined;
 
+    const activeSessionId = sessionId;
     const sigintHandler = () => {
-      void client.interrupt(sessionId);
+      void client.interrupt(activeSessionId);
     };
     process.once('SIGINT', sigintHandler);
 
-    for await (const ev of client.send(sessionId, effectivePrompt)) {
+    for await (const ev of client.send(activeSessionId, effectivePrompt)) {
       if (opts.json) {
         process.stdout.write(`${JSON.stringify(ev)}\n`);
       } else if (ev.type === 'assistant_text_delta') {
@@ -222,11 +226,11 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     }
 
     if (sandboxOpts?.enabled && cliFactory) {
-      const docker = cliFactory.getSandbox(sessionId);
+      const docker = cliFactory.getSandbox(activeSessionId);
       if (docker && docker.mode() === 'overlay') {
         try {
           await finalizeOverlay({
-            sessionId,
+            sessionId: activeSessionId,
             cwd: opts.cwd,
             exitReason,
             applyOnSuccess: sandboxOpts.applyOnSuccess,
@@ -239,6 +243,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 
     return { exitCode: exitCodeFor(exitReason) };
   } finally {
+    // Best-effort delete the session so SessionEnd hooks fire.
+    if (sessionId) await client.deleteSession(sessionId).catch(() => {});
     if (cliFactory) {
       await cliFactory.dispose();
     }

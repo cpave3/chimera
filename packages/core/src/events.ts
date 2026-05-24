@@ -99,7 +99,7 @@ export type AgentEvent =
     }
   | {
       type: 'run_finished';
-      reason: 'stop' | 'max_steps' | 'error' | 'interrupted';
+      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout';
       error?: string;
     }
   | {
@@ -156,7 +156,7 @@ export type PersistedEvent =
     }
   | {
       type: 'run_finished';
-      reason: 'stop' | 'max_steps' | 'error' | 'interrupted';
+      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout';
       error?: string;
     }
   | {

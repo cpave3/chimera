@@ -5,7 +5,9 @@ export type HookEvent =
   | 'Stop'
   | 'SessionEnd'
   | 'CompactionStart'
-  | 'CompactionEnd';
+  | 'CompactionEnd'
+  | 'Timeout'
+  | 'Interrupt';
 
 export const PRE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(['PermissionRequest']);
 
@@ -17,6 +19,8 @@ export const ALL_HOOK_EVENTS: readonly HookEvent[] = [
   'SessionEnd',
   'CompactionStart',
   'CompactionEnd',
+  'Timeout',
+  'Interrupt',
 ];
 
 export interface HookPayloadBase {
@@ -55,6 +59,14 @@ export interface SessionEndPayload extends HookPayloadBase {
   event: 'SessionEnd';
 }
 
+export interface TimeoutPayload extends HookPayloadBase {
+  event: 'Timeout';
+}
+
+export interface InterruptPayload extends HookPayloadBase {
+  event: 'Interrupt';
+}
+
 export interface CompactionStartPayload extends HookPayloadBase {
   event: 'CompactionStart';
   reason: string;
@@ -72,6 +84,8 @@ export type HookPayload =
   | PermissionRequestPayload
   | StopPayload
   | SessionEndPayload
+  | TimeoutPayload
+  | InterruptPayload
   | CompactionStartPayload
   | CompactionEndPayload;
 
@@ -93,6 +107,8 @@ export type FirePayload =
     }
   | { event: 'Stop'; reason: string }
   | { event: 'SessionEnd' }
+  | { event: 'Timeout' }
+  | { event: 'Interrupt' }
   | { event: 'CompactionStart'; reason: string }
   | { event: 'CompactionEnd'; success: boolean; error?: string };
 

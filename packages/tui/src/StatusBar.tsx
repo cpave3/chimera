@@ -36,7 +36,10 @@ export function StatusBar({
     <Box height={1} overflow="hidden">
       <Box>
         {leftItems.map((item, i) => (
-          <Box key={`l-${i}`}>
+          <Box
+            // biome-ignore lint/suspicious/noArrayIndexKey: opaque React nodes, index is stable ordering
+            key={`l-${i}`}
+          >
             {i > 0 && <Text color={separatorColor}>{separator}</Text>}
             {item}
           </Box>
@@ -47,7 +50,10 @@ export function StatusBar({
           <Box flexGrow={1} />
           <Box>
             {rightItems.map((item, i) => (
-              <Box key={`r-${i}`}>
+              <Box
+                // biome-ignore lint/suspicious/noArrayIndexKey: opaque React nodes, index is stable ordering
+                key={`r-${i}`}
+              >
                 {i > 0 && <Text color={separatorColor}>{separator}</Text>}
                 {item}
               </Box>

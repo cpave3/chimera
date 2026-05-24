@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { CompactionConfig, ModelConfig } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
-import type { ProvidersConfig, ProviderSpec } from '@chimera/providers';
+import type { ProviderSpec, ProvidersConfig } from '@chimera/providers';
 
 export interface ModelOptions {
   contextWindow?: number;
@@ -43,6 +43,11 @@ export interface ChimeraConfig {
   defaultMode?: string;
   /** Ordered list cycled by Shift+Tab in the TUI. Defaults to ["build", "plan"]. */
   cycleModes?: string[];
+  /**
+   * Per-step wall-clock timeout for LLM `streamText` calls (ms).
+   * A value of `0` disables the timeout. Defaults to 120000.
+   */
+  responseTimeoutMs?: number;
   /**
    * Optional compaction settings for context-window management.
    * Defaults are `enabled: true`, `reserveTokens: 16384`, `keepRecentTokens: 20000`.

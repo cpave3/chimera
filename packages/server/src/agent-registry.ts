@@ -112,6 +112,33 @@ export interface AgentRegistryOptions {
   loadModes?: ModesLoader;
 }
 
+const DEFAULT_DELETE_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (reason) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(reason);
+      },
+    );
+  });
+}
+
 export class AgentRegistry {
   private readonly entries = new Map<SessionId, AgentEntry>();
   private readonly factory: AgentFactory;
@@ -192,14 +219,14 @@ export class AgentRegistry {
     if (!entry) return false;
     entry.agent.interrupt();
     // Wait for any in-flight run (and its final persistSession) to settle so
-    // the caller can safely tear down the session directory afterwards.
+    // the caller can safely tear down the session directory afterwards. Cap
+    // with a timeout so a hung backend can't block SessionEnd forever.
     if (entry.activeRun) {
       try {
-        await entry.activeRun;
+        await withTimeout(entry.activeRun, DEFAULT_DELETE_TIMEOUT_MS, `delete(${id}) activeRun`);
       } catch (err) {
-        // run errors already surfaced via the event bus; we only need it done
         console.debug(
-          `[agent-registry] delete(${id}): activeRun rejection swallowed:`,
+          `[agent-registry] delete(${id}): activeRun rejection/timed-out swallowed:`,
           err instanceof Error ? err.message : String(err),
         );
       }
@@ -207,10 +234,14 @@ export class AgentRegistry {
     // Also wait for any active compaction to finish before tearing down.
     if (entry.activeCompaction) {
       try {
-        await entry.activeCompaction;
+        await withTimeout(
+          entry.activeCompaction,
+          DEFAULT_DELETE_TIMEOUT_MS,
+          `delete(${id}) activeCompaction`,
+        );
       } catch (err) {
         console.debug(
-          `[agent-registry] delete(${id}): activeCompaction rejection swallowed:`,
+          `[agent-registry] delete(${id}): activeCompaction rejection/timed-out swallowed:`,
           err instanceof Error ? err.message : String(err),
         );
       }
@@ -274,8 +305,7 @@ export class AgentRegistry {
   ): Promise<'injected' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive || entry.injectActive)
-      return 'already-running';
+    if (entry.runActive || entry.compactionActive || entry.injectActive) return 'already-running';
     entry.injectActive = true;
     try {
       await entry.agent.appendMessage(content);

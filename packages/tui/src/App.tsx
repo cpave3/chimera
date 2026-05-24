@@ -7,13 +7,12 @@ import type { CommandRegistry } from '@chimera/commands';
 import type {
   AgentEvent,
   ModelConfig,
-  RememberScope,
   SandboxMode,
   SessionId,
   SessionInfo,
   Usage,
 } from '@chimera/core';
-import type { Mode, ModeRegistry } from '@chimera/modes';
+import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { Header } from './Header';
 import {
@@ -156,6 +155,21 @@ export function App(props: AppProps): React.ReactElement {
     sessionId: SessionId;
     label: string;
   }>({ client: props.client, sessionId: props.sessionId, label: 'parent' });
+  const activeSessionRef = useRef(activeSession);
+  useEffect(() => {
+    activeSessionRef.current = activeSession;
+  }, [activeSession]);
+  const cleanupAndExit = async () => {
+    const session = activeSessionRef.current;
+    if (session) {
+      try {
+        await session.client.deleteSession(session.sessionId);
+      } catch {
+        // best-effort
+      }
+    }
+    app.exit();
+  };
   const [overlayPicker, setOverlayPicker] = useState<OverlayDiffEntry[] | null>(null);
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null);
   // Tracks the active session's parentId for header display; refreshed via
@@ -533,7 +547,7 @@ export function App(props: AppProps): React.ReactElement {
       }
       const now = Date.now();
       if (now - lastCtrlC < 2000) {
-        app.exit();
+        void cleanupAndExit();
         return;
       }
       setLastCtrlC(now);
@@ -546,7 +560,7 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
     if (key.ctrl && char === 'd') {
-      app.exit();
+      void cleanupAndExit();
       return;
     }
     if (key.ctrl && char === 'z') {
@@ -826,7 +840,7 @@ export function App(props: AppProps): React.ReactElement {
         setStaticEpoch((n) => n + 1);
         return;
       case '/exit':
-        app.exit();
+        void cleanupAndExit();
         return;
       case '/model': {
         if (arg) {
@@ -1443,9 +1457,15 @@ export function App(props: AppProps): React.ReactElement {
     return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
   }, [committedEntries, childrenByParent, showHeader]);
 
-  const cwdLeft: StatusBarWidget[] = [<Text color={theme.accent.primary}>{props.cwd}</Text>];
+  const cwdLeft: StatusBarWidget[] = [
+    <Text key="cwd" color={theme.accent.primary}>
+      {props.cwd}
+    </Text>,
+  ];
   const cwdRight: StatusBarWidget[] = [
-    <Text color={theme.text.muted}>{`[sandbox:${sandboxMode}]`}</Text>,
+    <Text key="sandbox" color={theme.text.muted}>
+      {`[sandbox:${sandboxMode}]`}
+    </Text>,
   ];
   const activeModeObj = props.modes?.find(activeModeName);
   const pendingModeObj = pendingModeName ? props.modes?.find(pendingModeName) : undefined;
@@ -1467,13 +1487,22 @@ export function App(props: AppProps): React.ReactElement {
     );
   const modelLeft: StatusBarWidget[] = [
     modeWidget,
-    <Text color={theme.accent.primary}>{currentModelRef}</Text>,
-    <Text color={theme.text.muted}>{`session ${activeSession.sessionId.slice(-8)}`}</Text>,
-    activeParentId ? <Text color={theme.accent.secondary}>(forked)</Text> : null,
+    <Text key="model" color={theme.accent.primary}>
+      {currentModelRef}
+    </Text>,
+    <Text key="session" color={theme.text.muted}>
+      {`session ${activeSession.sessionId.slice(-8)}`}
+    </Text>,
+    activeParentId ? (
+      <Text key="forked" color={theme.accent.secondary}>
+        (forked)
+      </Text>
+    ) : null,
   ];
   const modelRight: StatusBarWidget[] = [
     usageState && (
       <UsageWidget
+        key="usage"
         usage={usageState.usage}
         contextWindow={usageState.contextWindow}
         usedContextTokens={usageState.usedContextTokens}
@@ -1482,12 +1511,24 @@ export function App(props: AppProps): React.ReactElement {
     ),
   ];
   const hintsLeft: StatusBarWidget[] = [
-    <Text color={theme.text.muted}>{'\\<Enter> newline'}</Text>,
-    <Text color={theme.text.muted}>Ctrl+G editor</Text>,
-    <Text color={theme.text.muted}>Ctrl+Z suspend</Text>,
-    <Text color={theme.text.muted}>Esc/Ctrl+C interrupt</Text>,
-    <Text color={theme.text.muted}>/ commands</Text>,
-    <Text color={theme.text.muted}>Shift+Tab cycle mode</Text>,
+    <Text key="newline" color={theme.text.muted}>
+      {'\\<Enter> newline'}
+    </Text>,
+    <Text key="editor" color={theme.text.muted}>
+      Ctrl+G editor
+    </Text>,
+    <Text key="suspend" color={theme.text.muted}>
+      Ctrl+Z suspend
+    </Text>,
+    <Text key="interrupt" color={theme.text.muted}>
+      Esc/Ctrl+C interrupt
+    </Text>,
+    <Text key="commands" color={theme.text.muted}>
+      / commands
+    </Text>,
+    <Text key="cycle-mode" color={theme.text.muted}>
+      Shift+Tab cycle mode
+    </Text>,
   ];
 
   // Steady-state during a run: the buffer is empty and the spinner /
@@ -1678,6 +1719,7 @@ function renderPromptLines(
     const showCursor = idx === cursorLine && !editorOpen;
     if (!showCursor) {
       return (
+        // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
         <Box key={idx}>
           <Text color={isFirst ? color : undefined}>{prefix}</Text>
           <Text>{lineText}</Text>
@@ -1693,6 +1735,7 @@ function renderPromptLines(
     // because Ink treats each as a separate flex item.
     const lineWithCursor = `${pre}\x1b[7m${atChar}\x1b[27m${post}`;
     return (
+      // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
       <Box key={idx}>
         <Text color={isFirst ? color : undefined}>{prefix}</Text>
         <Text>{lineWithCursor}</Text>
@@ -1756,6 +1799,7 @@ function renderEntryLines(
           {`: ${lines[0] ?? ''}`}
         </Text>
         {lines.slice(1).map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
           <Box key={i} paddingLeft={prefix.length}>
             <Text>{line}</Text>
           </Box>
@@ -1782,12 +1826,14 @@ function renderEntryLines(
           <Text color={theme.accent.secondary}>{textLines[0] ?? ''}</Text>
         </Text>
         {textLines.slice(1).map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
           <Box key={i} paddingLeft={prefixLen}>
             <Text color={theme.accent.secondary}>{line}</Text>
           </Box>
         ))}
         {entry.detail !== undefined &&
           wrapToLines(entry.detail, width, prefixLen).map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
             <Box key={`d${i}`} paddingLeft={prefixLen}>
               <Text color={theme.text.muted}>{line}</Text>
             </Box>
@@ -1809,12 +1855,14 @@ function renderEntryLines(
                 <Text color={theme.text.muted}>{childLines[0] ?? ''}</Text>
               </Text>
               {childLines.slice(1).map((line, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
                 <Box key={i} paddingLeft={connector.length}>
                   <Text color={theme.text.muted}>{line}</Text>
                 </Box>
               ))}
               {child.detail !== undefined &&
                 wrapToLines(child.detail, width, prefixLen + connector.length).map((line, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
                   <Box key={`cd${i}`} paddingLeft={connector.length}>
                     <Text color={theme.text.muted}>{line}</Text>
                   </Box>
@@ -1829,6 +1877,7 @@ function renderEntryLines(
       out.push(
         <Box key={`${entry.id}:e`} flexDirection="column" paddingLeft={prefixLen}>
           {errLines.map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
             <Text key={i} color={theme.status.error}>
               {line}
             </Text>
@@ -1853,6 +1902,7 @@ function renderEntryLines(
           <Text color={theme.text.muted}>{lines[0] ?? ''}</Text>
         </Text>
         {lines.slice(1).map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
           <Box key={i} paddingLeft={prefix.length}>
             <Text color={theme.text.muted}>{line}</Text>
           </Box>
@@ -1863,6 +1913,7 @@ function renderEntryLines(
   if (entry.kind === 'info' || entry.kind === 'mode_change') {
     const lines = wrapToLines(entry.text, width, 0);
     return lines.map((line, i) => (
+      // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
       <Text key={`${entry.id}:${i}`} color={theme.text.muted}>
         {line}
       </Text>
@@ -1870,6 +1921,7 @@ function renderEntryLines(
   }
   const lines = wrapToLines(entry.text, width, 0);
   return lines.map((line, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
     <Text key={`${entry.id}:${i}`} color={theme.status.error}>
       {line}
     </Text>

@@ -1,10 +1,11 @@
-import { stepCountIs, streamText, type ModelMessage, type LanguageModel, type ToolSet } from 'ai';
 import { resolve } from 'node:path';
+import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
 import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
-import { type CallId, type SessionId, newCallId, newRequestId, newSessionId } from './ids';
+
+import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
 import {
   appendSessionEvent,
@@ -14,17 +15,17 @@ import {
   writeSessionMetadata,
 } from './persistence';
 import {
-  DEFAULT_SESSION_MODE,
   type CompactionConfig,
   type CompactorApi,
+  DEFAULT_SESSION_MODE,
   type ExecutionTarget,
+  emptyUsage,
   type ModelConfig,
   type RememberScope,
   type SandboxMode,
   type Session,
   type ToolCallRecord,
   type UsageStep,
-  emptyUsage,
 } from './types';
 import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
@@ -34,6 +35,14 @@ export interface StopHook {
     reason?: string;
     additionalContext?: string;
   }>;
+}
+
+export interface TimeoutHook {
+  fire(): Promise<void>;
+}
+
+export interface InterruptHook {
+  fire(): Promise<void>;
 }
 
 export interface AgentOptions {
@@ -92,6 +101,24 @@ export interface AgentOptions {
    * reason and loops into a fresh LLM turn instead of finishing.
    */
   stopHook?: StopHook;
+  /**
+   * Optional timeout hook. When provided, fired synchronously when a step
+   * exceeds `responseTimeoutMs` and the agent aborts. Purely observational;
+   * the agent always proceeds to emit `run_finished { reason: "timeout" }`
+   * after the hook resolves.
+   */
+  timeoutHook?: TimeoutHook;
+  /**
+   * Optional interrupt hook. When provided, fired synchronously when the
+   * run terminates with reason `"interrupted"` (e.g. from `Agent.interrupt()`
+   * or Ctrl+C in the TUI). Purely observational.
+   */
+  interruptHook?: InterruptHook;
+  /**
+   * Per-step wall-clock timeout for LLM `streamText` calls (ms).
+   * A value of `0` disables the timeout. Defaults to 120000.
+   */
+  responseTimeoutMs?: number;
 }
 
 export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<PermissionResolution>;
@@ -409,7 +436,9 @@ export class Agent {
    * session's model and languageModel, persists metadata, and returns `applied`.
    * On a running agent, returns `running` so the caller may surface a message.
    */
-  setUserModelOverride(ref: string | null):
+  setUserModelOverride(
+    ref: string | null,
+  ):
     | { status: 'applied'; from: string; to: string }
     | { status: 'running' }
     | { status: 'invalid'; error: string } {
@@ -797,7 +826,7 @@ export class Agent {
 
     let stepNumber = 0;
     let terminalStepCount = 0;
-    let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' = 'stop';
+    let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' = 'stop';
     let errorMessage: string | undefined;
     let stopRetryCount = 0;
 
@@ -810,9 +839,13 @@ export class Agent {
 
       terminalReason = 'stop';
       errorMessage = undefined;
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
 
       try {
         for (let iteration = 0; iteration < safetyMaxIterations; iteration++) {
+          timedOut = false;
+          timeoutHandle = undefined;
           // Map AI SDK tool call id -> our CallId, name, target for tool-result correlation.
           const callInfo = new Map<
             string,
@@ -830,6 +863,14 @@ export class Agent {
             cachedInputTokens: 0,
             totalTokens: 0,
           };
+
+          const responseTimeoutMs = this.opts.responseTimeoutMs ?? 120_000;
+          if (responseTimeoutMs > 0) {
+            timeoutHandle = setTimeout(() => {
+              timedOut = true;
+              this.abortController.abort();
+            }, responseTimeoutMs);
+          }
 
           const stream = streamText({
             model: this.opts.languageModel,
@@ -890,10 +931,7 @@ export class Agent {
                       text: shadow.buf,
                     });
                     emittedTextById.set(part.id, shadow.buf);
-                  } else if (
-                    shadow.buf.length > 0 &&
-                    shadow.buf !== emittedTextById.get(part.id)
-                  ) {
+                  } else if (shadow.buf.length > 0 && shadow.buf !== emittedTextById.get(part.id)) {
                     // Buf is a strict prefix of stored content — model emitted a
                     // shorter "new" text under the same id. Surface it as new.
                     syntheticTextCounter += 1;
@@ -997,7 +1035,8 @@ export class Agent {
                 const info = callInfo.get(part.toolCallId);
                 if (!info) break;
                 const errorValue = (part as { error?: unknown }).error;
-                const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+                const message =
+                  errorValue instanceof Error ? errorValue.message : String(errorValue);
                 const record = this.session.toolCalls.find(
                   (toolCall) => toolCall.callId === info.callId,
                 );
@@ -1073,12 +1112,13 @@ export class Agent {
                 break;
               }
               case 'abort': {
-                terminalReason = 'interrupted';
+                terminalReason = timedOut ? 'timeout' : 'interrupted';
                 break;
               }
               case 'error': {
                 terminalReason = 'error';
-                errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
+                errorMessage =
+                  part.error instanceof Error ? part.error.message : String(part.error);
                 break;
               }
               default:
@@ -1086,6 +1126,9 @@ export class Agent {
                 break;
             }
           }
+
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
 
           // After the stream finishes, attach response messages.
           const response = await stream.response;
@@ -1148,7 +1191,10 @@ export class Agent {
           // best-effort
         }
       } catch (err) {
-        if (this.abortController.signal.aborted) {
+        if (timedOut) {
+          terminalReason = 'timeout';
+          errorMessage = `step timed out after ${this.opts.responseTimeoutMs ?? 120_000}ms`;
+        } else if (this.abortController.signal.aborted) {
           terminalReason = 'interrupted';
         } else {
           terminalReason = 'error';
@@ -1156,7 +1202,14 @@ export class Agent {
         }
       }
 
-      // Stop hook: only for clean "stop", not error/interrupted.
+      if (timedOut && this.opts.timeoutHook) {
+        await this.opts.timeoutHook.fire();
+      }
+      if (terminalReason === 'interrupted' && this.opts.interruptHook) {
+        await this.opts.interruptHook.fire();
+      }
+
+      // Stop hook: only for clean "stop", not error/interrupted/timeout.
       if (terminalReason === 'stop' && this.opts.stopHook && stopRetryCount < Agent.MAX_STOP_RETRIES) {
         const hookResult = await this.opts.stopHook.fire({ reason: terminalReason });
         if (hookResult.blocked) {
@@ -1180,7 +1233,8 @@ export class Agent {
       break; // No more retries.
     }
 
-    this.session.status = terminalReason === 'error' ? 'error' : 'idle';
+    this.session.status =
+      terminalReason === 'error' || terminalReason === 'timeout' ? 'error' : 'idle';
     try {
       await persistSession(
         this.session,

@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { tool, type LanguageModel, type ToolSet } from 'ai';
+import { type LanguageModel, type ToolSet, tool } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { Agent, buildPermissionRequest } from '../src/agent';
 import type { ModelConfig } from '../src/types';
 
@@ -1188,6 +1188,170 @@ describe('Agent.signal', () => {
       expect(result.status).toBe('running');
       agent.interrupt();
       await runPromise;
+    });
+  });
+
+  describe('response timeout', () => {
+    it('emits run_finished { reason: "timeout" } when stream stalls', async () => {
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: silentModel(),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        responseTimeoutMs: 50,
+      });
+
+      const events: string[] = [];
+      for await (const ev of agent.run('hi')) {
+        events.push(ev.type);
+      }
+
+      expect(events[events.length - 1]).toBe('run_finished');
+    });
+
+    it('fires timeoutHook when step times out', async () => {
+      let timeoutFired = false;
+      const timeoutHook = {
+        async fire() {
+          timeoutFired = true;
+        },
+      };
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: silentModel(),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        responseTimeoutMs: 50,
+        timeoutHook,
+      });
+
+      const events = [] as { type: string; reason?: string }[];
+      for await (const ev of agent.run('hi')) {
+        events.push({ type: ev.type, reason: (ev as { reason?: string }).reason });
+      }
+
+      expect(timeoutFired).toBe(true);
+      const finished = events.find((e) => e.type === 'run_finished');
+      expect(finished?.reason).toBe('timeout');
+    });
+
+    it('disables timeout when responseTimeoutMs is 0', async () => {
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: silentModel(),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        responseTimeoutMs: 0,
+      });
+
+      // With timeout disabled, a stalled run never finishes on its own.
+      // Interrupt it after a short delay to prove it was still running.
+      const drained: { type: string; reason?: string }[] = [];
+      const drain = (async () => {
+        for await (const ev of agent.run('hi')) {
+          drained.push({ type: ev.type, reason: (ev as { reason?: string }).reason });
+        }
+      })();
+
+      await new Promise((r) => setTimeout(r, 10));
+      expect(drained.find((e) => e.type === 'run_finished')).toBeUndefined();
+      agent.interrupt();
+      await drain;
+      expect(drained[drained.length - 1]?.reason).toBe('interrupted');
+    });
+
+    it('fires timeoutHook but not stopHook on timeout', async () => {
+      let timeoutFired = false;
+      let stopFired = false;
+      const timeoutHook = {
+        async fire() {
+          timeoutFired = true;
+        },
+      };
+      const stopHook = {
+        async fire() {
+          stopFired = true;
+          return { blocked: false };
+        },
+      };
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: silentModel(),
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        responseTimeoutMs: 50,
+        timeoutHook,
+        stopHook,
+      });
+
+      for await (const ev of agent.run('hi')) {
+        if (ev.type === 'run_finished') break;
+      }
+
+      expect(timeoutFired).toBe(true);
+      expect(stopFired).toBe(false);
+    });
+  });
+
+  describe('interrupt hook', () => {
+    it('fires interruptHook on manual interrupt()', async () => {
+      let interruptFired = false;
+      const interruptHook = {
+        async fire() {
+          interruptFired = true;
+        },
+      };
+      // A long stream so we can interrupt mid-flight.
+      const model = new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({
+            initialDelayInMs: 10,
+            chunkDelayInMs: 50,
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'hello' },
+            ],
+          }),
+        }),
+      }) as unknown as LanguageModel;
+
+      const agent = new Agent({
+        cwd: '/tmp',
+        model: makeModel(),
+        languageModel: model,
+        tools: {} as ToolSet,
+        sandboxMode: 'off',
+        home,
+        contextWindow: 200_000,
+        interruptHook,
+      });
+
+      // Drain async generator in background so we can interrupt.
+      const drain = (async () => {
+        for await (const _ev of agent.run('go')) {
+          // consume
+        }
+      })();
+      await new Promise((r) => setTimeout(r, 20));
+      agent.interrupt();
+      await drain;
+
+      expect(interruptFired).toBe(true);
     });
   });
 });
