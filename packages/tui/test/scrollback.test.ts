@@ -856,16 +856,16 @@ describe('Scrollback.rehydrateFromSession', () => {
       expect(scrollback.getSnapshot()[0]!.text).toBe('first');
     });
 
-    it('subscribers are notified after a microtask batch when entries change', async () => {
+    it('subscribers are notified after a macrotask batch when entries change', async () => {
       const scrollback = new Scrollback();
       const listener = vi.fn();
       scrollback.subscribe(listener);
 
       scrollback.addInfo('a');
-      // Before microtask flush: listener should not have been called yet
+      // Before macrotask flush: listener should not have been called yet
       expect(listener).not.toHaveBeenCalled();
 
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(listener).toHaveBeenCalledTimes(1);
     });
@@ -879,7 +879,7 @@ describe('Scrollback.rehydrateFromSession', () => {
       scrollback.addInfo('b');
       scrollback.addInfo('c');
 
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(listener).toHaveBeenCalledTimes(1);
       expect(scrollback.getSnapshot()).toHaveLength(3);
@@ -892,7 +892,7 @@ describe('Scrollback.rehydrateFromSession', () => {
       unsub();
 
       scrollback.addInfo('x');
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -906,7 +906,7 @@ describe('Scrollback.rehydrateFromSession', () => {
       scrollback.apply({ type: 'assistant_text_delta', delta: 'lo' });
       scrollback.apply({ type: 'tool_call_start', callId: 'c1', name: 'bash', args: {}, target: 'host' });
 
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(listener).toHaveBeenCalledTimes(1);
       const snapshot = scrollback.getSnapshot();
@@ -925,7 +925,7 @@ describe('Scrollback.rehydrateFromSession', () => {
         args: { command: 'echo hi' },
         target: 'host',
       });
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       listener.mockClear();
 
@@ -935,7 +935,7 @@ describe('Scrollback.rehydrateFromSession', () => {
         result: { output: 'hi' },
         durationMs: 5,
       });
-      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(listener).toHaveBeenCalledTimes(1);
     });

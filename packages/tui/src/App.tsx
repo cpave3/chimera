@@ -489,6 +489,17 @@ export function App(props: AppProps): React.ReactElement {
       setRunning(false);
       setStreaming(false);
       setStreamingEntryId(null);
+      if (ev.reason !== 'stop') {
+        const statusMsg =
+          ev.reason === 'max_steps'
+            ? "run ended: max steps reached; type 'continue' to resume"
+            : ev.reason === 'interrupted'
+              ? 'run interrupted'
+              : ev.reason === 'timeout'
+                ? 'run timed out'
+                : `run error: ${ev.error ?? 'unknown'}`;
+        scrollback.addInfo(statusMsg);
+      }
     } else if (ev.type === 'usage_updated') {
       setUsageState({
         usage: ev.usage,

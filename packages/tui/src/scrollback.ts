@@ -149,15 +149,17 @@ export class Scrollback {
     this._snapshot = [...this.entries];
   }
 
+  private flushTimeout: ReturnType<typeof setTimeout> | undefined;
+
   private scheduleFlush(): void {
     if (this._flushScheduled) return;
     this._flushScheduled = true;
-    queueMicrotask(() => {
+    this.flushTimeout = setTimeout(() => {
       this._flushScheduled = false;
       for (const listener of this._listeners) {
         listener();
       }
-    });
+    }, 0);
   }
 
   addUserMessage(content: string): void {
@@ -223,6 +225,11 @@ export class Scrollback {
     this.subagentParents.clear();
     this.subagentToolsByCallId.clear();
     this.suppressUserContent = null;
+    if (this.flushTimeout) {
+      clearTimeout(this.flushTimeout);
+      this.flushTimeout = undefined;
+      this._flushScheduled = false;
+    }
     this.updateSnapshot();
     this.scheduleFlush();
   }
