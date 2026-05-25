@@ -1,5 +1,5 @@
 import { Text } from 'ink';
-import React from 'react';
+import React, { memo } from 'react';
 import type { Usage } from '@chimera/core';
 import { useTheme } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
@@ -19,7 +19,27 @@ export function pickUsageColor(pct: number | null, theme: Theme): string {
   return theme.text.muted;
 }
 
-export function UsageWidget(props: UsageWidgetProps): React.ReactElement {
+function sameUsageStep(a: NonNullable<Usage['lastStep']>, b: NonNullable<Usage['lastStep']>): boolean {
+  return (
+    a.inputTokens === b.inputTokens &&
+    a.outputTokens === b.outputTokens &&
+    a.cachedInputTokens === b.cachedInputTokens &&
+    a.totalTokens === b.totalTokens
+  );
+}
+
+export function sameUsage(a: Usage, b: Usage): boolean {
+  return (
+    a.inputTokens === b.inputTokens &&
+    a.outputTokens === b.outputTokens &&
+    a.cachedInputTokens === b.cachedInputTokens &&
+    a.totalTokens === b.totalTokens &&
+    a.stepCount === b.stepCount &&
+    (a.lastStep == null ? b.lastStep == null : b.lastStep != null && sameUsageStep(a.lastStep, b.lastStep))
+  );
+}
+
+export const UsageWidget = memo(function UsageWidget(props: UsageWidgetProps): React.ReactElement {
   const theme = useTheme();
   const { usage, contextWindow, usedContextTokens, unknownWindow } = props;
   const pct = contextWindow > 0 ? Math.round((usedContextTokens / contextWindow) * 100) : null;
@@ -35,6 +55,15 @@ export function UsageWidget(props: UsageWidgetProps): React.ReactElement {
       ? `${used} / —${delta ? ` ${delta}` : ''}`
       : `${used} / ${winStr}${pctStr}${delta ? ` ${delta}` : ''}`;
   return <Text color={color}>{text}</Text>;
+}, arePropsEqual);
+
+function arePropsEqual(prev: UsageWidgetProps, next: UsageWidgetProps): boolean {
+  return (
+    prev.contextWindow === next.contextWindow &&
+    prev.usedContextTokens === next.usedContextTokens &&
+    prev.unknownWindow === next.unknownWindow &&
+    sameUsage(prev.usage, next.usage)
+  );
 }
 
 export function formatTokens(n: number): string {

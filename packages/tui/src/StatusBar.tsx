@@ -14,12 +14,64 @@ export interface StatusBarProps {
   separatorColor?: string;
 }
 
+/** Shallow comparison for plain objects used as React props.
+ *  Only recurses into plain objects and arrays; anything else falls back
+ *  to `Object.is`. This keeps the comparison O(tree-size) and safe from
+ *  prototype-chain or circular-reference problems. */
+function samePlainObject(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.hasOwn(b, key)) return false;
+    // Values compared via sameNode so nested primitives / arrays / elements
+    // are handled consistently.
+    if (!sameNode(a[key], b[key])) return false;
+  }
+  return true;
+}
+
+/** Deep structural equality for React nodes used in StatusBar widgets.
+ *  Falls back to reference equality for non-serialisable props (functions,
+ *  refs, etc.) so the comparison stays O(tree-size) and conservative. */
+function sameNode(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (a == null || b == null) return a === b;
+
+  const aIsElement = React.isValidElement(a);
+  const bIsElement = React.isValidElement(b);
+  if (aIsElement !== bIsElement) return false;
+
+  if (aIsElement && bIsElement) {
+    if (a.type !== b.type) return false;
+    if (a.key !== b.key) return false;
+    const aProps = a.props as Record<string, unknown>;
+    const bProps = b.props as Record<string, unknown>;
+    return samePlainObject(aProps, bProps);
+  }
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return sameArray(a, b);
+  }
+
+  if (
+    typeof a === 'object' &&
+    typeof b === 'object' &&
+    Object.getPrototypeOf(a) === Object.prototype &&
+    Object.getPrototypeOf(b) === Object.prototype
+  ) {
+    return samePlainObject(a as Record<string, unknown>, b as Record<string, unknown>);
+  }
+
+  return false;
+}
+
 function sameArray(a: unknown[] | undefined, b: unknown[] | undefined): boolean {
-  if (a === b) return true;
+  if (Object.is(a, b)) return true;
   if (!a || !b) return false;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
+    if (!sameNode(a[i], b[i])) return false;
   }
   return true;
 }
@@ -33,7 +85,8 @@ function sameArray(a: unknown[] | undefined, b: unknown[] | undefined): boolean 
  *
  *     <StatusBar right={[scrolling && <Indicator />]} />
  *
- * Memoised so that referentially-stable widget arrays avoid re-renders.
+ * Memoised so that structurally-equal widget arrays avoid re-renders, even
+ * when React has recreated the JSX elements (e.g. useMemo cache eviction).
  */
 export const StatusBar = memo(function StatusBar({
   left = [],

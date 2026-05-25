@@ -3,7 +3,7 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { emptyUsage, type Usage } from '@chimera/core';
-import { formatTokens, pickUsageColor, UsageWidget } from '../src/UsageWidget';
+import { formatTokens, pickUsageColor, sameUsage, UsageWidget } from '../src/UsageWidget';
 import { defaultTheme } from '../src/theme/tokens';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 
@@ -129,5 +129,44 @@ describe('UsageWidget', () => {
     const out = frame(<UsageWidget usage={usage} contextWindow={200_000} usedContextTokens={0} />);
     expect(out).toContain('0 / 200k');
     expect(out).not.toContain('+');
+  });
+});
+
+describe('sameUsage', () => {
+  it('returns true for two Usage objects with identical values but different references', () => {
+    const a = usageWith({ inputTokens: 1_000, outputTokens: 200, totalTokens: 1_200, stepCount: 1 });
+    const b = usageWith({ inputTokens: 1_000, outputTokens: 200, totalTokens: 1_200, stepCount: 1 });
+    expect(a === b).toBe(false); // different references
+    expect(sameUsage(a, b)).toBe(true);
+  });
+
+  it('returns false when inputTokens differs', () => {
+    const a = usageWith({ inputTokens: 1_000 });
+    const b = usageWith({ inputTokens: 1_001 });
+    expect(sameUsage(a, b)).toBe(false);
+  });
+
+  it('returns false when lastStep differs', () => {
+    const a = usageWith({
+      lastStep: { inputTokens: 100, outputTokens: 50, cachedInputTokens: 0, totalTokens: 150 },
+    });
+    const b = usageWith({
+      lastStep: { inputTokens: 100, outputTokens: 51, cachedInputTokens: 0, totalTokens: 151 },
+    });
+    expect(sameUsage(a, b)).toBe(false);
+  });
+
+  it('handles both lastStep being undefined', () => {
+    const a = usageWith();
+    const b = usageWith();
+    expect(sameUsage(a, b)).toBe(true);
+  });
+
+  it('handles one lastStep defined and the other undefined', () => {
+    const a = usageWith({
+      lastStep: { inputTokens: 100, outputTokens: 50, cachedInputTokens: 0, totalTokens: 150 },
+    });
+    const b = usageWith();
+    expect(sameUsage(a, b)).toBe(false);
   });
 });
