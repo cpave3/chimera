@@ -52,6 +52,7 @@ import {
 import { StatusBar, type StatusBarWidget } from './StatusBar';
 import { renderToolBody } from './ToolBody';
 import { UsageWidget } from './UsageWidget';
+import { ChromeBar } from './ChromeBar';
 import { applyThemeByName, listThemes } from './theme/loader';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
@@ -323,7 +324,7 @@ export function App(props: AppProps): React.ReactElement {
   // Tick the spinner while waiting for a response or compacting.
   useEffect(() => {
     if (!running && !compacting) return;
-    const id = setInterval(() => setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
+    const id = setInterval(() => setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length), 200);
     return () => clearInterval(id);
   }, [running, compacting]);
 
@@ -1514,29 +1515,7 @@ export function App(props: AppProps): React.ReactElement {
     ],
     [usageState],
   );
-  const hintsLeft = useMemo<StatusBarWidget[]>(
-    () => [
-      <Text key="newline" color={theme.text.muted}>
-        {'\\<Enter> newline'}
-      </Text>,
-      <Text key="editor" color={theme.text.muted}>
-        Ctrl+G editor
-      </Text>,
-      <Text key="suspend" color={theme.text.muted}>
-        Ctrl+Z suspend
-      </Text>,
-      <Text key="interrupt" color={theme.text.muted}>
-        Esc/Ctrl+C interrupt
-      </Text>,
-      <Text key="commands" color={theme.text.muted}>
-        / commands
-      </Text>,
-      <Text key="cycle-mode" color={theme.text.muted}>
-        Shift+Tab cycle mode
-      </Text>,
-    ],
-    [theme.text.muted],
-  );
+
 
   // Steady-state during a run: the buffer is empty and the spinner /
   // streaming deltas re-render App many times per second. Keep the prompt
@@ -1685,10 +1664,15 @@ export function App(props: AppProps): React.ReactElement {
         >
           {promptBody}
         </Box>
-        <StatusBar left={cwdLeft} right={cwdRight} separatorColor={theme.text.muted} />
-        <StatusBar left={modelLeft} right={modelRight} separatorColor={theme.text.muted} />
-        <StatusBar left={hintsLeft} separatorColor={theme.text.muted} />
       </Box>
+      <ChromeBar
+        cwdLeft={cwdLeft}
+        cwdRight={cwdRight}
+        modelLeft={modelLeft}
+        modelRight={modelRight}
+        separatorColor={theme.text.muted}
+        mutedColor={theme.text.muted}
+      />
     </>
   );
 }
