@@ -117,6 +117,47 @@ describe('chimera run E2E (stub provider)', () => {
     // The real assertion is that the run completed cleanly.
   });
 
+  it('--add-read-path and --add-write-path reach the factory', { timeout: 20000 }, async () => {
+    const extraRead = join(home, 'allowed-read');
+    const extraWrite = join(home, 'allowed-write');
+    await Promise.all([
+      mkdir(extraRead, { recursive: true }),
+      mkdir(extraWrite, { recursive: true }),
+    ]);
+
+    let capturedInit: Parameters<AgentFactory['build']>[0] | undefined;
+    const factory: AgentFactory = {
+      build: async (init) => {
+        capturedInit = init;
+        return {
+          agent: new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('done.'),
+            tools: {},
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          }),
+        };
+      },
+    };
+
+    const result = await runOneShot({
+      prompt: 'hi',
+      cwd: workspace,
+      home,
+      factoryOverride: factory,
+      modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+      additionalReadPaths: [extraRead],
+      additionalWritePaths: [extraWrite],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(capturedInit).toBeDefined();
+    expect(capturedInit!.additionalReadPaths).toEqual([extraRead]);
+    expect(capturedInit!.additionalWritePaths).toEqual([extraWrite]);
+  });
+
   it('bash tool call round-trip: model invokes echo, loop continues, exits 0', {
     timeout: 20000,
   }, async () => {

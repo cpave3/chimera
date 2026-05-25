@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
 import { Compactor } from '@chimera/compaction';
 import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
 import {
@@ -127,6 +128,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly providersConfig: ProvidersConfig;
   private readonly modelsConfig: Record<string, ModelOptions>;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
+  private readonly liveExecutors = new Map<SessionId, LocalExecutor>();
+  private readonly liveAgents = new Map<SessionId, Agent>();
   private readonly compaction: CompactionConfig | undefined;
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
@@ -194,8 +197,23 @@ export class CliAgentFactory implements AgentFactory {
     // read the SKILL.md itself and any peer scripts bundled with it.
     const skillDirs = skillsReg ? skillsReg.all().map((s) => dirname(s.path)) : [];
     const tmpDir = tmpdir();
-    const readAllowDirs = [...skillDirs, tmpDir];
-    const local = new LocalExecutor({ cwd: init.cwd, readAllowDirs, writeAllowDirs: [tmpDir] });
+    // Merge persisted paths (on resume) with any newly-supplied CLI paths.
+    const sessionReadPaths = session?.additionalReadPaths ?? [];
+    const sessionWritePaths = session?.additionalWritePaths ?? [];
+    const readAllowDirs = [
+      ...skillDirs,
+      tmpDir,
+      ...sessionReadPaths,
+      ...sessionWritePaths,
+      ...(init.additionalReadPaths ?? []),
+      ...(init.additionalWritePaths ?? []),
+    ];
+    const local = new LocalExecutor({
+      cwd: init.cwd,
+      readAllowDirs,
+      writeAllowDirs: [tmpDir, ...sessionWritePaths, ...(init.additionalWritePaths ?? [])],
+    });
+    this.liveExecutors.set(sessionId, local);
 
     const modesReg = this.modes;
     const requestedMode = session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
@@ -252,6 +270,7 @@ export class CliAgentFactory implements AgentFactory {
       systemPrompt: effectiveSystemPrompt,
       sandboxMode: init.sandboxMode,
       session,
+      sessionId,
       home: this.home,
       skillActivation,
       contextWindow: resolvedWindow.value,
@@ -264,6 +283,14 @@ export class CliAgentFactory implements AgentFactory {
       interruptHook,
       responseTimeoutMs: this.responseTimeoutMs,
     });
+
+    // Propagate CLI-supplied additional paths onto the session so they are
+    // persisted (and inherited on fork). When loading from disk the values
+    // already come from the persisted record; only overwrite for fresh sessions.
+    if (!session) {
+      agent.session.additionalReadPaths = init.additionalReadPaths ?? [];
+      agent.session.additionalWritePaths = init.additionalWritePaths ?? [];
+    }
 
     // Persist metadata immediately so the session appears in disk-scanned
     // listings before any model run produces a step_finished snapshot.
@@ -355,6 +382,7 @@ export class CliAgentFactory implements AgentFactory {
     }
 
     this.lastFormatters = formatters;
+    this.liveAgents.set(agent.session.id, agent);
 
     // Apply an agent-definition tools allowlist before mode filtering. The
     // mode filter then intersects: if a mode also restricts tools, the child
@@ -466,6 +494,55 @@ export class CliAgentFactory implements AgentFactory {
     return this.liveSandboxes.get(sessionId);
   }
 
+  /** Live LocalExecutor for a session. Used by runtime mutators. */
+  getLocalExecutor(sessionId: SessionId): LocalExecutor | undefined {
+    return this.liveExecutors.get(sessionId);
+  }
+
+  async addSessionPath(
+    sessionId: SessionId,
+    kind: 'read' | 'write',
+    path: string,
+  ): Promise<{ absolute: string; added: boolean }> {
+    const agent = this.liveAgents.get(sessionId);
+    if (!agent) throw new Error('session not found');
+
+    const absolute = isAbsolute(path) ? resolve(path) : resolve(agent.session.cwd, path);
+    try {
+      await stat(absolute);
+    } catch {
+      throw new Error(`no such file or directory: ${absolute}`);
+    }
+    const resolved = await realpath(absolute);
+
+    const executor = this.liveExecutors.get(sessionId);
+    if (!executor) throw new Error('session not found');
+
+    const writeAlready = agent.session.additionalWritePaths.includes(resolved);
+    if (kind === 'read') {
+      if (agent.session.additionalReadPaths.includes(resolved)) {
+        return { absolute: resolved, added: false };
+      }
+      executor.addReadAllowDir(resolved);
+      agent.session.additionalReadPaths.push(resolved);
+      await writeSessionMetadata(agent.session, this.home);
+      return { absolute: resolved, added: true };
+    }
+
+    // kind === 'write': grant both write and read access.
+    if (!agent.session.additionalReadPaths.includes(resolved)) {
+      executor.addReadAllowDir(resolved);
+      agent.session.additionalReadPaths.push(resolved);
+    }
+    if (!writeAlready) {
+      executor.addWriteAllowDir(resolved);
+      agent.session.additionalWritePaths.push(resolved);
+    }
+
+    await writeSessionMetadata(agent.session, this.home);
+    return { absolute: resolved, added: !writeAlready };
+  }
+
   /** Stop all running DockerExecutors. Safe to call multiple times. */
   async dispose(): Promise<void> {
     const stops = Array.from(this.liveSandboxes.values()).map((d) =>
@@ -474,6 +551,8 @@ export class CliAgentFactory implements AgentFactory {
       }),
     );
     this.liveSandboxes.clear();
+    this.liveExecutors.clear();
+    this.liveAgents.clear();
     await Promise.all(stops);
   }
 }

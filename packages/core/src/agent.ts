@@ -204,6 +204,8 @@ export class Agent {
         mode: opts.session.mode ?? DEFAULT_SESSION_MODE,
         userModelOverride: opts.session.userModelOverride ?? null,
         fileOps: opts.session.fileOps ?? { reads: new Set(), writes: new Set() },
+        additionalReadPaths: opts.session.additionalReadPaths ?? [],
+        additionalWritePaths: opts.session.additionalWritePaths ?? [],
       };
     } else {
       this.session = {
@@ -221,6 +223,8 @@ export class Agent {
         mode: opts.initialMode ?? DEFAULT_SESSION_MODE,
         userModelOverride: opts.initialUserModelOverride ?? null,
         fileOps: { reads: new Set(), writes: new Set() },
+        additionalReadPaths: [],
+        additionalWritePaths: [],
       };
     }
   }

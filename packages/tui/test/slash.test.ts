@@ -6,6 +6,8 @@ describe('slash commands', () => {
     const names = BUILTIN_COMMANDS.map((c) => c.name).sort();
     expect(names).toEqual(
       [
+        '/add-read-path',
+        '/add-write-path',
         '/attach',
         '/clear',
         '/compact',

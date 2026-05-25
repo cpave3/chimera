@@ -6,7 +6,6 @@ import {
   forkSession as coreForkSession,
   listSessionsOnDisk,
   readSessionMetadata,
-  type RememberScope,
   type SessionId,
   type SessionInfo,
 } from '@chimera/core';
@@ -44,6 +43,8 @@ const createSessionSchema = z.object({
   }),
   sandboxMode: z.enum(['off', 'bind', 'overlay', 'ephemeral']).optional(),
   sessionId: z.string().optional(),
+  additionalReadPaths: z.array(z.string()).optional(),
+  additionalWritePaths: z.array(z.string()).optional(),
 });
 
 const messageSchema = z.object({
@@ -64,6 +65,11 @@ const modeSchema = z.object({
 
 const modelSchema = z.object({
   model: z.string().nullable(),
+});
+
+const pathsAddSchema = z.object({
+  kind: z.enum(['read', 'write']),
+  path: z.string(),
 });
 
 const permissionRuleSchema = z.object({
@@ -127,6 +133,8 @@ export function buildApp(opts: AppOptions): Hono {
       model: parseResult.data.model,
       sandboxMode: parseResult.data.sandboxMode ?? 'off',
       sessionId: parseResult.data.sessionId,
+      additionalReadPaths: parseResult.data.additionalReadPaths,
+      additionalWritePaths: parseResult.data.additionalWritePaths,
     });
     invalidateListCache();
     return c.json({ sessionId }, 201);
@@ -179,7 +187,7 @@ export function buildApp(opts: AppOptions): Hono {
     try {
       // Refuse if the persisted record has children. The in-memory registry
       // doesn't track child links, so we always check disk metadata first.
-      let onDisk;
+      let onDisk: Awaited<ReturnType<typeof readSessionMetadata>> | undefined;
       try {
         onDisk = await readSessionMetadata(id, home);
       } catch {
@@ -216,7 +224,7 @@ export function buildApp(opts: AppOptions): Hono {
     if (existing) {
       return c.json({ sessionId: id });
     }
-    let meta;
+    let meta: Awaited<ReturnType<typeof readSessionMetadata>>;
     try {
       meta = await readSessionMetadata(id, home);
     } catch {
@@ -245,7 +253,7 @@ export function buildApp(opts: AppOptions): Hono {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
     const purpose = parseResult.data.purpose;
-    let meta;
+    let meta: Awaited<ReturnType<typeof readSessionMetadata>>;
     try {
       meta = await readSessionMetadata(parentId, home);
     } catch {
@@ -302,6 +310,45 @@ export function buildApp(opts: AppOptions): Hono {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
     return c.json(Array.from(entry.subagents.values()));
+  });
+
+  app.get('/v1/sessions/:id/paths', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json({
+      read: entry.agent.session.additionalReadPaths,
+      write: entry.agent.session.additionalWritePaths,
+    });
+  });
+
+  app.post('/v1/sessions/:id/paths', async (c) => {
+    const id = c.req.param('id');
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = pathsAddSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    try {
+      await registry.addSessionPath(id, parseResult.data.kind, parseResult.data.path);
+      return c.body(null, 204);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('no such file or directory')) {
+        return c.json({ error: message }, 400);
+      }
+      if (message === 'not found') {
+        return c.json({ error: 'not found' }, 404);
+      }
+      if (message === 'factory does not support runtime path mutation') {
+        return c.json({ error: message }, 501);
+      }
+      return c.json({ error: message }, 500);
+    }
   });
 
   // --- Messages / interrupt ---------------------------------------------

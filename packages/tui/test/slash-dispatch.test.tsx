@@ -6,7 +6,6 @@ import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands
 import type { AgentEvent, ModelConfig, Session, SessionInfo } from '@chimera/core';
 import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
-import React from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App } from '../src/App';
 
@@ -38,6 +37,8 @@ interface StubClientOpts {
   compactSpy?: (id: string) => void;
   appendSpy?: (content: string) => void;
   setModelSpy?: (modelRef: string | null) => void;
+  addPathSpy?: (kind: 'read' | 'write', path: string) => void;
+  addPathError?: Error;
 }
 
 function emptySession(id: string): Session {
@@ -81,6 +82,7 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev
         });
       }
     },
+    // biome-ignore lint/correctness/useYield: stub never yields; events arrive via separate subscribe() generator
     send: async function* (_id: string, msg: string) {
       opts.sendSpy?.(msg);
       for (const ev of opts.echoOnSend?.(msg) ?? []) {
@@ -128,6 +130,11 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev
       wake?.();
       wake = null;
     },
+    addPath: async (_id: string, kind: 'read' | 'write', path: string) => {
+      if (opts.addPathError) throw opts.addPathError;
+      opts.addPathSpy?.(kind, path);
+    },
+    listPaths: async () => ({ read: [], write: [] }),
     pushEvent: (ev: AgentEvent) => {
       queue.push(ev);
       wake?.();
@@ -176,12 +183,35 @@ function buildSkillRegistry(
 async function type(stdin: NodeJS.WritableStream, text: string): Promise<void> {
   for (const ch of text) {
     (stdin as any).write(ch);
-    await new Promise((r) => setTimeout(r, 1));
+    // 4ms per char — 1ms was too tight: under load, Ink's useInput handler
+    // sometimes didn't finish processing an earlier char before the next one
+    // landed, and a trailing `\r` could fire submit on a partial buffer.
+    await new Promise((r) => setTimeout(r, 4));
   }
-  // Settle window after typing. The default 20ms was flaky on loaded
-  // machines — post-Enter the App commits scrollback through <Static> and
-  // the next assertion needs to see that commit.
-  await new Promise((r) => setTimeout(r, 100));
+  // Short settle window for input-buffer state to flush. Tests asserting on
+  // async-IIFE outcomes (state mutations after `client.foo()`, scrollback
+  // writes from a deferred handler) must use `waitFor` — a wall-clock sleep
+  // here cannot guarantee an arbitrary microtask chain has run.
+  await new Promise((r) => setTimeout(r, 20));
+}
+
+/**
+ * Poll `predicate()` until it returns truthy, or throw after `timeoutMs`.
+ * Use this for any assertion that depends on an async IIFE having completed
+ * — typing `\r` schedules the work but does not await it, so a fixed sleep
+ * is a race. `waitFor` waits for the actual outcome.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  { timeoutMs = 1000, intervalMs = 5 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitFor timeout after ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 describe('TUI slash dispatch', () => {
@@ -199,6 +229,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/help\r');
+    await waitFor(() => lastFrame()!.includes('User commands'));
     const frame = lastFrame()!;
     expect(frame).toContain('/help');
     expect(frame).toContain('User commands');
@@ -220,6 +251,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/help\r');
+    await waitFor(() => lastFrame()!.includes('shadowed by the built-in'));
     const frame = lastFrame()!;
     // The built-in /help lists commands — shouldn't have fired an "unknown" error.
     expect(frame).not.toContain('unknown command');
@@ -245,7 +277,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/summarize the current branch\r');
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => sent.length > 0);
     expect(sent).toEqual(['Summarize: the current branch']);
     unmount();
   });
@@ -255,6 +287,7 @@ describe('TUI slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="mock/mock" cwd="/tmp" />,
     );
     await type(stdin, '/model\r');
+    await waitFor(() => lastFrame()!.includes('current model: mock/mock'));
     expect(lastFrame()).toContain('current model: mock/mock');
     unmount();
   });
@@ -274,6 +307,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/model other/new\r');
+    await waitFor(() => modelSet !== null);
     expect(modelSet).toBe('other/new');
     // TUI commits an info line synchronously; the model change event is
     // pushed asynchronously. The setModelSpy being called is proof the
@@ -296,6 +330,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/model default\r');
+    await waitFor(() => modelSet === null);
     expect(modelSet).toBeNull();
     unmount();
   });
@@ -320,7 +355,8 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/summarize the current branch\r');
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => sent.length > 0);
+    await waitFor(() => lastFrame()!.includes('/summarize the current branch'));
     const frame = lastFrame()!;
     // The invocation the user typed appears.
     expect(frame).toContain('/summarize the current branch');
@@ -383,7 +419,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/reload\r');
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => lastFrame()!.includes('commands reloaded (2 total)'));
     const frame = lastFrame()!;
     expect(frame).toContain('commands reloaded (2 total)');
     unmount();
@@ -400,6 +436,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/help\r');
+    await waitFor(() => lastFrame()!.includes('/reload'));
     expect(lastFrame()!).toContain('/reload');
     unmount();
   });
@@ -424,7 +461,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/pdf merge foo.pdf bar.pdf\r');
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => sent.length > 0);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('Use the "pdf" skill');
     expect(sent[0]).toContain('/abs/.chimera/skills/pdf/SKILL.md');
@@ -446,7 +483,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/pdf\r');
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => sent.length > 0);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('Use the "pdf" skill');
   });
@@ -468,7 +505,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/pdf hello\r');
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => sent.length > 0);
     expect(sent).toEqual(['Command body hello']);
     unmount();
   });
@@ -486,6 +523,7 @@ describe('TUI slash dispatch', () => {
       />,
     );
     await type(stdin, '/summarze foo\r');
+    await waitFor(() => lastFrame()!.includes('unknown command'));
     const frame = lastFrame()!;
     expect(frame).toContain('unknown command');
     expect(frame).toContain('did you mean');
@@ -517,6 +555,7 @@ describe('TUI overlay slash dispatch', () => {
       />,
     );
     await type(stdin, '/overlay\r');
+    await waitFor(() => lastFrame()!.includes('+ new.ts'));
     const frame = lastFrame()!;
     expect(diffCalls).toBe(1);
     expect(frame).toContain('+ new.ts');
@@ -542,6 +581,7 @@ describe('TUI overlay slash dispatch', () => {
       />,
     );
     await type(stdin, '/overlay\r');
+    await waitFor(() => lastFrame()!.includes('no pending changes'));
     expect(lastFrame()).toContain('no pending changes');
     unmount();
   });
@@ -566,6 +606,8 @@ describe('TUI overlay slash dispatch', () => {
       />,
     );
     await type(stdin, '/discard\r');
+    await waitFor(() => discardCalls === 1);
+    await waitFor(() => lastFrame()!.includes('overlay discarded'));
     expect(discardCalls).toBe(1);
     expect(lastFrame()).toContain('overlay discarded');
     unmount();
@@ -597,6 +639,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/theme\r');
+    await waitFor(() => lastFrame()!.includes('themes:'));
     const frame = lastFrame()!;
     expect(frame).toContain('themes:');
     expect(frame).toContain('cyberpunk');
@@ -611,7 +654,9 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/theme cyberpunk\r');
+    await waitFor(() => lastFrame()!.includes("theme: applied 'cyberpunk'"));
     await type(stdin, '/theme\r');
+    await waitFor(() => /\*\s+cyberpunk/.test(lastFrame()!));
     const frame = lastFrame()!;
     expect(frame).toMatch(/\*\s+cyberpunk/);
     unmount();
@@ -622,6 +667,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/theme cyberpunk\r');
+    await waitFor(() => lastFrame()!.includes("theme: applied 'cyberpunk' (builtin)"));
     expect(lastFrame()).toContain("theme: applied 'cyberpunk' (builtin)");
     const written = JSON.parse(readFileSync(join(tmpHome, '.chimera', 'theme.json'), 'utf-8'));
     expect(written._themeName).toBe('cyberpunk');
@@ -634,6 +680,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/theme not-a-real-theme\r');
+    await waitFor(() => /\/theme:.*unknown theme/.test(lastFrame()!));
     const frame = lastFrame()!;
     expect(frame).toMatch(/\/theme:.*unknown theme/);
     expect(frame).toContain('not-a-real-theme');
@@ -648,6 +695,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/theme\r');
+    await waitFor(() => /cyberpunk\s+\(user\)/.test(lastFrame()!));
     const frame = lastFrame()!;
     // The shadowed cyberpunk entry shows the (user) tag.
     expect(frame).toMatch(/cyberpunk\s+\(user\)/);
@@ -659,6 +707,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/subagents\r');
+    await waitFor(() => lastFrame()!.includes('no active subagents'));
     expect(lastFrame()!).toContain('no active subagents');
     unmount();
   });
@@ -675,6 +724,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({ subagents: [sub] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/subagents\r');
+    await waitFor(() => lastFrame()!.includes(sub.subagentId));
     const frame = lastFrame()!;
     expect(frame).toContain(sub.subagentId);
     expect(frame).toContain(sub.purpose);
@@ -688,6 +738,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/attach\r');
+    await waitFor(() => lastFrame()!.includes('usage: /attach <subagentId>'));
     expect(lastFrame()!).toContain('usage: /attach <subagentId>');
     unmount();
   });
@@ -697,6 +748,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({ subagents: [] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/attach nothere\r');
+    await waitFor(() => /no subagent matching "nothere"/.test(lastFrame()!));
     expect(lastFrame()!).toMatch(/no subagent matching "nothere"/);
     unmount();
   });
@@ -713,6 +765,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({ subagents: [sub] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/attach sub-inproc\r');
+    await waitFor(() => /in-process and not attachable/.test(lastFrame()!));
     expect(lastFrame()!).toMatch(/in-process and not attachable/);
     unmount();
   });
@@ -731,6 +784,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({ subagents: [sub] })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/attach tail-1234\r');
+    await waitFor(() => lastFrame()!.includes(`attaching to subagent ${sub.subagentId}`));
     expect(lastFrame()!).toContain(`attaching to subagent ${sub.subagentId}`);
     unmount();
   });
@@ -740,6 +794,7 @@ describe('TUI /theme slash dispatch', () => {
       <App client={stubClient({})} sessionId="s" modelRef="m/m" model={TEST_MODEL} cwd="/tmp" />,
     );
     await type(stdin, '/detach\r');
+    await waitFor(() => lastFrame()!.includes('already attached to the parent session'));
     expect(lastFrame()!).toContain('already attached to the parent session');
     unmount();
   });
@@ -758,6 +813,8 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/new\r');
+    await waitFor(() => createCalls.length > 0);
+    await waitFor(() => lastFrame()!.includes('new session'));
     expect(createCalls).toHaveLength(1);
     expect(createCalls[0]).toMatchObject({
       cwd: '/tmp',
@@ -799,6 +856,7 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/sessions\r');
+    await waitFor(() => lastFrame()!.includes('Sessions (1)'));
     const frame = lastFrame()!;
     expect(frame).toContain('Sessions (1)');
     expect(frame).toContain('AAAAAAAA'); // truncated id of the persisted session
@@ -816,6 +874,7 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/sessions\r');
+    await waitFor(() => lastFrame()!.includes('no persisted sessions'));
     expect(lastFrame()!).toContain('no persisted sessions');
     unmount();
   });
@@ -834,6 +893,8 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/fork try alternative\r');
+    await waitFor(() => forkCalls.length > 0);
+    await waitFor(() => lastFrame()!.includes('forked session'));
     expect(forkCalls).toEqual([{ id: '01HZPARENT0000000000000000AB', purpose: 'try alternative' }]);
     expect(lastFrame()!).toContain('forked session');
     unmount();
@@ -853,6 +914,7 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/fork\r');
+    await waitFor(() => forkCalls.length > 0);
     expect(forkCalls).toEqual([{ id: '01HZPARENT0000000000000000AB', purpose: undefined }]);
     unmount();
   });
@@ -870,6 +932,7 @@ describe('TUI /theme slash dispatch', () => {
       />,
     );
     await type(stdin, '/compact\r');
+    await waitFor(() => compactCalls.length > 0);
     expect(compactCalls).toEqual(['SESS001']);
     unmount();
   });
@@ -881,12 +944,12 @@ describe('TUI /theme slash dispatch', () => {
     );
     // Inject compaction_started so compacting flips to true.
     client.pushEvent({ type: 'compaction_started', reason: 'threshold' });
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => lastFrame()!.includes('compacting'));
     expect(lastFrame()).toContain('compacting');
 
     // Type a message while compacting.
     await type(stdin, 'hello while compacting\r');
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => lastFrame()!.includes('queued (1)'));
     const frame = lastFrame();
     expect(frame).toContain('queued (1)');
     expect(frame).toContain('hello while compacting');
@@ -899,7 +962,7 @@ describe('TUI /theme slash dispatch', () => {
       tokensAfter: 200,
       messagesReplaced: 5,
     });
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => !lastFrame()!.includes('queued ('));
     expect(lastFrame()).not.toContain('queued (');
 
     unmount();
@@ -919,7 +982,7 @@ describe('TUI bang dispatch', () => {
       />,
     );
     await type(stdin, '!echo hello\r');
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => appended.length >= 1);
     // No LLM message sent — bang is appended to history, not sent to model.
     expect(sent).toEqual([]);
     expect(appended).toHaveLength(1);
@@ -930,7 +993,7 @@ describe('TUI bang dispatch', () => {
 
     // A real message is sent as-is, not prepended.
     await type(stdin, 'now ask\r');
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => sent.length >= 1);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBe('now ask');
 
@@ -965,20 +1028,19 @@ describe('TUI bang dispatch', () => {
       />,
     );
     await type(stdin, '!false\r');
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => appended.length >= 1);
     expect(appended).toHaveLength(1);
     expect(appended[0]).toContain('!false');
     expect(appended[0]).toContain('(exit 1)');
     expect(sent).toEqual([]);
 
-    // Allow time for the subscribe stream to render the user_message.
-    await new Promise((r) => setTimeout(r, 300));
+    await waitFor(() => lastFrame()!.includes('exit 1'));
     const frame = lastFrame()!;
     expect(frame).toContain('exit 1');
 
     // A real message is sent as-is, not prepended.
     await type(stdin, 'ask\r');
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => sent.length >= 1);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBe('ask');
 
@@ -994,7 +1056,7 @@ describe('TUI bang dispatch', () => {
     expect(lastFrame()).not.toContain('bash >');
 
     await type(stdin, '!echo hello');
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => lastFrame()!.includes('bash > !echo hello'));
     const frame = lastFrame()!;
     expect(frame).toContain('bash > !echo hello');
     unmount();
@@ -1014,12 +1076,12 @@ describe('TUI bang dispatch', () => {
 
     // Make the agent busy with compaction.
     client.pushEvent({ type: 'compaction_started', reason: 'threshold' });
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => lastFrame()!.includes('compacting'));
     expect(lastFrame()).toContain('compacting');
 
     // Bang queues while busy.
     await type(stdin, '!echo hello\r');
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => lastFrame()!.includes('queued (1)'));
     expect(lastFrame()).toContain('queued (1)');
 
     // Release busy - bang drains and appends to history without model.
@@ -1030,7 +1092,7 @@ describe('TUI bang dispatch', () => {
       tokensAfter: 200,
       messagesReplaced: 5,
     });
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => appended.length >= 1);
 
     expect(appended).toHaveLength(1);
     expect(appended[0]).toContain('!echo hello');
@@ -1038,7 +1100,7 @@ describe('TUI bang dispatch', () => {
 
     // A real message is sent without prepended bang output.
     await type(stdin, 'summarize\r');
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(() => sent.length >= 1);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBe('summarize');
 

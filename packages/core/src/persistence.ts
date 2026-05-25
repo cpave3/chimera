@@ -55,6 +55,9 @@ interface SessionMetadata {
   fileOpsWrites?: string[];
   /** Cached message count so listings avoid reading events.jsonl. */
   messageCount?: number;
+  /** Additional read/write allow paths for tool calls outside cwd. */
+  additionalReadPaths?: string[];
+  additionalWritePaths?: string[];
 }
 
 function toMetadata(session: Session): SessionMetadata {
@@ -72,6 +75,8 @@ function toMetadata(session: Session): SessionMetadata {
     fileOpsReads: sortedArray(session.fileOps.reads),
     fileOpsWrites: sortedArray(session.fileOps.writes),
     messageCount: session.messages.length,
+    additionalReadPaths: session.additionalReadPaths,
+    additionalWritePaths: session.additionalWritePaths,
   };
 }
 
@@ -103,7 +108,7 @@ export async function appendSessionEvent(
 ): Promise<void> {
   await ensureSessionDir(sessionId, home);
   const path = sessionEventsPath(sessionId, home);
-  await appendFile(path, JSON.stringify(event) + '\n', 'utf8');
+  await appendFile(path, `${JSON.stringify(event)}\n`, 'utf8');
 }
 
 // The two writes touch different files (append vs atomic tmp+rename) and
@@ -161,6 +166,10 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
       reads: new Set(Array.isArray(parsed.fileOpsReads) ? parsed.fileOpsReads : []),
       writes: new Set(Array.isArray(parsed.fileOpsWrites) ? parsed.fileOpsWrites : []),
     },
+    additionalReadPaths: Array.isArray(parsed.additionalReadPaths) ? parsed.additionalReadPaths : [],
+    additionalWritePaths: Array.isArray(parsed.additionalWritePaths)
+      ? parsed.additionalWritePaths
+      : [],
   };
 
   const snapshot = await readLatestStepSnapshot(sessionId, home);
@@ -185,6 +194,9 @@ export interface SessionMetadataReadResult {
   mode: string;
   userModelOverride: string | null;
   messageCount: number;
+  /** Additional read/write allow paths persisted in session metadata. */
+  additionalReadPaths: string[];
+  additionalWritePaths: string[];
 }
 
 /**
@@ -234,6 +246,10 @@ export async function readSessionMetadata(
     userModelOverride:
       typeof parsed.userModelOverride === 'string' ? parsed.userModelOverride : null,
     messageCount,
+    additionalReadPaths: Array.isArray(parsed.additionalReadPaths) ? parsed.additionalReadPaths : [],
+    additionalWritePaths: Array.isArray(parsed.additionalWritePaths)
+      ? parsed.additionalWritePaths
+      : [],
   };
 }
 
@@ -251,7 +267,7 @@ async function readLatestStepSnapshot(
 ): Promise<StepSnapshot | null> {
   const path = sessionEventsPath(sessionId, home);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
-  let stats;
+  let stats: Awaited<ReturnType<typeof stat>>;
   try {
     stats = await stat(path);
     if (stats.size === 0) return null;
@@ -391,6 +407,8 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
       reads: new Set(parent.fileOps.reads),
       writes: new Set(parent.fileOps.writes),
     },
+    additionalReadPaths: [...parent.additionalReadPaths],
+    additionalWritePaths: [...parent.additionalWritePaths],
   };
   await writeSessionMetadata(child, home);
 
@@ -416,6 +434,9 @@ export interface SessionInfo {
   sandboxMode: SandboxMode;
   usage: Usage;
   messageCount: number;
+  /** Additional read/write allow paths persisted in session metadata. */
+  additionalReadPaths: string[];
+  additionalWritePaths: string[];
 }
 
 // Pre-change flat `<id>.json` files (siblings of session directories from
@@ -476,6 +497,12 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
         sandboxMode: parsed.sandboxMode,
         usage: parsed.usage ?? emptyUsage(),
         messageCount,
+        additionalReadPaths: Array.isArray(parsed.additionalReadPaths)
+          ? parsed.additionalReadPaths
+          : [],
+        additionalWritePaths: Array.isArray(parsed.additionalWritePaths)
+          ? parsed.additionalWritePaths
+          : [],
       });
     } catch (err) {
       // skip corrupt/missing session.json

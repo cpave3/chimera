@@ -1,7 +1,8 @@
 import { resolve as resolvePath } from 'node:path';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ChimeraClient } from '@chimera/client';
+import { ChimeraClient, ChimeraHttpError } from '@chimera/client';
+import { parseAttachTokens, readForAttach } from './attach-paths';
 import { runBangCommand } from './bang';
 import type { CommandRegistry } from '@chimera/commands';
 import type {
@@ -163,14 +164,6 @@ export function App(props: AppProps): React.ReactElement {
     activeSessionRef.current = activeSession;
   }, [activeSession]);
   const cleanupAndExit = async () => {
-    const session = activeSessionRef.current;
-    if (session) {
-      try {
-        await session.client.deleteSession(session.sessionId);
-      } catch {
-        // best-effort
-      }
-    }
     app.exit();
   };
   const [overlayPicker, setOverlayPicker] = useState<OverlayDiffEntry[] | null>(null);
@@ -797,6 +790,33 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   async function sendUserMessage(text: string): Promise<void> {
+    const tokens = parseAttachTokens(text, props.cwd);
+    for (const token of tokens) {
+      try {
+        await activeSession.client.addPath(activeSession.sessionId, token.kind, token.absolute);
+      } catch (err) {
+        const error = err as Error;
+        if (error instanceof ChimeraHttpError && error.status === 400) {
+          scrollback.addError(`attach ${token.raw}: ${error.message}`);
+          continue;
+        }
+        scrollback.addError(`attach ${token.raw}: ${error.message}`);
+        continue;
+      }
+
+      const info = await readForAttach(token.absolute);
+      if (info.kind === 'missing' || info.kind === 'error') {
+        scrollback.addError(`attach ${token.raw}: ${info.body}`);
+        continue;
+      }
+
+      const prefix = token.kind === 'read' ? '@' : '#';
+      await activeSession.client.appendMessage(
+        activeSession.sessionId,
+        `[auto-attached ${prefix}${token.raw}]\n${info.body}`,
+      );
+    }
+
     setRunning(true);
     setStreaming(false);
     try {
@@ -853,6 +873,23 @@ export function App(props: AppProps): React.ReactElement {
         } else {
           scrollback.addInfo(`current model: ${currentModelRef}`);
         }
+        return;
+      }
+      case '/add-read-path':
+      case '/add-write-path': {
+        const kind = name === '/add-read-path' ? 'read' : 'write';
+        if (!arg) {
+          scrollback.addError(`usage: ${name} <path>`);
+          return;
+        }
+        void (async () => {
+          try {
+            await activeSession.client.addPath(activeSession.sessionId, kind, arg);
+            scrollback.addInfo(`${name}: granted ${kind} access to ${arg}`);
+          } catch (err) {
+            scrollback.addError(`${name}: ${(err as Error).message}`);
+          }
+        })();
         return;
       }
       case '/rules': {
@@ -1408,79 +1445,98 @@ export function App(props: AppProps): React.ReactElement {
     return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
   }, [committedEntries, childrenByParent, showHeader]);
 
-  const cwdLeft: StatusBarWidget[] = [
-    <Text key="cwd" color={theme.accent.primary}>
-      {props.cwd}
-    </Text>,
-  ];
-  const cwdRight: StatusBarWidget[] = [
-    <Text key="sandbox" color={theme.text.muted}>
-      {`[sandbox:${sandboxMode}]`}
-    </Text>,
-  ];
+  const cwdLeft = useMemo<StatusBarWidget[]>(
+    () => [
+      <Text key="cwd" color={theme.accent.primary}>
+        {props.cwd}
+      </Text>,
+    ],
+    [props.cwd, theme.accent.primary],
+  );
+  const cwdRight = useMemo<StatusBarWidget[]>(
+    () => [
+      <Text key="sandbox" color={theme.text.muted}>
+        {`[sandbox:${sandboxMode}]`}
+      </Text>,
+    ],
+    [sandboxMode, theme.text.muted],
+  );
   const activeModeObj = props.modes?.find(activeModeName);
   const pendingModeObj = pendingModeName ? props.modes?.find(pendingModeName) : undefined;
-  const modeWidget: StatusBarWidget =
-    pendingModeObj && pendingModeObj.name !== activeModeName ? (
-      <Text>
-        <Text color={theme.text.muted}>[mode:</Text>
-        <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
-        <Text color={theme.text.muted}>{' → '}</Text>
-        <Text color={pendingModeObj.colorHex}>{pendingModeObj.name}</Text>
-        <Text color={theme.text.muted}>]</Text>
-      </Text>
-    ) : (
+  const modeWidget = useMemo<StatusBarWidget>(() => {
+    if (pendingModeObj && pendingModeObj.name !== activeModeName) {
+      return (
+        <Text>
+          <Text color={theme.text.muted}>[mode:</Text>
+          <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
+          <Text color={theme.text.muted}>{' → '}</Text>
+          <Text color={pendingModeObj.colorHex}>{pendingModeObj.name}</Text>
+          <Text color={theme.text.muted}>]</Text>
+        </Text>
+      );
+    }
+    return (
       <Text>
         <Text color={theme.text.muted}>[mode:</Text>
         <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
         <Text color={theme.text.muted}>]</Text>
       </Text>
     );
-  const modelLeft: StatusBarWidget[] = [
-    modeWidget,
-    <Text key="model" color={theme.accent.primary}>
-      {currentModelRef}
-    </Text>,
-    <Text key="session" color={theme.text.muted}>
-      {`session ${activeSession.sessionId.slice(-8)}`}
-    </Text>,
-    activeParentId ? (
-      <Text key="forked" color={theme.accent.secondary}>
-        (forked)
-      </Text>
-    ) : null,
-  ];
-  const modelRight: StatusBarWidget[] = [
-    usageState && (
-      <UsageWidget
-        key="usage"
-        usage={usageState.usage}
-        contextWindow={usageState.contextWindow}
-        usedContextTokens={usageState.usedContextTokens}
-        unknownWindow={usageState.unknownWindow}
-      />
-    ),
-  ];
-  const hintsLeft: StatusBarWidget[] = [
-    <Text key="newline" color={theme.text.muted}>
-      {'\\<Enter> newline'}
-    </Text>,
-    <Text key="editor" color={theme.text.muted}>
-      Ctrl+G editor
-    </Text>,
-    <Text key="suspend" color={theme.text.muted}>
-      Ctrl+Z suspend
-    </Text>,
-    <Text key="interrupt" color={theme.text.muted}>
-      Esc/Ctrl+C interrupt
-    </Text>,
-    <Text key="commands" color={theme.text.muted}>
-      / commands
-    </Text>,
-    <Text key="cycle-mode" color={theme.text.muted}>
-      Shift+Tab cycle mode
-    </Text>,
-  ];
+  }, [activeModeName, activeModeObj, pendingModeName, pendingModeObj, theme.text.muted]);
+  const modelLeft = useMemo<StatusBarWidget[]>(
+    () => [
+      modeWidget,
+      <Text key="model" color={theme.accent.primary}>
+        {currentModelRef}
+      </Text>,
+      <Text key="session" color={theme.text.muted}>
+        {`session ${activeSession.sessionId.slice(-8)}`}
+      </Text>,
+      activeParentId ? (
+        <Text key="forked" color={theme.accent.secondary}>
+          (forked)
+        </Text>
+      ) : null,
+    ],
+    [modeWidget, currentModelRef, activeSession.sessionId, activeParentId, theme.accent.primary, theme.text.muted, theme.accent.secondary],
+  );
+  const modelRight = useMemo<StatusBarWidget[]>(
+    () => [
+      usageState && (
+        <UsageWidget
+          key="usage"
+          usage={usageState.usage}
+          contextWindow={usageState.contextWindow}
+          usedContextTokens={usageState.usedContextTokens}
+          unknownWindow={usageState.unknownWindow}
+        />
+      ),
+    ],
+    [usageState],
+  );
+  const hintsLeft = useMemo<StatusBarWidget[]>(
+    () => [
+      <Text key="newline" color={theme.text.muted}>
+        {'\\<Enter> newline'}
+      </Text>,
+      <Text key="editor" color={theme.text.muted}>
+        Ctrl+G editor
+      </Text>,
+      <Text key="suspend" color={theme.text.muted}>
+        Ctrl+Z suspend
+      </Text>,
+      <Text key="interrupt" color={theme.text.muted}>
+        Esc/Ctrl+C interrupt
+      </Text>,
+      <Text key="commands" color={theme.text.muted}>
+        / commands
+      </Text>,
+      <Text key="cycle-mode" color={theme.text.muted}>
+        Shift+Tab cycle mode
+      </Text>,
+    ],
+    [theme.text.muted],
+  );
 
   // Steady-state during a run: the buffer is empty and the spinner /
   // streaming deltas re-render App many times per second. Keep the prompt

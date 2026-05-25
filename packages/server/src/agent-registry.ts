@@ -25,6 +25,13 @@ export interface SessionInit {
    * rely on the factory honoring it.
    */
   sessionId?: SessionId;
+  /**
+   * Extra absolute paths granted for read/write tool calls outside cwd.
+   * Factory must merge these into its executor allow lists and set them
+   * on the session for persistence.
+   */
+  additionalReadPaths?: string[];
+  additionalWritePaths?: string[];
 }
 
 export interface BuildResult {
@@ -93,6 +100,15 @@ export interface InstanceInfo {
 
 export interface AgentFactory {
   build(init: SessionInit): Promise<BuildResult>;
+  /**
+   * Optional: add a read or write directory for a live session.
+   * Returns the absolute resolved path and whether it was newly added.
+   */
+  addSessionPath?(
+    sessionId: SessionId,
+    kind: 'read' | 'write',
+    path: string,
+  ): Promise<{ absolute: string; added: boolean }>;
 }
 
 export type CommandsLoader = (ctx: { cwd: string }) => Command[];
@@ -353,5 +369,19 @@ export class AgentRegistry {
       }
     })();
     return 'queued';
+  }
+
+  async addSessionPath(
+    sessionId: SessionId,
+    kind: 'read' | 'write',
+    path: string,
+  ): Promise<{ absolute: string; added: boolean }> {
+    const entry = this.entries.get(sessionId);
+    if (!entry) throw new Error('not found');
+    if (!entry.agent.session) throw new Error('not found');
+    if (!this.factory.addSessionPath) {
+      throw new Error('factory does not support runtime path mutation');
+    }
+    return this.factory.addSessionPath(sessionId, kind, path);
   }
 }

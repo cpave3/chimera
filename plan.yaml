@@ -1,0 +1,410 @@
+swarm:
+  parent_task_id: "tjs8r1yu"
+  working_dir: "/home/cameron/Projects/chimera"
+  summary: |
+    Add per-session "additional read/write paths" to Chimera so users can
+    grant tool access to files/directories outside the launch cwd. Wires
+    through (a) launch flags `--add-read-path` / `--add-write-path`,
+    (b) runtime slash commands `/add-read-path <p>` / `/add-write-path <p>`,
+    and (c) in-prompt `@path` / `#path` shorthand that auto-grants access
+    and loads the content into context before sending the user's message.
+    Paths are persisted on the Session so resuming a session restores
+    access. Built on the existing `LocalExecutor.readAllowDirs` /
+    `writeAllowDirs` plumbing (the same mechanism that lets the agent read
+    skill directories today).
+
+steps:
+  - name: "Foundation: session model, persistence, executor mutator, launch flags"
+    subtasks:
+      - title: "Add session-tracked extra paths + launch flags + mutable executor"
+        role: backend
+        scope:
+          - packages/core/src/types.ts
+          - packages/core/src/persistence.ts
+          - packages/core/src/agent.ts
+          - packages/core/test/**
+          - packages/tools/src/local-executor.ts
+          - packages/tools/test/local-executor.test.ts
+          - packages/cli/src/program.ts
+          - packages/cli/src/factory.ts
+          - packages/cli/src/commands/interactive.ts
+          - packages/cli/src/commands/run.ts
+          - packages/cli/src/commands/serve.ts
+          - packages/cli/test/**
+        prompt: |
+          You are part of a swarm adding "additional read/write paths" to
+          Chimera so tool calls can access files outside the launch cwd.
+          The parent task is `tjs8r1yu`. Read it via the brief at
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` before starting.
+          You are the foundation step — subsequent workers depend on the
+          contracts you establish here.
+
+          ## What you must deliver
+
+          1. **Session model (`packages/core/src/types.ts`)** — add two
+             optional fields to `Session`:
+             ```
+             additionalReadPaths: string[];   // absolute paths
+             additionalWritePaths: string[];  // absolute paths
+             ```
+             Initialise both to `[]` on new sessions. Resolve to absolute
+             paths at the entry points (CLI/server) so the executor never
+             has to guess. Keep symmetry with existing `fileOps` arrays.
+
+          2. **Persistence (`packages/core/src/persistence.ts`)** —
+             serialise/deserialise the two new arrays in `SessionMetadata`
+             (`additionalReadPaths`, `additionalWritePaths`). Default to
+             empty arrays when missing (sessions persisted pre-change).
+             Update `toMetadata`, `loadSession`, `forkSession`,
+             `readSessionMetadata`, and the `SessionInfo` listing path as
+             relevant. Forked sessions inherit the parent's arrays.
+
+          3. **LocalExecutor (`packages/tools/src/local-executor.ts`)** —
+             expose mutator methods:
+             ```
+             addReadAllowDir(absolutePath: string): void
+             addWriteAllowDir(absolutePath: string): void
+             listReadAllowDirs(): readonly string[]
+             listWriteAllowDirs(): readonly string[]
+             ```
+             Mutators de-duplicate (resolve + compare). Existing
+             constructor-arg behaviour stays unchanged. Add tests in
+             `local-executor.test.ts` covering: (a) addReadAllowDir lets a
+             subsequent `readFile` succeed where it previously rejected;
+             (b) addWriteAllowDir similarly for `writeFile`; (c) duplicates
+             are silently ignored; (d) writes still rejected if only a
+             read-dir is added.
+
+          4. **Factory wiring (`packages/cli/src/factory.ts`)** — when
+             constructing `LocalExecutor` in `build()`, merge the session's
+             `additionalReadPaths` and `additionalWritePaths` into the
+             existing `readAllowDirs` / `writeAllowDirs` arrays.
+             Additionally, keep a `Map<SessionId, LocalExecutor>` (mirroring
+             `liveSandboxes`) and expose:
+             ```
+             getLocalExecutor(sessionId): LocalExecutor | undefined
+             ```
+             so step 2 of the swarm can mutate the live executor at runtime.
+
+          5. **CLI launch flags (`packages/cli/src/program.ts`)** — register
+             `--add-read-path <paths...>` and `--add-write-path <paths...>`
+             as variadic, repeatable options on every command that already
+             takes `--cwd` (default `run`, `serve`, `resume`, `continue`,
+             and the default interactive entry). Commander's variadic form
+             with manual aggregation across repeats: collect each occurrence
+             and concat. Example: `chimera --add-read-path /a /b --add-read-path /c`
+             yields `["/a", "/b", "/c"]`.
+
+             Plumb both arrays through:
+             - `runOneShot` (`commands/run.ts`)
+             - `runInteractive` (`commands/interactive.ts`)
+             - `runServe` (`commands/serve.ts`)
+
+             Where the CLI creates the initial session via
+             `client.createSession(...)`, after creation, push the requested
+             paths into the session by either:
+               (a) Extending `CreateSession` request schema with optional
+                   `additionalReadPaths` / `additionalWritePaths`, OR
+               (b) Calling new server endpoints (these don't exist yet —
+                   step 2 will add them).
+             Pick (a) — it's cleaner and lets the executor be constructed
+             with the right allow lists from the start. Update:
+             - `packages/server/src/app.ts` `createSessionSchema` to accept
+               the optional arrays.
+             - `packages/server/src/agent-registry.ts` to pass them into
+               `factory.build()` via `SessionInit`.
+             - `packages/server/src/...` (or wherever `SessionInit` is
+               defined — search for the type).
+             - `packages/client/src/client.ts` `createSession()` to accept
+               and forward them.
+             - The factory consumes these from `SessionInit` and sets them
+               on `agent.session.additionalReadPaths/...` plus the
+               `LocalExecutor` allow lists.
+
+             Resolution rules: each user-supplied path is resolved relative
+             to the CLI process cwd (or `--cwd` if set) before being sent
+             to the server. Reject non-existent paths at CLI parse time
+             with a clear error.
+
+          6. **Tests** — add CLI-level tests asserting:
+             - `chimera --add-read-path <abs> run "echo"` (with a fake
+               factory or non-LLM exit path if available) produces a
+               session whose `additionalReadPaths` contains the abs path.
+             - Resuming a session restores its `additionalReadPaths` /
+               `additionalWritePaths`.
+             - Forked sessions inherit parent's arrays.
+             - Persistence round-trip via `writeSessionMetadata` +
+               `loadSession`.
+
+          ## Scope discipline
+
+          - Stay inside the file globs in `scope`. Do NOT touch the TUI,
+            server *endpoints* beyond `createSession`, or anything in
+            `packages/commands` or `packages/tui`.
+          - You may add a tiny mutator method to `LocalExecutor` but DO
+            NOT touch `DockerExecutor` — sandbox extra paths is out of
+            scope for now (note this in code comments if relevant).
+          - Do NOT add `/add-read-path` / `/add-write-path` slash commands
+            or `@`/`#` prompt detection — those are later steps.
+
+          ## Build / verify
+
+          - `pnpm --filter @chimera/core build`
+          - `pnpm --filter @chimera/tools build`
+          - `pnpm --filter @chimera/server build`
+          - `pnpm --filter @chimera/client build`
+          - `pnpm --filter @chimera/cli build`
+          - `pnpm --filter @chimera/core test`
+          - `pnpm --filter @chimera/tools test`
+          - `pnpm --filter @chimera/cli test`
+          - Note: workspace packages are consumed via built `dist/`, so
+            rebuild downstream packages after editing an upstream one
+            (see `AGENTS.md` "Package model").
+
+          Use `pnpm biome:lint:fix` if you need to format (NOT plain
+          `pnpm lint` — see AGENTS.md for the rtk-hook caveat).
+
+          When you're done, run:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```
+
+  - name: "Runtime API: server endpoints + client methods + factory hook for runtime mutation"
+    subtasks:
+      - title: "Add /paths endpoints, client methods, and runtime-mutation factory hook"
+        role: backend
+        scope:
+          - packages/server/src/app.ts
+          - packages/server/src/agent-registry.ts
+          - packages/server/test/**
+          - packages/client/src/client.ts
+          - packages/client/test/**
+          - packages/cli/src/factory.ts
+          - packages/cli/test/**
+          - packages/core/src/agent.ts
+          - packages/core/test/**
+        prompt: |
+          You are step 2 of a swarm adding "additional read/write paths"
+          to Chimera. Parent task is `tjs8r1yu`; read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          Step 1 has already landed:
+          - `Session.additionalReadPaths` / `additionalWritePaths`
+            (persisted, restored on resume, inherited on fork)
+          - `LocalExecutor.addReadAllowDir(...)` /
+            `addWriteAllowDir(...)` / `listReadAllowDirs()` /
+            `listWriteAllowDirs()` mutators
+          - `CliAgentFactory.getLocalExecutor(sessionId)` returns the
+            live executor
+          - Launch flags `--add-read-path` / `--add-write-path` populate
+            the session at construction via `SessionInit`
+
+          Run `git log --oneline -10` to see what step 1 actually shipped
+          before assuming the shape — read the diff if anything below
+          conflicts with the actual contract.
+
+          ## What you must deliver
+
+          1. **Server endpoints** (`packages/server/src/app.ts`):
+             - `GET  /v1/sessions/:id/paths` →
+               `{ read: string[], write: string[] }`
+             - `POST /v1/sessions/:id/paths` body
+               `{ kind: 'read'|'write', path: string }` →
+               204 No Content. On success the server must:
+                 (a) validate the path is a non-empty string and exists
+                     on disk (return 400 with a clear message if not);
+                 (b) resolve to absolute (using the session's cwd as the
+                     base for relative paths);
+                 (c) push it into the session's
+                     `additionalReadPaths` / `additionalWritePaths`
+                     (idempotent — duplicates are no-ops);
+                 (d) update the live `LocalExecutor` via the factory's
+                     `getLocalExecutor(sessionId)` mutator;
+                 (e) persist updated session metadata via
+                     `writeSessionMetadata`.
+             - Wire these into `AgentRegistry` so the route handler can
+               reach the factory + the live agent's session. The
+               `AgentRegistry` already brokers session→agent lookups;
+               add a `addSessionPath(sessionId, kind, path)` method on
+               the registry that the route handler calls.
+
+          2. **Client** (`packages/client/src/client.ts`):
+             - `async listPaths(sessionId): Promise<{ read: string[]; write: string[] }>`
+             - `async addPath(sessionId, kind: 'read'|'write', path: string): Promise<void>`
+
+          3. **Agent** — if the in-memory `Session` lives on the `Agent`
+             instance (it does — see `agent.session`), expose a tiny
+             helper on `Agent`:
+             ```
+             addAdditionalPath(kind: 'read'|'write', absPath: string): boolean
+             ```
+             Returns `true` if added, `false` if it was already present.
+             The route handler calls this, then the registry mutates the
+             executor and persists. (Choose the layering you think is
+             cleanest — registry can do everything if you'd rather not
+             touch Agent, but make sure the in-memory `Session` is
+             updated so subsequent persistence reflects it.)
+
+          4. **Tests**:
+             - Server tests for both endpoints: round-trip (POST then
+               GET), nonexistent path → 400, idempotent re-add → 204 and
+               only one entry, mutating writes also accept absolute paths.
+             - Client tests via the existing mock-server harness.
+             - A small CLI/factory test asserting that calling
+               `registry.addSessionPath(...)` makes the live
+               `LocalExecutor.readFile()` succeed for a path that
+               previously raised `PathEscapeError`.
+
+          ## Scope discipline
+
+          - You may extend `Agent` minimally (one method) but DO NOT
+            change its event model or persistence semantics.
+          - You must NOT add slash commands or any TUI changes —
+            those are step 3.
+          - Do NOT change the schema of `SessionInit` for new sessions
+            (step 1 did that). You're only adding *runtime* mutation.
+          - The hand-off from POST to live executor must work even when
+            no DockerExecutor is in play (`sandboxMode === 'off'`). When
+            a DockerExecutor IS in play, log a `warn(...)` that runtime
+            path mutation does not affect the sandbox — the executor
+            map only tracks `LocalExecutor`. (We accept this limitation
+            for now; the launch flags route through the sandbox mount
+            in a later change.)
+
+          ## Build / verify
+
+          - `pnpm --filter @chimera/server build && pnpm --filter @chimera/server test`
+          - `pnpm --filter @chimera/client build && pnpm --filter @chimera/client test`
+          - `pnpm --filter @chimera/cli build && pnpm --filter @chimera/cli test`
+          - `pnpm --filter @chimera/core build && pnpm --filter @chimera/core test`
+
+          When you're done, run:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```
+
+  - name: "TUI: slash commands + @/# prompt shorthand"
+    subtasks:
+      - title: "Slash commands + @path/#path detection in TUI input"
+        role: frontend
+        scope:
+          - packages/tui/src/App.tsx
+          - packages/tui/src/slash-commands.ts
+          - packages/tui/test/**
+        prompt: |
+          You are step 3 of a swarm adding "additional read/write paths"
+          to Chimera. Parent task is `tjs8r1yu`; read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          Steps 1 and 2 have already landed:
+          - Session-tracked `additionalReadPaths` / `additionalWritePaths`
+          - Launch flags `--add-read-path` / `--add-write-path`
+          - Server endpoints `GET/POST /v1/sessions/:id/paths`
+          - Client methods `listPaths(sessionId)` /
+            `addPath(sessionId, kind, path)`
+
+          Run `git log --oneline -10` to confirm the actual landed
+          contract before assuming names — adjust if step 2's method
+          names differ slightly.
+
+          ## What you must deliver
+
+          1. **Two new builtin slash commands** in
+             `packages/tui/src/slash-commands.ts` (`BUILTIN_COMMANDS`):
+             - `/add-read-path` — "Grant read access to a file or directory"
+             - `/add-write-path` — "Grant read+write access to a file or directory"
+
+          2. **Handlers in `packages/tui/src/App.tsx`** (in
+             `handleSlash`, alongside `/rules` and friends). For each:
+             - Require an argument (the path).
+             - Call `client.addPath(sessionId, 'read'|'write', arg)`.
+             - On success: `scrollback.addInfo(...)`.
+             - On error: `scrollback.addError(...)`.
+             - Tab-complete arg as a path if there's existing path-
+               completion in the input — if not, don't add it; that's
+               out of scope.
+
+          3. **`@path` / `#path` shorthand detection** — Before sending
+             a user message (in the path that leads to `sendUserMessage`
+             — `submitInput()` or wherever the user message is
+             tokenised), scan the text for tokens of the form:
+             - `@<path>` → add as read path, then load the content
+               into context.
+             - `#<path>` → add as write path, then load the content
+               into context.
+
+             Detection rules:
+             - Token starts with `@` or `#` at a word boundary (start of
+               string or after whitespace).
+             - Path runs until the next whitespace.
+             - Accept absolute, `~`-prefixed (expand to homedir), and
+               relative paths (resolve relative to `props.cwd`).
+             - If the resolved path doesn't exist, emit
+               `scrollback.addError(...)` and leave the literal token in
+               the prompt (don't strip it).
+
+             For each detected token:
+               a. Call `client.addPath(sessionId, kind, resolvedAbs)`.
+                  Log an info line.
+               b. Programmatically execute the equivalent of a `read`
+                  tool call: call `client.appendMessage(sessionId, ...)`
+                  with a synthetic block formatted to look like the
+                  output of the `read` tool so the model treats it as
+                  pre-read context. The format should be:
+                  ```
+                  [auto-attached @<path>]
+                  <line-numbered file contents OR directory listing>
+                  ```
+                  Use the same line-number prefixing the `read` tool uses
+                  (`<n>\t<line>`). For directories, list entries one per
+                  line with a trailing `/` for subdirs. Bound the
+                  read/directory output to a sensible cap (e.g. 2000
+                  lines / 100 KB for files, 200 entries for dirs) — copy
+                  the constants from `packages/tools/src/read.ts` if you
+                  want exact parity. Do this via a small local helper
+                  inside `App.tsx` (or factor it into
+                  `packages/tui/src/...` — your call) — do NOT pull in
+                  `@chimera/tools` to avoid a new dep edge.
+               c. Strip the `@token` / `#token` from the outgoing user
+                  message text (the model has the content already from
+                  step b; leaving the bare path in is fine but the
+                  literal `@` prefix would be confusing). Actually,
+                  keep the token in the user message — the brief says
+                  the agent should see the prompt as the user wrote it.
+                  Re-read the brief: yes, leave the token literal.
+
+          4. **Tests** — add ink-testing-library tests covering:
+             - Typing `/add-read-path /tmp` calls
+               `client.addPath(..., 'read', '/tmp')` and prints a
+               confirmation line.
+             - Typing `look at @./fixture.txt and tell me what's in it`
+               produces:
+                 i.  a client.addPath call with `'read'` and the
+                     resolved abs path
+                 ii. a client.appendMessage call carrying the file's
+                     content
+                iii. a client.send call carrying the original user
+                     text.
+               Use a fixture file the test creates in a tmp dir.
+             - `#path` triggers the `'write'` variant.
+             - Nonexistent path → error line, no API calls beyond the
+               error.
+
+          ## Scope discipline
+
+          - Touch only files in `scope`. Do NOT modify server, client,
+            core, or CLI launch flags.
+          - Do NOT add a new package dep on `@chimera/tools`.
+          - Follow the per-char-sleep + raw-escape stdin conventions
+            documented in `AGENTS.md` "TUI testing conventions".
+
+          ## Build / verify
+
+          - `pnpm --filter @chimera/tui build`
+          - `pnpm --filter @chimera/tui test`
+          - Use `pnpm biome:lint:fix` if you need to format.
+
+          When you're done, run:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```

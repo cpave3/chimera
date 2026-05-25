@@ -1,5 +1,4 @@
 import type { ModelMessage } from 'ai';
-import type { AgentEvent } from './events';
 import type { CallId, SessionId } from './ids';
 
 export type SandboxMode = 'off' | 'bind' | 'overlay' | 'ephemeral';
@@ -98,6 +97,16 @@ export interface Session {
    * persisted as sorted arrays in session metadata.
    */
   fileOps: FileOps;
+  /**
+   * Additional absolute paths (outside cwd) the agent is allowed to read via
+   * tool calls. Persisted in session metadata so resuming/forking retains them.
+   */
+  additionalReadPaths: string[];
+  /**
+   * Additional absolute paths (outside cwd) the agent is allowed to write via
+   * tool calls. Persisted in session metadata so resuming/forking retains them.
+   */
+  additionalWritePaths: string[];
 }
 
 /** Default mode for new sessions. Mirrored in `@chimera/modes`. */

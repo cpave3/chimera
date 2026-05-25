@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import React from 'react';
+import React, { memo } from 'react';
 
 export type StatusBarWidget = React.ReactNode;
 
@@ -14,6 +14,16 @@ export interface StatusBarProps {
   separatorColor?: string;
 }
 
+function sameArray(a: unknown[] | undefined, b: unknown[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 /**
  * A single-row status bar with two widget groups: one pinned to each edge,
  * separated by a stretchy spacer in the middle. Widgets are just React nodes
@@ -22,8 +32,10 @@ export interface StatusBarProps {
  * can use conditional rendering inline:
  *
  *     <StatusBar right={[scrolling && <Indicator />]} />
+ *
+ * Memoised so that referentially-stable widget arrays avoid re-renders.
  */
-export function StatusBar({
+export const StatusBar = memo(function StatusBar({
   left = [],
   right = [],
   separator = ' · ',
@@ -62,5 +74,14 @@ export function StatusBar({
         </>
       )}
     </Box>
+  );
+}, arePropsEqual);
+
+function arePropsEqual(prev: StatusBarProps, next: StatusBarProps): boolean {
+  return (
+    prev.separator === next.separator &&
+    prev.separatorColor === next.separatorColor &&
+    sameArray(prev.left, next.left) &&
+    sameArray(prev.right, next.right)
   );
 }

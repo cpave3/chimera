@@ -42,6 +42,8 @@ describe('persistence', () => {
       sandboxMode: 'off',
       usage: emptyUsage(),
       fileOps: { reads: new Set(), writes: new Set() },
+      additionalReadPaths: [],
+      additionalWritePaths: [],
       ...overrides,
     };
   }
@@ -149,7 +151,7 @@ describe('persistence', () => {
     );
     const eventsPath = sessionEventsPath(session.id, home);
     const existing = await readFile(eventsPath, 'utf8');
-    await writeFile(eventsPath, existing + '{ this is not json', 'utf8');
+    await writeFile(eventsPath, `${existing}{ this is not json`, 'utf8');
 
     const loaded = await loadSession(session.id, home);
     expect(loaded.messages).toEqual([{ role: 'user', content: 'hi' }]);
@@ -171,6 +173,39 @@ describe('persistence', () => {
     );
     const loaded = await loadSession(session.id, home);
     expect(loaded.status).toEqual('idle');
+  });
+
+  it('round-trips additionalReadPaths and additionalWritePaths', async () => {
+    const session = makeSession({
+      additionalReadPaths: ['/opt/data', '/etc/config'],
+      additionalWritePaths: ['/tmp', '/var/log'],
+    });
+    await writeSessionMetadata(session, home);
+    const loaded = await loadSession(session.id, home);
+    expect(loaded.additionalReadPaths).toEqual(['/opt/data', '/etc/config']);
+    expect(loaded.additionalWritePaths).toEqual(['/tmp', '/var/log']);
+  });
+
+  it('defaults additionalReadPaths/additionalWritePaths to [] when missing', async () => {
+    const session = makeSession();
+    await writeSessionMetadata(session, home);
+    // Manually strip the new fields to simulate pre-change metadata.
+    const raw = await readFile(sessionMetadataPath(session.id, home), 'utf8');
+    const parsed = JSON.parse(raw);
+    delete parsed.additionalReadPaths;
+    delete parsed.additionalWritePaths;
+    await writeFile(
+      sessionMetadataPath(session.id, home),
+      JSON.stringify(parsed),
+      'utf8',
+    );
+    const loaded = await loadSession(session.id, home);
+    expect(loaded.additionalReadPaths).toEqual([]);
+    expect(loaded.additionalWritePaths).toEqual([]);
+    // readSessionMetadata also copes with missing fields.
+    const meta = await readSessionMetadata(session.id, home);
+    expect(meta.additionalReadPaths).toEqual([]);
+    expect(meta.additionalWritePaths).toEqual([]);
   });
 
   describe('forkSession', () => {
@@ -250,6 +285,32 @@ describe('persistence', () => {
 
       const parentAfter = await readFile(sessionEventsPath(parent.id, home), 'utf8');
       expect(parentAfter).toEqual(parentBefore);
+    });
+
+    it('inherits parent additionalReadPaths and additionalWritePaths', async () => {
+      const parent = makeSession({
+        additionalReadPaths: ['/opt/data'],
+        additionalWritePaths: ['/tmp'],
+      });
+      await persistSession(
+        parent,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [{ role: 'user', content: 'hi' }],
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+      const { session: child } = await forkSession({ parentId: parent.id, home });
+      expect(child.additionalReadPaths).toEqual(['/opt/data']);
+      expect(child.additionalWritePaths).toEqual(['/tmp']);
+      // Verify they survive into persisted metadata.
+      const childMeta = JSON.parse(await readFile(sessionMetadataPath(child.id, home), 'utf8'));
+      expect(childMeta.additionalReadPaths).toEqual(['/opt/data']);
+      expect(childMeta.additionalWritePaths).toEqual(['/tmp']);
     });
   });
 
@@ -507,7 +568,7 @@ describe('persistence', () => {
         }),
       );
       await writeSessionMetadata(session, home);
-      await writeFile(sessionEventsPath(session.id, home), lines.join('\n') + '\n', 'utf8');
+      await writeFile(sessionEventsPath(session.id, home), `${lines.join('\n')}\n`, 'utf8');
 
       const start = performance.now();
       const loaded = await loadSession(session.id, home);
@@ -525,7 +586,7 @@ describe('persistence', () => {
         JSON.stringify({ type: 'user_message', content: String(i) }),
       );
       await writeSessionMetadata(session, home);
-      await writeFile(sessionEventsPath(session.id, home), lines.join('\n') + '\n', 'utf8');
+      await writeFile(sessionEventsPath(session.id, home), `${lines.join('\n')}\n`, 'utf8');
 
       const loaded = await loadSession(session.id, home);
       expect(loaded.messages).toHaveLength(0);
@@ -545,7 +606,7 @@ describe('persistence', () => {
         }),
       ];
       await writeSessionMetadata(session, home);
-      await writeFile(sessionEventsPath(session.id, home), lines.join('\n') + '\n', 'utf8');
+      await writeFile(sessionEventsPath(session.id, home), `${lines.join('\n')}\n`, 'utf8');
 
       const loaded = await loadSession(session.id, home);
       expect(loaded.messages).toHaveLength(1);
@@ -566,7 +627,7 @@ describe('persistence', () => {
         usage: emptyUsage(),
       });
       await writeSessionMetadata(session, home);
-      await writeFile(sessionEventsPath(session.id, home), noise + '\n' + snapshot + '\n', 'utf8');
+      await writeFile(sessionEventsPath(session.id, home), `${noise}\n${snapshot}\n`, 'utf8');
 
       const loaded = await loadSession(session.id, home);
       expect(loaded.messages).toHaveLength(1);

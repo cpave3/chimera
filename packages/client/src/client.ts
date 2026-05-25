@@ -54,6 +54,8 @@ export interface CreateSessionOpts {
   model: ModelConfig;
   sandboxMode?: SandboxMode;
   sessionId?: SessionId;
+  additionalReadPaths?: string[];
+  additionalWritePaths?: string[];
 }
 
 export interface ForkResponse {
@@ -240,6 +242,18 @@ export class ChimeraClient {
 
   async listSubagents(sessionId: SessionId): Promise<SubagentInfo[]> {
     return this.json<SubagentInfo[]>(`/v1/sessions/${sessionId}/subagents`);
+  }
+
+  async listPaths(sessionId: SessionId): Promise<{ read: string[]; write: string[] }> {
+    return this.json<{ read: string[]; write: string[] }>(`/v1/sessions/${sessionId}/paths`);
+  }
+
+  async addPath(sessionId: SessionId, kind: 'read' | 'write', path: string): Promise<void> {
+    await this.json<void>(`/v1/sessions/${sessionId}/paths`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind, path }),
+    });
   }
 
   /**

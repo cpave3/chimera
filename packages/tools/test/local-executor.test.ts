@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PathEscapeError } from '../src/errors';
 import { LocalExecutor } from '../src/local-executor';
@@ -254,5 +254,70 @@ describe('LocalExecutor', () => {
       { name: 'b.txt', isDir: false },
       { name: 'sub', isDir: true },
     ]);
+  });
+
+  // --- Runtime mutators (addReadAllowDir / addWriteAllowDir) ---
+
+  it('addReadAllowDir lets a subsequent readFile succeed', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-read-mut-'));
+    try {
+      const file = join(outside, 'secret.txt');
+      await writeFile(file, 'hello');
+      const exec = new LocalExecutor({ cwd: root });
+      await expect(exec.readFile(file)).rejects.toBeInstanceOf(PathEscapeError);
+      exec.addReadAllowDir(outside);
+      const content = await exec.readFile(file);
+      expect(content).toBe('hello');
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('addWriteAllowDir lets a subsequent writeFile succeed', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-write-mut-'));
+    try {
+      const file = join(outside, 'new.txt');
+      const exec = new LocalExecutor({ cwd: root });
+      await expect(exec.writeFile(file, 'hello')).rejects.toBeInstanceOf(PathEscapeError);
+      exec.addWriteAllowDir(outside);
+      await exec.writeFile(file, 'hello');
+      expect(await readFile(file, 'utf8')).toBe('hello');
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('mutators silently ignore duplicate paths', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-dup-'));
+    try {
+      const exec = new LocalExecutor({ cwd: root });
+      exec.addReadAllowDir(outside);
+      exec.addReadAllowDir(outside);
+      exec.addReadAllowDir(outside);
+      exec.addWriteAllowDir(outside);
+      exec.addWriteAllowDir(outside);
+      expect(exec.listReadAllowDirs().filter((d) => d === resolve(outside)).length).toBe(1);
+      expect(exec.listWriteAllowDirs().filter((d) => d === resolve(outside)).length).toBe(1);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('writeFile is still rejected when only addReadAllowDir was used', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-read-only-'));
+    try {
+      const file = join(outside, 'new.txt');
+      const exec = new LocalExecutor({ cwd: root });
+      exec.addReadAllowDir(outside);
+      // Read works.
+      await writeFile(file, 'existing');
+      expect(await exec.readFile(file)).toBe('existing');
+      // Write still rejects.
+      await expect(exec.writeFile(join(outside, 'another.txt'), 'x')).rejects.toBeInstanceOf(
+        PathEscapeError,
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

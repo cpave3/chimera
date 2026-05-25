@@ -57,6 +57,32 @@ export class LocalExecutor implements Executor {
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
+  /** Add an absolute directory to the read-allow list. Deduplicates silently. */
+  addReadAllowDir(absolutePath: string): void {
+    const resolved = resolve(absolutePath);
+    if (!this.readAllowDirs.some((d) => resolve(d) === resolved)) {
+      this.readAllowDirs.push(resolved);
+    }
+  }
+
+  /** Add an absolute directory to the write-allow list. Deduplicates silently. */
+  addWriteAllowDir(absolutePath: string): void {
+    const resolved = resolve(absolutePath);
+    if (!this.writeAllowDirs.some((d) => resolve(d) === resolved)) {
+      this.writeAllowDirs.push(resolved);
+    }
+  }
+
+  /** Return a shallow copy of the current read-allow directories. */
+  listReadAllowDirs(): readonly string[] {
+    return [...this.readAllowDirs];
+  }
+
+  /** Return a shallow copy of the current write-allow directories. */
+  listWriteAllowDirs(): readonly string[] {
+    return [...this.writeAllowDirs];
+  }
+
   cwd(): string {
     return this.rootCwd;
   }

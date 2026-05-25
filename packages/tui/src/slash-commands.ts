@@ -20,6 +20,8 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'Show or change the active model' },
   { name: '/mode', description: 'Show modes or queue a switch (/mode <name>)' },
   { name: '/rules', description: 'List permission rules (/rules rm <n> to delete)' },
+  { name: '/add-read-path', description: 'Grant read access to a file or directory' },
+  { name: '/add-write-path', description: 'Grant read+write access to a file or directory' },
   { name: '/reload', description: 'Re-read user commands and AGENTS.md/CLAUDE.md from disk' },
   { name: '/theme', description: 'List or apply a colour theme (/theme <name>)' },
   { name: '/subagents', description: 'List active subagents of the current session' },

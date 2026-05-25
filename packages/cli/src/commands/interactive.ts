@@ -41,6 +41,10 @@ export interface InteractiveOptions {
    * compaction is disabled for this invocation.
    */
   compaction?: boolean;
+  /** Additional absolute paths for read access outside cwd. */
+  additionalReadPaths?: string[];
+  /** Additional absolute paths for write access outside cwd. */
+  additionalWritePaths?: string[];
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -126,6 +130,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     models: config.models,
     compaction: compactionConfig,
     compactor,
+    responseTimeoutMs: config.responseTimeoutMs,
   });
 
   const commands = loadReloadingCommandsFromConfig({
@@ -164,6 +169,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     model,
     sandboxMode,
     sessionId: opts.session,
+    additionalReadPaths: opts.additionalReadPaths,
+    additionalWritePaths: opts.additionalWritePaths,
   });
 
   const overlay: OverlayHandlers | undefined =

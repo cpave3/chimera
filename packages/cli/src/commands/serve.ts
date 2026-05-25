@@ -53,6 +53,10 @@ export interface ServeOptions {
    * compaction is disabled for this invocation.
    */
   compaction?: boolean;
+  /** Additional absolute paths for read access outside cwd. */
+  additionalReadPaths?: string[];
+  /** Additional absolute paths for write access outside cwd. */
+  additionalWritePaths?: string[];
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
@@ -153,6 +157,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     models: config.models,
     compaction: compactionConfig,
     compactor,
+    responseTimeoutMs: config.responseTimeoutMs,
   });
 
   const registry = new AgentRegistry({
@@ -184,6 +189,8 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     cwd: opts.cwd,
     model,
     sandboxMode,
+    additionalReadPaths: opts.additionalReadPaths,
+    additionalWritePaths: opts.additionalWritePaths,
   });
 
   writeLockfile(

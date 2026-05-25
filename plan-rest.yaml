@@ -1,0 +1,405 @@
+swarm:
+  parent_task_id: "tjs8r1yu"
+  working_dir: "/home/cameron/Projects/chimera"
+  summary: |
+    Continue the "additional read/write paths" feature. Step 0 (foundation:
+    Session fields, persistence, LocalExecutor mutators, factory
+    getLocalExecutor(), launch flags) is already merged on main. The four
+    remaining steps land in small, focused chunks so a worker won't run
+    out of context: (1) factory + AgentFactory contract for runtime path
+    mutation, (2) server endpoints, (3) client methods, (4a) TUI slash
+    commands, (4b) TUI @/# prompt shorthand.
+
+steps:
+  - name: "Factory: runtime addSessionPath on AgentFactory contract"
+    subtasks:
+      - title: "Implement CliAgentFactory.addSessionPath + extend AgentFactory interface"
+        role: backend
+        scope:
+          - packages/server/src/agent-registry.ts
+          - packages/cli/src/factory.ts
+          - packages/cli/test/factory.test.ts
+          - packages/cli/test/factory-paths.test.ts
+        prompt: |
+          You are a worker in a swarm. Parent task is `tjs8r1yu` — read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          The foundation has already shipped on `main`. Run
+          `git log --oneline -5` to confirm, but the contract you can rely
+          on is:
+          - `Session.additionalReadPaths: string[]`,
+            `Session.additionalWritePaths: string[]` (persisted)
+          - `LocalExecutor.addReadAllowDir(absPath)`,
+            `addWriteAllowDir(absPath)`,
+            `listReadAllowDirs()`, `listWriteAllowDirs()`
+          - `CliAgentFactory.getLocalExecutor(sessionId)` returns the live
+            executor for a session.
+
+          ## Deliverable (small, single concern)
+
+          1. Extend the `AgentFactory` interface in
+             `packages/server/src/agent-registry.ts` with an OPTIONAL
+             method:
+             ```ts
+             addSessionPath?(
+               sessionId: SessionId,
+               kind: 'read' | 'write',
+               path: string,
+             ): Promise<{ absolute: string; added: boolean }>;
+             ```
+             Keep it optional so non-CLI factories don't have to
+             implement it. The server can feature-detect.
+
+          2. Implement it on `CliAgentFactory`
+             (`packages/cli/src/factory.ts`). Semantics:
+             - Look up the live executor via `getLocalExecutor(sessionId)`.
+               If absent, throw `Error('session not found')`.
+             - Resolve `path` to absolute. If relative, resolve against
+               the session's `cwd` (which the factory can read from the
+               live `Agent.session.cwd` — store an internal map
+               `sessionId -> Agent` alongside `liveExecutors` if it
+               doesn't already exist; add only what you need).
+             - `fs.stat` the resolved path — if it doesn't exist, throw
+               `Error('no such file or directory: <abs>')`.
+             - Mutate the executor: `addReadAllowDir` or
+               `addWriteAllowDir` per `kind`.
+             - Mutate `agent.session.additionalReadPaths` /
+               `additionalWritePaths` (idempotent — skip if already
+               present; record `added: false` in that case).
+             - Persist with `writeSessionMetadata(agent.session, this.home)`.
+             - Return `{ absolute, added }`.
+
+          3. Tests in `packages/cli/test/factory-paths.test.ts` (new
+             file). Build a `CliAgentFactory` with a fake provider, call
+             `build()` to get a session, then exercise
+             `addSessionPath`:
+             - Adding a read path makes a subsequent
+               `executor.readFile(<path/inside>)` succeed where it
+               previously threw `PathEscapeError`.
+             - Adding a write path makes `executor.writeFile` succeed.
+             - Re-adding the same path returns `{ added: false }`,
+               only one entry on the session.
+             - Nonexistent path throws.
+             - Unknown session id throws.
+
+          ## Scope discipline
+
+          - Touch ONLY the files in `scope`.
+          - Do NOT add server endpoints, client methods, slash commands,
+            or any TUI changes — those are later steps.
+          - Do NOT modify `Agent` itself.
+
+          ## Build / verify
+
+          ```
+          pnpm --filter @chimera/server build
+          pnpm --filter @chimera/cli build
+          pnpm --filter @chimera/cli test
+          ```
+
+          When done:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```
+
+  - name: "Server: GET/POST /v1/sessions/:id/paths endpoints"
+    subtasks:
+      - title: "Add /paths endpoints + AgentRegistry passthrough + server tests"
+        role: backend
+        scope:
+          - packages/server/src/agent-registry.ts
+          - packages/server/src/app.ts
+          - packages/server/test/paths.test.ts
+        prompt: |
+          You are a worker in a swarm. Parent task is `tjs8r1yu` — read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          Run `git log --oneline -5` to see what's landed. The contract
+          you can rely on:
+          - `Session.additionalReadPaths` / `additionalWritePaths`
+            (persisted)
+          - `factory.addSessionPath?(sessionId, kind, path)` returns
+            `{ absolute, added }`, throws on error.
+
+          ## Deliverable (one concern)
+
+          1. **AgentRegistry passthrough** in
+             `packages/server/src/agent-registry.ts`:
+             ```ts
+             async addSessionPath(
+               sessionId: SessionId,
+               kind: 'read' | 'write',
+               path: string,
+             ): Promise<{ absolute: string; added: boolean }>
+             ```
+             Look up the entry by `sessionId` (throw `Error('not found')`
+             if absent). Reach the entry's `session` to confirm it
+             exists, then delegate to `this.factory.addSessionPath?.(...)`.
+             If the factory doesn't implement the optional method,
+             throw `Error('factory does not support runtime path mutation')`.
+
+          2. **Endpoints** in `packages/server/src/app.ts`:
+             - `GET /v1/sessions/:id/paths` →
+               `{ read: string[]; write: string[] }`. Read from the
+               session via the registry's existing entry-lookup helper
+               (the in-memory `agent.session`). Return 404 if no session.
+             - `POST /v1/sessions/:id/paths` with body
+               `{ kind: 'read'|'write', path: string }`:
+                 - Validate body with zod (`pathsAddSchema`).
+                 - Call `registry.addSessionPath(...)`.
+                 - On `'no such file or directory'` → 400 with the error.
+                 - On `'not found'` → 404.
+                 - On `'factory does not support ...'` → 501.
+                 - Other errors → 500.
+                 - Success → 204 No Content.
+
+          3. **Tests** in `packages/server/test/paths.test.ts`. Build the
+             app with a stub `AgentFactory` that implements
+             `addSessionPath` against an in-memory session state. Cover:
+             - GET returns the empty `{read:[], write:[]}` for a fresh
+               session.
+             - POST `{kind:'read', path:'/tmp'}` then GET shows
+               `/tmp` in `read`.
+             - POST with a nonexistent path → 400.
+             - POST with invalid body shape → 400 (zod failure).
+             - GET on unknown session → 404.
+             - Re-POSTing the same path → 204 (idempotent) and only
+               one entry on subsequent GET.
+
+          ## Scope discipline
+
+          - Touch ONLY the files in `scope`.
+          - Do NOT modify the factory, the client, slash commands,
+            or the TUI.
+
+          ## Build / verify
+
+          ```
+          pnpm --filter @chimera/server build
+          pnpm --filter @chimera/server test
+          ```
+
+          When done:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```
+
+  - name: "Client: listPaths + addPath methods"
+    subtasks:
+      - title: "Add client.listPaths and client.addPath with tests"
+        role: backend
+        scope:
+          - packages/client/src/client.ts
+          - packages/client/test/paths.test.ts
+        prompt: |
+          You are a worker in a swarm. Parent task is `tjs8r1yu` — read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          The server now exposes:
+          - `GET  /v1/sessions/:id/paths` →
+            `{ read: string[]; write: string[] }`
+          - `POST /v1/sessions/:id/paths` body
+            `{ kind: 'read'|'write', path: string }` → 204
+
+          ## Deliverable (single concern)
+
+          1. Add to `ChimeraClient` in `packages/client/src/client.ts`:
+             ```ts
+             async listPaths(sessionId: SessionId): Promise<{ read: string[]; write: string[] }>
+             async addPath(sessionId: SessionId, kind: 'read'|'write', path: string): Promise<void>
+             ```
+             - Use the existing `this.fetchImpl` / `this.json` / error
+               wrappers consistently with sibling methods.
+             - `addPath` throws `ChimeraHttpError` for non-204 responses.
+
+          2. Tests in `packages/client/test/paths.test.ts`. Follow the
+             style of existing client tests (look at the directory for a
+             mock-fetch / mock-server helper). Cover:
+             - `listPaths` calls `GET` and returns the parsed body.
+             - `addPath('read', '/tmp')` POSTs the right body.
+             - 400 response → throws `ChimeraHttpError` with status 400.
+             - 404 → throws with status 404.
+
+          ## Scope discipline
+
+          - Touch ONLY files in `scope`.
+
+          ## Build / verify
+
+          ```
+          pnpm --filter @chimera/client build
+          pnpm --filter @chimera/client test
+          ```
+
+          When done:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```
+
+  - name: "TUI: /add-read-path and /add-write-path slash commands"
+    subtasks:
+      - title: "Add two slash commands + handler + tests"
+        role: frontend
+        scope:
+          - packages/tui/src/slash-commands.ts
+          - packages/tui/src/App.tsx
+          - packages/tui/test/slash-paths.test.tsx
+        prompt: |
+          You are a worker in a swarm. Parent task is `tjs8r1yu` — read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          The client now has:
+          - `client.listPaths(sessionId)` → `{ read, write }`
+          - `client.addPath(sessionId, 'read'|'write', path)`
+
+          ## Deliverable (single concern)
+
+          1. **`packages/tui/src/slash-commands.ts`** — add two entries
+             to `BUILTIN_COMMANDS`:
+             - `/add-read-path` — "Grant read access to a file or directory"
+             - `/add-write-path` — "Grant read+write access to a file or directory"
+
+          2. **`packages/tui/src/App.tsx`** `handleSlash` — add two new
+             cases alongside `/rules`:
+             - Both require an argument (the path); error if missing.
+             - On success: `client.addPath(sessionId, kind, arg)` then
+               `scrollback.addInfo(...)` confirming the path.
+             - On error: `scrollback.addError(\`/add-read-path: ${err.message}\`)`.
+             - No path completion / no `@`/`#` handling here — that's a
+               separate worker.
+
+          3. **Tests** in `packages/tui/test/slash-paths.test.tsx`.
+             Follow conventions from
+             `packages/tui/test/slash-dispatch.test.tsx` (per-char sleep,
+             escape sequences — see `AGENTS.md` "TUI testing
+             conventions"). Cover:
+             - Typing `/add-read-path /tmp\r` calls
+               `client.addPath(sessionId, 'read', '/tmp')` and shows a
+               confirmation line.
+             - Typing `/add-write-path /tmp\r` does the `'write'` variant.
+             - Typing `/add-read-path\r` (no arg) shows a usage error and
+               does NOT call `client.addPath`.
+             - Backend error propagates as a scrollback error line.
+
+          ## Scope discipline
+
+          - Touch ONLY the files in `scope`.
+          - Do NOT add `@`/`#` prompt shorthand — that's a separate
+            worker (next step).
+
+          ## Build / verify
+
+          ```
+          pnpm --filter @chimera/tui build
+          pnpm --filter @chimera/tui test
+          ```
+
+          When done:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```
+
+  - name: "TUI: @path / #path prompt shorthand"
+    subtasks:
+      - title: "Detect @path/#path in user input, grant + load content"
+        role: frontend
+        scope:
+          - packages/tui/src/App.tsx
+          - packages/tui/src/attach-paths.ts
+          - packages/tui/test/attach-paths.test.ts
+          - packages/tui/test/attach-paths-app.test.tsx
+        prompt: |
+          You are a worker in a swarm. Parent task is `tjs8r1yu` — read
+          `/home/cameron/.legato/agents/tjs8r1yu/brief.md` first.
+
+          The previous steps have already shipped:
+          - `client.addPath(sessionId, kind, path)` mutates server-side
+            allow lists.
+          - `client.appendMessage(sessionId, content)` appends a user
+            message to history without invoking the LLM.
+
+          ## Deliverable (single concern)
+
+          1. **Pure helper** in
+             `packages/tui/src/attach-paths.ts`:
+             ```ts
+             export interface AttachToken { kind: 'read'|'write'; raw: string; absolute: string; }
+             export function parseAttachTokens(input: string, cwd: string): AttachToken[];
+             ```
+             Detection rules (test these in isolation):
+             - Tokens match `(^|\s)([@#])(\S+)`. The path runs until the
+               next whitespace.
+             - `@` → `kind: 'read'`. `#` → `kind: 'write'`.
+             - `~/...` expands to `os.homedir() + ...`.
+             - Otherwise resolved against `cwd` (absolute paths pass
+               through).
+             - The returned list preserves order of appearance.
+
+          2. **Read/format helper** (same file or sibling):
+             ```ts
+             export async function readForAttach(absPath: string): Promise<{
+               kind: 'file'|'dir'|'missing'|'error';
+               body: string;
+             }>;
+             ```
+             - For a file, returns line-numbered content
+               (`<n>\t<line>`), capped at 2000 lines / 100 KB.
+             - For a directory, returns one entry per line (with
+               trailing `/` for subdirs), capped at 200 entries.
+             - For missing path, returns `{ kind: 'missing', body: ... }`.
+             - On any other error, returns `{ kind: 'error', body: errMsg }`.
+
+          3. **App integration** in `packages/tui/src/App.tsx`. In the
+             flow that leads to `sendUserMessage(text)` (i.e. when the
+             user submits a non-slash, non-bang message), before
+             dispatching:
+             - Call `parseAttachTokens(text, props.cwd)`.
+             - For each token, in order:
+                 a. `await client.addPath(sessionId, kind, absolute)`.
+                    If it 400s ("no such file or directory"), emit
+                    `scrollback.addError(...)`, skip this token, do NOT
+                    call appendMessage.
+                 b. `await readForAttach(absolute)`. If `kind === 'missing'`
+                    or `'error'`, emit a scrollback error and skip
+                    appendMessage.
+                 c. Otherwise call `client.appendMessage(sessionId,
+                    \`[auto-attached @<rawPath>]\n<body>\`)`. Use `#` in
+                    the synthetic label when `kind === 'write'`.
+             - Leave the literal `@token` / `#token` in `text` and
+               proceed with the existing `sendUserMessage(text)` call.
+             - Tokens are processed sequentially so the order matches
+               their appearance in the prompt.
+
+          4. **Tests**:
+             - `attach-paths.test.ts` — unit-test
+               `parseAttachTokens` (empty input, single `@token`, single
+               `#token`, mixed, `~` expansion, no-match-mid-word like
+               `a@b` not matching, leading vs interior position).
+             - `attach-paths.test.ts` — unit-test `readForAttach`
+               against tmp files: small file, large file (cap),
+               directory, missing.
+             - `attach-paths-app.test.tsx` — full TUI flow with mocked
+               `client.addPath` / `client.appendMessage` / `client.send`
+               asserting the call order and arguments for an input like
+               `look at @./fixture.txt and tell me`.
+
+          ## Scope discipline
+
+          - Touch ONLY files in `scope`.
+          - Do NOT change the slash command file — that's done.
+          - Do NOT take a new dep on `@chimera/tools`.
+          - The synthetic appendMessage content does NOT need to imitate
+            a tool-call envelope — plain text under a clear header is
+            sufficient (the brief allowed either approach).
+
+          ## Build / verify
+
+          ```
+          pnpm --filter @chimera/tui build
+          pnpm --filter @chimera/tui test
+          ```
+
+          When done:
+          ```
+          legato swarm built $LEGATO_SUBTASK_ID
+          ```

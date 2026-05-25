@@ -49,6 +49,10 @@ export interface RunOptions {
    * compaction is disabled for this invocation.
    */
   compaction?: boolean;
+  /** Additional absolute paths for read access outside cwd. */
+  additionalReadPaths?: string[];
+  /** Additional absolute paths for write access outside cwd. */
+  additionalWritePaths?: string[];
 }
 
 export interface RunResult {
@@ -187,6 +191,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       model,
       sandboxMode,
       sessionId: opts.session,
+      additionalReadPaths: opts.additionalReadPaths,
+      additionalWritePaths: opts.additionalWritePaths,
     });
     sessionId = sessionResult.sessionId;
 
