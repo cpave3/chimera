@@ -1,6 +1,7 @@
-import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import type { Stats } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 
 export interface AttachToken {
   kind: 'read' | 'write';
@@ -17,20 +18,25 @@ export interface AttachToken {
 export function parseAttachTokens(input: string, cwd: string): AttachToken[] {
   const tokens: AttachToken[] = [];
   const pattern = /(^|\s)([@#])(\S+)/g;
-  let match;
-  // eslint-disable-next-line no-cond-assign
-  while ((match = pattern.exec(input)) !== null) {
+  let match: RegExpExecArray | null = pattern.exec(input);
+  while (match !== null) {
     const [, , prefix, rawPath] = match;
-    const kind = prefix === '@' ? 'read' : 'write';
-    let resolved: string;
-    if (rawPath.startsWith('~/')) {
-      resolved = join(homedir(), rawPath.slice(2));
-    } else if (isAbsolute(rawPath)) {
-      resolved = rawPath;
+    if (prefix === '#' && rawPath.startsWith('#')) {
+      // Skip markdown headings (`## Title`, `### Code`, etc.)
+      match = pattern.exec(input);
     } else {
-      resolved = resolve(cwd, rawPath);
+      const kind = prefix === '@' ? 'read' : 'write';
+      let resolved: string;
+      if (rawPath.startsWith('~/')) {
+        resolved = join(homedir(), rawPath.slice(2));
+      } else if (isAbsolute(rawPath)) {
+        resolved = rawPath;
+      } else {
+        resolved = resolve(cwd, rawPath);
+      }
+      tokens.push({ kind, raw: rawPath, absolute: resolved });
+      match = pattern.exec(input);
     }
-    tokens.push({ kind, raw: rawPath, absolute: resolved });
   }
   return tokens;
 }
@@ -45,7 +51,7 @@ export async function readForAttach(absPath: string): Promise<{
   kind: 'file' | 'dir' | 'missing' | 'error';
   body: string;
 }> {
-  let stats;
+  let stats: Stats;
   try {
     stats = await stat(absPath);
   } catch (err) {

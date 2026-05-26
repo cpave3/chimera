@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmdirSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -66,6 +66,29 @@ describe('parseAttachTokens', () => {
     expect(parseAttachTokens('check @/etc/hosts', '/tmp')).toEqual([
       { kind: 'read', raw: '/etc/hosts', absolute: '/etc/hosts' },
     ]);
+  });
+
+  it('ignores single # followed by a space (markdown heading)', () => {
+    expect(parseAttachTokens('# Heading', '/tmp')).toEqual([]);
+  });
+
+  it('ignores multiple # followed by a space (markdown headings)', () => {
+    expect(parseAttachTokens('## Sub-heading\n### Title\n#### Code', '/tmp')).toEqual([]);
+  });
+
+  it('ignores markdown headings inside text blocks', () => {
+    const text = 'Let me show:\n\n```\n## example\n```\n';
+    expect(parseAttachTokens(text, '/tmp')).toEqual([]);
+  });
+
+  it('still detects # tokens that are not markdown headings', () => {
+    expect(parseAttachTokens('edit #file.txt', '/tmp')).toEqual([
+      { kind: 'write', raw: 'file.txt', absolute: '/tmp/file.txt' },
+    ]);
+  });
+
+  it('ignores bare ## with no trailing text', () => {
+    expect(parseAttachTokens('prefix ## ', '/tmp')).toEqual([]);
   });
 });
 
