@@ -208,3 +208,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 Split large changes into logically coherent commits rather than one mega-
 commit. Don't push or open PRs unless explicitly asked.
+
+## Session rewind
+
+`truncateEventsAtIndex` uses byte offsets precomputed by `readCheckpoints`
+against the on-disk `events.jsonl` byte layout. These offsets are only valid
+while no new events are being appended — the server enforces this via a rewind
+lock that blocks new runs and compactions while truncation is in flight. Any
+future concurrent-write path through `events.jsonl` must respect this invariant.

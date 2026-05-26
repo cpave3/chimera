@@ -3,6 +3,7 @@ import type { Mode } from '@chimera/modes';
 import type {
   AgentEvent,
   AgentEventEnvelope,
+  Checkpoint,
   EventId,
   ModelConfig,
   PermissionRule,
@@ -129,11 +130,26 @@ export class ChimeraClient {
     });
   }
 
-  async forkSession(id: SessionId, purpose?: string): Promise<ForkResponse> {
+  async forkSession(id: SessionId, purpose?: string, rewindIndex?: number): Promise<ForkResponse> {
+    const body: Record<string, unknown> = {};
+    if (purpose !== undefined) body.purpose = purpose;
+    if (rewindIndex !== undefined) body.rewindIndex = rewindIndex;
     return this.json<ForkResponse>(`/v1/sessions/${id}/fork`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(purpose !== undefined ? { purpose } : {}),
+      body: JSON.stringify(body),
+    });
+  }
+
+  async listCheckpoints(sessionId: SessionId): Promise<Checkpoint[]> {
+    return this.json<Checkpoint[]>(`/v1/sessions/${sessionId}/checkpoints`);
+  }
+
+  async rewindSession(sessionId: SessionId, index: number): Promise<{ sessionId: SessionId }> {
+    return this.json<{ sessionId: SessionId }>(`/v1/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ index }),
     });
   }
 

@@ -6,7 +6,7 @@ import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands
 import type { AgentEvent, ModelConfig, Session, SessionInfo } from '@chimera/core';
 import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 
 interface SubagentStub {
@@ -33,7 +33,11 @@ interface StubClientOpts {
   getSessionImpl?: (id: string) => Session;
   createSessionSpy?: (opts: unknown) => void;
   resumeSessionSpy?: (id: string) => void;
-  forkSessionSpy?: (id: string, purpose?: string) => void;
+  forkSessionSpy?: (id: string, purpose?: string, rewindIndex?: number) => void;
+  /** Checkpoints returned by `listCheckpoints`. */
+  checkpoints?: import('@chimera/core').Checkpoint[];
+  listCheckpointsSpy?: (id: string) => void;
+  rewindSessionSpy?: (id: string, index: number) => void;
   compactSpy?: (id: string) => void;
   appendSpy?: (content: string) => void;
   setModelSpy?: (modelRef: string | null) => void;
@@ -107,12 +111,20 @@ function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev
       opts.resumeSessionSpy?.(id);
       return { sessionId: id };
     },
-    forkSession: async (id: string, purpose?: string) => {
-      opts.forkSessionSpy?.(id, purpose);
+    forkSession: async (id: string, purpose?: string, rewindIndex?: number) => {
+      opts.forkSessionSpy?.(id, purpose, rewindIndex);
       return {
         sessionId: '01HZFORKEDCHILD0000000000000',
         parentId: id,
       };
+    },
+    listCheckpoints: async (id: string) => {
+      opts.listCheckpointsSpy?.(id);
+      return opts.checkpoints ?? [];
+    },
+    rewindSession: async (id: string, index: number) => {
+      opts.rewindSessionSpy?.(id, index);
+      return { sessionId: id };
     },
     compact: async (_id: string) => {
       opts.compactSpy?.(_id);
@@ -1147,6 +1159,176 @@ describe('TUI bang dispatch', () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBe('analysis');
+
+    unmount();
+  });
+});
+
+describe('TUI /rewind slash dispatch', () => {
+  const sampleCheckpoints = [
+    { index: 0, userMessage: '', toolCallSummary: '', truncateByteOffset: 0 },
+    { index: 3, userMessage: 'first prompt', toolCallSummary: '1 tool call', truncateByteOffset: 120 },
+    { index: 7, userMessage: 'second prompt', toolCallSummary: '', truncateByteOffset: 240 },
+  ];
+
+  it('/rewind opens the picker when checkpoints exist', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ checkpoints: sampleCheckpoints })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('Rewind to checkpoint'));
+    const frame = lastFrame()!;
+    expect(frame).toContain('Rewind to checkpoint');
+    expect(frame).toContain('[3] first prompt');
+    expect(frame).toContain('[7] second prompt');
+    unmount();
+  });
+
+  it('/rewind shows info when there are no rewindable checkpoints', async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <App client={stubClient({ checkpoints: [sampleCheckpoints[0]!] })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('no checkpoints to rewind to'));
+    expect(lastFrame()!).toContain('no checkpoints to rewind to');
+    unmount();
+  });
+
+  it('pressing Enter on a checkpoint calls rewindSession with the correct index', async () => {
+    const rewindCalls: Array<{ id: string; index: number }> = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({
+          checkpoints: sampleCheckpoints,
+          rewindSessionSpy: (id, index) => rewindCalls.push({ id, index }),
+        })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('Rewind to checkpoint'));
+    // Highlight starts at array position 0; navigate down once → checkpoint index 3.
+    (stdin as any).write('\x1b[B');
+    await new Promise((r) => setTimeout(r, 20));
+    await type(stdin, '\r');
+    await waitFor(() => rewindCalls.length > 0);
+    expect(rewindCalls).toEqual([{ id: 's', index: 3 }]);
+    unmount();
+  });
+
+  it('pressing Shift+Enter calls forkSession with the correct rewindIndex', async () => {
+    const forkCalls: Array<{ id: string; purpose?: string; rewindIndex?: number }> = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({
+          checkpoints: sampleCheckpoints,
+          forkSessionSpy: (id, purpose, rewindIndex) => forkCalls.push({ id, purpose, rewindIndex }),
+        })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('Rewind to checkpoint'));
+    // Highlight starts at array position 0; navigate down twice → checkpoint index 7.
+    (stdin as any).write('\x1b[B');
+    await new Promise((r) => setTimeout(r, 20));
+    (stdin as any).write('\x1b[B');
+    await new Promise((r) => setTimeout(r, 20));
+    // Send Shift+Enter via the SGR escape sequence fallback.
+    (stdin as any).write('\x1b[13;2u');
+    await waitFor(() => forkCalls.length > 0);
+    expect(forkCalls).toEqual([{ id: 's', purpose: undefined, rewindIndex: 7 }]);
+    // Wait for fork info to appear, then assert the input buffer contains the user message.
+    await waitFor(() => lastFrame()!.includes('forked from checkpoint'));
+    expect(lastFrame()!).toContain('second prompt');
+    unmount();
+  });
+
+  it('pressing Escape closes the picker without calling rewind or fork', async () => {
+    const rewindCalls: Array<{ id: string; index: number }> = [];
+    const forkCalls: Array<{ id: string; purpose?: string; rewindIndex?: number }> = [];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({
+          checkpoints: sampleCheckpoints,
+          rewindSessionSpy: (id, index) => rewindCalls.push({ id, index }),
+          forkSessionSpy: (id, purpose, rewindIndex) => forkCalls.push({ id, purpose, rewindIndex }),
+        })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('Rewind to checkpoint'));
+    (stdin as any).write('\x1b');
+    await waitFor(() => !lastFrame()!.includes('Rewind to checkpoint'));
+    expect(lastFrame()!).not.toContain('Rewind to checkpoint');
+    expect(rewindCalls).toHaveLength(0);
+    expect(forkCalls).toHaveLength(0);
+    unmount();
+  });
+
+  it('after in-place rewind, the input buffer contains the checkpoint user message', async () => {
+    const checkpoints = [
+      { index: 0, userMessage: '', toolCallSummary: '', truncateByteOffset: 0 },
+      { index: 1, userMessage: 'refactor the query', toolCallSummary: '', truncateByteOffset: 120 },
+    ];
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={stubClient({ checkpoints })}
+        sessionId="s"
+        modelRef="m/m"
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('Rewind to checkpoint'));
+    // Highlight starts at index 0; navigate down once → index 1.
+    (stdin as any).write('\x1b[B');
+    await new Promise((r) => setTimeout(r, 20));
+    await type(stdin, '\r');
+    // Wait for picker to close and rewind info to appear.
+    await waitFor(() => lastFrame()!.includes('rewound to checkpoint'));
+    const frame = lastFrame()!;
+    // The buffer should contain the checkpoint's user message text next to the prompt.
+    expect(frame).toContain('refactor the query');
+    unmount();
+  });
+
+  it('typing /rewind while busy queues it', async () => {
+    const listCheckpointsSpy = vi.fn();
+    const client = stubClient({ checkpoints: sampleCheckpoints, listCheckpointsSpy });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+    // Inject compaction_started so busy flips to true.
+    client.pushEvent({ type: 'compaction_started', reason: 'threshold' });
+    await waitFor(() => lastFrame()!.includes('compacting'));
+    expect(lastFrame()).toContain('compacting');
+
+    // Type /rewind while compacting.
+    await type(stdin, '/rewind\r');
+    await waitFor(() => lastFrame()!.includes('queued'));
+    const frame = lastFrame()!;
+    expect(frame).toContain('queued');
+    expect(frame).toContain('/rewind');
+
+    // listCheckpoints should not have been called because /rewind was queued.
+    expect(listCheckpointsSpy).not.toHaveBeenCalled();
 
     unmount();
   });

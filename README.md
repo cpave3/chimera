@@ -137,6 +137,7 @@ The TUI exposes three session-management commands:
   - `/sessions tree` prints a static tree to scrollback.
   - `/sessions <id>` prints details for one session: full id, cwd, model, parent, child count, and ancestry chain.
 - `/fork [purpose]` — create a child session inheriting the current session's conversation state. The parent is unchanged. In `overlay` sandbox mode the parent's filesystem upperdir is snapshotted into a new upperdir for the child, so the child's filesystem changes do not affect the parent.
+- `/rewind` — open an interactive picker showing every user message in the session with a summary of the tool calls that followed it. Enter rewinds in-place, truncating the event log and preloading the selected message into the input buffer. Shift+Enter forks from the checkpoint into a new child session, preserving the original branch. Escape cancels. In-place rewind is destructive (history after the checkpoint is removed); use Shift+Enter if you want to keep the original branch.
 
 Resume across server restarts:
 

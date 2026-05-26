@@ -1162,5 +1162,292 @@ describe('server app', () => {
         entry!.agent.resolvePermission = originalResolve;
       }
     });
+
+    it('POST /v1/sessions/:id/rewind rejects malformed JSON', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad',
+      });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe('invalid JSON');
+    });
+
+    it('POST /v1/sessions/:id/rewind rejects negative index', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index: -1 }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('bad request');
+      expect(Array.isArray(body.errors)).toBe(true);
+    });
+  });
+
+  describe('checkpoints and rewind', () => {
+    async function createSession(app: ReturnType<typeof buildApp>): Promise<string> {
+      const response = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      });
+      const { sessionId } = await response.json();
+      return sessionId;
+    }
+
+    async function waitForIdle(sessionId: string, registry: AgentRegistry): Promise<void> {
+      const entry = registry.get(sessionId);
+      if (!entry) return;
+      await new Promise<void>((resolve) => {
+        const ticker = setInterval(() => {
+          if (!entry!.runActive) {
+            clearInterval(ticker);
+            resolve();
+          }
+        }, 10);
+      });
+    }
+
+    it('GET /checkpoints returns single checkpoint for empty session', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      const response = await app.request(`/v1/sessions/${sessionId}/checkpoints`);
+      expect(response.status).toBe(200);
+      const checkpoints = await response.json();
+      expect(checkpoints).toHaveLength(1);
+      expect(checkpoints[0]).toStrictEqual({ index: 0, userMessage: '', toolCallSummary: '', truncateByteOffset: 0 });
+    });
+
+    it('GET /checkpoints returns 404 for missing session', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const response = await app.request('/v1/sessions/01KSHWCXG17ZRTQY9G13J3AETZ/checkpoints');
+      expect(response.status).toBe(404);
+    });
+
+    it('GET /checkpoints happy path: multi-turn session', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'first message' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'second message' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      const response = await app.request(`/v1/sessions/${sessionId}/checkpoints`);
+      expect(response.status).toBe(200);
+      const checkpoints = await response.json();
+      // Should have checkpoint 0 (before any messages) plus one for each user message.
+      expect(checkpoints.length).toBeGreaterThanOrEqual(2);
+      expect(checkpoints[0]!.index).toBe(0);
+      expect(checkpoints[1]!.userMessage).toBe('first message');
+    });
+
+    it('POST /rewind truncates and patches live agent state', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'first message' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      // Get checkpoints to know what index to rewind to.
+      const checkpointsResponse = await app.request(`/v1/sessions/${sessionId}/checkpoints`);
+      const checkpoints = await checkpointsResponse.json();
+      expect(checkpoints.length).toBeGreaterThanOrEqual(2);
+      const initialMessages = registry.get(sessionId)!.agent.session.messages.length;
+      expect(initialMessages).toBeGreaterThan(0);
+
+      // Rewind to checkpoint 0 (before first user message).
+      const rewindResponse = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index: 0 }),
+      });
+      expect(rewindResponse.status).toBe(200);
+      const rewindBody = await rewindResponse.json();
+      expect(rewindBody.sessionId).toBe(sessionId);
+
+      // Live agent state should be reset.
+      const after = registry.get(sessionId)!.agent.session;
+      expect(after.messages).toHaveLength(0);
+      expect(after.toolCalls).toHaveLength(0);
+      expect(after.usage.totalTokens).toBe(0);
+    });
+
+    it('POST /rewind returns 404 for missing session', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const response = await app.request('/v1/sessions/01KSHWCXG17ZRTQY9G13J3AETZ/rewind', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index: 0 }),
+      });
+      expect(response.status).toBe(404);
+    });
+
+    it('POST /rewind returns 409 during active run', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      // Start a message run but don't wait for it.
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'hi' }),
+      });
+
+      const response = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index: 0 }),
+      });
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.error).toBe('run already in progress');
+    });
+
+    it('POST /rewind rewinds to middle of conversation', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'first message' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'second message' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      const checkpointsResponse = await app.request(`/v1/sessions/${sessionId}/checkpoints`);
+      const checkpoints = await checkpointsResponse.json();
+
+      // Find checkpoint for the second user message.
+      const cp = checkpoints.find((c: { index: number; userMessage: string }) => c.userMessage === 'second message');
+      expect(cp).toBeDefined();
+      const targetIndex = cp!.index;
+
+      const beforeRewind = registry.get(sessionId)!.agent.session.messages.length;
+      expect(beforeRewind).toBeGreaterThan(0);
+
+      const rewindResponse = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index: targetIndex }),
+      });
+      expect(rewindResponse.status).toBe(200);
+      const rewindBody = await rewindResponse.json();
+      expect(rewindBody.sessionId).toBe(sessionId);
+
+      // Messages should now only contain system + first user message (anything before second).
+      const after = registry.get(sessionId)!.agent.session;
+      expect(after.messages.length).toBeLessThan(beforeRewind);
+      // The second user message should no longer appear.
+      expect(after.messages.some((m: { content: string }) => m.content === 'second message')).toBe(false);
+    });
+
+    it('POST /fork with rewindIndex creates child with truncated history', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'first' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'second' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      const checkpointsResponse = await app.request(`/v1/sessions/${sessionId}/checkpoints`);
+      const checkpoints = await checkpointsResponse.json();
+      expect(checkpoints.length).toBeGreaterThanOrEqual(2);
+      const rewindIndex = checkpoints[0]!.index;
+
+      const forkResponse = await app.request(`/v1/sessions/${sessionId}/fork`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ purpose: 'fork with rewind', rewindIndex }),
+      });
+      expect(forkResponse.status).toBe(201);
+      const forkBody = await forkResponse.json();
+      expect(forkBody.parentId).toBe(sessionId);
+      expect(typeof forkBody.sessionId).toBe('string');
+
+      // Child should have truncated messages.
+      const childResponse = await app.request(`/v1/sessions/${forkBody.sessionId}`);
+      expect(childResponse.status).toBe(200);
+      const childSession = await childResponse.json();
+      // Checkpoint 0 means before first user message, so child messages should be empty.
+      expect(childSession.messages).toHaveLength(0);
+    });
   });
 });

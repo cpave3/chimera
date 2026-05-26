@@ -19,6 +19,7 @@ describe('slash commands', () => {
         '/model',
         '/new',
         '/reload',
+        '/rewind',
         '/rules',
         '/sessions',
         '/subagents',

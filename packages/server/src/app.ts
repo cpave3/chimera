@@ -5,7 +5,10 @@ import {
   deleteSession as coreDeleteSession,
   forkSession as coreForkSession,
   listSessionsOnDisk,
+  readCheckpoints,
   readSessionMetadata,
+  truncateEventsAtIndex,
+  writeSessionMetadata,
   type SessionId,
   type SessionInfo,
 } from '@chimera/core';
@@ -53,6 +56,11 @@ const messageSchema = z.object({
 
 const forkSchema = z.object({
   purpose: z.string().optional(),
+  rewindIndex: z.number().int().nonnegative().optional(),
+});
+
+const rewindSchema = z.object({
+  index: z.number().int().nonnegative(),
 });
 
 const reloadSchema = z.object({
@@ -259,7 +267,7 @@ export function buildApp(opts: AppOptions): Hono {
     } catch {
       return c.json({ error: `parent session ${parentId} not found` }, 404);
     }
-    const { childId } = await coreForkSession({ parentId, purpose, home });
+    const { childId } = await coreForkSession({ parentId, purpose, home, rewindIndex: parseResult.data.rewindIndex });
     if (onFork) {
       try {
         // Satisfy the SessionInfo contract expected by onFork.
@@ -286,6 +294,55 @@ export function buildApp(opts: AppOptions): Hono {
     });
     invalidateListCache();
     return c.json({ sessionId, parentId }, 201);
+  });
+
+  app.get('/v1/sessions/:id/checkpoints', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    try {
+      await readSessionMetadata(id, home);
+    } catch {
+      return c.json({ error: 'not found' }, 404);
+    }
+    const checkpoints = await readCheckpoints(id, home);
+    return c.json(checkpoints);
+  });
+
+  app.post('/v1/sessions/:id/rewind', async (c) => {
+    const id = c.req.param('id');
+    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = rewindSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    try {
+      await readSessionMetadata(id, home);
+    } catch {
+      return c.json({ error: 'not found' }, 404);
+    }
+    const entry = registry.get(id);
+    const acquired = registry.tryAcquireRewind(id);
+    if (acquired === 'busy') return c.json({ error: 'run already in progress' }, 409);
+    try {
+      const truncated = await truncateEventsAtIndex(id, parseResult.data.index, home);
+      if (acquired !== null && entry) {
+        entry.agent.session.messages = truncated.messages;
+        entry.agent.session.toolCalls = truncated.toolCalls;
+        entry.agent.session.usage = truncated.usage;
+        await writeSessionMetadata(entry.agent.session, home);
+      }
+      return c.json({ sessionId: id });
+    } finally {
+      if (acquired !== null && typeof acquired === 'object') {
+        acquired.release();
+      }
+    }
   });
 
   app.get('/v1/sessions/:id/commands', (c) => {

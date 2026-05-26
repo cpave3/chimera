@@ -8,6 +8,7 @@ import {
   rename,
   rm,
   stat,
+  truncate,
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -349,10 +350,275 @@ async function countLines(path: string): Promise<number> {
   }
 }
 
+export interface Checkpoint {
+  index: number;
+  userMessage: string;
+  toolCallSummary: string;
+  truncateByteOffset: number;
+}
+
+function extractText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const textParts = (content as Array<{ type?: string; text?: string }>).filter(
+      (part) => part && typeof part === 'object' && part.type === 'text',
+    );
+    return textParts.map((part) => (typeof part.text === 'string' ? part.text : '')).join('');
+  }
+  return '';
+}
+
+function extractPathFromArgs(args: unknown): string | undefined {
+  if (
+    args &&
+    typeof args === 'object' &&
+    'path' in args &&
+    typeof (args as { path: unknown }).path === 'string'
+  ) {
+    return (args as { path: string }).path;
+  }
+  return undefined;
+}
+
+function extractToolCallSummary(
+  messages: Session['messages'],
+  startIndex: number,
+  endIndex: number,
+): string {
+  const toolCalls: { name: string; path?: string }[] = [];
+  for (let i = startIndex + 1; i < endIndex; i++) {
+    const msg = messages[i];
+    if (!msg || msg.role !== 'assistant') continue;
+    const parts = Array.isArray(msg.content) ? msg.content : [];
+    for (const part of parts) {
+      if (
+        part &&
+        typeof part === 'object' &&
+        'type' in part &&
+        (part as { type?: string }).type === 'tool-call'
+      ) {
+        const name = ((part as { toolName?: string }).toolName as string) ?? 'tool';
+        const args = (part as { input?: unknown }).input ?? (part as { args?: unknown }).args;
+        const path = extractPathFromArgs(args);
+        toolCalls.push({ name, path });
+      }
+    }
+  }
+
+  if (toolCalls.length === 0) return '';
+
+  const counts = new Map<string, number>();
+  const paths = new Map<string, Set<string>>();
+  for (const tc of toolCalls) {
+    counts.set(tc.name, (counts.get(tc.name) ?? 0) + 1);
+    if (tc.path) {
+      const set = paths.get(tc.name) ?? new Set<string>();
+      set.add(tc.path);
+      paths.set(tc.name, set);
+    }
+  }
+
+  const parts: string[] = [];
+  for (const [name, count] of counts) {
+    const pathSet = paths.get(name);
+    if (pathSet && pathSet.size > 0) {
+      const pathList = Array.from(pathSet).join(', ');
+      if (count === 1) {
+        parts.push(`${name}(${pathList})`);
+      } else {
+        parts.push(`${name}(${pathList}) x${count}`);
+      }
+    } else if (count === 1) {
+      parts.push(name);
+    } else {
+      parts.push(`${name} x${count}`);
+    }
+  }
+
+  return parts.join(', ');
+}
+
+export async function readCheckpoints(sessionId: SessionId, home = homedir()): Promise<Checkpoint[]> {
+  const checkpoints: Checkpoint[] = [];
+  const path = sessionEventsPath(sessionId, home);
+
+  // Always emit checkpoint 0 as the first entry — represents "before any user message".
+  checkpoints.push({ index: 0, userMessage: '', toolCallSummary: '', truncateByteOffset: 0 });
+
+  let content: string;
+  try {
+    const buf = await readFile(path);
+    if (buf.length === 0) return checkpoints;
+    content = buf.toString('utf8');
+  } catch {
+    return checkpoints;
+  }
+
+  // Pass 1: collect every snapshot with its end byte offset.
+  interface Snapshot {
+    messages: Session['messages'];
+    endByteOffset: number;
+  }
+  const snapshots: Snapshot[] = [];
+  const lines = content.split('\n');
+  let currentByteOffset = 0;
+
+  for (const line of lines) {
+    const lineByteLen = Buffer.byteLength(line, 'utf8') + 1; // +1 for \n
+    if (!line.trim()) {
+      currentByteOffset += lineByteLen;
+      continue;
+    }
+    let parsed: PersistedEvent;
+    try {
+      parsed = JSON.parse(line) as PersistedEvent;
+    } catch {
+      currentByteOffset += lineByteLen;
+      continue;
+    }
+    if (parsed.type !== 'step_finished' && parsed.type !== 'message_appended') {
+      currentByteOffset += lineByteLen;
+      continue;
+    }
+    // endByteOffset is the byte position AFTER this snapshot line.
+    snapshots.push({ messages: parsed.messages, endByteOffset: currentByteOffset + lineByteLen });
+    currentByteOffset += lineByteLen;
+  }
+
+  if (snapshots.length === 0) return checkpoints;
+
+  // Detect compaction: a snapshot with fewer messages than its predecessor.
+  for (let i = 1; i < snapshots.length; i++) {
+    if (snapshots[i]!.messages.length < snapshots[i - 1]!.messages.length) {
+      console.warn(
+        `[chimera] warn: session compaction detected for ${sessionId}; some checkpoints may be unavailable`,
+      );
+      break;
+    }
+  }
+
+  // Pass 2: walk snapshots chronologically, tracking newly-appearing user messages.
+  // A user-message identity is (content, occurrenceCount) to handle duplicates.
+  interface UserIdentity {
+    content: string;
+    occurrence: number;
+    truncateByteOffset: number;
+  }
+  const newlyAppearing: UserIdentity[] = [];
+  const globalCounts = new Map<string, number>();
+
+  for (let snapshotIdx = 0; snapshotIdx < snapshots.length; snapshotIdx++) {
+    const snapshot = snapshots[snapshotIdx]!;
+    const priorEndByteOffset = snapshotIdx > 0 ? snapshots[snapshotIdx - 1]!.endByteOffset : 0;
+    const localCounts = new Map<string, number>();
+
+    for (const msg of snapshot.messages) {
+      if (msg.role === 'user') {
+        const content = extractText(msg.content);
+        localCounts.set(content, (localCounts.get(content) ?? 0) + 1);
+      }
+    }
+
+    for (const [content, localCount] of localCounts) {
+      const globalCount = globalCounts.get(content) ?? 0;
+      const newCount = localCount - globalCount;
+      for (let k = 0; k < newCount; k++) {
+        newlyAppearing.push({
+          content,
+          occurrence: globalCount + k + 1,
+          truncateByteOffset: priorEndByteOffset,
+        });
+      }
+    }
+
+    for (const [content, localCount] of localCounts) {
+      globalCounts.set(content, localCount);
+    }
+  }
+
+  // Pass 3: map each newly-appearing user message to the latest snapshot.
+  const latest = snapshots[snapshots.length - 1]!;
+  const latestUserPositions: number[] = [];
+  const latestOccurrences = new Map<string, number>();
+  const latestUsers: { content: string; occurrence: number; pos: number }[] = [];
+
+  for (let pos = 0; pos < latest.messages.length; pos++) {
+    const msg = latest.messages[pos]!;
+    if (msg.role === 'user') {
+      const content = extractText(msg.content);
+      const count = (latestOccurrences.get(content) ?? 0) + 1;
+      latestOccurrences.set(content, count);
+      latestUserPositions.push(pos);
+      latestUsers.push({ content, occurrence: count, pos });
+    }
+  }
+
+  const matched = new Set<number>();
+  for (const entry of newlyAppearing) {
+    const foundIdx = latestUsers.findIndex(
+      (u, idx) =>
+        !matched.has(idx) && u.content === entry.content && u.occurrence === entry.occurrence,
+    );
+
+    if (foundIdx === -1) {
+      console.warn(
+        `[chimera] warn: checkpoint user message was compacted out and is no longer addressable`,
+      );
+      continue;
+    }
+
+    matched.add(foundIdx);
+    const found = latestUsers[foundIdx]!;
+    const nextUserPos = latestUsers[foundIdx + 1]?.pos ?? latest.messages.length;
+
+    checkpoints.push({
+      index: found.pos,
+      userMessage: found.content,
+      toolCallSummary: extractToolCallSummary(latest.messages, found.pos, nextUserPos),
+      truncateByteOffset: entry.truncateByteOffset,
+    });
+  }
+
+  return checkpoints;
+}
+
+export interface TruncateResult {
+  messages: Session['messages'];
+  toolCalls: Session['toolCalls'];
+  usage: Usage;
+}
+
+export async function truncateEventsAtIndex(
+  sessionId: SessionId,
+  index: number,
+  home = homedir(),
+): Promise<TruncateResult> {
+  const checkpoints = await readCheckpoints(sessionId, home);
+  const checkpoint = checkpoints.find((c) => c.index === index);
+  if (!checkpoint) {
+    throw new Error(`Checkpoint with index ${index} not found for session ${sessionId}`);
+  }
+
+  const eventsPath = sessionEventsPath(sessionId, home);
+
+  if (checkpoint.truncateByteOffset === 0) {
+    await writeFile(eventsPath, '', 'utf8');
+  } else {
+    await truncate(eventsPath, checkpoint.truncateByteOffset);
+  }
+
+  const snapshot = await readLatestStepSnapshot(sessionId, home);
+  if (!snapshot) {
+    return { messages: [], toolCalls: [], usage: emptyUsage() };
+  }
+  return { messages: snapshot.messages, toolCalls: snapshot.toolCalls, usage: snapshot.usage };
+}
+
 export interface ForkOptions {
   parentId: SessionId;
   purpose?: string;
   home?: string;
+  rewindIndex?: number;
 }
 
 export interface ForkResult {
@@ -378,6 +644,16 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
 
+  let snapshot: StepSnapshot | null = null;
+  if (opts.rewindIndex !== undefined) {
+    const result = await truncateEventsAtIndex(childId, opts.rewindIndex, home);
+    snapshot = { messages: result.messages, toolCalls: result.toolCalls, usage: result.usage };
+  }
+
+  // Re-count after truncation (and before forked_from) so the recorded
+  // parentEventCount reflects what the child actually inherited.
+  parentEventCount = await countLines(childEvents);
+
   const forkedFrom: PersistedEvent = {
     type: 'forked_from',
     parentId: opts.parentId,
@@ -392,12 +668,12 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     children: [],
     cwd: parent.cwd,
     createdAt: Date.now(),
-    messages: parent.messages,
-    toolCalls: parent.toolCalls,
+    messages: snapshot ? snapshot.messages : parent.messages,
+    toolCalls: snapshot ? snapshot.toolCalls : parent.toolCalls,
     status: 'idle',
     model: parent.model,
     sandboxMode: parent.sandboxMode,
-    usage: emptyUsage(),
+    usage: snapshot ? snapshot.usage : emptyUsage(),
     // Don't inherit parent's mode — per add-modes design D10, children
     // start in `build` so a plan-mode parent doesn't silently impose a
     // read-only allowlist on its child.

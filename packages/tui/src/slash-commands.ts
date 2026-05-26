@@ -16,6 +16,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
       'Pick a session in this dir (/sessions all to see every dir; /sessions tree, /sessions <id> for variants)',
   },
   { name: '/fork', description: 'Fork the current session into a child (/fork [purpose])' },
+  { name: '/rewind', description: 'Rewind to an earlier checkpoint and retry (/rewind)' },
   { name: '/exit', description: 'Exit the TUI' },
   { name: '/model', description: 'Show or change the active model' },
   { name: '/mode', description: 'Show modes or queue a switch (/mode <name>)' },

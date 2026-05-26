@@ -87,9 +87,9 @@ Review the auth module (priority: urgent). Cwd: /home/me/proj. Date: 2026-04-24.
 
 ## Precedence and collisions
 
-Built-in slash commands (`/help`, `/clear`, `/new`, `/sessions`, `/exit`,
-`/model`, `/rules`) always win over a user template of the same name. A
-warning is logged once at session start; the template is never expanded.
+Built-in slash commands (including `/help`, `/clear`, `/fork`, `/rewind`,
+and others) always win over a user template of the same name. A warning is
+logged once at session start; the template is never expanded.
 
 Across tiers, higher-priority tiers win and the shadowed duplicate is logged.
 

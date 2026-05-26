@@ -7,6 +7,7 @@ import { runBangCommand } from './bang';
 import type { CommandRegistry } from '@chimera/commands';
 import type {
   AgentEvent,
+  Checkpoint,
   ModelConfig,
   SandboxMode,
   SessionId,
@@ -41,6 +42,7 @@ import {
   type ScrollbackEntry,
   type SubagentEntry,
 } from './scrollback';
+import { RewindPicker } from './RewindPicker';
 import { SessionPicker, buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import {
@@ -49,7 +51,7 @@ import {
   isBuiltin,
   OVERLAY_COMMANDS,
 } from './slash-commands';
-import { StatusBar, type StatusBarWidget } from './StatusBar';
+import { type StatusBarWidget } from './StatusBar';
 import { renderToolBody } from './ToolBody';
 import { UsageWidget } from './UsageWidget';
 import { ChromeBar } from './ChromeBar';
@@ -169,6 +171,7 @@ export function App(props: AppProps): React.ReactElement {
   };
   const [overlayPicker, setOverlayPicker] = useState<OverlayDiffEntry[] | null>(null);
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null);
+  const [rewindPicker, setRewindPicker] = useState<Checkpoint[] | null>(null);
   // Tracks the active session's parentId for header display; refreshed via
   // `client.getSession()` after switches and forks.
   const [activeParentId, setActiveParentId] = useState<SessionId | null>(null);
@@ -536,6 +539,7 @@ export function App(props: AppProps): React.ReactElement {
     if (pending) return; // handled by modal
     if (overlayPicker) return; // handled by picker
     if (sessionPicker) return; // handled by SessionPicker
+    if (rewindPicker) return; // handled by RewindPicker
     if (editorOpenRef.current) return; // editor is mid-handoff
 
     if (key.ctrl && char === 'c') {
@@ -1052,6 +1056,26 @@ export function App(props: AppProps): React.ReactElement {
             );
           } catch (err) {
             scrollback.addError(`/fork: ${(err as Error).message}`);
+          }
+        })();
+        return;
+      }
+      case '/rewind': {
+        if (busy) {
+          setQueue((q) => [...q, raw]);
+          scrollback.addInfo(`queued: ${previewLine(raw)}`);
+          return;
+        }
+        void (async () => {
+          try {
+            const checkpoints = await activeSession.client.listCheckpoints(activeSession.sessionId);
+            if (checkpoints.length <= 1) {
+              scrollback.addInfo('no checkpoints to rewind to');
+              return;
+            }
+            setRewindPicker(checkpoints);
+          } catch (err) {
+            scrollback.addError(`/rewind: ${(err as Error).message}`);
           }
         })();
         return;
@@ -1647,6 +1671,74 @@ export function App(props: AppProps): React.ReactElement {
                   scrollback.addInfo(`switched to session ${selectedId.slice(-8)}`);
                 } catch (err) {
                   scrollback.addError(`/sessions: ${(err as Error).message}`);
+                }
+              })();
+            }}
+          />
+        )}
+        {rewindPicker && (
+          <RewindPicker
+            checkpoints={rewindPicker}
+            onCancel={() => {
+              setRewindPicker(null);
+              scrollback.addInfo('/rewind cancelled');
+            }}
+            onRewind={(checkpoint) => {
+              setRewindPicker(null);
+              setRunning(false);
+              setQueue([]);
+              setStreaming(false);
+              setStreamingEntryId(null);
+              void (async () => {
+                try {
+                  await activeSession.client.rewindSession(activeSession.sessionId, checkpoint.index);
+                  stdout?.write('\x1b[2J\x1b[3J\x1b[H');
+                  scrollback.clear();
+                  setStaticEpoch((n) => n + 1);
+                  setShowHeader(false);
+                  const s = await activeSession.client.getSession(activeSession.sessionId);
+                  if (Array.isArray(s.messages) && s.messages.length > 0) {
+                    scrollback.rehydrateFromSession(s);
+                  }
+                  setBufferText(checkpoint.userMessage);
+                  scrollback.addInfo(`rewound to checkpoint ${checkpoint.index}`);
+                } catch (err) {
+                  scrollback.addError(`/rewind: ${(err as Error).message}`);
+                }
+              })();
+            }}
+            onFork={(checkpoint) => {
+              setRewindPicker(null);
+              void (async () => {
+                try {
+                  const { sessionId: childId } = await props.client.forkSession(
+                    activeSession.sessionId,
+                    undefined,
+                    checkpoint.index,
+                  );
+                  stdout?.write('\x1b[2J\x1b[3J\x1b[H');
+                  scrollback.clear();
+                  setStaticEpoch((n) => n + 1);
+                  setShowHeader(false);
+                  setActiveSession({
+                    client: props.client,
+                    sessionId: childId,
+                    label: 'forked',
+                  });
+                  setRunning(false);
+                  setQueue([]);
+                  setStreaming(false);
+                  setStreamingEntryId(null);
+                  const s = await activeSession.client.getSession(childId);
+                  if (Array.isArray(s.messages) && s.messages.length > 0) {
+                    scrollback.rehydrateFromSession(s);
+                  }
+                  setBufferText(checkpoint.userMessage);
+                  scrollback.addInfo(
+                    `forked from checkpoint ${checkpoint.index} into session ${childId.slice(-8)}`,
+                  );
+                } catch (err) {
+                  scrollback.addError(`/rewind fork: ${(err as Error).message}`);
                 }
               })();
             }}

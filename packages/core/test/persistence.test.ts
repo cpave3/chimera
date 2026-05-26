@@ -1,18 +1,21 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSessionId } from '../src/ids';
 import {
+  appendSessionEvent,
   forkSession,
   listSessionsOnDisk,
   loadSession,
   persistSession,
+  readCheckpoints,
   readSessionMetadata,
   sessionEventsPath,
   sessionMetadataPath,
   sessionsDir,
+  truncateEventsAtIndex,
   writeSessionMetadata,
 } from '../src/persistence';
 import { emptyUsage, type Session } from '../src/types';
@@ -658,6 +661,482 @@ describe('persistence', () => {
         expect.stringContaining('skipping malformed line'),
       );
       stderrSpy.mockRestore();
+    });
+  });
+
+  describe('readCheckpoints', () => {
+    it('returns single checkpoint for empty session', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+      const checkpoints = await readCheckpoints(session.id, home);
+      expect(checkpoints).toHaveLength(1);
+      expect(checkpoints[0]).toEqual({
+        index: 0,
+        userMessage: '',
+        toolCallSummary: '',
+        truncateByteOffset: 0,
+      });
+    });
+
+    it('returns checkpoints for a single user turn', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+      const event1 = {
+        type: 'step_finished' as const,
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [{ role: 'user' as const, content: 'hello' }],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+      await appendSessionEvent(session.id, event1, home);
+
+      const checkpoints = await readCheckpoints(session.id, home);
+      expect(checkpoints).toHaveLength(2);
+      expect(checkpoints[0]).toEqual({
+        index: 0,
+        userMessage: '',
+        toolCallSummary: '',
+        truncateByteOffset: 0,
+      });
+      expect(checkpoints[1]).toMatchObject({
+        index: 0, // user message at index 0
+        userMessage: 'hello',
+        toolCallSummary: '',
+      });
+      // For the first checkpoint, truncateByteOffset matches index-0 checkpoint
+      // because there is no prior snapshot before the first user message.
+      expect(checkpoints[1]!.truncateByteOffset).toBe(0);
+    });
+
+    it('reads checkpoints with correct byte offsets when no trailing newline', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+
+      const event = {
+        type: 'step_finished' as const,
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [{ role: 'user' as const, content: 'hello' }],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+
+      // Write without trailing newline (manually, not via appendSessionEvent).
+      const eventsPath = sessionEventsPath(session.id, home);
+      await mkdir(dirname(eventsPath), { recursive: true });
+      await writeFile(eventsPath, JSON.stringify(event), 'utf8');
+
+      const checkpoints = await readCheckpoints(session.id, home);
+      expect(checkpoints).toHaveLength(2);
+      expect(checkpoints[0]).toEqual({
+        index: 0,
+        userMessage: '',
+        toolCallSummary: '',
+        truncateByteOffset: 0,
+      });
+      expect(checkpoints[1]).toMatchObject({
+        index: 0,
+        userMessage: 'hello',
+        toolCallSummary: '',
+      });
+
+      // Truncating at the reported offset should leave a valid file.
+      const result = await truncateEventsAtIndex(session.id, 0, home);
+      expect(result.messages).toEqual([]);
+
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toEqual([]);
+    });
+
+    it('handles compacted session with warning and only addressable checkpoints', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Pre-compaction snapshot: contains two user messages.
+      const preCompaction = {
+        type: 'step_finished' as const,
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'first' },
+          { role: 'assistant' as const, content: 'reply1' },
+          { role: 'user' as const, content: 'second' },
+          { role: 'assistant' as const, content: 'reply2' },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+
+      // Post-compaction snapshot: fewer messages (summary + recent).
+      const postCompaction = {
+        type: 'step_finished' as const,
+        stepNumber: 2,
+        finishReason: 'stop',
+        messages: [
+          { role: 'system' as const, content: 'Summary of previous conversation' },
+          { role: 'user' as const, content: 'second' },
+          { role: 'assistant' as const, content: 'reply2' },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+
+      await appendSessionEvent(session.id, preCompaction, home);
+      await appendSessionEvent(session.id, postCompaction, home);
+
+      const checkpoints = await readCheckpoints(session.id, home);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('compaction detected'),
+      );
+
+      // Only addressable checkpoints: index 0 + the user message still in latest snapshot.
+      expect(checkpoints).toHaveLength(2);
+      expect(checkpoints[0]).toEqual({
+        index: 0,
+        userMessage: '',
+        toolCallSummary: '',
+        truncateByteOffset: 0,
+      });
+      expect(checkpoints[1]).toMatchObject({
+        index: 1,
+        userMessage: 'second',
+        toolCallSummary: '',
+      });
+
+      warnSpy.mockRestore();
+    });
+
+    it('returns checkpoints for multiple user turns with tool call summaries', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+
+      // Turn 1: user + assistant(tool-calls) + tool_results
+      const event1 = {
+        type: 'step_finished' as const,
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'first message' },
+          {
+            role: 'assistant' as const,
+            content: [
+              { type: 'text', text: 'Here is the analysis' },
+              { type: 'tool-call', toolCallId: 'tc1', toolName: 'read', input: { path: '/tmp/a' } },
+            ],
+          },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc1', output: 'data' }] },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+      // Turn 2: user + assistant(tool-calls)
+      const event2 = {
+        type: 'step_finished' as const,
+        stepNumber: 2,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'first message' },
+          {
+            role: 'assistant' as const,
+            content: [
+              { type: 'text', text: 'Here is the analysis' },
+              { type: 'tool-call', toolCallId: 'tc1', toolName: 'read', input: { path: '/tmp/a' } },
+            ],
+          },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc1', output: 'data' }] },
+          { role: 'user' as const, content: 'second message' },
+          {
+            role: 'assistant' as const,
+            content: [
+              { type: 'tool-call', toolCallId: 'tc2', toolName: 'write', input: { path: '/tmp/b' } },
+              { type: 'tool-call', toolCallId: 'tc3', toolName: 'write', input: { path: '/tmp/b' } },
+            ],
+          },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+
+      await appendSessionEvent(session.id, event1, home);
+      await appendSessionEvent(session.id, event2, home);
+
+      const checkpoints = await readCheckpoints(session.id, home);
+      expect(checkpoints).toHaveLength(3);
+      expect(checkpoints[0]).toEqual({
+        index: 0,
+        userMessage: '',
+        toolCallSummary: '',
+        truncateByteOffset: 0,
+      });
+      expect(checkpoints[1]).toMatchObject({
+        index: 0,
+        userMessage: 'first message',
+        toolCallSummary: 'read(/tmp/a)',
+      });
+      expect(checkpoints[2]).toMatchObject({
+        index: 3,
+        userMessage: 'second message',
+        toolCallSummary: 'write(/tmp/b) x2',
+      });
+
+      // Verify byte offsets: checkpoint 1 should be length of event1 line + newline
+      const eventsRaw = await readFile(sessionEventsPath(session.id, home), 'utf8');
+      const event1Line = JSON.stringify(event1);
+      const expectedOffset = Buffer.byteLength(event1Line, 'utf8') + 1; // +1 for \n
+      expect(checkpoints[1]!.truncateByteOffset).toBe(0); // event1 starts at 0
+      expect(checkpoints[2]!.truncateByteOffset).toBe(expectedOffset); // event2 starts after event1
+      // Verify truncation point by slicing the file
+      const truncatedBytes = eventsRaw
+        .slice(0, checkpoints[2]!.truncateByteOffset)
+        .split('\n')
+        .filter(Boolean);
+      expect(truncatedBytes).toHaveLength(1);
+      const truncated = JSON.parse(truncatedBytes[0]!);
+      expect(truncated.messages).toEqual(event1.messages);
+    });
+
+    it('updates checkpoint on message_appended snapshots', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+
+      await persistSession(
+        session,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [{ role: 'user', content: 'hi' }],
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+
+      // Append another user message
+      await persistSession(
+        session,
+        {
+          type: 'message_appended',
+          messages: [
+            { role: 'user', content: 'hi' },
+            { role: 'user', content: 'extra' },
+          ],
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+
+      const checkpoints = await readCheckpoints(session.id, home);
+      expect(checkpoints).toHaveLength(3);
+      expect(checkpoints[1]!.userMessage).toBe('hi');
+      expect(checkpoints[2]!.userMessage).toBe('extra');
+    });
+  });
+
+  describe('truncateEventsAtIndex', () => {
+    it('truncates to middle of multi-turn session', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+
+      // In real sessions the first persisted snapshot after a turn
+      // already includes the assistant reply.
+      const afterAssistantReply = {
+        type: 'step_finished' as const,
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'hello' },
+          { role: 'assistant' as const, content: 'hi there' },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+      const afterSecondUser = {
+        type: 'step_finished' as const,
+        stepNumber: 2,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'hello' },
+          { role: 'assistant' as const, content: 'hi there' },
+          { role: 'user' as const, content: 'how are you?' },
+          { role: 'assistant' as const, content: 'doing great' },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+
+      await appendSessionEvent(session.id, afterAssistantReply, home);
+      await appendSessionEvent(session.id, afterSecondUser, home);
+
+      // In a session with messages [user0, assistant1, user2, assistant3]
+      // the user messages are at positions 0 and 2.
+      const checkpointsBefore = await readCheckpoints(session.id, home);
+      expect(checkpointsBefore).toHaveLength(3);
+
+      // Truncate before the second user message (index 2).
+      // The latest snapshot with messages.length <= 2 is afterAssistantReply.
+      const result = await truncateEventsAtIndex(session.id, 2, home);
+      expect(result.messages).toEqual([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+      ]);
+      expect(result.toolCalls).toEqual([]);
+      expect(result.usage).toEqual(emptyUsage());
+
+      // File should contain exactly the surviving snapshot.
+      const eventsRaw = await readFile(sessionEventsPath(session.id, home), 'utf8');
+      const remainingLines = eventsRaw.split('\n').filter(Boolean);
+      expect(remainingLines).toHaveLength(1);
+      const remaining = JSON.parse(remainingLines[0]!);
+      expect(remaining.messages).toEqual([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+      ]);
+
+      // Verify loadSession reflects truncated state
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toEqual([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+      ]);
+    });
+
+    it('truncates to index 0 and clears file', async () => {
+      const session = makeSession();
+      await writeSessionMetadata(session, home);
+
+      await persistSession(
+        session,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [{ role: 'user', content: 'hi' }],
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+
+      const result = await truncateEventsAtIndex(session.id, 0, home);
+      expect(result.messages).toEqual([]);
+      expect(result.toolCalls).toEqual([]);
+      expect(result.usage).toEqual(emptyUsage());
+
+      // File should be empty
+      const eventsRaw = await readFile(sessionEventsPath(session.id, home), 'utf8');
+      expect(eventsRaw).toBe('');
+
+      const loaded = await loadSession(session.id, home);
+      expect(loaded.messages).toEqual([]);
+    });
+  });
+
+  describe('forkSession with rewindIndex', () => {
+    it('creates child with truncated history when rewindIndex is set', async () => {
+      const parent = makeSession();
+      await writeSessionMetadata(parent, home);
+
+      // Snapshot after first turn completes (user+assistant):
+      const afterTurn1 = {
+        type: 'step_finished' as const,
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'hello' },
+          { role: 'assistant' as const, content: 'hi' },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+      // Snapshot after second turn completes (user2+assistant2):
+      const afterTurn2 = {
+        type: 'step_finished' as const,
+        stepNumber: 2,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user' as const, content: 'hello' },
+          { role: 'assistant' as const, content: 'hi' },
+          { role: 'user' as const, content: 'how are you?' },
+          { role: 'assistant' as const, content: 'fine' },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      };
+
+      await appendSessionEvent(parent.id, afterTurn1, home);
+      await appendSessionEvent(parent.id, afterTurn2, home);
+
+      // Fork with rewindIndex=2 — before the second user message.
+      const { session: child, childId } = await forkSession({
+        parentId: parent.id,
+        purpose: 'test-rewind',
+        home,
+        rewindIndex: 2,
+      });
+
+      // Child messages should reflect the truncation (only turn 1).
+      expect(child.messages).toEqual([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ]);
+
+      // Child events: one surviving snapshot + forked_from appended.
+      const childEventsRaw = await readFile(sessionEventsPath(childId, home), 'utf8');
+      const childLines = childEventsRaw.split('\n').filter(Boolean);
+      expect(childLines).toHaveLength(2);
+      const lastChild = JSON.parse(childLines[1]!);
+      expect(lastChild.type).toBe('forked_from');
+      expect(lastChild.purpose).toBe('test-rewind');
+
+      // Parent should be untouched.
+      const parentRaw = await readFile(sessionEventsPath(parent.id, home), 'utf8');
+      const parentLines = parentRaw.split('\n').filter(Boolean);
+      expect(parentLines).toHaveLength(2);
+      expect(parentLines[0]).toContain('"stepNumber":1');
+      expect(parentLines[1]).toContain('"stepNumber":2');
+
+      // Loading child from disk should give truncated state.
+      const loadedChild = await loadSession(childId, home);
+      expect(loadedChild.messages).toEqual([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ]);
+      expect(loadedChild.toolCalls).toEqual([]);
+    });
+
+    it('fork with rewindIndex=0 creates empty child', async () => {
+      const parent = makeSession();
+      await persistSession(
+        parent,
+        {
+          type: 'step_finished',
+          stepNumber: 1,
+          finishReason: 'stop',
+          messages: [{ role: 'user', content: 'only message' }],
+          toolCalls: [],
+          usage: emptyUsage(),
+        },
+        home,
+      );
+
+      const { session: child, childId } = await forkSession({
+        parentId: parent.id,
+        home,
+        rewindIndex: 0,
+      });
+
+      expect(child.messages).toEqual([]);
+      expect(child.toolCalls).toEqual([]);
+
+      const childEventsRaw = await readFile(sessionEventsPath(childId, home), 'utf8');
+      const childLines = childEventsRaw.split('\n').filter(Boolean);
+      expect(childLines).toHaveLength(1); // only forked_from
+      expect(JSON.parse(childLines[0]!).type).toBe('forked_from');
     });
   });
 });

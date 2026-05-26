@@ -74,6 +74,7 @@ export interface AgentEntry {
    * down.
    */
   activeCompaction: Promise<void> | null;
+  rewindActive: boolean;
   compactionCount: number;
   lastCompactedAt: number | null;
   resolvedPermissionIds: Set<string>;
@@ -192,6 +193,7 @@ export class AgentRegistry {
       injectActive: false,
       compactionActive: false,
       activeCompaction: null,
+      rewindActive: false,
       compactionCount: 0,
       lastCompactedAt: null,
       resolvedPermissionIds: new Set(),
@@ -286,7 +288,7 @@ export class AgentRegistry {
   async run(id: SessionId, content: string): Promise<'queued' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive) return 'already-running';
+    if (entry.runActive || entry.compactionActive || entry.rewindActive) return 'already-running';
     entry.runActive = true;
     entry.activeRun = (async () => {
       try {
@@ -321,7 +323,7 @@ export class AgentRegistry {
   ): Promise<'injected' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive || entry.injectActive) return 'already-running';
+    if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive) return 'already-running';
     entry.injectActive = true;
     try {
       await entry.agent.appendMessage(content);
@@ -343,7 +345,7 @@ export class AgentRegistry {
   compact(id: SessionId): 'queued' | 'already-running' | 'missing' {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive) return 'already-running';
+    if (entry.runActive || entry.compactionActive || entry.rewindActive) return 'already-running';
     entry.compactionActive = true;
     entry.activeCompaction = (async () => {
       let success = false;
@@ -369,6 +371,25 @@ export class AgentRegistry {
       }
     })();
     return 'queued';
+  }
+
+  /**
+   * Atomically acquire a rewind lock for a session. Returns `null` if the
+   * entry doesn't exist, `'busy'` if run/compaction/inject/rewind is active,
+   * or a release function on success. The caller MUST invoke `release()`.
+   */
+  tryAcquireRewind(id: SessionId): null | 'busy' | { release(): void } {
+    const entry = this.entries.get(id);
+    if (!entry) return null;
+    if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive) {
+      return 'busy';
+    }
+    entry.rewindActive = true;
+    return {
+      release: () => {
+        entry.rewindActive = false;
+      },
+    };
   }
 
   async addSessionPath(
