@@ -99,14 +99,59 @@ export type ScrollbackEntry =
   | SubagentEntry
   | ModeChangeEntry;
 
+export interface ScrollbackOptions {
+  /**
+   * Max line count the in-flight streaming entry may reach before completed
+   * paragraphs spill into finalized chunk entries (which commit to <Static>).
+   * Keeps Ink's dynamic region shorter than the terminal: once the dynamic
+   * frame is taller than the viewport, Ink falls back to a clearTerminal +
+   * full-rewrite per render, which flickers and floods scrollback.
+   */
+  streamSpillLines?: number;
+}
+
+const DEFAULT_STREAM_SPILL_LINES = 8;
+
+/**
+ * Streaming state for one delta/done text channel (assistant or thinking).
+ *
+ * `suppressSpill` is true while the current delta cycle re-streams a textId
+ * that already completed (the SDK re-emits text parts across step
+ * boundaries). Spilling is disabled for such cycles so the duplicate stays
+ * one uncommitted entry that the done-time dedupe can still remove.
+ */
+interface TextStream {
+  kind: 'assistant' | 'thinking';
+  buf: string | null;
+  /** Id of the active entry currently being streamed into. */
+  entryId: string | null;
+  /** Chars of `buf` already moved into finalized spill-chunk entries. */
+  spilled: number;
+  suppressSpill: boolean;
+  /** textId → final text of completed streams, for re-emission dedupe. */
+  completedTexts: Map<string, string>;
+}
+
+function newTextStream(kind: 'assistant' | 'thinking'): TextStream {
+  return {
+    kind,
+    buf: null,
+    entryId: null,
+    spilled: 0,
+    suppressSpill: false,
+    completedTexts: new Map(),
+  };
+}
+
+function isTextEntry(entry: ScrollbackEntry): entry is AssistantEntry | ThinkingEntry {
+  return entry.kind === 'assistant' || entry.kind === 'thinking';
+}
+
 export class Scrollback {
   private entries: ScrollbackEntry[] = [];
-  private assistantBuf: string | null = null;
-  /** Id of the active assistant entry being streamed into by `assistant_text_delta`. */
-  private assistantEntryId: string | null = null;
-  private thinkingBuf: string | null = null;
-  /** Id of the active thinking entry being streamed into by `reasoning_text_delta`. */
-  private thinkingEntryId: string | null = null;
+  private streamSpillLines: number;
+  private assistantStream = newTextStream('assistant');
+  private thinkingStream = newTextStream('thinking');
   private toolsByCallId = new Map<CallId, ToolEntry>();
   /** subagentId → parent (spawn_agent) entry id, for routing child rows. */
   private subagentParents = new Map<string, string>();
@@ -137,9 +182,9 @@ export class Scrollback {
     committedCount: 0,
   };
 
-
-  constructor(formatters: Record<string, Formatter> = {}) {
+  constructor(formatters: Record<string, Formatter> = {}, options: ScrollbackOptions = {}) {
     this.formatters = formatters;
+    this.streamSpillLines = options.streamSpillLines ?? DEFAULT_STREAM_SPILL_LINES;
   }
 
   private safeFormat(name: string, args: unknown, result?: unknown): ToolDisplay | undefined {
@@ -195,8 +240,8 @@ export class Scrollback {
    * position in the render order is settled.
    */
   private isFinalized(entry: ScrollbackEntry, index: number, lastTopLevelIdx: number): boolean {
-    if (entry.kind === 'assistant') return entry.id !== this.assistantEntryId;
-    if (entry.kind === 'thinking') return entry.id !== this.thinkingEntryId;
+    if (entry.kind === 'assistant') return entry.id !== this.assistantStream.entryId;
+    if (entry.kind === 'thinking') return entry.id !== this.thinkingStream.entryId;
     if (entry.kind === 'tool') {
       return entry.toolResult !== undefined || entry.toolError !== undefined;
     }
@@ -220,6 +265,168 @@ export class Scrollback {
       if (!this.isFinalized(entry, this.committedCount, lastTopLevelIdx)) break;
       this.committedCount += 1;
     }
+  }
+
+  /**
+   * When the in-flight streaming text grows past `streamSpillLines`, peel its
+   * completed paragraphs off into the current entry — which finalizes — and
+   * continue streaming into a fresh active entry. Returns the number of
+   * chars of `tail` consumed by the spill (0 when no safe boundary exists).
+   * Entries are only ever appended, so the commit cursor's append-only
+   * invariant holds: the old active entry finalizes in place and the new
+   * tail entry lands after it.
+   */
+  private spillStreamingParagraphs(stream: TextStream, tail: string): number {
+    if (countLines(tail) <= this.streamSpillLines) return 0;
+    const boundary = lastParagraphBoundary(tail);
+    if (boundary <= 0) return 0;
+    const active = this.entries.find((e) => e.id === stream.entryId);
+    if (!active || !isTextEntry(active)) return 0;
+    active.text = tail.slice(0, boundary).trimEnd();
+    let consumed = boundary;
+    while (tail[consumed] === '\n') consumed += 1;
+    const newId = this.newId();
+    this.entries.push({
+      id: newId,
+      kind: stream.kind,
+      text: tail.slice(consumed),
+      textId: active.textId,
+    });
+    stream.entryId = newId;
+    return consumed;
+  }
+
+  private applyTextDelta(stream: TextStream, ev: { id?: string; delta: string }): void {
+    if (stream.buf === null) {
+      stream.buf = '';
+      stream.spilled = 0;
+      stream.suppressSpill = ev.id !== undefined && stream.completedTexts.has(ev.id);
+      const id = this.newId();
+      stream.entryId = id;
+      this.entries.push({ id, kind: stream.kind, text: '', textId: ev.id });
+    }
+    stream.buf += ev.delta;
+    if (!stream.suppressSpill) {
+      stream.spilled += this.spillStreamingParagraphs(stream, stream.buf.slice(stream.spilled));
+    }
+    const target = this.entries.find((e) => e.id === stream.entryId);
+    if (target && target.kind === stream.kind) {
+      target.text = stream.buf.slice(stream.spilled);
+    }
+  }
+
+  private applyTextDone(stream: TextStream, ev: { id?: string; text: string }): void {
+    const streamed = stream.buf;
+    const spilled = stream.spilled;
+    stream.buf = null;
+    stream.spilled = 0;
+    const trackedIdx = this.entries.findIndex((e) => e.id === stream.entryId);
+    stream.entryId = null;
+    if (ev.id !== undefined) {
+      // Group-aware dedupe: when an earlier emission of this textId produced
+      // the same full text (possibly as several spilled chunks no
+      // single-entry comparison could match), drop the re-streamed
+      // duplicate wholesale.
+      if (trackedIdx >= 0 && stream.completedTexts.get(ev.id) === ev.text) {
+        this.entries.splice(trackedIdx, 1);
+        return;
+      }
+      stream.completedTexts.set(ev.id, ev.text);
+    }
+    if (spilled > 0 && trackedIdx >= 0) {
+      // Earlier paragraphs were spilled into already-committed entries,
+      // which are immutable once printed by <Static>. Reconcile only the
+      // tail: when the canonical text matches what we streamed, swap in
+      // its remainder; otherwise keep the streamed tail as-is. Dedupe is
+      // impossible here — the chunks are physically in the terminal.
+      const target = this.entries[trackedIdx];
+      if (target && isTextEntry(target)) {
+        const prefixMatches =
+          streamed !== null && ev.text.slice(0, spilled) === streamed.slice(0, spilled);
+        const tailText = prefixMatches ? ev.text.slice(spilled) : target.text;
+        if (tailText.length === 0) {
+          this.entries.splice(trackedIdx, 1);
+        } else {
+          target.text = tailText;
+          if (ev.id !== undefined) target.textId = ev.id;
+        }
+        return;
+      }
+    }
+    if (trackedIdx >= 0) {
+      const target = this.entries[trackedIdx];
+      if (target && isTextEntry(target) && target.kind === stream.kind && target.text.length > 0) {
+        target.text = ev.text;
+        if (ev.id !== undefined) target.textId = ev.id;
+        // Dedupe: the tracked entry may be a duplicate of an earlier one.
+        if (ev.id !== undefined) {
+          for (let i = trackedIdx - 1; i >= 0; i -= 1) {
+            const candidate = this.entries[i];
+            if (
+              candidate &&
+              candidate.kind === stream.kind &&
+              isTextEntry(candidate) &&
+              candidate.textId === ev.id &&
+              candidate.text === target.text
+            ) {
+              this.entries.splice(trackedIdx, 1);
+              return;
+            }
+          }
+        } else {
+          const above = this.entries[trackedIdx - 1];
+          if (
+            above &&
+            above.kind === stream.kind &&
+            isTextEntry(above) &&
+            above.text === target.text &&
+            above.textId === undefined
+          ) {
+            this.entries.splice(trackedIdx, 1);
+          }
+        }
+        return;
+      }
+    }
+
+    this.entries.push({ id: this.newId(), kind: stream.kind, text: ev.text, textId: ev.id });
+    const finalEntry = this.entries[this.entries.length - 1]!;
+
+    if (ev.id !== undefined) {
+      for (let i = this.entries.length - 2; i >= 0; i -= 1) {
+        const candidate = this.entries[i];
+        if (
+          candidate &&
+          candidate.kind === stream.kind &&
+          isTextEntry(candidate) &&
+          candidate.textId === ev.id &&
+          candidate.text === finalEntry.text
+        ) {
+          this.entries.pop();
+          return;
+        }
+      }
+      return;
+    }
+
+    const above = this.entries[this.entries.length - 2];
+    if (
+      above &&
+      above.kind === stream.kind &&
+      isTextEntry(above) &&
+      above.text === finalEntry.text &&
+      above.textId === undefined
+    ) {
+      this.entries.pop();
+    }
+  }
+
+  private resetTextStream(stream: TextStream): void {
+    stream.buf = null;
+    stream.entryId = null;
+    stream.spilled = 0;
+    stream.suppressSpill = false;
+    stream.completedTexts.clear();
   }
 
   private flushTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -295,13 +502,11 @@ export class Scrollback {
   clear(): void {
     this.entries = [];
     this.committedCount = 0;
-    this.assistantBuf = null;
     this.toolsByCallId.clear();
     this.subagentParents.clear();
     this.subagentToolsByCallId.clear();
-    this.assistantEntryId = null;
-    this.thinkingBuf = null;
-    this.thinkingEntryId = null;
+    this.resetTextStream(this.assistantStream);
+    this.resetTextStream(this.thinkingStream);
     this.suppressUserContent = null;
     if (this.flushTimeout) {
       clearTimeout(this.flushTimeout);
@@ -410,202 +615,22 @@ export class Scrollback {
     let dirty = false;
     try {
       if (ev.type === 'assistant_text_delta') {
-        if (this.assistantBuf === null) {
-          this.assistantBuf = '';
-          const id = this.newId();
-          this.assistantEntryId = id;
-          this.entries.push({
-            id,
-            kind: 'assistant',
-            text: '',
-            textId: ev.id,
-          });
-        }
-        this.assistantBuf += ev.delta;
-        const target = this.entries.find((e) => e.id === this.assistantEntryId);
-        if (target && target.kind === 'assistant') {
-          target.text = this.assistantBuf;
-        }
+        this.applyTextDelta(this.assistantStream, ev);
         dirty = true;
         return;
       }
       if (ev.type === 'assistant_text_done') {
-        this.assistantBuf = null;
-        const trackedIdx = this.entries.findIndex((e) => e.id === this.assistantEntryId);
-        this.assistantEntryId = null;
-        if (trackedIdx >= 0) {
-          const target = this.entries[trackedIdx];
-          if (target && target.kind === 'assistant' && target.text.length > 0) {
-            target.text = ev.text;
-            if (ev.id !== undefined) target.textId = ev.id;
-            // Dedupe: the tracked entry may be a duplicate of an earlier one.
-            if (ev.id !== undefined) {
-              for (let i = trackedIdx - 1; i >= 0; i -= 1) {
-                const candidate = this.entries[i];
-                if (
-                  candidate &&
-                  candidate.kind === 'assistant' &&
-                  candidate.textId === ev.id &&
-                  candidate.text === target.text
-                ) {
-                  this.entries.splice(trackedIdx, 1);
-                  dirty = true;
-                  return;
-                }
-              }
-            } else {
-              const above = this.entries[trackedIdx - 1];
-              if (
-                above &&
-                above.kind === 'assistant' &&
-                above.text === target.text &&
-                above.textId === undefined
-              ) {
-                this.entries.splice(trackedIdx, 1);
-              }
-            }
-            dirty = true;
-            return;
-          }
-        }
-
-        this.entries.push({
-          id: this.newId(),
-          kind: 'assistant',
-          text: ev.text,
-          textId: ev.id,
-        });
-
-        const finalEntry = this.entries[this.entries.length - 1];
-        if (!finalEntry || finalEntry.kind !== 'assistant') return;
-
-        if (ev.id !== undefined) {
-          for (let i = this.entries.length - 2; i >= 0; i -= 1) {
-            const candidate = this.entries[i];
-            if (
-              candidate &&
-              candidate.kind === 'assistant' &&
-              candidate.textId === ev.id &&
-              candidate.text === finalEntry.text
-            ) {
-              this.entries.pop();
-              dirty = true;
-              return;
-            }
-          }
-          dirty = true;
-          return;
-        }
-
-        const above = this.entries[this.entries.length - 2];
-        if (
-          above &&
-          above.kind === 'assistant' &&
-          above.text === finalEntry.text &&
-          above.textId === undefined
-        ) {
-          this.entries.pop();
-        }
+        this.applyTextDone(this.assistantStream, ev);
         dirty = true;
         return;
       }
       if (ev.type === 'reasoning_text_delta') {
-        if (this.thinkingBuf === null) {
-          this.thinkingBuf = '';
-          const id = this.newId();
-          this.thinkingEntryId = id;
-          this.entries.push({
-            id,
-            kind: 'thinking',
-            text: '',
-            textId: ev.id,
-          });
-        }
-        this.thinkingBuf += ev.delta;
-        const target = this.entries.find((e) => e.id === this.thinkingEntryId);
-        if (target && target.kind === 'thinking') {
-          target.text = this.thinkingBuf;
-        }
+        this.applyTextDelta(this.thinkingStream, ev);
         dirty = true;
         return;
       }
       if (ev.type === 'reasoning_text_done') {
-        this.thinkingBuf = null;
-        const trackedIdx = this.entries.findIndex((e) => e.id === this.thinkingEntryId);
-        this.thinkingEntryId = null;
-        if (trackedIdx >= 0) {
-          const target = this.entries[trackedIdx];
-          if (target && target.kind === 'thinking' && target.text.length > 0) {
-            target.text = ev.text;
-            if (ev.id !== undefined) target.textId = ev.id;
-            // Dedupe: same logic as assistant_text_done.
-            if (ev.id !== undefined) {
-              for (let i = trackedIdx - 1; i >= 0; i -= 1) {
-                const candidate = this.entries[i];
-                if (
-                  candidate &&
-                  candidate.kind === 'thinking' &&
-                  candidate.textId === ev.id &&
-                  candidate.text === target.text
-                ) {
-                  this.entries.splice(trackedIdx, 1);
-                  dirty = true;
-                  return;
-                }
-              }
-            } else {
-              const above = this.entries[trackedIdx - 1];
-              if (
-                above &&
-                above.kind === 'thinking' &&
-                above.text === target.text &&
-                above.textId === undefined
-              ) {
-                this.entries.splice(trackedIdx, 1);
-              }
-            }
-            dirty = true;
-            return;
-          }
-        }
-
-        this.entries.push({
-          id: this.newId(),
-          kind: 'thinking',
-          text: ev.text,
-          textId: ev.id,
-        });
-
-        const finalEntry = this.entries[this.entries.length - 1];
-        if (!finalEntry || finalEntry.kind !== 'thinking') return;
-
-        if (ev.id !== undefined) {
-          for (let i = this.entries.length - 2; i >= 0; i -= 1) {
-            const candidate = this.entries[i];
-            if (
-              candidate &&
-              candidate.kind === 'thinking' &&
-              candidate.textId === ev.id &&
-              candidate.text === finalEntry.text
-            ) {
-              this.entries.pop();
-              dirty = true;
-              return;
-            }
-          }
-          dirty = true;
-          return;
-        }
-
-        const above = this.entries[this.entries.length - 2];
-        if (
-          above &&
-          above.kind === 'thinking' &&
-          above.text === finalEntry.text &&
-          above.textId === undefined
-        ) {
-          this.entries.pop();
-        }
+        this.applyTextDone(this.thinkingStream, ev);
         dirty = true;
         return;
       }
@@ -802,10 +827,8 @@ export class Scrollback {
         // interrupted run may leave a streaming text entry without its
         // *_done event and pending tool entries without results, which
         // would otherwise block every later entry from committing.
-        this.assistantBuf = null;
-        this.assistantEntryId = null;
-        this.thinkingBuf = null;
-        this.thinkingEntryId = null;
+        this.resetTextStream(this.assistantStream);
+        this.resetTextStream(this.thinkingStream);
         for (let i = this.entries.length - 1; i >= 0; i--) {
           const entry = this.entries[i]!;
           if (
@@ -829,6 +852,39 @@ export class Scrollback {
       }
     }
   }
+}
+
+function countLines(text: string): number {
+  let count = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') count += 1;
+  }
+  return count;
+}
+
+/**
+ * Index of the newline ending the last completed paragraph in `text` — i.e.
+ * the start of the last blank-line separator — or -1 when the text is a
+ * single unbroken paragraph. Blank lines inside an open code fence are not
+ * separators: each spilled chunk is lexed as standalone markdown, so a chunk
+ * boundary there would leave both halves with unbalanced fences.
+ */
+function lastParagraphBoundary(text: string): number {
+  let boundary = -1;
+  let pos = 0;
+  let insideFence = false;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // The segment after the final '\n' is not a completed line, so it
+    // cannot act as a paragraph separator.
+    if (i > 0 && i < lines.length - 1 && !insideFence && line.trim() === '') {
+      boundary = pos - 1;
+    }
+    if (/^[ \t]*(```|~~~)/.test(line)) insideFence = !insideFence;
+    pos += line.length + 1;
+  }
+  return boundary;
 }
 
 function previewLine(text: string): string {
