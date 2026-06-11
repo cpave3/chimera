@@ -8,6 +8,7 @@ import {
   readCheckpoints,
   readSessionMetadata,
   truncateEventsAtIndex,
+  WorkspaceCheckpoints,
   writeSessionMetadata,
   type SessionId,
   type SessionInfo,
@@ -321,8 +322,9 @@ export function buildApp(opts: AppOptions): Hono {
     if (!parseResult.success) {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
+    let meta: Awaited<ReturnType<typeof readSessionMetadata>>;
     try {
-      await readSessionMetadata(id, home);
+      meta = await readSessionMetadata(id, home);
     } catch {
       return c.json({ error: 'not found' }, 404);
     }
@@ -330,6 +332,18 @@ export function buildApp(opts: AppOptions): Hono {
     const acquired = registry.tryAcquireRewind(id);
     if (acquired === 'busy') return c.json({ error: 'run already in progress' }, 409);
     try {
+      // Restore the working tree before truncating the event log: the
+      // checkpoint list (and the byte offsets it carries) must be read from
+      // the untruncated log, and a failed restore must not lose history.
+      let workspaceRestored = false;
+      const checkpoints = await readCheckpoints(id, home);
+      const target = checkpoints.find(
+        (candidate) => candidate.index === parseResult.data.index,
+      );
+      if (target) {
+        const workspace = new WorkspaceCheckpoints({ sessionId: id, cwd: meta.cwd, home });
+        workspaceRestored = await workspace.restore(target, checkpoints);
+      }
       const truncated = await truncateEventsAtIndex(id, parseResult.data.index, home);
       if (acquired !== null && entry) {
         entry.agent.session.messages = truncated.messages;
@@ -337,7 +351,7 @@ export function buildApp(opts: AppOptions): Hono {
         entry.agent.session.usage = truncated.usage;
         await writeSessionMetadata(entry.agent.session, home);
       }
-      return c.json({ sessionId: id });
+      return c.json({ sessionId: id, workspaceRestored });
     } finally {
       if (acquired !== null && typeof acquired === 'object') {
         acquired.release();

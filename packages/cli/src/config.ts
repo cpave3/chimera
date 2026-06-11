@@ -72,6 +72,12 @@ export interface ChimeraConfig {
     provider: 'tavily' | 'brave';
     apiKey: string;
   };
+  /**
+   * Shadow-git working-tree snapshots taken before each user message so
+   * /rewind can restore file state. Default true; set false to make rewind
+   * conversation-only.
+   */
+  workspaceCheckpoints?: boolean;
 }
 
 export function configPath(home = homedir()): string {

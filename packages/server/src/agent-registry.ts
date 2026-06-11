@@ -1,12 +1,13 @@
 import type { Command } from '@chimera/commands';
-import type {
-  Agent,
-  AgentEvent,
-  ModelConfig,
-  PermissionGate,
-  SandboxMode,
-  Session,
-  SessionId,
+import {
+  type Agent,
+  type AgentEvent,
+  type ModelConfig,
+  type PermissionGate,
+  type SandboxMode,
+  type Session,
+  type SessionId,
+  WorkspaceCheckpoints,
 } from '@chimera/core';
 import type { HookRunner } from '@chimera/hooks';
 import type { Mode } from '@chimera/modes';
@@ -127,6 +128,14 @@ export interface AgentRegistryOptions {
   loadSkills?: SkillsLoader;
   /** Optional hook to load modes at session-creation time. */
   loadModes?: ModesLoader;
+  /** Chimera home dir override, used by workspace checkpoints. */
+  home?: string;
+  /**
+   * Snapshot the session's working tree (shadow git) before each user
+   * message, so /rewind can restore file state. Off unless explicitly
+   * enabled — the CLI commands enable it from config.
+   */
+  workspaceCheckpoints?: boolean;
 }
 
 const DEFAULT_DELETE_TIMEOUT_MS = 10_000;
@@ -163,6 +172,8 @@ export class AgentRegistry {
   private readonly loadCommands?: CommandsLoader;
   private readonly loadSkills?: SkillsLoader;
   private readonly loadModes?: ModesLoader;
+  private readonly home?: string;
+  private readonly workspaceCheckpoints: boolean;
 
   constructor(opts: AgentRegistryOptions) {
     this.factory = opts.factory;
@@ -170,6 +181,22 @@ export class AgentRegistry {
     this.loadCommands = opts.loadCommands;
     this.loadSkills = opts.loadSkills;
     this.loadModes = opts.loadModes;
+    this.home = opts.home;
+    this.workspaceCheckpoints = opts.workspaceCheckpoints ?? false;
+  }
+
+  /**
+   * Best-effort working-tree snapshot before a user message runs. Failures
+   * are logged inside WorkspaceCheckpoints and never block the run.
+   */
+  private async snapshotWorkspace(entry: AgentEntry, content: string): Promise<void> {
+    if (!this.workspaceCheckpoints) return;
+    const workspace = new WorkspaceCheckpoints({
+      sessionId: entry.agent.session.id,
+      cwd: entry.agent.session.cwd,
+      home: this.home,
+    });
+    await workspace.snapshot(content);
   }
 
   getInstanceInfo(): InstanceInfo {
@@ -292,6 +319,7 @@ export class AgentRegistry {
     entry.runActive = true;
     entry.activeRun = (async () => {
       try {
+        await this.snapshotWorkspace(entry, content);
         for await (const event of entry.agent.run(content)) {
           entry.bus.publish(event);
           if (event.type === 'run_finished') break;
@@ -326,6 +354,7 @@ export class AgentRegistry {
     if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive) return 'already-running';
     entry.injectActive = true;
     try {
+      await this.snapshotWorkspace(entry, content);
       await entry.agent.appendMessage(content);
     } catch (err) {
       if ((err as Error).message === 'Agent is already running') return 'already-running';

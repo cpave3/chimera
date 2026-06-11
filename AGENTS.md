@@ -216,3 +216,12 @@ against the on-disk `events.jsonl` byte layout. These offsets are only valid
 while no new events are being appended — the server enforces this via a rewind
 lock that blocks new runs and compactions while truncation is in flight. Any
 future concurrent-write path through `events.jsonl` must respect this invariant.
+
+Workspace restore (`WorkspaceCheckpoints` in core) snapshots the cwd into a
+shadow git repo before each user message (`AgentRegistry.run`/`injectMessage`,
+gated by the `workspaceCheckpoints` registry option — off in tests, enabled by
+the CLI commands from config). Snapshot records are keyed by
+`(userMessage, occurrence)`, not checkpoint index, because checkpoint indices
+are message positions in the latest snapshot and shift under compaction. The
+rewind handler restores **before** truncating, while the byte offsets are
+still valid.

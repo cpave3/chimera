@@ -173,6 +173,8 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     },
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
+    home: opts.home,
+    workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });
 
   const app = buildApp({

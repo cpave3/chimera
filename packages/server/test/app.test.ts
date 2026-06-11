@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LanguageModel, ToolSet } from 'ai';
@@ -1315,6 +1315,107 @@ describe('server app', () => {
       expect(after.messages).toHaveLength(0);
       expect(after.toolCalls).toHaveLength(0);
       expect(after.usage.totalTokens).toBe(0);
+    });
+
+    it('POST /rewind restores the working tree from workspace checkpoints', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'chimera-rewindcwd-'));
+      const cwdFactory: AgentFactory = {
+        build: async (init) => {
+          const session = init.sessionId
+            ? await loadSession(init.sessionId, home).catch(() => undefined)
+            : undefined;
+          const agent = new Agent({
+            cwd: init.cwd,
+            model,
+            languageModel: textOnlyModel('ok'),
+            tools: {} as ToolSet,
+            sandboxMode: 'off',
+            home,
+            contextWindow: 200_000,
+            sessionId: init.sessionId,
+            session,
+          });
+          await writeSessionMetadata(agent.session, home);
+          return { agent };
+        },
+      };
+      const registry = new AgentRegistry({
+        factory: cwdFactory,
+        instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+        home,
+        workspaceCheckpoints: true,
+      });
+      const app = buildApp({ registry, home });
+      const createResponse = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd, model, sandboxMode: 'off' }),
+      });
+      const { sessionId } = await createResponse.json();
+
+      try {
+        await writeFile(join(cwd, 'a.txt'), 'v1');
+        await app.request(`/v1/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'first message' }),
+        });
+        await waitForIdle(sessionId, registry);
+
+        await writeFile(join(cwd, 'a.txt'), 'v2');
+        await app.request(`/v1/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'second message' }),
+        });
+        await waitForIdle(sessionId, registry);
+
+        await writeFile(join(cwd, 'a.txt'), 'v3');
+
+        const checkpointsResponse = await app.request(`/v1/sessions/${sessionId}/checkpoints`);
+        const checkpoints = await checkpointsResponse.json();
+        const second = checkpoints.find(
+          (entry: { userMessage: string }) => entry.userMessage === 'second message',
+        );
+        expect(second).toBeDefined();
+
+        const rewindResponse = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ index: second.index }),
+        });
+        expect(rewindResponse.status).toBe(200);
+        const rewindBody = await rewindResponse.json();
+        expect(rewindBody.workspaceRestored).toBe(true);
+        expect(await readFile(join(cwd, 'a.txt'), 'utf8')).toBe('v2');
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('POST /rewind reports workspaceRestored false when checkpointing is off', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+
+      await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'first message' }),
+      });
+      await waitForIdle(sessionId, registry);
+
+      const rewindResponse = await app.request(`/v1/sessions/${sessionId}/rewind`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index: 0 }),
+      });
+      expect(rewindResponse.status).toBe(200);
+      const rewindBody = await rewindResponse.json();
+      expect(rewindBody.workspaceRestored).toBe(false);
     });
 
     it('POST /rewind returns 404 for missing session', async () => {

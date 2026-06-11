@@ -145,12 +145,18 @@ export class ChimeraClient {
     return this.json<Checkpoint[]>(`/v1/sessions/${sessionId}/checkpoints`);
   }
 
-  async rewindSession(sessionId: SessionId, index: number): Promise<{ sessionId: SessionId }> {
-    return this.json<{ sessionId: SessionId }>(`/v1/sessions/${sessionId}/rewind`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ index }),
-    });
+  async rewindSession(
+    sessionId: SessionId,
+    index: number,
+  ): Promise<{ sessionId: SessionId; workspaceRestored: boolean }> {
+    return this.json<{ sessionId: SessionId; workspaceRestored: boolean }>(
+      `/v1/sessions/${sessionId}/rewind`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ index }),
+      },
+    );
   }
 
   async interrupt(id: SessionId): Promise<void> {

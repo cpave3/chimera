@@ -173,6 +173,17 @@ The TUI exposes three session-management commands:
 - `/fork [purpose]` — create a child session inheriting the current session's conversation state. The parent is unchanged. In `overlay` sandbox mode the parent's filesystem upperdir is snapshotted into a new upperdir for the child, so the child's filesystem changes do not affect the parent.
 - `/rewind` — open an interactive picker showing every user message in the session with a summary of the tool calls that followed it. Enter rewinds in-place, truncating the event log and preloading the selected message into the input buffer. Shift+Enter forks from the checkpoint into a new child session, preserving the original branch. Escape cancels. In-place rewind is destructive (history after the checkpoint is removed); use Shift+Enter if you want to keep the original branch.
 
+  In-place rewind also restores the **working tree**: before each user message
+  runs, Chimera snapshots the session cwd into a shadow git repo
+  (`~/.chimera/sessions/<id>/workspace.git` — your project's own `.git` is
+  never touched, and the project `.gitignore` is respected). Rewinding checks
+  out the snapshot taken just before the selected message, removing files the
+  agent created after it. The pre-rewind tree is committed to the shadow repo
+  first, so a rewind is itself recoverable with plain git commands against
+  the shadow repo. The TUI reports whether the tree was restored or the
+  rewind was conversation-only. Disable with `"workspaceCheckpoints": false`
+  in `~/.chimera/config.json`.
+
 Resume across server restarts:
 
 ```

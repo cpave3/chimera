@@ -1697,7 +1697,10 @@ export function App(props: AppProps): React.ReactElement {
               setStreamingEntryId(null);
               void (async () => {
                 try {
-                  await activeSession.client.rewindSession(activeSession.sessionId, checkpoint.index);
+                  const rewindResult = await activeSession.client.rewindSession(
+                    activeSession.sessionId,
+                    checkpoint.index,
+                  );
                   stdout?.write('\x1b[2J\x1b[3J\x1b[H');
                   scrollback.clear();
                   setStaticEpoch((n) => n + 1);
@@ -1707,7 +1710,11 @@ export function App(props: AppProps): React.ReactElement {
                     scrollback.rehydrateFromSession(s);
                   }
                   setBufferText(checkpoint.userMessage);
-                  scrollback.addInfo(`rewound to checkpoint ${checkpoint.index}`);
+                  scrollback.addInfo(
+                    rewindResult.workspaceRestored
+                      ? `rewound to checkpoint ${checkpoint.index} (working tree restored)`
+                      : `rewound to checkpoint ${checkpoint.index} (conversation only; working tree unchanged)`,
+                  );
                 } catch (err) {
                   scrollback.addError(`/rewind: ${(err as Error).message}`);
                 }

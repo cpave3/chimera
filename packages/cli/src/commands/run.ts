@@ -181,6 +181,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
+    home: opts.home,
+    workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });
   const app = buildApp({ registry, home: opts.home });
   const server = await startServer({ app });

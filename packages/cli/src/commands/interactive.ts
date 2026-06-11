@@ -153,6 +153,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
+    home: opts.home,
+    workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });
   const app = buildApp({
     registry,
