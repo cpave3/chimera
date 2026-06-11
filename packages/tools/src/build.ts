@@ -6,6 +6,7 @@ import { buildEditTool } from './edit';
 import { buildGlobTool } from './glob';
 import { buildGrepTool } from './grep';
 import { buildReadTool } from './read';
+import { buildRecallTool } from './recall';
 import { buildTaskListTool } from './task-list';
 import type { ChimeraToolDef, FormatScrollback } from './types';
 import { buildFetchTool } from './web';
@@ -32,6 +33,9 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
   }
   if (ctx.taskList) {
     defs.task_list = buildTaskListTool(ctx);
+  }
+  if (ctx.recall) {
+    defs.recall = buildRecallTool(ctx);
   }
   if (ctx.backgroundProcesses) {
     defs.bash_output = buildBashOutputTool(ctx);

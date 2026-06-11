@@ -78,6 +78,18 @@ export interface ChimeraConfig {
    * conversation-only.
    */
   workspaceCheckpoints?: boolean;
+  /**
+   * Archived-tool-output store backing the recall tool and compaction's
+   * prune phase. Entries live under `~/.chimera/recall/<sessionId>/`.
+   */
+  recall?: {
+    /** Default true. */
+    enabled?: boolean;
+    /** Tool results above this (estimated) size are archived at compaction. Default 500. */
+    archiveThresholdTokens?: number;
+    /** Entries older than this are garbage-collected. Default 30. */
+    ttlDays?: number;
+  };
 }
 
 export function configPath(home = homedir()): string {

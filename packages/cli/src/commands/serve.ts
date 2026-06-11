@@ -160,6 +160,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     responseTimeoutMs: config.responseTimeoutMs,
     diagnostics: config.diagnostics,
     webSearch: config.webSearch,
+    recall: config.recall,
   });
 
   const registry = new AgentRegistry({

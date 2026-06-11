@@ -804,4 +804,7 @@ async function countLatestMessageCount(sessionId: SessionId, home: string): Prom
 
 export async function deleteSession(sessionId: SessionId, home = homedir()): Promise<void> {
   await rm(sessionDir(sessionId, home), { recursive: true, force: true });
+  // Sibling per-session state stores. Core owns the ~/.chimera layout, so
+  // it removes them by path rather than importing the owning packages.
+  await rm(join(home, '.chimera', 'recall', sessionId), { recursive: true, force: true });
 }

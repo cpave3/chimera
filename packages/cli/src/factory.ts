@@ -43,6 +43,7 @@ import {
   TaskListStore,
   type WebSearchProvider,
 } from '@chimera/tools';
+import { RecallStore } from '@chimera/recall';
 import type { ToolSet } from 'ai';
 import type { ModelOptions } from './config';
 import type { CliSandboxOptions } from './sandbox-config';
@@ -129,6 +130,8 @@ export interface CliAgentFactoryOptions {
   diagnostics?: DiagnosticsConfig;
   /** Search backend for the web_search tool. Omitted = tool not registered. */
   webSearch?: { provider: 'tavily' | 'brave'; apiKey: string };
+  /** Archived-output recall store config. enabled defaults to true. */
+  recall?: { enabled?: boolean; archiveThresholdTokens?: number; ttlDays?: number };
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -153,6 +156,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly compaction: CompactionConfig | undefined;
   private readonly diagnosticsConfig: DiagnosticsConfig | undefined;
   private readonly webSearchProvider: WebSearchProvider | undefined;
+  private readonly recallConfig: CliAgentFactoryOptions['recall'];
+  private readonly liveRecallStores = new Map<SessionId, RecallStore>();
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
   /**
@@ -183,6 +188,7 @@ export class CliAgentFactory implements AgentFactory {
     this.compactor = opts.compactor;
     this.responseTimeoutMs = opts.responseTimeoutMs;
     this.diagnosticsConfig = opts.diagnostics;
+    this.recallConfig = opts.recall;
     this.webSearchProvider = opts.webSearch
       ? createWebSearchProvider({
           provider: opts.webSearch.provider,
@@ -390,6 +396,16 @@ export class CliAgentFactory implements AgentFactory {
       config: this.diagnosticsConfig,
     });
 
+    let recallStore: RecallStore | undefined;
+    if (this.recallConfig?.enabled !== false) {
+      recallStore = new RecallStore({
+        sessionId: agent.session.id,
+        home: this.home,
+        ttlDays: this.recallConfig?.ttlDays,
+      });
+      this.liveRecallStores.set(agent.session.id, recallStore);
+    }
+
     const taskList = new TaskListStore({
       initial: agent.session.tasks,
       onUpdate: (tasks) => {
@@ -410,6 +426,7 @@ export class CliAgentFactory implements AgentFactory {
       diagnostics,
       webSearch: this.webSearchProvider,
       taskList,
+      recall: recallStore,
     });
     const tools = built.tools;
     const formatters = { ...built.formatters };

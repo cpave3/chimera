@@ -35,6 +35,7 @@
     "@chimera/server": "workspace:*",
     "@chimera/skills": "workspace:*",
     "@chimera/subagents": "workspace:*",
+    "@chimera/recall": "workspace:*",
     "@chimera/tools": "workspace:*",
     "@chimera/tui": "workspace:*",
     "commander": "^14.0.3"

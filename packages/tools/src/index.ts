@@ -13,6 +13,7 @@ export { buildWriteTool } from './write';
 export { buildEditTool } from './edit';
 export { buildGlobTool } from './glob';
 export { buildGrepTool } from './grep';
+export { buildRecallTool, type RecallStoreApi } from './recall';
 export * from './task-list';
 export { buildFetchTool, htmlToText } from './web';
 export * from './web-search';

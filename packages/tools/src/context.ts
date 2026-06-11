@@ -1,6 +1,7 @@
 import type { Executor, PermissionGate, SandboxMode } from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
 import type { DiagnosticsRunner } from './diagnostics';
+import type { RecallStoreApi } from './recall';
 import type { TaskListStore } from './task-list';
 import type { WebSearchProvider } from './web-search';
 
@@ -25,4 +26,6 @@ export interface ToolContext {
   webSearch?: WebSearchProvider;
   /** When present, the task_list tool is registered. */
   taskList?: TaskListStore;
+  /** When present, the recall tool is registered (archived tool outputs). */
+  recall?: RecallStoreApi;
 }

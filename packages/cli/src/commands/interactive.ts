@@ -133,6 +133,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     responseTimeoutMs: config.responseTimeoutMs,
     diagnostics: config.diagnostics,
     webSearch: config.webSearch,
+    recall: config.recall,
   });
 
   const commands = loadReloadingCommandsFromConfig({

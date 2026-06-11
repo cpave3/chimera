@@ -149,6 +149,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       responseTimeoutMs: config.responseTimeoutMs,
     diagnostics: config.diagnostics,
     webSearch: config.webSearch,
+    recall: config.recall,
     });
     factory = cliFactory;
   }
