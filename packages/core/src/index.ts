@@ -5,6 +5,7 @@ export * from './interfaces';
 export * from './agent';
 export * from './persistence';
 export * from './workspace-checkpoints';
+export * from './context-tracker';
 export * from './prompts/compose';
 export { ROLE_PROMPT } from './prompts/role';
 export { EventQueue } from './event-queue';

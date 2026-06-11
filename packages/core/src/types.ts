@@ -130,6 +130,12 @@ export interface CompactionConfig {
   reserveTokens: number;
   keepRecentTokens: number;
   model?: string;
+  /**
+   * Compact when the projected prompt crosses this percentage of the
+   * context window (effective trigger = min(window * pct, window - reserve)).
+   * Default 85.
+   */
+  thresholdPercent?: number;
 }
 
 /**

@@ -6,7 +6,15 @@ export interface CompactionConfig {
   keepRecentTokens: number;
   /** Optional model override in providerId/modelId format. */
   model?: string;
+  /**
+   * Compact when the projected prompt crosses this percentage of the
+   * context window (effective trigger = min(window * pct, window - reserve)).
+   * Default 85.
+   */
+  thresholdPercent?: number;
 }
+
+export const DEFAULT_THRESHOLD_PERCENT = 85;
 
 export const DEFAULT_RESERVE_TOKENS = 16384;
 export const DEFAULT_KEEP_RECENT_TOKENS = 20000;

@@ -27,6 +27,7 @@ import {
   type ToolCallRecord,
   type UsageStep,
 } from './types';
+import { ContextTracker, shouldCompact } from './context-tracker';
 import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
 export interface StopHook {
@@ -169,6 +170,16 @@ export class Agent {
    * accepted plan via task_list before executing it.
    */
   private planHandoffPending = false;
+  /** Real-usage projection of the next prompt size for compaction decisions. */
+  private contextTracker = new ContextTracker();
+  /** Mid-run compaction guard: require at least one step since the last one. */
+  private stepsSinceCompaction = 1;
+  /**
+   * Latched when a threshold compaction fails or leaves the projection over
+   * the trigger (e.g. a giant keep-tail) — prevents a compact-every-step
+   * loop. Cleared at the next user turn.
+   */
+  private compactionIneffective = false;
   /**
    * Optional callback invoked when a queued mode switch is drained. Returns
    * the freshly-recomposed system prompt + filtered tool set + effective
@@ -594,6 +605,7 @@ export class Agent {
     yield { type: 'compaction_started', reason: 'manual' };
     try {
       const result = await compactor.compact(this.session, 'manual');
+      this.contextTracker.noteCompaction();
       yield {
         type: 'compaction_finished',
         summary: result.summary,
@@ -759,6 +771,73 @@ export class Agent {
     return parts.join('\n\n');
   }
 
+  /**
+   * True when the projected next prompt crosses the compaction trigger.
+   * Projection uses the provider's last reported inputTokens plus a char/4
+   * estimate of messages appended since (pure estimate before the first
+   * usage report and right after a compaction).
+   */
+  private overCompactionThreshold(): boolean {
+    const config = this.opts.compaction;
+    if (!config?.enabled || !this.opts.compactor) return false;
+    return shouldCompact({
+      projected: this.contextTracker.projectedNextPrompt(this.session.messages),
+      contextWindow: this.opts.contextWindow,
+      thresholdPercent: config.thresholdPercent ?? 85,
+      reserveTokens: config.reserveTokens,
+      maxOutputTokens: this.opts.model.maxOutputTokens,
+    });
+  }
+
+  /**
+   * Run a threshold compaction (at run start or between steps), emitting the
+   * event pair and persisting a snapshot so a crash before the next step
+   * cannot resurrect the pre-compaction history. Failure emits
+   * `compaction_failed` and latches further attempts off for this turn —
+   * a degraded run beats a dead one.
+   */
+  private async runThresholdCompaction(queue: EventQueue<AgentEvent>): Promise<void> {
+    const compactor = this.opts.compactor;
+    if (!compactor) return;
+    queue.push({ type: 'compaction_started', reason: 'threshold' });
+    try {
+      const result = await compactor.compact(this.session, 'threshold');
+      queue.push({
+        type: 'compaction_finished',
+        summary: result.summary,
+        tokensBefore: result.tokensBefore,
+        tokensAfter: result.tokensAfter,
+        messagesReplaced: result.messagesReplaced,
+        strategy: result.strategy,
+        prunedCount: result.prunedCount,
+        prunedTokensSaved: result.prunedTokensSaved,
+      });
+      this.contextTracker.noteCompaction();
+      this.stepsSinceCompaction = 0;
+      if (this.overCompactionThreshold()) {
+        this.compactionIneffective = true;
+      }
+      try {
+        await persistSession(
+          this.session,
+          {
+            type: 'message_appended',
+            messages: this.session.messages,
+            toolCalls: this.session.toolCalls,
+            usage: cloneUsage(this.session.usage),
+          },
+          this.opts.home,
+        );
+      } catch {
+        // Persistence errors must not crash the run.
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      queue.push({ type: 'compaction_failed', error: message });
+      this.compactionIneffective = true;
+    }
+  }
+
   private async runInternal(userMessage: string, queue: EventQueue<AgentEvent>): Promise<void> {
     this.session.status = 'running';
 
@@ -839,29 +918,11 @@ export class Agent {
 
     queue.push({ type: 'user_message', content: userMessage });
 
-    // Compaction: if configured, run before streamText.
-    const compactor = this.opts.compactor;
-    const compactionEnabled = this.opts.compaction?.enabled ?? false;
-    if (compactionEnabled && compactor) {
-      try {
-        const result = await compactor.maybeCompact(this.session);
-        if (result.ran) {
-          queue.push({ type: 'compaction_started', reason: 'threshold' });
-          queue.push({
-            type: 'compaction_finished',
-            summary: result.summary,
-            tokensBefore: result.tokensBefore,
-            tokensAfter: result.tokensAfter,
-            messagesReplaced: result.messagesReplaced,
-            strategy: result.strategy,
-            prunedCount: result.prunedCount,
-            prunedTokensSaved: result.prunedTokensSaved,
-          });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        queue.push({ type: 'compaction_failed', error: message });
-      }
+    // Compaction: a fresh user turn clears the ineffective latch, then the
+    // same projection-based trigger used between steps runs once up front.
+    this.compactionIneffective = false;
+    if (this.overCompactionThreshold()) {
+      await this.runThresholdCompaction(queue);
     }
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
@@ -937,6 +998,9 @@ export class Agent {
             }, responseTimeoutMs);
           }
 
+          // Message count the prompt was built from; pairs with the step's
+          // reported inputTokens in the context tracker.
+          const messageCountAtPrompt = this.session.messages.length;
           const stream = streamText({
             model: this.opts.languageModel,
             messages: this.session.messages,
@@ -1268,8 +1332,10 @@ export class Agent {
                   stepNumber,
                   finishReason: part.finishReason,
                 });
+                this.stepsSinceCompaction += 1;
                 const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
                 if (stepUsage) {
+                  this.contextTracker.noteUsage(stepUsage.inputTokens, messageCountAtPrompt);
                   applyStepUsage(this.session.usage, stepUsage);
                   runDelta.inputTokens += stepUsage.inputTokens;
                   runDelta.outputTokens += stepUsage.outputTokens;
@@ -1357,7 +1423,16 @@ export class Agent {
 
           if (stepHadToolCalls) {
             // Intermediate step — the model emitted tool calls and needs to
-            // consume results. Loop again.
+            // consume results. Compact here if the projected next prompt
+            // crosses the trigger, so long tool loops never die on a
+            // context-window overflow mid-run.
+            if (
+              this.stepsSinceCompaction >= 1 &&
+              !this.compactionIneffective &&
+              this.overCompactionThreshold()
+            ) {
+              await this.runThresholdCompaction(queue);
+            }
             continue;
           }
 
