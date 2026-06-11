@@ -30,8 +30,7 @@ vi.mock('../src/spawn-child', async () => {
     ...actual,
     spawnChimeraChild: (...args: Parameters<typeof actual.spawnChimeraChild>) =>
       mockSpawnChimeraChild(...args),
-    teardownChild: (...args: Parameters<typeof actual.teardownChild>) =>
-      mockTeardownChild(...args),
+    teardownChild: (...args: Parameters<typeof actual.teardownChild>) => mockTeardownChild(...args),
   };
 });
 
@@ -41,7 +40,11 @@ function makeMockChildHandle(opts: {
   interrupt?: () => Promise<void>;
 }): spawnChildMod.ChildHandle {
   return {
-    proc: { pid: 123, exitCode: null, signalCode: null } as unknown as import('node:child_process').ChildProcess,
+    proc: {
+      pid: 123,
+      exitCode: null,
+      signalCode: null,
+    } as unknown as import('node:child_process').ChildProcess,
     client: {
       send: (_sessionId: SessionId, _prompt: string, options: { signal: AbortSignal }) =>
         opts.send!(_prompt, options),
@@ -125,26 +128,24 @@ describe('parallel spawn_agent emission integrity', () => {
 describe('parallel spawn_agent interrupt cascade', () => {
   it('aborts both in-flight children when the parent signal fires', async () => {
     const interrupts: string[] = [];
-    const builder =
-      (label: string) =>
-      async () => {
-        const send = async function* (
-          _p: string,
-          opts?: { signal?: AbortSignal },
-        ): AsyncGenerator<AgentEvent> {
-          await new Promise<void>((resolve) => {
-            if (opts?.signal?.aborted) return resolve();
-            opts?.signal?.addEventListener('abort', () => resolve(), { once: true });
-          });
-          yield { type: 'run_finished', reason: 'interrupted' };
-        };
-        return {
-          sessionId: `child-${label}`,
-          send: (p, o) => send(p, o),
-          interrupt: () => interrupts.push(label),
-          dispose: async () => {},
-        };
+    const builder = (label: string) => async () => {
+      const send = async function* (
+        _p: string,
+        opts?: { signal?: AbortSignal },
+      ): AsyncGenerator<AgentEvent> {
+        await new Promise<void>((resolve) => {
+          if (opts?.signal?.aborted) return resolve();
+          opts?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        yield { type: 'run_finished', reason: 'interrupted' };
       };
+      return {
+        sessionId: `child-${label}`,
+        send: (p, o) => send(p, o),
+        interrupt: () => interrupts.push(label),
+        dispose: async () => {},
+      };
+    };
 
     const parentCtl = new AbortController();
     const ctxA = makeCtx({

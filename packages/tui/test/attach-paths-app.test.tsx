@@ -7,12 +7,14 @@ interface AgentEvent {
   type: string;
 }
 
-function stubClient(overrides: {
-  addPathSpy?: (kind: 'read' | 'write', path: string) => void;
-  addPathError?: Error;
-  appendMessageSpy?: (content: string) => void;
-  sendSpy?: (msg: string) => void;
-} = {}) {
+function stubClient(
+  overrides: {
+    addPathSpy?: (kind: 'read' | 'write', path: string) => void;
+    addPathError?: Error;
+    appendMessageSpy?: (content: string) => void;
+    sendSpy?: (msg: string) => void;
+  } = {},
+) {
   const queue: AgentEvent[] = [];
   let wake: (() => void) | null = null;
   return {
@@ -28,6 +30,7 @@ function stubClient(overrides: {
     },
     send: async function* (_id: string, msg: string) {
       overrides.sendSpy?.(msg);
+      yield* [];
     },
     interrupt: async () => {},
     listRules: async () => [],

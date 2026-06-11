@@ -86,13 +86,23 @@ describe('buildTiers', () => {
   });
 
   it('omits claude tiers when includeClaudeCompat is false', () => {
-    const tiers = buildTiers({ cwd: '/proj', userHome: '/home', assetType: 'skills', includeClaudeCompat: false });
+    const tiers = buildTiers({
+      cwd: '/proj',
+      userHome: '/home',
+      assetType: 'skills',
+      includeClaudeCompat: false,
+    });
     const dirs = tiers.map((t) => t.dir);
     expect(dirs.some((d) => d.includes('.claude'))).toBe(false);
   });
 
   it('appends builtinDir when provided', () => {
-    const tiers = buildTiers({ cwd: '/proj', userHome: '/home', assetType: 'modes', builtinDir: '/builtin' });
+    const tiers = buildTiers({
+      cwd: '/proj',
+      userHome: '/home',
+      assetType: 'modes',
+      builtinDir: '/builtin',
+    });
     expect(tiers[tiers.length - 1]).toEqual({ source: 'builtin', dir: '/builtin' });
   });
 

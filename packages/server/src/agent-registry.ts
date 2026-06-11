@@ -351,7 +351,8 @@ export class AgentRegistry {
   ): Promise<'injected' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive) return 'already-running';
+    if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive)
+      return 'already-running';
     entry.injectActive = true;
     try {
       await this.snapshotWorkspace(entry, content);

@@ -78,7 +78,9 @@ describe('CliAgentFactory.addSessionPath', () => {
     const outFile = join(realWriteDir, 'dump.txt');
 
     const executor = factory.getLocalExecutor(agent.session.id)!;
-    await expect(executor.writeFile(outFile, 'data')).rejects.toThrow('is outside the working directory');
+    await expect(executor.writeFile(outFile, 'data')).rejects.toThrow(
+      'is outside the working directory',
+    );
 
     const result = await factory.addSessionPath(agent.session.id, 'write', writeDir);
     expect(result.absolute).toBe(realWriteDir);
@@ -104,7 +106,9 @@ describe('CliAgentFactory.addSessionPath', () => {
     await writeFile(readFilePath, 'readable');
 
     const executor = factory.getLocalExecutor(agent.session.id)!;
-    await expect(executor.readFile(readFilePath)).rejects.toThrow('is outside the working directory');
+    await expect(executor.readFile(readFilePath)).rejects.toThrow(
+      'is outside the working directory',
+    );
 
     const result = await factory.addSessionPath(agent.session.id, 'write', writeDir);
     expect(result.added).toBe(true);
@@ -138,9 +142,9 @@ describe('CliAgentFactory.addSessionPath', () => {
       sandboxMode: 'off',
     });
 
-    await expect(factory.addSessionPath(agent.session.id, 'read', '/nonexistent/path')).rejects.toThrow(
-      'no such file or directory',
-    );
+    await expect(
+      factory.addSessionPath(agent.session.id, 'read', '/nonexistent/path'),
+    ).rejects.toThrow('no such file or directory');
   });
 
   it('throws when the session id is unknown', async () => {

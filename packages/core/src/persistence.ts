@@ -171,7 +171,9 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
       reads: new Set(Array.isArray(parsed.fileOpsReads) ? parsed.fileOpsReads : []),
       writes: new Set(Array.isArray(parsed.fileOpsWrites) ? parsed.fileOpsWrites : []),
     },
-    additionalReadPaths: Array.isArray(parsed.additionalReadPaths) ? parsed.additionalReadPaths : [],
+    additionalReadPaths: Array.isArray(parsed.additionalReadPaths)
+      ? parsed.additionalReadPaths
+      : [],
     additionalWritePaths: Array.isArray(parsed.additionalWritePaths)
       ? parsed.additionalWritePaths
       : [],
@@ -252,7 +254,9 @@ export async function readSessionMetadata(
     userModelOverride:
       typeof parsed.userModelOverride === 'string' ? parsed.userModelOverride : null,
     messageCount,
-    additionalReadPaths: Array.isArray(parsed.additionalReadPaths) ? parsed.additionalReadPaths : [],
+    additionalReadPaths: Array.isArray(parsed.additionalReadPaths)
+      ? parsed.additionalReadPaths
+      : [],
     additionalWritePaths: Array.isArray(parsed.additionalWritePaths)
       ? parsed.additionalWritePaths
       : [],
@@ -311,9 +315,7 @@ async function readLatestStepSnapshot(
           // When reading from the tail of the file, warn for any malformed
           // line so data corruption near the end is still visible.
           if (isLastChunk) {
-            process.stderr.write(
-              `[chimera] warn: skipping malformed line in ${path}\n`,
-            );
+            process.stderr.write(`[chimera] warn: skipping malformed line in ${path}\n`);
           }
           continue;
         }
@@ -443,7 +445,10 @@ function extractToolCallSummary(
   return parts.join(', ');
 }
 
-export async function readCheckpoints(sessionId: SessionId, home = homedir()): Promise<Checkpoint[]> {
+export async function readCheckpoints(
+  sessionId: SessionId,
+  home = homedir(),
+): Promise<Checkpoint[]> {
   const checkpoints: Checkpoint[] = [];
   const path = sessionEventsPath(sessionId, home);
 

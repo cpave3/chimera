@@ -18,8 +18,20 @@ describe('Scrollback commit cursor', () => {
 
     scrollback.apply({ type: 'user_message', content: 'do two things' });
     record();
-    scrollback.apply({ type: 'tool_call_start', callId: 'a', name: 'bash', args: {}, target: 'host' });
-    scrollback.apply({ type: 'tool_call_start', callId: 'b', name: 'read', args: {}, target: 'host' });
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'a',
+      name: 'bash',
+      args: {},
+      target: 'host',
+    });
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'b',
+      name: 'read',
+      args: {},
+      target: 'host',
+    });
     record();
     // B finishes before A — must NOT commit ahead of the still-pending A.
     scrollback.apply({ type: 'tool_call_result', callId: 'b', result: {}, durationMs: 1 });
@@ -84,7 +96,13 @@ describe('Scrollback commit cursor', () => {
   it('run_finished finalizes dangling streaming and pending-tool state', () => {
     const scrollback = new Scrollback();
     scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'interrupted mid-' });
-    scrollback.apply({ type: 'tool_call_start', callId: 'a', name: 'bash', args: {}, target: 'host' });
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'a',
+      name: 'bash',
+      args: {},
+      target: 'host',
+    });
     expect(scrollback.splitSnapshot().committedCount).toBe(0);
 
     scrollback.apply({ type: 'run_finished', reason: 'interrupted' });

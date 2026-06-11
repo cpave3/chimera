@@ -403,7 +403,9 @@ describe('Agent.compactSession', () => {
   });
 
   it('invokes compact with manual reason when compactor is provided', async () => {
-    const compactFn = vi.fn().mockResolvedValue({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 });
+    const compactFn = vi
+      .fn()
+      .mockResolvedValue({ summary: '', tokensBefore: 0, tokensAfter: 0, messagesReplaced: 0 });
     const compactor: CompactorApi = {
       maybeCompact: vi.fn().mockResolvedValue(false),
       compact: compactFn,
@@ -487,7 +489,12 @@ describe('mid-run auto-compaction', () => {
               type: 'finish',
               finishReason: 'tool-calls',
               usage: {
-                inputTokens: { total: step1InputTokens, noCache: step1InputTokens, cacheRead: 0, cacheWrite: 0 },
+                inputTokens: {
+                  total: step1InputTokens,
+                  noCache: step1InputTokens,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                },
                 outputTokens: { total: 1, text: 1, reasoning: 0 },
               },
             },

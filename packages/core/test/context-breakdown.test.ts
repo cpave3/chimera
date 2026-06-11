@@ -47,7 +47,12 @@ describe('computeContextBreakdown', () => {
       systemPrompt: 'You are chimera.\n# Current tasks\n- [pending] x',
       lastPromptTokens: 12_345,
       contextWindow: 100_000,
-      compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000, thresholdPercent: 85 },
+      compaction: {
+        enabled: true,
+        reserveTokens: 16_384,
+        keepRecentTokens: 20_000,
+        thresholdPercent: 85,
+      },
     });
 
     expect(breakdown.contextWindow).toBe(100_000);

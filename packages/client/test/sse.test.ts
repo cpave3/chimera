@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseSSE } from '../src/sse';
 
-function makeMockStream(reader: ReadableStreamDefaultReader<Uint8Array>): ReadableStream<Uint8Array> {
+function makeMockStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): ReadableStream<Uint8Array> {
   return {
     getReader: () => reader,
   } as unknown as ReadableStream<Uint8Array>;

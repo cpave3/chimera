@@ -197,11 +197,7 @@ describe('persistence', () => {
     const parsed = JSON.parse(raw);
     delete parsed.additionalReadPaths;
     delete parsed.additionalWritePaths;
-    await writeFile(
-      sessionMetadataPath(session.id, home),
-      JSON.stringify(parsed),
-      'utf8',
-    );
+    await writeFile(sessionMetadataPath(session.id, home), JSON.stringify(parsed), 'utf8');
     const loaded = await loadSession(session.id, home);
     expect(loaded.additionalReadPaths).toEqual([]);
     expect(loaded.additionalWritePaths).toEqual([]);
@@ -657,9 +653,7 @@ describe('persistence', () => {
 
       const loaded = await loadSession(session.id, home);
       expect(loaded.messages).toHaveLength(1);
-      expect(stderrSpy).toHaveBeenCalledWith(
-        expect.stringContaining('skipping malformed line'),
-      );
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('skipping malformed line'));
       stderrSpy.mockRestore();
     });
   });
@@ -788,9 +782,7 @@ describe('persistence', () => {
 
       const checkpoints = await readCheckpoints(session.id, home);
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('compaction detected'),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('compaction detected'));
 
       // Only addressable checkpoints: index 0 + the user message still in latest snapshot.
       expect(checkpoints).toHaveLength(2);
@@ -851,8 +843,18 @@ describe('persistence', () => {
           {
             role: 'assistant' as const,
             content: [
-              { type: 'tool-call', toolCallId: 'tc2', toolName: 'write', input: { path: '/tmp/b' } },
-              { type: 'tool-call', toolCallId: 'tc3', toolName: 'write', input: { path: '/tmp/b' } },
+              {
+                type: 'tool-call',
+                toolCallId: 'tc2',
+                toolName: 'write',
+                input: { path: '/tmp/b' },
+              },
+              {
+                type: 'tool-call',
+                toolCallId: 'tc3',
+                toolName: 'write',
+                input: { path: '/tmp/b' },
+              },
             ],
           },
         ],

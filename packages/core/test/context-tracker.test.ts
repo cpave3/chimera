@@ -67,8 +67,6 @@ describe('shouldCompact', () => {
       maxOutputTokens: 64_000,
     });
     expect(result).toBe(true);
-    expect(
-      shouldCompact({ ...base, projected: 130_000, maxOutputTokens: 64_000 }),
-    ).toBe(false);
+    expect(shouldCompact({ ...base, projected: 130_000, maxOutputTokens: 64_000 })).toBe(false);
   });
 });

@@ -230,10 +230,7 @@ export class LocalExecutor implements Executor {
         } catch (err) {
           const error = err as NodeJS.ErrnoException;
           if (error.code === 'EPERM') {
-            console.debug(
-              `[local-executor] SIGTERM failed (EPERM):`,
-              error.message,
-            );
+            console.debug(`[local-executor] SIGTERM failed (EPERM):`, error.message);
           }
           // ESRCH → process already gone, benign; ignore silently.
         }
@@ -243,10 +240,7 @@ export class LocalExecutor implements Executor {
           } catch (err) {
             const error = err as NodeJS.ErrnoException;
             if (error.code === 'EPERM') {
-              console.debug(
-                `[local-executor] SIGKILL failed (EPERM):`,
-                error.message,
-              );
+              console.debug(`[local-executor] SIGKILL failed (EPERM):`, error.message);
             }
             // ESRCH → process already gone, benign; ignore silently.
           }

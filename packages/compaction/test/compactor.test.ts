@@ -61,15 +61,11 @@ describe('computeBoundary', () => {
       user('step 1'),
       {
         role: 'assistant',
-        content: [
-          { type: 'tool-call', toolCallId: 'c1', toolName: 'read', input: { path: '/x' } },
-        ],
+        content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'read', input: { path: '/x' } }],
       },
       {
         role: 'tool',
-        content: [
-          { type: 'tool-result', toolCallId: 'c1', toolName: 'read', output: 'data' },
-        ],
+        content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'read', output: 'data' }],
       },
       assistant('final'),
     ];
@@ -83,11 +79,7 @@ describe('computeBoundary', () => {
   });
 
   it('does not extend when boundary is on a clean message boundary', () => {
-    const messages: ModelMessage[] = [
-      user('a'),
-      assistant('b'),
-      user('c'),
-    ];
+    const messages: ModelMessage[] = [user('a'), assistant('b'), user('c')];
     const budget = estimateTokens([messages[2]!]);
     const result = computeBoundary(messages, budget);
     expect(result.keepStart).toBe(2);
@@ -107,7 +99,9 @@ describe('Compactor', () => {
   afterEach(async () => {
     try {
       await rm(home, { recursive: true, force: true });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   });
 
   function makeSession(messages: ModelMessage[] = []): Session {
@@ -252,7 +246,11 @@ describe('Compactor', () => {
       expect(typeof entry.tokensBefore).toBe('number');
       expect(typeof entry.tokensAfter).toBe('number');
       expect(entry.summary).toContain('## Goal');
-      expect(entry.messagesReplaced).toEqual({ count: expect.any(Number), firstIndex: expect.any(Number), lastIndex: expect.any(Number) });
+      expect(entry.messagesReplaced).toEqual({
+        count: expect.any(Number),
+        firstIndex: expect.any(Number),
+        lastIndex: expect.any(Number),
+      });
     });
 
     it('appends multiple lines in chronological order', async () => {

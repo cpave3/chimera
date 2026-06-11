@@ -93,9 +93,7 @@ export async function readForAttach(absPath: string): Promise<{
     }
 
     const lines = body.split('\n');
-    const numbered = lines
-      .slice(0, MAX_LINES)
-      .map((line, index) => `${index + 1}\t${line}`);
+    const numbered = lines.slice(0, MAX_LINES).map((line, index) => `${index + 1}\t${line}`);
     return { kind: 'file', body: numbered.join('\n') };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

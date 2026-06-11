@@ -80,7 +80,7 @@ describe('AgentRegistry compaction', () => {
     const { sessionId } = await registry.create({ cwd: '/tmp', model, sandboxMode: 'off' });
     // Start a run
     const runPromise = registry.run(sessionId, 'hi');
-    // Immediately try to compact before run finishes        
+    // Immediately try to compact before run finishes
     const compactResult = registry.compact(sessionId);
     await runPromise;
     expect(compactResult).toBe('already-running');
@@ -216,7 +216,9 @@ describe('AgentRegistry compaction', () => {
     registry.compact(sessionId);
     await entry!.activeCompaction;
 
-    expect(events.some((ev) => ev.type === 'compaction_failed' && ev.error === 'not configured')).toBe(true);
+    expect(
+      events.some((ev) => ev.type === 'compaction_failed' && ev.error === 'not configured'),
+    ).toBe(true);
     expect(entry!.compactionCount).toBe(0);
     expect(entry!.lastCompactedAt).toBeNull();
   });

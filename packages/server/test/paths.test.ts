@@ -50,10 +50,7 @@ describe('session paths endpoints', () => {
     write: string[];
   }
 
-  function makeFactory(
-    homeDir: string,
-    stateMap: Map<string, StubSessionState>,
-  ): AgentFactory {
+  function makeFactory(homeDir: string, stateMap: Map<string, StubSessionState>): AgentFactory {
     return {
       build: async (init) => {
         const agent = new Agent({

@@ -372,7 +372,6 @@ exit 0
     // Spawn failure = logged, not blocked
     expect(r.blocked).toBe(false);
   });
-
 });
 
 describe('NoopHookRunner', () => {

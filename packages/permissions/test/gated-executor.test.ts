@@ -58,14 +58,17 @@ describe('GatedExecutor', () => {
         return { decision: 'allow', remembered: false };
       },
     });
-    const g = new GatedExecutor({ inner: stubExecutor({
-      stdout: 'ok',
-      stderr: '',
-      exitCode: 0,
-      timedOut: false,
-      stdoutTruncated: false,
-      stderrTruncated: false,
-    }), gate });
+    const g = new GatedExecutor({
+      inner: stubExecutor({
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+      gate,
+    });
     await g.exec('echo hi');
     expect(capturedToolName).toBe('bash');
   });
@@ -80,14 +83,17 @@ describe('GatedExecutor', () => {
         return { decision: 'allow', remembered: false };
       },
     });
-    const g = new GatedExecutor({ inner: stubExecutor({
-      stdout: 'ok',
-      stderr: '',
-      exitCode: 0,
-      timedOut: false,
-      stdoutTruncated: false,
-      stderrTruncated: false,
-    }), gate });
+    const g = new GatedExecutor({
+      inner: stubExecutor({
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+      gate,
+    });
     await g.exec('rg foo', { toolName: 'grep' });
     expect(capturedToolName).toBe('grep');
     capturedToolName = '';

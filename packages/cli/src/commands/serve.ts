@@ -5,7 +5,11 @@ import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
-import { checkCompactionInvariant, recallPrunerFactory, resolveCompactionConfig } from '../compaction';
+import {
+  checkCompactionInvariant,
+  recallPrunerFactory,
+  resolveCompactionConfig,
+} from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';

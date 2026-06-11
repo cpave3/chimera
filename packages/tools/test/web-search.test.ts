@@ -22,16 +22,17 @@ afterEach(() => {
 
 describe('web_search tool', () => {
   it('tavily provider posts the query and maps results', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          results: [
-            { title: 'Result A', url: 'https://a.example', content: 'snippet a' },
-            { title: 'Result B', url: 'https://b.example', content: 'snippet b' },
-          ],
-        }),
-        { status: 200 },
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { title: 'Result A', url: 'https://a.example', content: 'snippet a' },
+              { title: 'Result B', url: 'https://b.example', content: 'snippet b' },
+            ],
+          }),
+          { status: 200 },
+        ),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -53,15 +54,16 @@ describe('web_search tool', () => {
   });
 
   it('brave provider sends the query as a GET with the key header', async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          web: {
-            results: [{ title: 'Brave A', url: 'https://a.example', description: 'desc a' }],
-          },
-        }),
-        { status: 200 },
-      ),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            web: {
+              results: [{ title: 'Brave A', url: 'https://a.example', description: 'desc a' }],
+            },
+          }),
+          { status: 200 },
+        ),
     );
     vi.stubGlobal('fetch', fetchMock);
 

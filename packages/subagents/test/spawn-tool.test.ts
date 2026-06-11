@@ -13,8 +13,7 @@ vi.mock('../src/spawn-child', async () => {
     ...actual,
     spawnChimeraChild: (...args: Parameters<typeof actual.spawnChimeraChild>) =>
       mockSpawnChimeraChild(...args),
-    teardownChild: (...args: Parameters<typeof actual.teardownChild>) =>
-      mockTeardownChild(...args),
+    teardownChild: (...args: Parameters<typeof actual.teardownChild>) => mockTeardownChild(...args),
   };
 });
 
@@ -41,7 +40,11 @@ function makeMockChildHandle(opts: {
   interrupt?: () => Promise<void>;
 }): spawnChildMod.ChildHandle {
   return {
-    proc: { pid: 123, exitCode: null, signalCode: null } as unknown as import('node:child_process').ChildProcess,
+    proc: {
+      pid: 123,
+      exitCode: null,
+      signalCode: null,
+    } as unknown as import('node:child_process').ChildProcess,
     client: {
       send: (_sessionId: SessionId, _prompt: string, options: { signal: AbortSignal }) =>
         opts.send!(_prompt, options),
@@ -80,8 +83,9 @@ describe('buildSpawnAgentTool — model index in description', () => {
   it('omits the models block when availableModels is empty or undefined', () => {
     const tool = buildSpawnAgentTool(baseCtx()).tool as unknown as { description: string };
     expect(tool.description).not.toMatch(/Available models/);
-    const toolEmpty = buildSpawnAgentTool(baseCtx({ availableModels: [] }))
-      .tool as unknown as { description: string };
+    const toolEmpty = buildSpawnAgentTool(baseCtx({ availableModels: [] })).tool as unknown as {
+      description: string;
+    };
     expect(toolEmpty.description).not.toMatch(/Available models/);
   });
 });

@@ -6,7 +6,11 @@ import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import { type AgentFactory, AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
-import { checkCompactionInvariant, recallPrunerFactory, resolveCompactionConfig } from '../compaction';
+import {
+  checkCompactionInvariant,
+  recallPrunerFactory,
+  resolveCompactionConfig,
+} from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';
@@ -127,7 +131,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         contextWindow: resolvedWindow.value,
         resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
         home: opts.home,
-      createPruner: recallPrunerFactory(config, opts.home),
+        createPruner: recallPrunerFactory(config, opts.home),
       });
     }
 
@@ -148,9 +152,9 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       compaction: compactionConfig,
       compactor,
       responseTimeoutMs: config.responseTimeoutMs,
-    diagnostics: config.diagnostics,
-    webSearch: config.webSearch,
-    recall: config.recall,
+      diagnostics: config.diagnostics,
+      webSearch: config.webSearch,
+      recall: config.recall,
     });
     factory = cliFactory;
   }

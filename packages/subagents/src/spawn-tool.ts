@@ -3,12 +3,7 @@ import { newCallId } from '@chimera/core';
 import { defineTool } from '@chimera/tools';
 import { z } from 'zod';
 import { parseToolsCsv } from './agents/frontmatter';
-import {
-  driveChild,
-  spawnChimeraChild,
-  teardownChild,
-  type ChildHandle,
-} from './spawn-child';
+import { driveChild, spawnChimeraChild, teardownChild, type ChildHandle } from './spawn-child';
 import { driveInProcess, spawnInProcessChild } from './spawn-in-process';
 import type { SpawnAgentToolContext, SubagentResult } from './types';
 

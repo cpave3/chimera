@@ -19,7 +19,10 @@ export function pickUsageColor(pct: number | null, theme: Theme): string {
   return theme.text.muted;
 }
 
-function sameUsageStep(a: NonNullable<Usage['lastStep']>, b: NonNullable<Usage['lastStep']>): boolean {
+function sameUsageStep(
+  a: NonNullable<Usage['lastStep']>,
+  b: NonNullable<Usage['lastStep']>,
+): boolean {
   return (
     a.inputTokens === b.inputTokens &&
     a.outputTokens === b.outputTokens &&
@@ -35,7 +38,9 @@ export function sameUsage(a: Usage, b: Usage): boolean {
     a.cachedInputTokens === b.cachedInputTokens &&
     a.totalTokens === b.totalTokens &&
     a.stepCount === b.stepCount &&
-    (a.lastStep == null ? b.lastStep == null : b.lastStep != null && sameUsageStep(a.lastStep, b.lastStep))
+    (a.lastStep == null
+      ? b.lastStep == null
+      : b.lastStep != null && sameUsageStep(a.lastStep, b.lastStep))
   );
 }
 

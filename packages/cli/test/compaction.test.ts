@@ -17,7 +17,12 @@ describe('resolveCompactionConfig', () => {
   it('reads values from config.compaction', () => {
     const config = resolveCompactionConfig({
       config: {
-        compaction: { enabled: false, reserveTokens: 5000, keepRecentTokens: 8000, model: 'anthropic/claude-sonnet-4-5' },
+        compaction: {
+          enabled: false,
+          reserveTokens: 5000,
+          keepRecentTokens: 8000,
+          model: 'anthropic/claude-sonnet-4-5',
+        },
       },
     });
     expect(config.enabled).toBe(false);
@@ -58,12 +63,18 @@ describe('resolveCompactionConfig', () => {
 
 describe('checkCompactionInvariant', () => {
   it('passes when reserve + keepRecent < contextWindow', () => {
-    const result = checkCompactionInvariant({ reserveTokens: 16000, keepRecentTokens: 20000 }, 200_000);
+    const result = checkCompactionInvariant(
+      { reserveTokens: 16000, keepRecentTokens: 20000 },
+      200_000,
+    );
     expect(result.ok).toBe(true);
   });
 
   it('fails when reserve + keepRecent >= contextWindow', () => {
-    const result = checkCompactionInvariant({ reserveTokens: 80_000, keepRecentTokens: 80_000 }, 128_000);
+    const result = checkCompactionInvariant(
+      { reserveTokens: 80_000, keepRecentTokens: 80_000 },
+      128_000,
+    );
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/Compaction invariant violated/);
     expect(result.error).toMatch(/128000/);

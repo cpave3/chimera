@@ -9,7 +9,11 @@ import type { ReloadingAgentRegistry } from '@chimera/subagents';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
-import { checkCompactionInvariant, recallPrunerFactory, resolveCompactionConfig } from '../compaction';
+import {
+  checkCompactionInvariant,
+  recallPrunerFactory,
+  resolveCompactionConfig,
+} from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';

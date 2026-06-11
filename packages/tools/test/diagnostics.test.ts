@@ -105,9 +105,7 @@ describe('edit/write tools — diagnostics feedback', () => {
       sandboxMode: 'off',
       diagnostics: new DiagnosticsRunner({
         executor,
-        checks: [
-          { name: 'no-todo', command: '! grep -n TODO {file}', match: '\\.ts$' },
-        ],
+        checks: [{ name: 'no-todo', command: '! grep -n TODO {file}', match: '\\.ts$' }],
       }),
     };
   });

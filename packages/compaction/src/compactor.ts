@@ -126,7 +126,8 @@ export class Compactor {
     // appended to the summary alongside <files>.
     const strategy: CompactionStrategy = prunedCount > 0 ? 'prune+summarize' : 'summarize';
     const toSummarize = keepStart === 0 ? [] : session.messages.slice(0, keepStart);
-    const tailMessages = keepStart === session.messages.length ? [] : session.messages.slice(keepStart);
+    const tailMessages =
+      keepStart === session.messages.length ? [] : session.messages.slice(keepStart);
     // Carried-forward refs (stubs from earlier passes, previous summary's
     // <archived> block) plus the refs archived by this pass's prune.
     const archivedById = new Map(collectArchivedRefs(toSummarize).map((ref) => [ref.id, ref]));
@@ -159,9 +160,7 @@ export class Compactor {
 
     const summaryMessage: ModelMessage = { role: 'assistant', content: summaryText };
     const newMessages =
-      toSummarize.length === 0
-        ? [...tailMessages]
-        : [summaryMessage, ...tailMessages];
+      toSummarize.length === 0 ? [...tailMessages] : [summaryMessage, ...tailMessages];
 
     const tokensAfter = estimateTokens(newMessages);
     const messagesReplaced = keepStart;
@@ -289,7 +288,10 @@ interface BoundaryResult {
 
 /** Compute the largest trailing slice that fits within keepRecentTokens,
  *  extending backward if necessary to preserve tool-call/tool-result pairs. */
-export function computeBoundary(messages: ModelMessage[], keepRecentTokens: number): BoundaryResult {
+export function computeBoundary(
+  messages: ModelMessage[],
+  keepRecentTokens: number,
+): BoundaryResult {
   let tokenSum = 0;
   let keepCount = 0;
 

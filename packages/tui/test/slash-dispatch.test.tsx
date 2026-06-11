@@ -70,7 +70,9 @@ function emptySession(id: string): Session {
   };
 }
 
-function stubClient(opts: StubClientOpts = {}): ChimeraClient & { pushEvent: (ev: AgentEvent) => void } {
+function stubClient(
+  opts: StubClientOpts = {},
+): ChimeraClient & { pushEvent: (ev: AgentEvent) => void } {
   const queue: AgentEvent[] = [];
   let wake: (() => void) | null = null;
   const getSessionImpl = opts.getSessionImpl ?? emptySession;
@@ -1167,7 +1169,12 @@ describe('TUI bang dispatch', () => {
 describe('TUI /rewind slash dispatch', () => {
   const sampleCheckpoints = [
     { index: 0, userMessage: '', toolCallSummary: '', truncateByteOffset: 0 },
-    { index: 3, userMessage: 'first prompt', toolCallSummary: '1 tool call', truncateByteOffset: 120 },
+    {
+      index: 3,
+      userMessage: 'first prompt',
+      toolCallSummary: '1 tool call',
+      truncateByteOffset: 120,
+    },
     { index: 7, userMessage: 'second prompt', toolCallSummary: '', truncateByteOffset: 240 },
   ];
 
@@ -1191,7 +1198,8 @@ describe('TUI /rewind slash dispatch', () => {
 
   it('/rewind shows info when there are no rewindable checkpoints', async () => {
     const { lastFrame, stdin, unmount } = render(
-      <App client={stubClient({ checkpoints: [sampleCheckpoints[0]!] })}
+      <App
+        client={stubClient({ checkpoints: [sampleCheckpoints[0]!] })}
         sessionId="s"
         modelRef="m/m"
         cwd="/tmp"
@@ -1233,7 +1241,8 @@ describe('TUI /rewind slash dispatch', () => {
       <App
         client={stubClient({
           checkpoints: sampleCheckpoints,
-          forkSessionSpy: (id, purpose, rewindIndex) => forkCalls.push({ id, purpose, rewindIndex }),
+          forkSessionSpy: (id, purpose, rewindIndex) =>
+            forkCalls.push({ id, purpose, rewindIndex }),
         })}
         sessionId="s"
         modelRef="m/m"
@@ -1265,7 +1274,8 @@ describe('TUI /rewind slash dispatch', () => {
         client={stubClient({
           checkpoints: sampleCheckpoints,
           rewindSessionSpy: (id, index) => rewindCalls.push({ id, index }),
-          forkSessionSpy: (id, purpose, rewindIndex) => forkCalls.push({ id, purpose, rewindIndex }),
+          forkSessionSpy: (id, purpose, rewindIndex) =>
+            forkCalls.push({ id, purpose, rewindIndex }),
         })}
         sessionId="s"
         modelRef="m/m"
@@ -1288,12 +1298,7 @@ describe('TUI /rewind slash dispatch', () => {
       { index: 1, userMessage: 'refactor the query', toolCallSummary: '', truncateByteOffset: 120 },
     ];
     const { lastFrame, stdin, unmount } = render(
-      <App
-        client={stubClient({ checkpoints })}
-        sessionId="s"
-        modelRef="m/m"
-        cwd="/tmp"
-      />,
+      <App client={stubClient({ checkpoints })} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
     await type(stdin, '/rewind\r');
     await waitFor(() => lastFrame()!.includes('Rewind to checkpoint'));

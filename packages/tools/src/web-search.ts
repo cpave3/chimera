@@ -97,10 +97,7 @@ export function buildWebSearchTool(ctx: ToolContext) {
         return { error: 'web search is not configured for this session' };
       }
       try {
-        const results = await provider.search(
-          args.query,
-          args.max_results ?? DEFAULT_MAX_RESULTS,
-        );
+        const results = await provider.search(args.query, args.max_results ?? DEFAULT_MAX_RESULTS);
         return { results };
       } catch (err) {
         return { error: `search failed: ${(err as Error)?.message ?? String(err)}` };

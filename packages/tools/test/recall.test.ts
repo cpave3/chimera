@@ -36,7 +36,9 @@ function makeCtx(store: RecallStoreApi): ToolContext {
 describe('recall tool', () => {
   it('returns the full archived content', async () => {
     const tool = asAny(
-      buildRecallTool(makeCtx(makeStore({ pr_abc12345: { toolName: 'bash', content: 'a\nb\nc' } }))),
+      buildRecallTool(
+        makeCtx(makeStore({ pr_abc12345: { toolName: 'bash', content: 'a\nb\nc' } })),
+      ),
     );
     const result = await tool.execute({ id: 'pr_abc12345' }, {});
     expect(result.content).toBe('a\nb\nc');

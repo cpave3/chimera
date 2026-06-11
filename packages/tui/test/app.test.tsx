@@ -1165,7 +1165,9 @@ describe('PermissionModal', () => {
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+        onResolve={(decision, remember) =>
+          calls.push({ decision, remember: remember as Record<string, unknown> })
+        }
       />,
     );
 
@@ -1186,7 +1188,9 @@ describe('PermissionModal', () => {
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+        onResolve={(decision, remember) =>
+          calls.push({ decision, remember: remember as Record<string, unknown> })
+        }
       />,
     );
 
@@ -1212,7 +1216,9 @@ describe('PermissionModal', () => {
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+        onResolve={(decision, remember) =>
+          calls.push({ decision, remember: remember as Record<string, unknown> })
+        }
       />,
     );
 
@@ -1247,7 +1253,9 @@ describe('PermissionModal', () => {
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+        onResolve={(decision, remember) =>
+          calls.push({ decision, remember: remember as Record<string, unknown> })
+        }
       />,
     );
 
@@ -1268,7 +1276,9 @@ describe('PermissionModal', () => {
       <PermissionModal
         command="clear"
         target="host"
-        onResolve={(decision, remember) => calls.push({ decision, remember: remember as Record<string, unknown> })}
+        onResolve={(decision, remember) =>
+          calls.push({ decision, remember: remember as Record<string, unknown> })
+        }
       />,
     );
 

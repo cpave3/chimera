@@ -516,7 +516,7 @@ describe('Scrollback', () => {
     const rows = scrollback.all();
     const parents = rows.filter((row) => row.kind === 'tool');
     expect(parents).toHaveLength(2);
-    const [parentA, parentB] = parents as [typeof parents[number], typeof parents[number]];
+    const [parentA, parentB] = parents as [(typeof parents)[number], (typeof parents)[number]];
     expect(parentA.subagentId).toBe('saA');
     expect(parentB.subagentId).toBe('saB');
 
@@ -1025,7 +1025,13 @@ describe('Scrollback.rehydrateFromSession', () => {
 
       scrollback.apply({ type: 'assistant_text_delta', delta: 'Hel' });
       scrollback.apply({ type: 'assistant_text_delta', delta: 'lo' });
-      scrollback.apply({ type: 'tool_call_start', callId: 'c1', name: 'bash', args: {}, target: 'host' });
+      scrollback.apply({
+        type: 'tool_call_start',
+        callId: 'c1',
+        name: 'bash',
+        args: {},
+        target: 'host',
+      });
 
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 

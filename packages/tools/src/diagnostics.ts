@@ -102,8 +102,7 @@ export async function buildDiagnosticsRunner(opts: {
 }): Promise<DiagnosticsRunner | undefined> {
   if (opts.config?.enabled === false) return undefined;
   const explicit = opts.config?.checks ?? [];
-  const detected =
-    opts.config?.autoDetect === false ? [] : await detectDiagnosticsChecks(opts.cwd);
+  const detected = opts.config?.autoDetect === false ? [] : await detectDiagnosticsChecks(opts.cwd);
   const merged = [
     ...detected.filter((check) => !explicit.some((override) => override.name === check.name)),
     ...explicit,

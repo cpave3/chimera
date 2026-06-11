@@ -78,10 +78,7 @@ export function buildRecallTool(ctx: ToolContext) {
     formatScrollback: (args, result) => {
       if (!result) return { summary: args.id };
       if ('error' in result) return { summary: `${args.id} (${clip(result.error, 40)})` };
-      const filters =
-        args.search !== undefined || args.start_line !== undefined
-          ? ' (sliced)'
-          : '';
+      const filters = args.search !== undefined || args.start_line !== undefined ? ' (sliced)' : '';
       return { summary: `${args.id} → ${result.tool_name}${filters}` };
     },
   });

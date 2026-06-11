@@ -134,8 +134,18 @@ describe('UsageWidget', () => {
 
 describe('sameUsage', () => {
   it('returns true for two Usage objects with identical values but different references', () => {
-    const a = usageWith({ inputTokens: 1_000, outputTokens: 200, totalTokens: 1_200, stepCount: 1 });
-    const b = usageWith({ inputTokens: 1_000, outputTokens: 200, totalTokens: 1_200, stepCount: 1 });
+    const a = usageWith({
+      inputTokens: 1_000,
+      outputTokens: 200,
+      totalTokens: 1_200,
+      stepCount: 1,
+    });
+    const b = usageWith({
+      inputTokens: 1_000,
+      outputTokens: 200,
+      totalTokens: 1_200,
+      stepCount: 1,
+    });
     expect(a === b).toBe(false); // different references
     expect(sameUsage(a, b)).toBe(true);
   });

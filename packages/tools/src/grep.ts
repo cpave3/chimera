@@ -63,7 +63,9 @@ export function buildGrepTool(ctx: ToolContext) {
         const flags: string[] = ['--hidden', '--no-messages'];
         if (args.case_insensitive) flags.push('-i');
         if (args.glob) flags.push('--glob', shellQuote(args.glob));
-        blockedDirGlobs(args.no_blocklist).forEach((g) => flags.push('--glob', shellQuote(g)));
+        for (const blockedGlob of blockedDirGlobs(args.no_blocklist)) {
+          flags.push('--glob', shellQuote(blockedGlob));
+        }
         if (args.files_with_matches) {
           flags.push('-l');
         } else {
@@ -139,13 +141,18 @@ export function buildGrepTool(ctx: ToolContext) {
         const tail = result.truncated
           ? ` (${result.files.length}+ files, truncated)`
           : ` (${result.files.length} files)`;
-        if (result.spillFile) return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
+        if (result.spillFile)
+          return {
+            summary: `${head}${tail}`,
+            detail: `Full results written to ${result.spillFile}`,
+          };
         return { summary: `${head}${tail}` };
       }
       const tail = result.truncated
         ? ` (${result.matches.length}+ matches, truncated)`
         : ` (${result.matches.length} matches)`;
-      if (result.spillFile) return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
+      if (result.spillFile)
+        return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
       return { summary: `${head}${tail}` };
     },
   });

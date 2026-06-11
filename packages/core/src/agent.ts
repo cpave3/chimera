@@ -1203,10 +1203,7 @@ export class Agent {
                   }
                   break;
                 }
-                reasoningStreams.set(
-                  part.id,
-                  (reasoningStreams.get(part.id) ?? '') + part.text,
-                );
+                reasoningStreams.set(part.id, (reasoningStreams.get(part.id) ?? '') + part.text);
                 queue.push({ type: 'reasoning_text_delta', id: part.id, delta: part.text });
                 break;
               }
@@ -1512,7 +1509,11 @@ export class Agent {
       }
 
       // Stop hook: only for clean "stop", not error/interrupted/timeout.
-      if (terminalReason === 'stop' && this.opts.stopHook && stopRetryCount < Agent.MAX_STOP_RETRIES) {
+      if (
+        terminalReason === 'stop' &&
+        this.opts.stopHook &&
+        stopRetryCount < Agent.MAX_STOP_RETRIES
+      ) {
         const hookResult = await this.opts.stopHook.fire({ reason: terminalReason });
         if (hookResult.blocked) {
           const parts: string[] = [];

@@ -498,8 +498,22 @@ describe('server app', () => {
 
     // Write a compactions log directly on disk to simulate prior activity.
     const logPath = join(home, '.chimera', 'sessions', `${sessionId}.compactions.jsonl`);
-    const entry1 = JSON.stringify({ ts: 1_700_000_000_000, reason: 'manual', tokensBefore: 10, tokensAfter: 5, summary: 's1', messagesReplaced: { count: 1, firstIndex: 0, lastIndex: 0 } });
-    const entry2 = JSON.stringify({ ts: 1_800_000_000_000, reason: 'threshold', tokensBefore: 20, tokensAfter: 8, summary: 's2', messagesReplaced: { count: 2, firstIndex: 0, lastIndex: 1 } });
+    const entry1 = JSON.stringify({
+      ts: 1_700_000_000_000,
+      reason: 'manual',
+      tokensBefore: 10,
+      tokensAfter: 5,
+      summary: 's1',
+      messagesReplaced: { count: 1, firstIndex: 0, lastIndex: 0 },
+    });
+    const entry2 = JSON.stringify({
+      ts: 1_800_000_000_000,
+      reason: 'threshold',
+      tokensBefore: 20,
+      tokensAfter: 8,
+      summary: 's2',
+      messagesReplaced: { count: 2, firstIndex: 0, lastIndex: 1 },
+    });
     await writeFile(logPath, entry1 + '\n' + entry2 + '\n', 'utf8');
 
     const getResponse = await app.request(`/v1/sessions/${sessionId}`);
@@ -1259,7 +1273,12 @@ describe('server app', () => {
       expect(response.status).toBe(200);
       const checkpoints = await response.json();
       expect(checkpoints).toHaveLength(1);
-      expect(checkpoints[0]).toStrictEqual({ index: 0, userMessage: '', toolCallSummary: '', truncateByteOffset: 0 });
+      expect(checkpoints[0]).toStrictEqual({
+        index: 0,
+        userMessage: '',
+        toolCallSummary: '',
+        truncateByteOffset: 0,
+      });
     });
 
     it('GET /checkpoints returns 404 for missing session', async () => {
@@ -1508,7 +1527,9 @@ describe('server app', () => {
       const checkpoints = await checkpointsResponse.json();
 
       // Find checkpoint for the second user message.
-      const cp = checkpoints.find((c: { index: number; userMessage: string }) => c.userMessage === 'second message');
+      const cp = checkpoints.find(
+        (c: { index: number; userMessage: string }) => c.userMessage === 'second message',
+      );
       expect(cp).toBeDefined();
       const targetIndex = cp!.index;
 
@@ -1528,7 +1549,9 @@ describe('server app', () => {
       const after = registry.get(sessionId)!.agent.session;
       expect(after.messages.length).toBeLessThan(beforeRewind);
       // The second user message should no longer appear.
-      expect(after.messages.some((m: { content: string }) => m.content === 'second message')).toBe(false);
+      expect(after.messages.some((m: { content: string }) => m.content === 'second message')).toBe(
+        false,
+      );
     });
 
     it('POST /fork with rewindIndex creates child with truncated history', async () => {

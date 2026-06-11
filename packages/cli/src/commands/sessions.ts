@@ -50,7 +50,7 @@ export async function runSessionsRm(sessionId: string, home = homedir()): Promis
     process.stderr.write(`No such session: ${sessionId}\n`);
     process.exit(1);
   }
-  let target;
+  let target: Awaited<ReturnType<typeof readSessionMetadata>>;
   try {
     target = await readSessionMetadata(sessionId, home);
   } catch {

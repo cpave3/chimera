@@ -13,9 +13,7 @@ describe('StatusBar structural memo', () => {
       return <Text>{renderCount}</Text>;
     }
 
-    const { rerender, lastFrame } = render(
-      <StatusBar left={[<CounterWidget key="cw" />]} />,
-    );
+    const { rerender, lastFrame } = render(<StatusBar left={[<CounterWidget key="cw" />]} />);
     const initialCount = renderCount;
     const firstFrame = lastFrame();
 
@@ -35,9 +33,7 @@ describe('StatusBar structural memo', () => {
       return <Text>{renderCount}</Text>;
     }
 
-    const { rerender, lastFrame } = render(
-      <StatusBar left={[<CounterWidget key="cw" />]} />,
-    );
+    const { rerender, lastFrame } = render(<StatusBar left={[<CounterWidget key="cw" />]} />);
     const initialCount = renderCount;
     const firstFrame = lastFrame();
 
@@ -47,7 +43,13 @@ describe('StatusBar structural memo', () => {
 
     // Now change the child text
     rerender(
-      <StatusBar left={[<Text key="changed" color="red">changed</Text>]} />,
+      <StatusBar
+        left={[
+          <Text key="changed" color="red">
+            changed
+          </Text>,
+        ]}
+      />,
     );
     expect(lastFrame()).not.toBe(firstFrame);
   });
@@ -61,21 +63,13 @@ describe('StatusBar structural memo', () => {
     }
 
     const { rerender, lastFrame } = render(
-      <StatusBar
-        left={[<Text key="left">left</Text>]}
-        right={[<FakeUsage key="fu" />]}
-      />,
+      <StatusBar left={[<Text key="left">left</Text>]} right={[<FakeUsage key="fu" />]} />,
     );
     const initialCount = renderCount;
     const firstFrame = lastFrame();
 
     // Recreate the same right widgets
-    rerender(
-      <StatusBar
-        left={[<Text key="left">left</Text>]}
-        right={[<FakeUsage key="fu" />]}
-      />,
-    );
+    rerender(<StatusBar left={[<Text key="left">left</Text>]} right={[<FakeUsage key="fu" />]} />);
 
     expect(lastFrame()).toBe(firstFrame);
     expect(renderCount).toBe(initialCount);

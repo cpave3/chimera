@@ -13,7 +13,10 @@ import { checkCompactionInvariant, resolveCompactionConfig } from '@chimera/cli'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 /** Build messages that estimate above a given threshold. */
-function makeLongMessages(count: number, charsPerMessage: number): { role: 'user'; content: string }[] {
+function makeLongMessages(
+  count: number,
+  charsPerMessage: number,
+): { role: 'user'; content: string }[] {
   return Array.from({ length: count }, () => ({
     role: 'user' as const,
     content: 'x'.repeat(charsPerMessage),
@@ -158,7 +161,9 @@ describe('chimera compaction E2E', () => {
       expect(finished!.summary).toContain('## Goal');
       expect(finished!.summary).toContain('<files>');
       // fileOps stores absolute paths, so the summary contains the resolved cwd path.
-      expect(finished!.summary).toContain(`<modified>${resolve(workspace, 'src/main.ts')}</modified>`);
+      expect(finished!.summary).toContain(
+        `<modified>${resolve(workspace, 'src/main.ts')}</modified>`,
+      );
       expect(finished!.messagesReplaced).toBeGreaterThan(0);
 
       const session = await client.getSession(sessionId);
@@ -239,7 +244,9 @@ describe('chimera compaction E2E', () => {
       const subscribeController = new AbortController();
 
       const subscribePromise = (async () => {
-        for await (const ev of client.subscribe(sessionId, { signal: subscribeController.signal })) {
+        for await (const ev of client.subscribe(sessionId, {
+          signal: subscribeController.signal,
+        })) {
           compactEvents.push(ev);
         }
       })();

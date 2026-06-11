@@ -99,10 +99,7 @@ export class SpawnDockerRunner implements DockerRunner {
             } catch (err) {
               const error = err as NodeJS.ErrnoException;
               if (error.code === 'EPERM') {
-                console.debug(
-                  `[docker-runner] SIGTERM failed (EPERM):`,
-                  error.message,
-                );
+                console.debug(`[docker-runner] SIGTERM failed (EPERM):`, error.message);
               }
               // ESRCH → process already gone, benign; ignore silently.
             }
@@ -112,10 +109,7 @@ export class SpawnDockerRunner implements DockerRunner {
               } catch (err) {
                 const error = err as NodeJS.ErrnoException;
                 if (error.code === 'EPERM') {
-                  console.debug(
-                    `[docker-runner] SIGKILL failed (EPERM):`,
-                    error.message,
-                  );
+                  console.debug(`[docker-runner] SIGKILL failed (EPERM):`, error.message);
                 }
                 // ESRCH → process already gone, benign; ignore silently.
               }

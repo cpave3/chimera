@@ -143,11 +143,7 @@ export class BackgroundProcessManager {
     }
   }
 
-  private settle(
-    tracked: TrackedProcess,
-    status: BackgroundProcessStatus,
-    exitCode: number,
-  ): void {
+  private settle(tracked: TrackedProcess, status: BackgroundProcessStatus, exitCode: number): void {
     if (tracked.record.status !== 'running') return;
     tracked.record.status = status;
     tracked.record.exitCode = exitCode;

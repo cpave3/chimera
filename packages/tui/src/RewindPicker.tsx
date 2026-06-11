@@ -10,7 +10,6 @@ export interface RewindPickerProps {
   onCancel(): void;
 }
 
-
 export function RewindPicker(props: RewindPickerProps): React.ReactElement {
   const theme = useTheme();
   const [highlight, setHighlight] = useState(0);
@@ -57,7 +56,11 @@ export function RewindPicker(props: RewindPickerProps): React.ReactElement {
           const summary = cp.toolCallSummary ? ` · ${cp.toolCallSummary}` : '';
           const text = `[${cp.index}] ${cp.userMessage}${summary}`;
           return (
-            <Text key={cp.index} inverse={isHighlighted} color={isHighlighted ? theme.accent.primary : undefined}>
+            <Text
+              key={cp.index}
+              inverse={isHighlighted}
+              color={isHighlighted ? theme.accent.primary : undefined}
+            >
               {text}
             </Text>
           );

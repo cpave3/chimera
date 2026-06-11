@@ -49,8 +49,9 @@ describe('createFilteredStdin', () => {
     const filtered = createFilteredStdin(upstream);
     const reads: string[] = [];
     filtered.on('readable', () => {
-      let chunk: unknown;
-      while ((chunk = filtered.read()) !== null) {
+      while (true) {
+        const chunk: unknown = filtered.read();
+        if (chunk === null) break;
         reads.push(
           typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8'),
         );

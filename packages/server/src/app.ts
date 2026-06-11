@@ -268,7 +268,12 @@ export function buildApp(opts: AppOptions): Hono {
     } catch {
       return c.json({ error: `parent session ${parentId} not found` }, 404);
     }
-    const { childId } = await coreForkSession({ parentId, purpose, home, rewindIndex: parseResult.data.rewindIndex });
+    const { childId } = await coreForkSession({
+      parentId,
+      purpose,
+      home,
+      rewindIndex: parseResult.data.rewindIndex,
+    });
     if (onFork) {
       try {
         // Satisfy the SessionInfo contract expected by onFork.
@@ -337,9 +342,7 @@ export function buildApp(opts: AppOptions): Hono {
       // the untruncated log, and a failed restore must not lose history.
       let workspaceRestored = false;
       const checkpoints = await readCheckpoints(id, home);
-      const target = checkpoints.find(
-        (candidate) => candidate.index === parseResult.data.index,
-      );
+      const target = checkpoints.find((candidate) => candidate.index === parseResult.data.index);
       if (target) {
         const workspace = new WorkspaceCheckpoints({ sessionId: id, cwd: meta.cwd, home });
         workspaceRestored = await workspace.restore(target, checkpoints);
@@ -624,7 +627,11 @@ export function buildApp(opts: AppOptions): Hono {
       return c.json({ error: 'already resolved' }, 409);
     }
     try {
-      entry.agent.resolvePermission(requestId, parseResult.data.decision, parseResult.data.remember);
+      entry.agent.resolvePermission(
+        requestId,
+        parseResult.data.decision,
+        parseResult.data.remember,
+      );
       entry.resolvedPermissionIds.add(requestId);
       return c.body(null, 204);
     } catch (err) {

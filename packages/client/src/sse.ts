@@ -41,7 +41,10 @@ export async function* parseSSE(
       await reader.cancel();
     } catch (err) {
       if (!isAbortError(err)) {
-        console.debug(`[sse] reader.cancel threw:`, err instanceof Error ? err.message : String(err));
+        console.debug(
+          `[sse] reader.cancel threw:`,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
     try {

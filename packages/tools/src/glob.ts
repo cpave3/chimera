@@ -62,7 +62,11 @@ export function buildGlobTool(ctx: ToolContext) {
         await ctx.sandboxExecutor.writeFile(args.output_file, lines.join('\n') + '\n');
       }
       const files = truncated ? lines.slice(0, MAX_FILES) : lines;
-      return { files, truncated, spillFile: truncated && args.output_file ? args.output_file : undefined };
+      return {
+        files,
+        truncated,
+        spillFile: truncated && args.output_file ? args.output_file : undefined,
+      };
     },
     formatScrollback: (args, result) => {
       const where = args.path ? ` in ${args.path}` : '';
@@ -71,7 +75,8 @@ export function buildGlobTool(ctx: ToolContext) {
       const tail = result.truncated
         ? ` (${result.files.length}+ files, truncated)`
         : ` (${result.files.length} files)`;
-      if (result.spillFile) return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
+      if (result.spillFile)
+        return { summary: `${head}${tail}`, detail: `Full results written to ${result.spillFile}` };
       return { summary: `${head}${tail}` };
     },
   });

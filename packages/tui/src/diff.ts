@@ -4,9 +4,8 @@ export function lineDiff(oldLines: string[], newLines: string[]): DiffEntry[] {
   const oldLen = oldLines.length;
   const newLen = newLines.length;
 
-  const lcsLengths: number[][] = Array.from(
-    { length: oldLen + 1 },
-    () => new Array(newLen + 1).fill(0),
+  const lcsLengths: number[][] = Array.from({ length: oldLen + 1 }, () =>
+    new Array(newLen + 1).fill(0),
   );
   for (let i = oldLen - 1; i >= 0; i--) {
     for (let j = newLen - 1; j >= 0; j--) {

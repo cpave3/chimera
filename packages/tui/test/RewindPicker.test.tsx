@@ -28,7 +28,14 @@ async function tick(ms = 10): Promise<void> {
 describe('RewindPicker', () => {
   it('renders checkpoints with summary', async () => {
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={vi.fn()} onFork={vi.fn()} onCancel={vi.fn()} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={vi.fn()}
+          onFork={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      ),
     );
     await tick();
     const frame = rendered.lastFrame()!;
@@ -41,7 +48,14 @@ describe('RewindPicker', () => {
   it('Enter calls onRewind with the highlighted checkpoint', async () => {
     const onRewind = vi.fn();
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={onRewind} onFork={vi.fn()} onCancel={vi.fn()} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={onRewind}
+          onFork={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      ),
     );
     await tick();
     rendered.stdin.write('\r');
@@ -53,7 +67,14 @@ describe('RewindPicker', () => {
   it('Escape calls onCancel', async () => {
     const onCancel = vi.fn();
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={vi.fn()} onFork={vi.fn()} onCancel={onCancel} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={vi.fn()}
+          onFork={vi.fn()}
+          onCancel={onCancel}
+        />,
+      ),
     );
     await tick();
     rendered.stdin.write('\x1b');
@@ -65,7 +86,14 @@ describe('RewindPicker', () => {
   it('arrow-down then Enter calls onRewind with the second checkpoint', async () => {
     const onRewind = vi.fn();
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={onRewind} onFork={vi.fn()} onCancel={vi.fn()} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={onRewind}
+          onFork={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      ),
     );
     await tick();
     rendered.stdin.write('\x1b[B');
@@ -79,7 +107,14 @@ describe('RewindPicker', () => {
   it('arrow-down twice then SGR Shift+Enter calls onFork with the third checkpoint', async () => {
     const onFork = vi.fn();
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={vi.fn()} onFork={onFork} onCancel={vi.fn()} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={vi.fn()}
+          onFork={onFork}
+          onCancel={vi.fn()}
+        />,
+      ),
     );
     await tick();
     // highlight 0 → 1 → 2
@@ -97,7 +132,14 @@ describe('RewindPicker', () => {
   it('Ctrl+C closes the picker via onCancel', async () => {
     const onCancel = vi.fn();
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={vi.fn()} onFork={vi.fn()} onCancel={onCancel} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={vi.fn()}
+          onFork={vi.fn()}
+          onCancel={onCancel}
+        />,
+      ),
     );
     await tick();
     rendered.stdin.write('\x03');
@@ -109,7 +151,14 @@ describe('RewindPicker', () => {
   it('j/k navigation selects the right checkpoint', async () => {
     const onRewind = vi.fn();
     const rendered = render(
-      withTheme(<RewindPicker checkpoints={TEST_CPS} onRewind={onRewind} onFork={vi.fn()} onCancel={vi.fn()} />),
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={onRewind}
+          onFork={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      ),
     );
     await tick();
     // highlight 0 → 1 → 2
