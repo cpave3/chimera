@@ -36,12 +36,7 @@ import { openInEditor as openInEditorImpl, type OpenInEditorResult } from './inp
 import { renderMarkdown } from './markdown';
 import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
-import {
-  type Formatter,
-  Scrollback,
-  type ScrollbackEntry,
-  type SubagentEntry,
-} from './scrollback';
+import { type Formatter, Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import { RewindPicker } from './RewindPicker';
 import { SessionPicker, buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
@@ -513,7 +508,7 @@ export function App(props: AppProps): React.ReactElement {
       const pruneNote =
         ev.prunedCount && ev.prunedCount > 0 ? `, ${ev.prunedCount} outputs archived` : '';
       scrollback.addInfo(
-        `compaction done${strategyNote}: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced${pruneNote})`
+        `compaction done${strategyNote}: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced${pruneNote})`,
       );
     } else if (ev.type === 'compaction_failed') {
       setCompacting(false);
@@ -522,9 +517,7 @@ export function App(props: AppProps): React.ReactElement {
       setTasks(ev.tasks);
     } else if (ev.type === 'background_process_exited') {
       const outcome =
-        ev.status === 'killed'
-          ? 'killed'
-          : `exited (exit ${ev.exitCode ?? 'unknown'})`;
+        ev.status === 'killed' ? 'killed' : `exited (exit ${ev.exitCode ?? 'unknown'})`;
       scrollback.addInfo(`background process ${ev.shellId} ${outcome}: ${ev.command}`);
     }
   }
@@ -871,9 +864,7 @@ export function App(props: AppProps): React.ReactElement {
           void (async () => {
             try {
               await activeSession.client.setModel(activeSession.sessionId, target);
-              scrollback.addInfo(
-                target ? `model set to ${target}` : 'model override cleared',
-              );
+              scrollback.addInfo(target ? `model set to ${target}` : 'model override cleared');
             } catch (error) {
               scrollback.addError(`/model: ${(error as Error).message}`);
             }
@@ -1538,7 +1529,15 @@ export function App(props: AppProps): React.ReactElement {
         </Text>
       ) : null,
     ],
-    [modeWidget, currentModelRef, activeSession.sessionId, activeParentId, theme.accent.primary, theme.text.muted, theme.accent.secondary],
+    [
+      modeWidget,
+      currentModelRef,
+      activeSession.sessionId,
+      activeParentId,
+      theme.accent.primary,
+      theme.text.muted,
+      theme.accent.secondary,
+    ],
   );
   const tasksWidget = useMemo<StatusBarWidget>(() => {
     if (tasks.length === 0) return null;
@@ -1569,7 +1568,6 @@ export function App(props: AppProps): React.ReactElement {
     [tasksWidget, usageState],
   );
 
-
   // Steady-state during a run: the buffer is empty and the spinner /
   // streaming deltas re-render App many times per second. Keep the prompt
   // subtree referentially stable across those renders, and collapse the
@@ -1579,7 +1577,14 @@ export function App(props: AppProps): React.ReactElement {
   const isMultilineBuffer = buffer.text.includes('\n');
   const isBangBuffer = buffer.text.startsWith('!');
   const promptBody = useMemo(
-    () => renderPromptLines(buffer, theme.accent.primary, theme.accent.secondary, editorOpen, isBangBuffer),
+    () =>
+      renderPromptLines(
+        buffer,
+        theme.accent.primary,
+        theme.accent.secondary,
+        editorOpen,
+        isBangBuffer,
+      ),
     [buffer, editorOpen, theme.accent.primary, theme.accent.secondary, isBangBuffer],
   );
 
@@ -1609,7 +1614,12 @@ export function App(props: AppProps): React.ReactElement {
       <Box flexDirection="column" width={columns}>
         {inFlightEntries.map((e) => (
           <Box key={e.id} flexDirection="column" marginTop={1}>
-            {renderEntryLines(e, columns, theme, childrenByParent.get(e.id) ?? [])}
+            {renderEntryLines(
+              e,
+              columns,
+              theme,
+              clampInFlightChildren(e.id, childrenByParent.get(e.id) ?? []),
+            )}
           </Box>
         ))}
         {running && (
@@ -1887,6 +1897,33 @@ function wrapToLines(text: string, width: number, firstOffset: number): string[]
     out.push(remaining);
   });
   return out;
+}
+
+/**
+ * Cap of nested subagent child rows rendered while the parent spawn_agent
+ * tool entry is still in flight. The whole group lives in Ink's dynamic
+ * region until the parent's tool_call_result lands, and a chatty subagent
+ * (30-100 events/sec) would otherwise grow that region past the terminal
+ * height — tipping Ink into its clearTerminal-per-frame fallback, which
+ * flickers and erases the terminal's scrollback buffer (`\x1b[3J`) so the
+ * user cannot scroll up. The full child list still commits to <Static>
+ * atomically with the parent.
+ */
+const MAX_INFLIGHT_SUBAGENT_ROWS = 4;
+
+function clampInFlightChildren(parentId: string, children: SubagentEntry[]): SubagentEntry[] {
+  if (children.length <= MAX_INFLIGHT_SUBAGENT_ROWS) return children;
+  const visible = children.slice(-(MAX_INFLIGHT_SUBAGENT_ROWS - 1));
+  const elided = children.length - visible.length;
+  return [
+    {
+      id: `${parentId}:elided`,
+      kind: 'subagent',
+      text: `… ${elided} earlier steps`,
+      parentEntryId: parentId,
+    },
+    ...visible,
+  ];
 }
 
 function renderEntryLines(
