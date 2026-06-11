@@ -1708,3 +1708,109 @@ describe('Agent.signal', () => {
     });
   });
 });
+
+describe('system prompt composition (tasks + plan handoff)', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'chimera-agent-sys-'));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  function textMock() {
+    return new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'ok' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    });
+  }
+
+  function makeAgent(mock: MockLanguageModelV3, initialMode?: string) {
+    return new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: mock as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      systemPrompt: 'base prompt',
+      initialMode,
+    });
+  }
+
+  function systemOf(call: { prompt: Array<{ role: string; content: unknown }> }): string {
+    const sys = call.prompt.find((m) => m.role === 'system');
+    return typeof sys?.content === 'string' ? sys.content : JSON.stringify(sys?.content ?? '');
+  }
+
+  it('injects the live task list into the system prompt', async () => {
+    const mock = textMock();
+    const agent = makeAgent(mock);
+    agent.session.tasks = [
+      { content: 'write failing test', status: 'completed' },
+      { content: 'implement feature', status: 'in_progress' },
+    ];
+    for await (const _ev of agent.run('hi')) {
+      // drain
+    }
+    const system = systemOf(mock.doStreamCalls[0]);
+    expect(system).toContain('base prompt');
+    expect(system).toContain('# Current tasks');
+    expect(system).toContain('- [completed] write failing test');
+    expect(system).toContain('- [in_progress] implement feature');
+  });
+
+  it('omits the tasks block when the list is empty', async () => {
+    const mock = textMock();
+    const agent = makeAgent(mock);
+    for await (const _ev of agent.run('hi')) {
+      // drain
+    }
+    expect(systemOf(mock.doStreamCalls[0])).not.toContain('# Current tasks');
+  });
+
+  it('adds a one-shot plan-handoff note on the first run after leaving plan mode', async () => {
+    const mock = textMock();
+    const agent = makeAgent(mock, 'plan');
+    const switched = agent.queueModeSwitch('build');
+    expect(switched.status).toBe('applied');
+
+    for await (const _ev of agent.run('looks good, go ahead')) {
+      // drain
+    }
+    expect(systemOf(mock.doStreamCalls[0])).toContain('# Plan accepted');
+
+    for await (const _ev of agent.run('next message')) {
+      // drain
+    }
+    const secondRunCall = mock.doStreamCalls[mock.doStreamCalls.length - 1];
+    expect(systemOf(secondRunCall)).not.toContain('# Plan accepted');
+  });
+
+  it('adds the handoff note when the switch is drained at run start', async () => {
+    const mock = textMock();
+    const agent = makeAgent(mock, 'plan');
+    // Queue the switch as if a run were active, then let run() drain it.
+    agent.queueModeSwitch('build');
+    for await (const _ev of agent.run('approved')) {
+      // drain
+    }
+    expect(systemOf(mock.doStreamCalls[0])).toContain('# Plan accepted');
+  });
+});

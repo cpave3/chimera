@@ -279,10 +279,16 @@ For multi-step work the model maintains a task list via the `task_list` tool
 (replace-whole-list semantics, statuses `pending` / `in_progress` /
 `completed`). The status bar shows live progress —
 `[tasks 2/5: implement feature]` — and the list is persisted in session
-metadata, so it survives resume, forks, and context compaction: after a
-compact, the plan is still structured state rather than a casualty of
-summarization. Scrollback renders each update as a compact progress line
-(`2/5 done → current task`).
+metadata, so it survives resume, forks, and context compaction. The current
+list is also injected into the system prompt on every step, so the model
+always sees the authoritative state even after a compact summarizes away the
+tool calls that built it. Scrollback renders each update as a compact
+progress line (`2/5 done → current task`).
+
+Plan mode hands off into this: the model presents its plan as a numbered
+markdown list, and when you accept it (switch out of plan mode), a one-shot
+system note on the next run tells it to record the plan via `task_list` and
+execute against it.
 
 ## Web access
 

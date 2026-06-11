@@ -14,10 +14,14 @@ Chimera ships with two built-ins:
   available); minimal prompt fragment. New sessions start in `build` unless
   you pass `--mode <name>` or set `defaultMode` in config.
 - **`plan`** — read-only exploration. `tools: [read, glob, grep, task_list]`;
-  the body steers the model toward building context, producing a numbered
-  plan, recording it via `task_list` (so the plan survives the switch to
-  build mode), surfacing assumptions, and ending with
-  `Plan ready for review.` rather than mutating anything.
+  the body steers the model toward building context, presenting a numbered
+  markdown plan, surfacing assumptions, and ending with
+  `Plan ready for review.` rather than mutating anything. When the user
+  accepts the plan by switching out of plan mode, the next run carries a
+  one-shot system note telling the model to record the plan via `task_list`
+  and execute against it; the recorded list is then injected into the system
+  prompt on every subsequent step, so it survives compaction in the model's
+  view as well as on disk.
 
 You can override either by dropping your own `build.md` / `plan.md` into a
 higher-priority discovery tier.

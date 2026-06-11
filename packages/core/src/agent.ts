@@ -164,6 +164,12 @@ export class Agent {
    */
   private queuedMode: string | null = null;
   /**
+   * Set when a mode switch leaves `plan` mode; consumed by the next run,
+   * which appends a one-shot system note telling the model to record the
+   * accepted plan via task_list before executing it.
+   */
+  private planHandoffPending = false;
+  /**
    * Optional callback invoked when a queued mode switch is drained. Returns
    * the freshly-recomposed system prompt + filtered tool set + effective
    * model to apply for the next run. Embedders register it via
@@ -518,6 +524,7 @@ export class Agent {
     }
     if (!this.modeResolver) {
       const from = this.session.mode;
+      if (from === 'plan') this.planHandoffPending = true;
       this.session.mode = name;
       this.queuedMode = null;
       return {
@@ -536,6 +543,7 @@ export class Agent {
       return { status: 'invalid', error: (err as Error).message };
     }
     const from = this.session.mode;
+    if (from === 'plan') this.planHandoffPending = true;
     this.opts = {
       ...this.opts,
       systemPrompt: resolved.systemPrompt,
@@ -716,6 +724,38 @@ export class Agent {
     return queue.drain();
   }
 
+  /**
+   * The system prompt actually sent to the model: the static mode prompt
+   * plus live task-list state (so the list survives compaction in the
+   * model's view, not just on disk) and the one-shot plan-handoff note.
+   * Evaluated per step, so mid-run task updates are visible on the next step.
+   */
+  private composeSystemPrompt(planHandoff: boolean): string | undefined {
+    const parts: string[] = [];
+    if (this.opts.systemPrompt) parts.push(this.opts.systemPrompt);
+    if (this.session.tasks.length > 0) {
+      const lines = this.session.tasks.map((task) => `- [${task.status}] ${task.content}`);
+      parts.push(
+        '# Current tasks\n\n' +
+          'Authoritative task-list state for this session (persisted outside the ' +
+          'conversation; update it with the task_list tool):\n' +
+          lines.join('\n'),
+      );
+    }
+    if (planHandoff) {
+      parts.push(
+        '# Plan accepted\n\n' +
+          'The user has just switched out of plan mode. If their message approves ' +
+          'the plan you proposed, first record it with the task_list tool (one task ' +
+          'per step, the first marked in_progress), then execute it step by step, ' +
+          'updating statuses as you go. If they ask for changes instead, revise the ' +
+          'plan before recording anything.',
+      );
+    }
+    if (parts.length === 0) return undefined;
+    return parts.join('\n\n');
+  }
+
   private async runInternal(userMessage: string, queue: EventQueue<AgentEvent>): Promise<void> {
     this.session.status = 'running';
 
@@ -731,6 +771,7 @@ export class Agent {
         if (this.modeResolver) {
           const resolved = this.modeResolver(queuedMode);
           const previousMode = this.session.mode;
+          if (previousMode === 'plan') this.planHandoffPending = true;
           this.opts = {
             ...this.opts,
             systemPrompt: resolved.systemPrompt,
@@ -750,6 +791,7 @@ export class Agent {
           // recomposing the prompt. Embedders that care about the system
           // prompt block always register a resolver.
           const previousMode = this.session.mode;
+          if (previousMode === 'plan') this.planHandoffPending = true;
           this.session.mode = queuedMode;
           queue.push({
             type: 'mode_changed',
@@ -769,6 +811,11 @@ export class Agent {
         );
       }
     }
+
+    // One-shot: a switch out of plan mode arms the handoff note for exactly
+    // this run, telling the model to record the accepted plan via task_list.
+    const planHandoff = this.planHandoffPending;
+    this.planHandoffPending = false;
 
     this.session.messages.push({ role: 'user', content: userMessage });
 
@@ -888,7 +935,7 @@ export class Agent {
             model: this.opts.languageModel,
             messages: this.session.messages,
             tools: this.opts.tools,
-            system: this.opts.systemPrompt,
+            system: this.composeSystemPrompt(planHandoff),
             stopWhen: stepCountIs(1),
             abortSignal: this.abortController.signal,
             temperature: this.opts.model.temperature,
