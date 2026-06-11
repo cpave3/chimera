@@ -272,6 +272,9 @@ importers:
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
+      ai:
+        specifier: ^6.0.168
+        version: 6.0.168(zod@4.3.6)
     devDependencies:
       tsup:
         specifier: ^8.5.1

@@ -1,5 +1,21 @@
 import type { ModelMessage } from 'ai';
 import type { FileOps } from '@chimera/core';
+import type { ArchivedRef } from './types';
+
+/**
+ * Authoritative index of recall ids referenced by the summarized region,
+ * appended to the summary after the <files> block. Lets the model (and the
+ * next compaction pass) keep using `recall` for outputs whose stubs were
+ * folded into the summary.
+ */
+export function formatArchivedBlock(refs: ArchivedRef[]): string {
+  const lines = ['<archived>'];
+  for (const ref of refs) {
+    lines.push(`  <entry id="${ref.id}" tool="${ref.toolName}">${ref.argsBrief}</entry>`);
+  }
+  lines.push('</archived>');
+  return lines.join('\n');
+}
 
 export function formatFilesBlock(fileOps: FileOps): string {
   const reads = sortedPaths(fileOps.reads).filter((path) => !fileOps.writes.has(path));
@@ -53,6 +69,13 @@ export function buildCompactionPrompt(input: BuildPromptInput): string {
     );
     parts.push('');
   }
+
+  parts.push(
+    'Some tool results appear as archive stubs like `[Result archived — retrieve with: recall({ id: "pr_..." })]`. ' +
+      'Mention what the output was about where relevant, but never invent, alter, or repeat pr_ ids — ' +
+      'an authoritative <archived> index is appended to your summary automatically.',
+  );
+  parts.push('');
 
   parts.push('Conversation history:');
   parts.push('');

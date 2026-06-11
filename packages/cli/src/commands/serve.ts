@@ -5,7 +5,7 @@ import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
-import { checkCompactionInvariant, resolveCompactionConfig } from '../compaction';
+import { checkCompactionInvariant, recallPrunerFactory, resolveCompactionConfig } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
@@ -134,6 +134,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       contextWindow: resolvedWindow.value,
       resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
       home: opts.home,
+      createPruner: recallPrunerFactory(config, opts.home),
     });
   }
 

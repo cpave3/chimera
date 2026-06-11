@@ -9,7 +9,7 @@ import type { ReloadingAgentRegistry } from '@chimera/subagents';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
-import { checkCompactionInvariant, resolveCompactionConfig } from '../compaction';
+import { checkCompactionInvariant, recallPrunerFactory, resolveCompactionConfig } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';
@@ -111,6 +111,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       contextWindow: resolvedWindow.value,
       resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
       home: opts.home,
+      createPruner: recallPrunerFactory(config, opts.home),
     });
   }
 

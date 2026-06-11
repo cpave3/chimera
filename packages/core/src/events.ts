@@ -124,6 +124,9 @@ export type AgentEvent =
       tokensBefore: number;
       tokensAfter: number;
       messagesReplaced: number;
+      strategy?: string;
+      prunedCount?: number;
+      prunedTokensSaved?: number;
     }
   | {
       type: 'compaction_failed';

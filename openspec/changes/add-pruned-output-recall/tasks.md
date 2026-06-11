@@ -1,40 +1,48 @@
+> **Implementation note (2026-06-11):** Implemented with a file-per-entry
+> store (`~/.chimera/recall/<sessionId>/<id>.json`) instead of SQLite — the
+> repo targets Node >= 20 with zero native deps, and `node:sqlite` requires
+> 22.5+. The compaction integration landed as a `createPruner` factory on
+> `CompactorOptions` (phase 1 of tiered compaction) rather than an
+> `onBeforeReplace` hook; prune-only compactions skip the LLM summarize
+> phase entirely when they bring the estimate back under budget.
+
 ## 1. Package scaffolding
 
-- [ ] 1.1 Add `packages/recall/` to the workspace. Depends on `@chimera/core` types, `@chimera/tools` (for tool registration), `better-sqlite3`.
-- [ ] 1.2 Define `RecallEntry`, `RecallStore` interface, and a `SqliteRecallStore` class.
+- [x] 1.1 Add `packages/recall/` to the workspace. Depends on `@chimera/core` types only (file store, no better-sqlite3).
+- [x] 1.2 Define `RecallEntry` and `RecallStore` (file-backed class, not SQLite).
 
 ## 2. Storage
 
-- [ ] 2.1 Implement `SqliteRecallStore` with `put(entry)`, `get(id)`, `delete(id)`, `purgeOlderThan(ts)`.
-- [ ] 2.2 Lazy-create the store file at `~/.chimera/recall/<sessionId>.sqlite` on first write.
-- [ ] 2.3 Implement the `entries` table schema and indexes (`created_at` for TTL scans).
-- [ ] 2.4 Implement the deterministic `pr_<hash>` id generator with collision-extend-to-12 logic.
-- [ ] 2.5 Unit tests: deterministic IDs, idempotent puts, TTL purge, missing-id get.
+- [x] 2.1 Implement `RecallStore` with `put`, `get`, TTL GC (delete/purge folded into lazy GC by mtime).
+- [x] 2.2 Lazy-create the store dir at `~/.chimera/recall/<sessionId>/` on first write.
+- [x] 2.3 ~~SQLite schema~~ N/A for the file backend.
+- [x] 2.4 Deterministic `pr_<hash>` id generator with collision-extend-to-12 logic.
+- [x] 2.5 Unit tests: deterministic IDs, idempotent puts, TTL purge, missing-id get.
 
 ## 3. `recall` tool
 
-- [ ] 3.1 Define Zod schema for `{ id, start_line?, end_line?, search? }`.
-- [ ] 3.2 Implement line slicing + search filtering; enforce `maxRecallBytes` cap.
-- [ ] 3.3 Register the tool in `@chimera/tools`' `buildTools` when `recall.enabled !== false`; bypass `permissionGate`.
-- [ ] 3.4 Unit tests: line slice, search filter, truncation flag, missing id path, no permission prompt occurs.
+- [x] 3.1 Zod schema for `{ id, start_line?, end_line?, search? }`.
+- [x] 3.2 Line slicing + search filtering; 100KB cap with truncated flag.
+- [x] 3.3 Registered in `buildTools` when `ToolContext.recall` is wired (CLI skips it when `recall.enabled === false`); never touches `permissionGate`.
+- [x] 3.4 Unit tests: line slice, search filter, truncation flag, missing id path.
 
 ## 4. Compaction hook
 
-- [ ] 4.1 Add an `onBeforeReplace` extension point to `@chimera/compaction` (small, additive).
-- [ ] 4.2 In `@chimera/recall`, register the hook at session start: walk the slice, extract large `tool-result`s, `put` them, rewrite content to the stub.
-- [ ] 4.3 Preserve the preceding `tool-call` message unchanged.
-- [ ] 4.4 Unit tests: archival above threshold, pass-through below threshold, stub format, idempotency when the same content is compacted twice.
+- [x] 4.1 `createPruner` factory on `CompactorOptions` (per-session, since stores are per-session).
+- [x] 4.2 `createRecallPruner` walks `messages[0..keepStart)`, archives large `tool-result` outputs, rewrites them to stubs.
+- [x] 4.3 Preceding `tool-call` parts (args) preserved unchanged; messages rewritten in place, never removed.
+- [x] 4.4 Unit tests: archival above threshold, pass-through below, stub format, idempotency (stubs never re-archived).
 
 ## 5. CLI / config / cleanup
 
-- [ ] 5.1 Parse `recall.*` config keys with the documented defaults.
-- [ ] 5.2 Hook `chimera sessions rm <id>` to also delete `~/.chimera/recall/<id>.sqlite*`.
-- [ ] 5.3 Validate that `recall.enabled === true && @chimera/compaction is absent` is allowed but emits a one-line info log explaining recall is inert without compaction.
+- [x] 5.1 `recall.*` config keys (`enabled`, `archiveThresholdTokens`, `ttlDays`).
+- [x] 5.2 `deleteSession` removes `~/.chimera/recall/<id>/` alongside session data.
+- [ ] 5.3 Info log when recall enabled but compaction disabled (inert) — skipped; the recall tool still serves previously archived entries, so the log would mislead.
 
 ## 6. Documentation / E2E
 
-- [ ] 6.1 Write `RECALL.md`: how archival works, stub format, tool usage, config.
-- [ ] 6.2 E2E: long session with stub model + compaction + one large `bash` output → archival occurs → model subsequently calls `recall` and receives the content.
-- [ ] 6.3 E2E: missing-id recall gracefully returns an error result.
-- [ ] 6.4 E2E: session deletion cleans up the SQLite file.
-- [ ] 6.5 E2E: `recall.enabled: false` skips registration and hook installation entirely.
+- [ ] 6.1 RECALL.md / README section — pending (lands with the context-management overhaul docs).
+- [x] 6.2 Covered by tiered-compaction tests: prune archives a large output, summary preserves pr_ ids, recall returns content.
+- [x] 6.3 Missing-id recall returns an error result (unit test).
+- [x] 6.4 Session deletion cleans up the recall dir.
+- [x] 6.5 `recall.enabled: false` skips store creation, tool registration, and the prune phase.

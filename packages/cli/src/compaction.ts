@@ -1,9 +1,27 @@
 import {
   DEFAULT_KEEP_RECENT_TOKENS,
   DEFAULT_RESERVE_TOKENS,
+  type MessagePruner,
 } from '@chimera/compaction';
+import { createRecallPruner, RecallStore } from '@chimera/recall';
 import type { CompactionConfig } from '@chimera/core';
 import type { ChimeraConfig } from './config';
+
+/**
+ * Per-session prune-phase factory for the Compactor, backed by the recall
+ * store. Returns undefined when recall is disabled — the Compactor then
+ * behaves exactly as before tiering (summarize only).
+ */
+export function recallPrunerFactory(
+  config: ChimeraConfig,
+  home?: string,
+): ((sessionId: string) => MessagePruner) | undefined {
+  if (config.recall?.enabled === false) return undefined;
+  return (sessionId) =>
+    createRecallPruner(new RecallStore({ sessionId, home, ttlDays: config.recall?.ttlDays }), {
+      archiveThresholdTokens: config.recall?.archiveThresholdTokens,
+    });
+}
 
 export function resolveCompactionConfig(opts: {
   cliOverride?: boolean;

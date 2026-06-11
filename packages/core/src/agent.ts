@@ -600,6 +600,9 @@ export class Agent {
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
         messagesReplaced: result.messagesReplaced,
+        strategy: result.strategy,
+        prunedCount: result.prunedCount,
+        prunedTokensSaved: result.prunedTokensSaved,
       };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -850,6 +853,9 @@ export class Agent {
             tokensBefore: result.tokensBefore,
             tokensAfter: result.tokensAfter,
             messagesReplaced: result.messagesReplaced,
+            strategy: result.strategy,
+            prunedCount: result.prunedCount,
+            prunedTokensSaved: result.prunedTokensSaved,
           });
         }
       } catch (err) {

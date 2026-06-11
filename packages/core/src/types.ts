@@ -136,15 +136,20 @@ export interface CompactionConfig {
  * Minimal interface for the compactor injected by the factory.
  * The concrete implementation lives in `@chimera/compaction`.
  */
+export interface CompactionOutcome {
+  summary: string;
+  tokensBefore: number;
+  tokensAfter: number;
+  messagesReplaced: number;
+  /** Which tiers ran: 'prune' | 'prune+summarize' | 'summarize'. */
+  strategy?: string;
+  prunedCount?: number;
+  prunedTokensSaved?: number;
+}
+
 export interface CompactorApi {
-  maybeCompact(session: Session): Promise<
-    | { ran: false }
-    | { ran: true; summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }
-  >;
-  compact(
-    session: Session,
-    reason: 'threshold' | 'manual',
-  ): Promise<{ summary: string; tokensBefore: number; tokensAfter: number; messagesReplaced: number }>;
+  maybeCompact(session: Session): Promise<{ ran: false } | ({ ran: true } & CompactionOutcome)>;
+  compact(session: Session, reason: 'threshold' | 'manual'): Promise<CompactionOutcome>;
 }
 
 export type RememberScope =
