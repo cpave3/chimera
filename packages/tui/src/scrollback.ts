@@ -122,6 +122,21 @@ export class Scrollback {
   private _listeners = new Set<() => void>();
   private _flushScheduled = false;
 
+  /**
+   * Monotonic commit cursor: entries[0..committedCount) are finalized and safe
+   * to hand to Ink's `<Static>`, which renders positionally and append-only —
+   * an item inserted before its cursor is never printed and displaces the
+   * tail into duplicate prints. The cursor advances only while the *prefix*
+   * is finalized: a pending tool or streaming text entry blocks everything
+   * after it (those render in the dynamic region until the blocker resolves).
+   * Never decremented except by clear().
+   */
+  private committedCount = 0;
+  private _splitSnapshot: { entries: ScrollbackEntry[]; committedCount: number } = {
+    entries: [],
+    committedCount: 0,
+  };
+
 
   constructor(formatters: Record<string, Formatter> = {}) {
     this.formatters = formatters;
@@ -159,9 +174,52 @@ export class Scrollback {
     return this._snapshot;
   }
 
+  /**
+   * Entries plus the committed-prefix length, captured atomically so the
+   * committed/in-flight split can never disagree with the entry list (the
+   * race that React-state-based classification had).
+   */
+  splitSnapshot(): { entries: ScrollbackEntry[]; committedCount: number } {
+    return this._splitSnapshot;
+  }
+
   /** Update the cached snapshot and schedule a single notification microtask. */
   private updateSnapshot(): void {
+    this.advanceCommitCursor();
     this._snapshot = [...this.entries];
+    this._splitSnapshot = { entries: this._snapshot, committedCount: this.committedCount };
+  }
+
+  /**
+   * An entry is finalized when its content can no longer change and its
+   * position in the render order is settled.
+   */
+  private isFinalized(entry: ScrollbackEntry, index: number, lastTopLevelIdx: number): boolean {
+    if (entry.kind === 'assistant') return entry.id !== this.assistantEntryId;
+    if (entry.kind === 'thinking') return entry.id !== this.thinkingEntryId;
+    if (entry.kind === 'tool') {
+      return entry.toolResult !== undefined || entry.toolError !== undefined;
+    }
+    // A trailing mode_change stays uncommitted so consecutive switches can
+    // collapse into one row before it is baked into <Static>.
+    if (entry.kind === 'mode_change') return index !== lastTopLevelIdx;
+    return true;
+  }
+
+  private advanceCommitCursor(): void {
+    let lastTopLevelIdx = -1;
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const candidate = this.entries[i]!;
+      if (candidate.kind !== 'subagent' || !candidate.parentEntryId) {
+        lastTopLevelIdx = i;
+        break;
+      }
+    }
+    while (this.committedCount < this.entries.length) {
+      const entry = this.entries[this.committedCount]!;
+      if (!this.isFinalized(entry, this.committedCount, lastTopLevelIdx)) break;
+      this.committedCount += 1;
+    }
   }
 
   private flushTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -236,6 +294,7 @@ export class Scrollback {
   /** Wipe all visible entries and reset transient streaming state. */
   clear(): void {
     this.entries = [];
+    this.committedCount = 0;
     this.assistantBuf = null;
     this.toolsByCallId.clear();
     this.subagentParents.clear();
@@ -738,8 +797,29 @@ export class Scrollback {
         }
         return;
       }
-      if (ev.type === 'run_finished' && ev.reason === 'error' && ev.error) {
-        this.addError(ev.error);
+      if (ev.type === 'run_finished') {
+        // Finalize dangling state so the commit cursor can't wedge: an
+        // interrupted run may leave a streaming text entry without its
+        // *_done event and pending tool entries without results, which
+        // would otherwise block every later entry from committing.
+        this.assistantBuf = null;
+        this.assistantEntryId = null;
+        this.thinkingBuf = null;
+        this.thinkingEntryId = null;
+        for (let i = this.entries.length - 1; i >= 0; i--) {
+          const entry = this.entries[i]!;
+          if (
+            entry.kind === 'tool' &&
+            entry.toolResult === undefined &&
+            entry.toolError === undefined
+          ) {
+            entry.toolError = `run ended (${ev.reason}) before tool result`;
+          }
+        }
+        dirty = true;
+        if (ev.reason === 'error' && ev.error) {
+          this.addError(ev.error);
+        }
         return;
       }
     } finally {

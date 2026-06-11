@@ -147,9 +147,9 @@ export function App(props: AppProps): React.ReactElement {
   const app = useApp();
   const { stdout } = useStdout();
   const scrollback = useMemo(() => new Scrollback(props.formatters), [props.formatters]);
-  const entries = useSyncExternalStore(
+  const { entries, committedCount } = useSyncExternalStore(
     scrollback.subscribe.bind(scrollback),
-    scrollback.getSnapshot.bind(scrollback),
+    scrollback.splitSnapshot.bind(scrollback),
   );
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [pending, setPending] = useState<PendingPermission | null>(null);
@@ -195,9 +195,6 @@ export function App(props: AppProps): React.ReactElement {
   } | null>(null);
   const [tasks, setTasks] = useState<{ content: string; status: string }[]>([]);
   const wasBusyRef = useRef(false);
-  // Id of the assistant entry currently receiving text deltas. Held out of
-  // <Static> so its text can keep updating; committed once text_done fires.
-  const [streamingEntryId, setStreamingEntryId] = useState<string | null>(null);
   const [menuHighlight, setMenuHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
   // Bumped on /clear to remount <Static> so its internal append-cursor resets.
@@ -448,12 +445,6 @@ export function App(props: AppProps): React.ReactElement {
     }
     if (ev.type === 'assistant_text_delta' || ev.type === 'reasoning_text_delta') {
       setStreaming(true);
-      const last = all[all.length - 1];
-      if (last?.kind === 'assistant' || last?.kind === 'thinking') {
-        setStreamingEntryId((prev) => (prev === last.id ? prev : last.id));
-      }
-    } else if (ev.type === 'assistant_text_done' || ev.type === 'reasoning_text_done') {
-      setStreamingEntryId(null);
     } else if (ev.type === 'permission_request') {
       setPending({ requestId: ev.requestId, command: ev.command, reason: ev.reason });
     } else if (ev.type === 'permission_resolved' || ev.type === 'permission_timeout') {
@@ -488,7 +479,6 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'run_finished') {
       setRunning(false);
       setStreaming(false);
-      setStreamingEntryId(null);
       if (ev.reason !== 'stop') {
         const statusMsg =
           ev.reason === 'max_steps'
@@ -866,7 +856,6 @@ export function App(props: AppProps): React.ReactElement {
         // parks the cursor at home so Ink's next frame draws from the top.
         stdout?.write('\x1b[2J\x1b[3J\x1b[H');
         scrollback.clear();
-        setStreamingEntryId(null);
         setShowHeader(false);
         setStaticEpoch((n) => n + 1);
         return;
@@ -957,7 +946,6 @@ export function App(props: AppProps): React.ReactElement {
             setRunning(false);
             setQueue([]);
             setStreaming(false);
-            setStreamingEntryId(null);
             scrollback.addInfo(`new session ${newId.slice(-8)}`);
           } catch (err) {
             scrollback.addError(`/new: ${(err as Error).message}`);
@@ -1059,7 +1047,6 @@ export function App(props: AppProps): React.ReactElement {
             setRunning(false);
             setQueue([]);
             setStreaming(false);
-            setStreamingEntryId(null);
             scrollback.addInfo(
               `forked session ${childId.slice(-8)} from ${parentId.slice(-8)}${
                 purpose.length > 0 ? ` (${purpose})` : ''
@@ -1149,7 +1136,6 @@ export function App(props: AppProps): React.ReactElement {
             setRunning(false);
             setQueue([]);
             setStreaming(false);
-            setStreamingEntryId(null);
           } catch (err) {
             scrollback.addError(`/attach: ${(err as Error).message}`);
           }
@@ -1170,7 +1156,6 @@ export function App(props: AppProps): React.ReactElement {
         setRunning(false);
         setQueue([]);
         setStreaming(false);
-        setStreamingEntryId(null);
         return;
       }
       case '/compact': {
@@ -1418,12 +1403,14 @@ export function App(props: AppProps): React.ReactElement {
       });
   }
 
-  // Split entries: the in-flight assistant entry and any tool entries that
-  // haven't yet seen their `tool_call_result` render inline below <Static>
-  // so their text can keep updating (deltas for assistants, the result-aware
-  // formatter summary for tool calls). Everything else is committed to the
-  // terminal's native scrollback via <Static>, which never re-renders an
-  // item once it has been emitted.
+  // Split entries on the store's commit cursor. `<Static>` renders
+  // positionally and append-only (it prints `items.slice(lastLength)`), so
+  // the committed list must be a strictly growing prefix of the entry order
+  // — per-entry classification here used to insert late-resolving entries
+  // before already-printed ones, producing duplicate tool rows and dropped
+  // text blocks. The Scrollback store owns finalization now: entries past
+  // the cursor (streaming text, pending tools, blocked-but-final entries)
+  // render in the dynamic region below until their whole prefix is final.
   //
   // Subagent rows whose `parentEntryId` references another entry are NOT
   // top-level — they're collected into `childrenByParent` and rendered
@@ -1442,34 +1429,15 @@ export function App(props: AppProps): React.ReactElement {
         childrenByParent.set(e.parentEntryId, arr);
       }
     }
-    // Find the index of the trailing top-level entry — a `mode_change` row in
-    // that slot stays in `inFlightEntries` so consecutive mode switches can
-    // collapse before any of them commit to <Static>.
-    let lastTopLevelIdx = -1;
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const candidate = entries[i]!;
-      if (candidate.kind !== 'subagent' || !candidate.parentEntryId) {
-        lastTopLevelIdx = i;
-        break;
-      }
-    }
     const inFlight: ScrollbackEntry[] = [];
     const committed: ScrollbackEntry[] = [];
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i]!;
       if (e.kind === 'subagent' && e.parentEntryId) continue; // nested child
-      const isStreamingAssistant = e.id === streamingEntryId;
-      const isPendingTool =
-        e.kind === 'tool' && e.toolResult === undefined && e.toolError === undefined;
-      const isTrailingModeChange = e.kind === 'mode_change' && i === lastTopLevelIdx;
-      if (isStreamingAssistant || isPendingTool || isTrailingModeChange) {
-        inFlight.push(e);
-      } else {
-        committed.push(e);
-      }
+      (i < committedCount ? committed : inFlight).push(e);
     }
     return { committedEntries: committed, inFlightEntries: inFlight, childrenByParent };
-  }, [entries, streamingEntryId]);
+  }, [entries, committedCount]);
 
   const staticItems = useMemo<StaticItem[]>(() => {
     const entryItems: StaticItem[] = committedEntries.map((e) => ({
@@ -1692,7 +1660,6 @@ export function App(props: AppProps): React.ReactElement {
                   setRunning(false);
                   setQueue([]);
                   setStreaming(false);
-                  setStreamingEntryId(null);
                   scrollback.addInfo(`switched to session ${selectedId.slice(-8)}`);
                 } catch (err) {
                   scrollback.addError(`/sessions: ${(err as Error).message}`);
@@ -1713,7 +1680,6 @@ export function App(props: AppProps): React.ReactElement {
               setRunning(false);
               setQueue([]);
               setStreaming(false);
-              setStreamingEntryId(null);
               void (async () => {
                 try {
                   const rewindResult = await activeSession.client.rewindSession(
@@ -1760,7 +1726,6 @@ export function App(props: AppProps): React.ReactElement {
                   setRunning(false);
                   setQueue([]);
                   setStreaming(false);
-                  setStreamingEntryId(null);
                   const s = await activeSession.client.getSession(childId);
                   if (Array.isArray(s.messages) && s.messages.length > 0) {
                     scrollback.rehydrateFromSession(s);

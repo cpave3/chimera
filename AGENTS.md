@@ -131,6 +131,16 @@ not the package barrel) at the start of each case.
 
 ## Ink (v7) specifics
 
+- **`<Static>` is positional and append-only.** It renders
+  `items.slice(prevLength)` and never re-renders or backfills. The TUI
+  therefore commits scrollback entries through a monotonic cursor owned by
+  the `Scrollback` store (`splitSnapshot()`): an entry commits only when it
+  is finalized AND everything before it is committed. Never classify
+  committed/in-flight per entry in the React layer — out-of-order tool
+  results or mid-stream info lines will insert before `<Static>`'s cursor,
+  printing duplicates and dropping entries. Tests:
+  `packages/tui/test/scrollback-commit.test.ts`.
+
 - `render()` options we rely on: `exitOnCtrlC: false` (so our handler
   interrupts instead of exiting) and `stdin` (custom stream — see
   `packages/tui/src/mouse.ts`).

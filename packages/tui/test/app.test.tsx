@@ -855,6 +855,83 @@ describe('App', () => {
     unmount();
   });
 
+  it('renders each tool call exactly once when results arrive out of order', async () => {
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const emit = (ev: unknown) => pushEvent!(ev);
+    emit({ type: 'assistant_text_delta', id: 't1', delta: 'running two tools' });
+    emit({ type: 'assistant_text_done', id: 't1', text: 'running two tools' });
+    emit({
+      type: 'tool_call_start',
+      callId: 'a',
+      name: 'bash',
+      args: {},
+      target: 'host',
+      display: { summary: 'TOOL_ALPHA_SUMMARY' },
+    });
+    emit({
+      type: 'tool_call_start',
+      callId: 'b',
+      name: 'read',
+      args: {},
+      target: 'host',
+      display: { summary: 'TOOL_BETA_SUMMARY' },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    // B resolves before A — the sequence that used to displace <Static>'s
+    // positional cursor and print B twice while dropping A entirely.
+    emit({
+      type: 'tool_call_result',
+      callId: 'b',
+      result: {},
+      durationMs: 1,
+      display: { summary: 'TOOL_BETA_SUMMARY' },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    emit({
+      type: 'tool_call_result',
+      callId: 'a',
+      result: {},
+      durationMs: 1,
+      display: { summary: 'TOOL_ALPHA_SUMMARY' },
+    });
+    emit({ type: 'run_finished', reason: 'stop' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const frame = lastFrame()!;
+    const count = (needle: string) => frame.split(needle).length - 1;
+    expect(count('TOOL_ALPHA_SUMMARY')).toBe(1);
+    expect(count('TOOL_BETA_SUMMARY')).toBe(1);
+    expect(count('running two tools')).toBe(1);
+
+    unmount();
+  });
+
   it('renders a task progress widget on task_list_updated', async () => {
     let pushEvent: ((ev: unknown) => void) | null = null;
     const client = stubClient({
