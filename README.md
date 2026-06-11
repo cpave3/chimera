@@ -11,14 +11,48 @@ MCP is intentionally **not** in this release; it's a self-contained follow-on ch
 
 ## Install
 
+### Prerequisites
+
+- Node.js >=20
+
+Enable corepack so the pinned `pnpm` version is used automatically:
+
+```bash
+corepack enable
 ```
+
+### Build
+
+```bash
 pnpm install
 pnpm -r build
 ```
 
-The CLI is exposed by `@chimera/cli`. During development, invoke it via:
+### Make `chimera` available globally
 
+Link the repo so the `chimera` binary is on your PATH:
+
+```bash
+pnpm link --global
 ```
+
+Verify:
+
+```bash
+chimera --version
+```
+
+To remove the global link later:
+
+```bash
+pnpm unlink --global
+```
+
+### Development fallback
+
+If you prefer not to link globally, run the CLI directly:
+
+```bash
 node packages/cli/dist/bin.js <args>
 ```
 

@@ -5,6 +5,9 @@
   "description": "Terminal-native AI coding agent with SDK-first architecture",
   "type": "module",
   "packageManager": "pnpm@10.24.0",
+  "bin": {
+    "chimera": "./packages/cli/dist/bin.js"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -19,8 +22,6 @@
     "lint:fix": "biome lint --write .",
     "biome:lint": "node ./node_modules/@biomejs/biome/bin/biome lint .",
     "biome:lint:fix": "node ./node_modules/@biomejs/biome/bin/biome lint --write .",
-    "link": "pnpm --filter @chimera/cli link --global",
-    "unlink": "pnpm --filter @chimera/cli unlink --global",
     "sandbox:build": "docker build -t chimera-sandbox:dev packages/sandbox/docker"
   },
   "devDependencies": {

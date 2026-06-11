@@ -422,6 +422,179 @@ describe('Agent', () => {
     expect(dones).toEqual(["I'll check...", 'Done!']);
   });
 
+  it('emits reasoning_text_delta/reasoning_text_done for reasoning parts', async () => {
+    // Provider-side chunks use `delta`; streamText's fullStream exposes `text`.
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'Hmm... ' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'let me think.' },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'Hello' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const reasoningDeltas: string[] = [];
+    const reasoningDones: string[] = [];
+    const textDones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'reasoning_text_delta') reasoningDeltas.push(ev.delta);
+      if (ev.type === 'reasoning_text_done') reasoningDones.push(ev.text);
+      if (ev.type === 'assistant_text_done') textDones.push(ev.text);
+    }
+    expect(reasoningDeltas).toEqual(['Hmm... ', 'let me think.']);
+    expect(reasoningDones).toEqual(['Hmm... let me think.']);
+    expect(textDones).toEqual(['Hello']);
+  });
+
+  it('flushes unconcluded text when a second text-start reuses the same id mid-step', async () => {
+    const noopTool = tool({
+      description: 'noop',
+      inputSchema: z.object({}),
+      execute: async () => ({ ok: true }),
+    });
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: 'first block' },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'noop',
+                  input: JSON.stringify({}),
+                },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: 'second block' },
+                { type: 'text-end', id: 't1' },
+                {
+                  type: 'finish',
+                  finishReason: 'stop',
+                  usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: { noop: noopTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const dones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'assistant_text_done') dones.push(ev.text);
+    }
+    expect(dones).toEqual(['first block', 'second block']);
+  });
+
+  it('flushes unconcluded reasoning on reasoning-start id reuse mid-step', async () => {
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                { type: 'reasoning-start', id: 'r1' },
+                { type: 'reasoning-delta', id: 'r1', delta: 'think1' },
+                { type: 'reasoning-start', id: 'r1' },
+                { type: 'reasoning-delta', id: 'r1', delta: 'think2' },
+                { type: 'reasoning-end', id: 'r1' },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: 'Hello' },
+                { type: 'text-end', id: 't1' },
+                {
+                  type: 'finish',
+                  finishReason: 'stop',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const reasoningDones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'reasoning_text_done') reasoningDones.push(ev.text);
+    }
+    expect(reasoningDones).toEqual(['think1', 'think2']);
+  });
+
   it('suppresses re-emitted text-start/text-delta/text-end for an already-finalized text-id', async () => {
     // The AI SDK can replay the same text-id across step boundaries when
     // `response.messages` consolidates multiple emitted parts back into one.
@@ -468,6 +641,186 @@ describe('Agent', () => {
     }
     expect(deltas).toEqual(['hello ', 'world']);
     expect(dones).toEqual(['hello world']);
+  });
+
+  it('suppresses replayed reasoning parts for an already-finalized reasoning-id', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'think ' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'hard' },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'think ' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'hard' },
+            { type: 'reasoning-end', id: 'r1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const deltas: string[] = [];
+    const dones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'reasoning_text_delta') deltas.push(ev.delta);
+      if (ev.type === 'reasoning_text_done') dones.push(ev.text);
+    }
+    expect(deltas).toEqual(['think ', 'hard']);
+    expect(dones).toEqual(['think hard']);
+  });
+
+  it('generates synthetic reasoning ids when the same id carries different content', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'first' },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'second' },
+            { type: 'reasoning-end', id: 'r1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const dones: string[] = [];
+    const ids: (string | undefined)[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'reasoning_text_done') {
+        dones.push(ev.text);
+        ids.push(ev.id);
+      }
+    }
+    expect(dones).toEqual(['first', 'second']);
+    expect(ids[0]).toBe('r1');
+    expect(ids[1]).toBe('r1#1');
+  });
+
+  it('interleaves reasoning and text chunks within a single step', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'hmm... ' },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'Hello' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const reasoningDeltas: string[] = [];
+    const reasoningDones: string[] = [];
+    const textDeltas: string[] = [];
+    const textDones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'reasoning_text_delta') reasoningDeltas.push(ev.delta);
+      if (ev.type === 'reasoning_text_done') reasoningDones.push(ev.text);
+      if (ev.type === 'assistant_text_delta') textDeltas.push(ev.delta);
+      if (ev.type === 'assistant_text_done') textDones.push(ev.text);
+    }
+    expect(reasoningDeltas).toEqual(['hmm... ']);
+    expect(reasoningDones).toEqual(['hmm... ']);
+    expect(textDeltas).toEqual(['Hello']);
+    expect(textDones).toEqual(['Hello']);
+  });
+
+  it('emits no reasoning events for an empty reasoning block', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'Hi' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const reasoningEvents: string[] = [];
+    const textDones: string[] = [];
+    for await (const ev of agent.run('hi')) {
+      if (ev.type === 'reasoning_text_delta' || ev.type === 'reasoning_text_done') {
+        reasoningEvents.push(ev.type);
+      }
+      if (ev.type === 'assistant_text_done') textDones.push(ev.text);
+    }
+    expect(reasoningEvents).toEqual([]);
+    expect(textDones).toEqual(['Hi']);
   });
 
   it('interrupt during run yields run_finished with reason interrupted', async () => {

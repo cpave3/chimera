@@ -29,6 +29,15 @@ export interface AssistantEntry extends BaseEntry {
   textId?: string;
 }
 
+export interface ThinkingEntry extends BaseEntry {
+  kind: 'thinking';
+  /**
+   * AI SDK `reasoning-id` for the reasoning turn — same dedupe semantics as
+   * `textId` above.
+   */
+  textId?: string;
+}
+
 export interface ToolEntry extends BaseEntry {
   kind: 'tool';
   toolName: string;
@@ -83,6 +92,7 @@ export interface ModeChangeEntry extends BaseEntry {
 export type ScrollbackEntry =
   | UserEntry
   | AssistantEntry
+  | ThinkingEntry
   | ToolEntry
   | InfoEntry
   | ErrorEntry
@@ -92,6 +102,11 @@ export type ScrollbackEntry =
 export class Scrollback {
   private entries: ScrollbackEntry[] = [];
   private assistantBuf: string | null = null;
+  /** Id of the active assistant entry being streamed into by `assistant_text_delta`. */
+  private assistantEntryId: string | null = null;
+  private thinkingBuf: string | null = null;
+  /** Id of the active thinking entry being streamed into by `reasoning_text_delta`. */
+  private thinkingEntryId: string | null = null;
   private toolsByCallId = new Map<CallId, ToolEntry>();
   /** subagentId → parent (spawn_agent) entry id, for routing child rows. */
   private subagentParents = new Map<string, string>();
@@ -218,12 +233,16 @@ export class Scrollback {
     this.scheduleFlush();
   }
 
+  /** Wipe all visible entries and reset transient streaming state. */
   clear(): void {
     this.entries = [];
     this.assistantBuf = null;
     this.toolsByCallId.clear();
     this.subagentParents.clear();
     this.subagentToolsByCallId.clear();
+    this.assistantEntryId = null;
+    this.thinkingBuf = null;
+    this.thinkingEntryId = null;
     this.suppressUserContent = null;
     if (this.flushTimeout) {
       clearTimeout(this.flushTimeout);
@@ -334,32 +353,69 @@ export class Scrollback {
       if (ev.type === 'assistant_text_delta') {
         if (this.assistantBuf === null) {
           this.assistantBuf = '';
+          const id = this.newId();
+          this.assistantEntryId = id;
           this.entries.push({
-            id: this.newId(),
+            id,
             kind: 'assistant',
             text: '',
             textId: ev.id,
           });
         }
         this.assistantBuf += ev.delta;
-        this.entries[this.entries.length - 1]!.text = this.assistantBuf;
+        const target = this.entries.find((e) => e.id === this.assistantEntryId);
+        if (target && target.kind === 'assistant') {
+          target.text = this.assistantBuf;
+        }
         dirty = true;
         return;
       }
       if (ev.type === 'assistant_text_done') {
         this.assistantBuf = null;
-        const last = this.entries[this.entries.length - 1];
-        if (last && last.kind === 'assistant' && last.text.length > 0) {
-          last.text = ev.text;
-          if (ev.id !== undefined) last.textId = ev.id;
-        } else {
-          this.entries.push({
-            id: this.newId(),
-            kind: 'assistant',
-            text: ev.text,
-            textId: ev.id,
-          });
+        const trackedIdx = this.entries.findIndex((e) => e.id === this.assistantEntryId);
+        this.assistantEntryId = null;
+        if (trackedIdx >= 0) {
+          const target = this.entries[trackedIdx];
+          if (target && target.kind === 'assistant' && target.text.length > 0) {
+            target.text = ev.text;
+            if (ev.id !== undefined) target.textId = ev.id;
+            // Dedupe: the tracked entry may be a duplicate of an earlier one.
+            if (ev.id !== undefined) {
+              for (let i = trackedIdx - 1; i >= 0; i -= 1) {
+                const candidate = this.entries[i];
+                if (
+                  candidate &&
+                  candidate.kind === 'assistant' &&
+                  candidate.textId === ev.id &&
+                  candidate.text === target.text
+                ) {
+                  this.entries.splice(trackedIdx, 1);
+                  dirty = true;
+                  return;
+                }
+              }
+            } else {
+              const above = this.entries[trackedIdx - 1];
+              if (
+                above &&
+                above.kind === 'assistant' &&
+                above.text === target.text &&
+                above.textId === undefined
+              ) {
+                this.entries.splice(trackedIdx, 1);
+              }
+            }
+            dirty = true;
+            return;
+          }
         }
+
+        this.entries.push({
+          id: this.newId(),
+          kind: 'assistant',
+          text: ev.text,
+          textId: ev.id,
+        });
 
         const finalEntry = this.entries[this.entries.length - 1];
         if (!finalEntry || finalEntry.kind !== 'assistant') return;
@@ -386,6 +442,106 @@ export class Scrollback {
         if (
           above &&
           above.kind === 'assistant' &&
+          above.text === finalEntry.text &&
+          above.textId === undefined
+        ) {
+          this.entries.pop();
+        }
+        dirty = true;
+        return;
+      }
+      if (ev.type === 'reasoning_text_delta') {
+        if (this.thinkingBuf === null) {
+          this.thinkingBuf = '';
+          const id = this.newId();
+          this.thinkingEntryId = id;
+          this.entries.push({
+            id,
+            kind: 'thinking',
+            text: '',
+            textId: ev.id,
+          });
+        }
+        this.thinkingBuf += ev.delta;
+        const target = this.entries.find((e) => e.id === this.thinkingEntryId);
+        if (target && target.kind === 'thinking') {
+          target.text = this.thinkingBuf;
+        }
+        dirty = true;
+        return;
+      }
+      if (ev.type === 'reasoning_text_done') {
+        this.thinkingBuf = null;
+        const trackedIdx = this.entries.findIndex((e) => e.id === this.thinkingEntryId);
+        this.thinkingEntryId = null;
+        if (trackedIdx >= 0) {
+          const target = this.entries[trackedIdx];
+          if (target && target.kind === 'thinking' && target.text.length > 0) {
+            target.text = ev.text;
+            if (ev.id !== undefined) target.textId = ev.id;
+            // Dedupe: same logic as assistant_text_done.
+            if (ev.id !== undefined) {
+              for (let i = trackedIdx - 1; i >= 0; i -= 1) {
+                const candidate = this.entries[i];
+                if (
+                  candidate &&
+                  candidate.kind === 'thinking' &&
+                  candidate.textId === ev.id &&
+                  candidate.text === target.text
+                ) {
+                  this.entries.splice(trackedIdx, 1);
+                  dirty = true;
+                  return;
+                }
+              }
+            } else {
+              const above = this.entries[trackedIdx - 1];
+              if (
+                above &&
+                above.kind === 'thinking' &&
+                above.text === target.text &&
+                above.textId === undefined
+              ) {
+                this.entries.splice(trackedIdx, 1);
+              }
+            }
+            dirty = true;
+            return;
+          }
+        }
+
+        this.entries.push({
+          id: this.newId(),
+          kind: 'thinking',
+          text: ev.text,
+          textId: ev.id,
+        });
+
+        const finalEntry = this.entries[this.entries.length - 1];
+        if (!finalEntry || finalEntry.kind !== 'thinking') return;
+
+        if (ev.id !== undefined) {
+          for (let i = this.entries.length - 2; i >= 0; i -= 1) {
+            const candidate = this.entries[i];
+            if (
+              candidate &&
+              candidate.kind === 'thinking' &&
+              candidate.textId === ev.id &&
+              candidate.text === finalEntry.text
+            ) {
+              this.entries.pop();
+              dirty = true;
+              return;
+            }
+          }
+          dirty = true;
+          return;
+        }
+
+        const above = this.entries[this.entries.length - 2];
+        if (
+          above &&
+          above.kind === 'thinking' &&
           above.text === finalEntry.text &&
           above.textId === undefined
         ) {
@@ -497,6 +653,18 @@ export class Scrollback {
         const id = ev.subagentId;
         const parentEntryId = this.subagentParents.get(id);
         if (inner.type === 'assistant_text_done' && inner.text.length > 0) {
+          this.entries.push({
+            id: this.newId(),
+            kind: 'subagent',
+            text: previewLine(inner.text),
+            subagentId: id,
+            subagentStatus: 'running',
+            parentEntryId,
+          });
+          dirty = true;
+          return;
+        }
+        if (inner.type === 'reasoning_text_done' && inner.text.length > 0) {
           this.entries.push({
             id: this.newId(),
             kind: 'subagent',

@@ -18,6 +18,10 @@ export type AgentEvent =
   | { type: 'user_message'; content: string }
   | { type: 'assistant_text_delta'; id?: string; delta: string }
   | { type: 'assistant_text_done'; id?: string; text: string }
+  /** Streaming delta for model reasoning content (o1, DeepSeek-R1, etc.). */
+  | { type: 'reasoning_text_delta'; id?: string; delta: string }
+  /** Finalized reasoning content for a reasoning turn. */
+  | { type: 'reasoning_text_done'; id?: string; text: string }
   | {
       type: 'tool_call_start';
       callId: CallId;

@@ -828,6 +828,12 @@ export class Agent {
     const shadows = new Map<string, ShadowState>();
     let syntheticTextCounter = 0;
 
+    // Same machinery for reasoning parts (e.g. o1, o3-mini, DeepSeek-R1).
+    const reasoningStreams = new Map<string, string>();
+    const emittedReasoningById = new Map<string, string>();
+    const reasoningShadows = new Map<string, ShadowState>();
+    let syntheticReasoningCounter = 0;
+
     let stepNumber = 0;
     let terminalStepCount = 0;
     let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' = 'stop';
@@ -889,13 +895,49 @@ export class Agent {
 
           for await (const part of stream.fullStream) {
             switch (part.type) {
-              case 'text-start':
+              case 'text-start': {
+                // Flush an unconcluded text block before starting a new one.
+                // Some providers reuse the same id mid-step (text -> tool-call
+                // -> text) without sending text-end for the first block.
+                const activeText = textStreams.get(part.id);
+                if (activeText !== undefined && activeText.length > 0) {
+                  queue.push({ type: 'assistant_text_done', id: part.id, text: activeText });
+                  emittedTextById.set(part.id, activeText);
+                  textStreams.delete(part.id);
+                }
+                const shadow = shadows.get(part.id);
+                if (shadow) {
+                  shadows.delete(part.id);
+                  if (shadow.syntheticId) {
+                    queue.push({
+                      type: 'assistant_text_done',
+                      id: shadow.syntheticId,
+                      text: shadow.buf,
+                    });
+                    emittedTextById.set(part.id, shadow.buf);
+                  } else if (shadow.buf.length > 0) {
+                    syntheticTextCounter += 1;
+                    const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                    queue.push({
+                      type: 'assistant_text_delta',
+                      id: syntheticId,
+                      delta: shadow.buf,
+                    });
+                    queue.push({
+                      type: 'assistant_text_done',
+                      id: syntheticId,
+                      text: shadow.buf,
+                    });
+                    emittedTextById.set(part.id, shadow.buf);
+                  }
+                }
                 if (emittedTextById.has(part.id)) {
                   shadows.set(part.id, { buf: '' });
                 } else {
                   textStreams.set(part.id, '');
                 }
                 break;
+              }
               case 'text-delta': {
                 const shadow = shadows.get(part.id);
                 if (shadow) {
@@ -959,6 +1001,117 @@ export class Agent {
                 if (full.length > 0) {
                   queue.push({ type: 'assistant_text_done', id: part.id, text: full });
                   emittedTextById.set(part.id, full);
+                }
+                break;
+              }
+              case 'reasoning-start': {
+                // Same provider quirk as text-start: mid-step id reuse without reasoning-end.
+                const activeReasoning = reasoningStreams.get(part.id);
+                if (activeReasoning !== undefined && activeReasoning.length > 0) {
+                  queue.push({ type: 'reasoning_text_done', id: part.id, text: activeReasoning });
+                  emittedReasoningById.set(part.id, activeReasoning);
+                  reasoningStreams.delete(part.id);
+                }
+                const reasoningShadow = reasoningShadows.get(part.id);
+                if (reasoningShadow) {
+                  reasoningShadows.delete(part.id);
+                  if (reasoningShadow.syntheticId) {
+                    queue.push({
+                      type: 'reasoning_text_done',
+                      id: reasoningShadow.syntheticId,
+                      text: reasoningShadow.buf,
+                    });
+                    emittedReasoningById.set(part.id, reasoningShadow.buf);
+                  } else if (reasoningShadow.buf.length > 0) {
+                    syntheticReasoningCounter += 1;
+                    const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                    queue.push({
+                      type: 'reasoning_text_delta',
+                      id: syntheticId,
+                      delta: reasoningShadow.buf,
+                    });
+                    queue.push({
+                      type: 'reasoning_text_done',
+                      id: syntheticId,
+                      text: reasoningShadow.buf,
+                    });
+                    emittedReasoningById.set(part.id, reasoningShadow.buf);
+                  }
+                }
+                if (emittedReasoningById.has(part.id)) {
+                  reasoningShadows.set(part.id, { buf: '' });
+                } else {
+                  reasoningStreams.set(part.id, '');
+                }
+                break;
+              }
+              case 'reasoning-delta': {
+                const reasoningShadow = reasoningShadows.get(part.id);
+                if (reasoningShadow) {
+                  reasoningShadow.buf += part.text;
+                  if (reasoningShadow.syntheticId) {
+                    queue.push({
+                      type: 'reasoning_text_delta',
+                      id: reasoningShadow.syntheticId,
+                      delta: part.text,
+                    });
+                  } else {
+                    const stored = emittedReasoningById.get(part.id) ?? '';
+                    if (!stored.startsWith(reasoningShadow.buf)) {
+                      syntheticReasoningCounter += 1;
+                      reasoningShadow.syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                      queue.push({
+                        type: 'reasoning_text_delta',
+                        id: reasoningShadow.syntheticId,
+                        delta: reasoningShadow.buf,
+                      });
+                    }
+                  }
+                  break;
+                }
+                reasoningStreams.set(
+                  part.id,
+                  (reasoningStreams.get(part.id) ?? '') + part.text,
+                );
+                queue.push({ type: 'reasoning_text_delta', id: part.id, delta: part.text });
+                break;
+              }
+              case 'reasoning-end': {
+                const reasoningShadow = reasoningShadows.get(part.id);
+                if (reasoningShadow) {
+                  reasoningShadows.delete(part.id);
+                  if (reasoningShadow.syntheticId) {
+                    queue.push({
+                      type: 'reasoning_text_done',
+                      id: reasoningShadow.syntheticId,
+                      text: reasoningShadow.buf,
+                    });
+                    emittedReasoningById.set(part.id, reasoningShadow.buf);
+                  } else if (
+                    reasoningShadow.buf.length > 0 &&
+                    reasoningShadow.buf !== emittedReasoningById.get(part.id)
+                  ) {
+                    syntheticReasoningCounter += 1;
+                    const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                    queue.push({
+                      type: 'reasoning_text_delta',
+                      id: syntheticId,
+                      delta: reasoningShadow.buf,
+                    });
+                    queue.push({
+                      type: 'reasoning_text_done',
+                      id: syntheticId,
+                      text: reasoningShadow.buf,
+                    });
+                    emittedReasoningById.set(part.id, reasoningShadow.buf);
+                  }
+                  break;
+                }
+                const reasoningFull = reasoningStreams.get(part.id) ?? '';
+                reasoningStreams.delete(part.id);
+                if (reasoningFull.length > 0) {
+                  queue.push({ type: 'reasoning_text_done', id: part.id, text: reasoningFull });
+                  emittedReasoningById.set(part.id, reasoningFull);
                 }
                 break;
               }
@@ -1126,7 +1279,7 @@ export class Agent {
                 break;
               }
               default:
-                // Ignore reasoning, source, file, tool-input-*, start/start-step, raw.
+                // Ignore source, file, tool-input-*, start/start-step, raw.
                 break;
             }
           }

@@ -22,6 +22,28 @@ describe('Scrollback', () => {
     expect(rows[0]!.text).toBe('Hello');
   });
 
+  it('accumulates reasoning text deltas into a thinking row', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'reasoning_text_delta', delta: 'Hmm' });
+    scrollback.apply({ type: 'reasoning_text_delta', delta: '...' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('thinking');
+    expect(rows[0]!.text).toBe('Hmm...');
+  });
+
+  it('collapses repeated reasoning delta+done cycles for the same id', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'reasoning_text_delta', id: 'r1', delta: 'Think' });
+    scrollback.apply({ type: 'reasoning_text_done', id: 'r1', text: 'Think' });
+    scrollback.apply({ type: 'reasoning_text_delta', id: 'r1', delta: 'Think' });
+    scrollback.apply({ type: 'reasoning_text_done', id: 'r1', text: 'Think' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('thinking');
+    expect(rows[0]!.text).toBe('Think');
+  });
+
   it('collapses repeated delta+done cycles for the same text-id into one row', () => {
     const scrollback = new Scrollback();
     scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hello' });
@@ -241,11 +263,28 @@ describe('Scrollback', () => {
     expect(scrollback.all()[0]!.detail).toBe('prompt: go');
   });
 
-  it('clear wipes entries', () => {
+  it('clear wipes entries and resets streaming state', () => {
     const scrollback = new Scrollback();
-    scrollback.apply({ type: 'user_message', content: 'hi' });
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hel' });
     scrollback.clear();
-    expect(scrollback.all()).toEqual([]);
+    // Streaming state must be wiped so the next delta starts a fresh entry.
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hello' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Hello' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.text).toBe('Hello');
+  });
+
+  it('clear wipes thinking streaming state', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'reasoning_text_delta', id: 'r1', delta: 'Think' });
+    scrollback.clear();
+    scrollback.apply({ type: 'reasoning_text_delta', id: 'r1', delta: 'Think' });
+    scrollback.apply({ type: 'reasoning_text_done', id: 'r1', text: 'Think' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('thinking');
+    expect(rows[0]!.text).toBe('Think');
   });
 
   it('suppressUserMessageMatching drops a single matching user_message event', () => {
@@ -492,6 +531,88 @@ describe('Scrollback', () => {
     // And the parents must keep their own purpose labels.
     expect(parentA.subagentPurpose).toBe('consistency review');
     expect(parentB.subagentPurpose).toBe('tests/docs review');
+  });
+
+  it('does not overwrite subagent entries when assistant text deltas arrive interleaved', () => {
+    const scrollback = new Scrollback();
+    // Start streaming assistant text.
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'Hel' });
+    // Interleaved subagent pushes a child tool entry after the assistant row.
+    scrollback.apply({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cc1',
+        name: 'bash',
+        args: { command: 'ls' },
+        target: 'host',
+      },
+    });
+    // Next delta must update the assistant entry, not the subagent entry.
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'lo' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(2);
+    const assistantEntry = rows.find((r) => r.kind === 'assistant');
+    const subagentEntry = rows.find((r) => r.kind === 'subagent');
+    expect(assistantEntry?.text).toBe('Hello');
+    expect(subagentEntry?.text).toBe('bash [host]');
+    // Finish the assistant turn to ensure cleanup works too.
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'Hello' });
+    expect(scrollback.all().find((r) => r.kind === 'assistant')?.text).toBe('Hello');
+  });
+
+  it('deduplicates assistant entries across interleaved subagent rows', () => {
+    const scrollback = new Scrollback();
+    // First assistant turn.
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'preamble' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'preamble' });
+    // Subagent event lands between turns.
+    scrollback.apply({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cc1',
+        name: 'bash',
+        args: { command: 'ls' },
+        target: 'host',
+      },
+    });
+    // The same text part is re-emitted (SDK can yield the same id again).
+    scrollback.apply({ type: 'assistant_text_delta', id: 't1', delta: 'preamble' });
+    scrollback.apply({ type: 'assistant_text_done', id: 't1', text: 'preamble' });
+    // Only one assistant row should survive; the subagent row must remain
+    // undisturbed in between.
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.kind === 'assistant')).toHaveLength(1);
+    expect(rows.find((r) => r.kind === 'assistant')?.text).toBe('preamble');
+    expect(rows.find((r) => r.kind === 'subagent')?.text).toBe('bash [host]');
+  });
+
+  it('deduplicates thinking entries across interleaved subagent rows', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({ type: 'reasoning_text_delta', id: 'r1', delta: 'ponder' });
+    scrollback.apply({ type: 'reasoning_text_done', id: 'r1', text: 'ponder' });
+    scrollback.apply({
+      type: 'subagent_event',
+      subagentId: 'sa1',
+      event: {
+        type: 'tool_call_start',
+        callId: 'cc1',
+        name: 'bash',
+        args: { command: 'ls' },
+        target: 'host',
+      },
+    });
+    scrollback.apply({ type: 'reasoning_text_delta', id: 'r1', delta: 'ponder' });
+    scrollback.apply({ type: 'reasoning_text_done', id: 'r1', text: 'ponder' });
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.kind === 'thinking')).toHaveLength(1);
+    expect(rows.find((r) => r.kind === 'thinking')?.text).toBe('ponder');
+    expect(rows.find((r) => r.kind === 'subagent')?.text).toBe('bash [host]');
   });
 
   it('falls back to a stand-alone row when subagent_spawned has no matching parent', () => {

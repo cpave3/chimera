@@ -443,13 +443,13 @@ export function App(props: AppProps): React.ReactElement {
         `[chimera-tui-apply]   after tool_call_result: total entries=${all.length}, subagent-children=${childCount}\n`,
       );
     }
-    if (ev.type === 'assistant_text_delta') {
+    if (ev.type === 'assistant_text_delta' || ev.type === 'reasoning_text_delta') {
       setStreaming(true);
       const last = all[all.length - 1];
-      if (last?.kind === 'assistant') {
+      if (last?.kind === 'assistant' || last?.kind === 'thinking') {
         setStreamingEntryId((prev) => (prev === last.id ? prev : last.id));
       }
-    } else if (ev.type === 'assistant_text_done') {
+    } else if (ev.type === 'assistant_text_done' || ev.type === 'reasoning_text_done') {
       setStreamingEntryId(null);
     } else if (ev.type === 'permission_request') {
       setPending({ requestId: ev.requestId, command: ev.command, reason: ev.reason });
@@ -1888,6 +1888,19 @@ function renderEntryLines(
     return [
       <Box key={`${entry.id}:a`} flexDirection="column" paddingLeft={2}>
         {renderMarkdown(entry.text, theme)}
+      </Box>,
+    ];
+  }
+  if (entry.kind === 'thinking') {
+    const lines = entry.text.split('\n');
+    return [
+      <Box key={`${entry.id}:th`} flexDirection="column" paddingLeft={2}>
+        {lines.map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for split output
+          <Text key={i} color={theme.text.muted}>
+            {line}
+          </Text>
+        ))}
       </Box>,
     ];
   }
