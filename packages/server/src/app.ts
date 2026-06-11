@@ -359,6 +359,12 @@ export function buildApp(opts: AppOptions): Hono {
     }
   });
 
+  app.get('/v1/sessions/:id/context', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(entry.agent.contextBreakdown());
+  });
+
   app.get('/v1/sessions/:id/commands', (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);

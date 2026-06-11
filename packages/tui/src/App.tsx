@@ -509,8 +509,11 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'compaction_finished') {
       setCompacting(false);
       const delta = ev.tokensBefore - ev.tokensAfter;
+      const strategyNote = ev.strategy ? ` [${ev.strategy}]` : '';
+      const pruneNote =
+        ev.prunedCount && ev.prunedCount > 0 ? `, ${ev.prunedCount} outputs archived` : '';
       scrollback.addInfo(
-        `compaction done: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced)`
+        `compaction done${strategyNote}: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced${pruneNote})`
       );
     } else if (ev.type === 'compaction_failed') {
       setCompacting(false);
@@ -1156,6 +1159,39 @@ export function App(props: AppProps): React.ReactElement {
         setRunning(false);
         setQueue([]);
         setStreaming(false);
+        return;
+      }
+      case '/context': {
+        void (async () => {
+          try {
+            const breakdown = await activeSession.client.getContextBreakdown(
+              activeSession.sessionId,
+            );
+            const fmt = (n: number) => n.toLocaleString('en-US');
+            const pct = (n: number) => `${Math.round((n / breakdown.contextWindow) * 100)}%`;
+            const lines = [
+              `context window: ${fmt(breakdown.contextWindow)} tokens`,
+              breakdown.lastPromptTokens !== null
+                ? `last prompt (actual): ${fmt(breakdown.lastPromptTokens)} (${pct(breakdown.lastPromptTokens)})`
+                : 'last prompt (actual): n/a (no step yet)',
+              `estimated now: ${fmt(breakdown.estimatedTotalTokens)} (${pct(breakdown.estimatedTotalTokens)})`,
+              breakdown.triggerTokens !== null
+                ? `auto-compact trigger: ${fmt(breakdown.triggerTokens)} (${pct(breakdown.triggerTokens)})`
+                : 'auto-compact: disabled',
+              `  system prompt: ~${fmt(breakdown.systemPromptTokens)}`,
+              ...(breakdown.summaryTokens > 0
+                ? [`  compaction summary: ~${fmt(breakdown.summaryTokens)}`]
+                : []),
+              `  user messages: ~${fmt(breakdown.userTokens)}`,
+              `  assistant messages: ~${fmt(breakdown.assistantTokens)}`,
+              `  tool results: ~${fmt(breakdown.toolTokens)} (${breakdown.archivedStubCount} archived stub${breakdown.archivedStubCount === 1 ? '' : 's'})`,
+              `  messages: ${breakdown.messageCount}`,
+            ];
+            for (const line of lines) scrollback.addInfo(line);
+          } catch (err) {
+            scrollback.addError(`/context: ${(err as Error).message}`);
+          }
+        })();
         return;
       }
       case '/compact': {

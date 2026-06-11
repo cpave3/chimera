@@ -457,6 +457,31 @@ describe('server app', () => {
     expect(body.lastCompactedAt).toBeNull();
   });
 
+  it('GET /v1/sessions/:id/context returns the token breakdown', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+
+    const contextResponse = await app.request(`/v1/sessions/${sessionId}/context`);
+    expect(contextResponse.status).toBe(200);
+    const breakdown = await contextResponse.json();
+    expect(breakdown.contextWindow).toBe(200_000);
+    expect(breakdown.messageCount).toBe(0);
+    expect(typeof breakdown.estimatedTotalTokens).toBe('number');
+
+    const missing = await app.request('/v1/sessions/01KSHWCXG17ZRTQY9G13J3AETZ/context');
+    expect(missing.status).toBe(404);
+  });
+
   it('GET /v1/sessions/:id reads compactionCount and lastCompactedAt from disk', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),

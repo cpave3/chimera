@@ -932,6 +932,43 @@ describe('App', () => {
     unmount();
   });
 
+  it('/context renders a token breakdown from the server', async () => {
+    const client = stubClient({
+      getContextBreakdown: async () => ({
+        contextWindow: 200_000,
+        lastPromptTokens: 54_321,
+        estimatedTotalTokens: 60_000,
+        triggerTokens: 170_000,
+        systemPromptTokens: 2_000,
+        messageCount: 12,
+        summaryTokens: 1_500,
+        userTokens: 5_000,
+        assistantTokens: 20_000,
+        toolTokens: 31_500,
+        archivedStubCount: 3,
+      }),
+    } as unknown as Partial<ChimeraClient>);
+
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+    const write = (s: string): void => {
+      (stdin as unknown as { write: (s: string) => void }).write(s);
+    };
+    for (const ch of '/context\r') {
+      write(ch);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+
+    const frame = lastFrame()!;
+    expect(frame).toContain('context window: 200,000 tokens');
+    expect(frame).toContain('last prompt (actual): 54,321 (27%)');
+    expect(frame).toContain('auto-compact trigger: 170,000 (85%)');
+    expect(frame).toContain('tool results: ~31,500 (3 archived stubs)');
+    unmount();
+  });
+
   it('renders a task progress widget on task_list_updated', async () => {
     let pushEvent: ((ev: unknown) => void) | null = null;
     const client = stubClient({

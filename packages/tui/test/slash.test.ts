@@ -11,6 +11,7 @@ describe('slash commands', () => {
         '/attach',
         '/clear',
         '/compact',
+        '/context',
         '/detach',
         '/exit',
         '/fork',

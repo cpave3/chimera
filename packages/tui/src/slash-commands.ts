@@ -29,6 +29,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/attach', description: 'Attach the TUI to a subagent by id (/attach <id>)' },
   { name: '/detach', description: 'Detach from a subagent and return to the parent session' },
   { name: '/compact', description: 'Compact context (summarise oldest messages)' },
+  { name: '/context', description: 'Show a token breakdown of the current context' },
 ];
 
 export const OVERLAY_COMMANDS: SlashCommand[] = [

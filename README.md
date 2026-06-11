@@ -273,6 +273,28 @@ Set `"diagnostics": { "enabled": false }` to turn the feature off, or
 test suites) are deliberately not auto-detected — they run on every edit, so
 opt in only where the project is small enough.
 
+## Context management
+
+Chimera is geared for models with 100–250k context windows. Three layers keep
+long sessions inside budget (full details in `docs/COMPACTION.md`):
+
+- **Mid-run auto-compaction.** The agent projects the next prompt from the
+  provider's *actual* reported token usage (falling back to a char/4 estimate
+  before the first step) and compacts when it crosses
+  `min(window × thresholdPercent, window − reserve)` — checked at run start
+  **and between steps**, so long tool loops never die on a window overflow.
+  Configure with `compaction.thresholdPercent` (default 85).
+- **Tiered compaction.** Phase 1 archives old large tool outputs to the
+  recall store and leaves `recall({ id: "pr_..." })` stubs in place — no LLM
+  call, and the conversation skeleton survives. Only if that isn't enough
+  does phase 2 summarize the oldest messages. The `recall` tool fetches
+  archived outputs back (with `start_line`/`end_line`/`search` slicing);
+  entries live under `~/.chimera/recall/<sessionId>/` and expire after
+  `recall.ttlDays` (default 30). Disable with `"recall": { "enabled": false }`.
+- **`/context`.** Shows the window, the actual last-prompt size, the current
+  estimate, the auto-compact trigger, and a per-category breakdown (system
+  prompt, summary, user/assistant messages, tool results, archived stubs).
+
 ## Task list
 
 For multi-step work the model maintains a task list via the `task_list` tool

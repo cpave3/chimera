@@ -41,7 +41,7 @@
 
 ## 6. Documentation / E2E
 
-- [ ] 6.1 RECALL.md / README section — pending (lands with the context-management overhaul docs).
+- [x] 6.1 Documented in README ("Context management") and docs/COMPACTION.md.
 - [x] 6.2 Covered by tiered-compaction tests: prune archives a large output, summary preserves pr_ ids, recall returns content.
 - [x] 6.3 Missing-id recall returns an error result (unit test).
 - [x] 6.4 Session deletion cleans up the recall dir.

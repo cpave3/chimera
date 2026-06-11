@@ -27,6 +27,7 @@ import {
   type ToolCallRecord,
   type UsageStep,
 } from './types';
+import { computeContextBreakdown, type ContextBreakdown } from './context-breakdown';
 import { ContextTracker, shouldCompact } from './context-tracker';
 import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
@@ -769,6 +770,20 @@ export class Agent {
     }
     if (parts.length === 0) return undefined;
     return parts.join('\n\n');
+  }
+
+  /**
+   * Per-category accounting of the current context for the /context command.
+   */
+  contextBreakdown(): ContextBreakdown {
+    return computeContextBreakdown({
+      messages: this.session.messages,
+      systemPrompt: this.composeSystemPrompt(false) ?? '',
+      lastPromptTokens: this.session.usage.lastStep?.inputTokens ?? null,
+      contextWindow: this.opts.contextWindow,
+      compaction: this.opts.compaction,
+      maxOutputTokens: this.opts.model.maxOutputTokens,
+    });
   }
 
   /**

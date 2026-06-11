@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   AgentEventEnvelope,
   Checkpoint,
+  ContextBreakdown,
   EventId,
   ModelConfig,
   PermissionRule,
@@ -143,6 +144,10 @@ export class ChimeraClient {
 
   async listCheckpoints(sessionId: SessionId): Promise<Checkpoint[]> {
     return this.json<Checkpoint[]>(`/v1/sessions/${sessionId}/checkpoints`);
+  }
+
+  async getContextBreakdown(sessionId: SessionId): Promise<ContextBreakdown> {
+    return this.json<ContextBreakdown>(`/v1/sessions/${sessionId}/context`);
   }
 
   async rewindSession(
