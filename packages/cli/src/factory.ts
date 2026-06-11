@@ -27,7 +27,12 @@ import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
 import { type AgentRegistry, buildSpawnAgentTool } from '@chimera/subagents';
-import { buildTools, type FormatScrollback, LocalExecutor } from '@chimera/tools';
+import {
+  BackgroundProcessManager,
+  buildTools,
+  type FormatScrollback,
+  LocalExecutor,
+} from '@chimera/tools';
 import type { ToolSet } from 'ai';
 import type { ModelOptions } from './config';
 import type { CliSandboxOptions } from './sandbox-config';
@@ -130,6 +135,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
   private readonly liveExecutors = new Map<SessionId, LocalExecutor>();
   private readonly liveAgents = new Map<SessionId, Agent>();
+  private readonly liveBackgroundManagers = new Map<SessionId, BackgroundProcessManager>();
   private readonly compaction: CompactionConfig | undefined;
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
@@ -339,11 +345,25 @@ export class CliAgentFactory implements AgentFactory {
       sandboxExecutor = docker;
     }
 
+    const backgroundProcesses = new BackgroundProcessManager({
+      cwd: init.cwd,
+      onExit: (notice) =>
+        agent.pushEvent({
+          type: 'background_process_exited',
+          shellId: notice.shellId,
+          command: notice.command,
+          status: notice.status === 'killed' ? 'killed' : 'exited',
+          exitCode: notice.exitCode,
+        }),
+    });
+    this.liveBackgroundManagers.set(agent.session.id, backgroundProcesses);
+
     const built = buildTools({
       sandboxExecutor,
       hostExecutor,
       permissionGate: gate,
       sandboxMode: init.sandboxMode,
+      backgroundProcesses,
     });
     const tools = built.tools;
     const formatters = { ...built.formatters };
@@ -543,8 +563,12 @@ export class CliAgentFactory implements AgentFactory {
     return { absolute: resolved, added: !writeAlready };
   }
 
-  /** Stop all running DockerExecutors. Safe to call multiple times. */
+  /** Stop all running DockerExecutors and background processes. Safe to call multiple times. */
   async dispose(): Promise<void> {
+    for (const manager of this.liveBackgroundManagers.values()) {
+      manager.killAll();
+    }
+    this.liveBackgroundManagers.clear();
     const stops = Array.from(this.liveSandboxes.values()).map((d) =>
       d.stop().catch((err) => {
         this.warn(`sandbox stop failed: ${(err as Error).message}`);

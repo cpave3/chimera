@@ -32,14 +32,27 @@ const BASH_SCHEMA = z.object({
     .describe(
       "Short justification for running on the host (required when sandbox is on and target='host').",
     ),
+  run_in_background: z
+    .boolean()
+    .optional()
+    .describe(
+      'Run the command as a background process and return a shell_id immediately. ' +
+        'Poll output with bash_output; terminate with bash_kill. Use for dev servers, ' +
+        'watchers, and long builds. Background commands always run on the host.',
+    ),
 });
 type BashArgs = z.infer<typeof BASH_SCHEMA>;
-type BashResult = {
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-  timed_out: boolean;
-};
+type BashResult =
+  | {
+      stdout: string;
+      stderr: string;
+      exit_code: number;
+      timed_out: boolean;
+    }
+  | {
+      shell_id: string;
+      message: string;
+    };
 
 export function buildBashTool(ctx: ToolContext) {
   return defineTool<BashArgs, BashResult>({
@@ -58,6 +71,10 @@ export function buildBashTool(ctx: ToolContext) {
           exit_code: -1,
           timed_out: false,
         };
+      }
+
+      if (args.run_in_background) {
+        return launchBackground(ctx, args);
       }
 
       const target: 'sandbox' | 'host' =
@@ -108,8 +125,43 @@ export function buildBashTool(ctx: ToolContext) {
     formatScrollback: (args, result) => {
       const head = clip(stripCdPrefix(args.command), 60);
       if (!result) return { summary: head };
+      if ('shell_id' in result) return { summary: `${head} (background: ${result.shell_id})` };
       if (result.timed_out) return { summary: `${head} (timed out)` };
       return { summary: `${head} (exit ${result.exit_code})` };
     },
   });
+}
+
+async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashResult> {
+  const refuse = (stderr: string): BashResult => ({
+    stdout: '',
+    stderr,
+    exit_code: -1,
+    timed_out: false,
+  });
+  if (args.target === 'sandbox') {
+    return refuse('refused by chimera: background commands only run on the host.');
+  }
+  const manager = ctx.backgroundProcesses;
+  if (!manager) {
+    return refuse('refused by chimera: background execution is not available in this session.');
+  }
+  if (ctx.permissionGate) {
+    const resolution = await ctx.permissionGate.request({
+      requestId: newRequestId(),
+      tool: 'bash',
+      target: 'host',
+      command: args.command,
+      cwd: ctx.hostExecutor.cwd(),
+      ...(args.reason ? { reason: args.reason } : {}),
+    });
+    if (resolution.decision === 'deny') {
+      return refuse('denied by user');
+    }
+  }
+  const launched = manager.launch(args.command);
+  return {
+    shell_id: launched.id,
+    message: `Started background process ${launched.id}. Poll with bash_output; stop with bash_kill.`,
+  };
 }

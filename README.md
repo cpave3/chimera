@@ -210,6 +210,24 @@ chimera sessions rm <id>   # delete a session (rejected if the session has child
 | max_steps      | 2    |
 | interrupted    | 130  |
 
+## Background processes
+
+The bash tool accepts `run_in_background: true`, which starts the command as a
+detached host process and returns a `shell_id` immediately — useful for dev
+servers, watchers, and long builds. Two companion tools manage running
+processes:
+
+- `bash_output { shell_id }` — returns output produced since the previous
+  read, plus the process status and exit code once it has finished.
+- `bash_kill { shell_id }` — SIGTERMs the process group, escalating to
+  SIGKILL after a grace period.
+
+Background launches go through the same permission gate as foreground host
+commands. When a process exits, a `background_process_exited` event is pushed
+onto the session's event stream and the TUI prints an info line. All
+background processes for a session are killed when the server shuts down.
+Background commands always run on the host — `target: 'sandbox'` is refused.
+
 ## Subagents
 
 The `spawn_agent` tool lets a parent agent delegate a focused task to a fresh

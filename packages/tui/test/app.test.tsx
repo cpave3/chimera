@@ -1,6 +1,5 @@
 import { ChimeraClient } from '@chimera/client';
 import { render } from 'ink-testing-library';
-import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { PermissionModal } from '../src/PermissionModal';
@@ -815,10 +814,52 @@ describe('App', () => {
     unmount();
   });
 
+  it('renders an info line when a background process exits', async () => {
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    pushEvent!({
+      type: 'background_process_exited',
+      shellId: 'shell_1',
+      command: 'pnpm dev',
+      status: 'exited',
+      exitCode: 1,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lastFrame()!).toContain('background process shell_1 exited (exit 1): pnpm dev');
+
+    unmount();
+  });
+
   it('/compact handler sets compacting immediately, and queued messages auto-send after compaction_finished', async () => {
     const sends: string[] = [];
     let pushEvent: ((ev: unknown) => void) | null = null;
     const client = stubClient({
+      // biome-ignore lint/correctness/useYield: stub records the call and yields nothing
       send: async function* (id: string, text: string) {
         void id;
         sends.push(text);

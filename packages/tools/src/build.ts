@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai';
+import { buildBashKillTool, buildBashOutputTool } from './background-tools';
 import { buildBashTool } from './bash';
 import type { ToolContext } from './context';
 import { buildEditTool } from './edit';
@@ -22,6 +23,10 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
     glob: buildGlobTool(ctx),
     grep: buildGrepTool(ctx),
   };
+  if (ctx.backgroundProcesses) {
+    defs.bash_output = buildBashOutputTool(ctx);
+    defs.bash_kill = buildBashKillTool(ctx);
+  }
   return splitDefs(defs);
 }
 

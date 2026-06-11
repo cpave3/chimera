@@ -4,6 +4,8 @@ export * from './context';
 export * from './build';
 export * from './define';
 export * from './types';
+export * from './background';
+export { buildBashKillTool, buildBashOutputTool } from './background-tools';
 export { buildBashTool } from './bash';
 export { buildReadTool } from './read';
 export { buildWriteTool } from './write';

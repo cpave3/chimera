@@ -93,6 +93,13 @@ export type AgentEvent =
       result: string;
       reason: string;
     }
+  | {
+      type: 'background_process_exited';
+      shellId: string;
+      command: string;
+      status: 'exited' | 'killed';
+      exitCode: number | null;
+    }
   | { type: 'step_finished'; stepNumber: number; finishReason: string }
   | {
       type: 'usage_updated';

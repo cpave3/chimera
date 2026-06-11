@@ -522,6 +522,12 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'compaction_failed') {
       setCompacting(false);
       scrollback.addError(`compaction failed: ${ev.error}`);
+    } else if (ev.type === 'background_process_exited') {
+      const outcome =
+        ev.status === 'killed'
+          ? 'killed'
+          : `exited (exit ${ev.exitCode ?? 'unknown'})`;
+      scrollback.addInfo(`background process ${ev.shellId} ${outcome}: ${ev.command}`);
     }
   }
 
