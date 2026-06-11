@@ -7,6 +7,8 @@ import { buildGlobTool } from './glob';
 import { buildGrepTool } from './grep';
 import { buildReadTool } from './read';
 import type { ChimeraToolDef, FormatScrollback } from './types';
+import { buildFetchTool } from './web';
+import { buildWebSearchTool } from './web-search';
 import { buildWriteTool } from './write';
 
 export interface BuildToolsResult {
@@ -22,7 +24,11 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
     edit: buildEditTool(ctx),
     glob: buildGlobTool(ctx),
     grep: buildGrepTool(ctx),
+    fetch: buildFetchTool(ctx),
   };
+  if (ctx.webSearch) {
+    defs.web_search = buildWebSearchTool(ctx);
+  }
   if (ctx.backgroundProcesses) {
     defs.bash_output = buildBashOutputTool(ctx);
     defs.bash_kill = buildBashKillTool(ctx);

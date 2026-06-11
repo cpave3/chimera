@@ -159,6 +159,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,
     diagnostics: config.diagnostics,
+    webSearch: config.webSearch,
   });
 
   const registry = new AgentRegistry({

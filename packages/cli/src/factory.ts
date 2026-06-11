@@ -22,7 +22,12 @@ import {
   type ModeRegistry,
 } from '@chimera/modes';
 import { type AutoApproveLevel, DefaultPermissionGate, GatedExecutor } from '@chimera/permissions';
-import { loadProviders, type ProvidersConfig, resolveContextWindow } from '@chimera/providers';
+import {
+  buildKeyResolver,
+  loadProviders,
+  type ProvidersConfig,
+  resolveContextWindow,
+} from '@chimera/providers';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
@@ -31,9 +36,11 @@ import {
   BackgroundProcessManager,
   buildDiagnosticsRunner,
   buildTools,
+  createWebSearchProvider,
   type DiagnosticsConfig,
   type FormatScrollback,
   LocalExecutor,
+  type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
 import type { ModelOptions } from './config';
@@ -119,6 +126,8 @@ export interface CliAgentFactoryOptions {
   responseTimeoutMs?: number;
   /** Post-edit diagnostics feedback config (auto-detection on by default). */
   diagnostics?: DiagnosticsConfig;
+  /** Search backend for the web_search tool. Omitted = tool not registered. */
+  webSearch?: { provider: 'tavily' | 'brave'; apiKey: string };
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -142,6 +151,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveBackgroundManagers = new Map<SessionId, BackgroundProcessManager>();
   private readonly compaction: CompactionConfig | undefined;
   private readonly diagnosticsConfig: DiagnosticsConfig | undefined;
+  private readonly webSearchProvider: WebSearchProvider | undefined;
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
   /**
@@ -172,6 +182,15 @@ export class CliAgentFactory implements AgentFactory {
     this.compactor = opts.compactor;
     this.responseTimeoutMs = opts.responseTimeoutMs;
     this.diagnosticsConfig = opts.diagnostics;
+    this.webSearchProvider = opts.webSearch
+      ? createWebSearchProvider({
+          provider: opts.webSearch.provider,
+          getApiKey: buildKeyResolver(opts.webSearch.apiKey, {
+            providerId: `webSearch/${opts.webSearch.provider}`,
+            warn: this.warn,
+          }),
+        })
+      : undefined;
   }
 
   /**
@@ -377,6 +396,7 @@ export class CliAgentFactory implements AgentFactory {
       sandboxMode: init.sandboxMode,
       backgroundProcesses,
       diagnostics,
+      webSearch: this.webSearchProvider,
     });
     const tools = built.tools;
     const formatters = { ...built.formatters };

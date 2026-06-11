@@ -64,6 +64,14 @@ export interface ChimeraConfig {
    * model inside the tool result.
    */
   diagnostics?: DiagnosticsConfig;
+  /**
+   * Enables the web_search tool. `apiKey` follows the provider convention:
+   * `env:VAR_NAME` resolves from the environment at call time.
+   */
+  webSearch?: {
+    provider: 'tavily' | 'brave';
+    apiKey: string;
+  };
 }
 
 export function configPath(home = homedir()): string {

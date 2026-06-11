@@ -262,6 +262,27 @@ Set `"diagnostics": { "enabled": false }` to turn the feature off, or
 test suites) are deliberately not auto-detected — they run on every edit, so
 opt in only where the project is small enough.
 
+## Web access
+
+Two tools give the agent eyes outside the working tree:
+
+- **`fetch`** — always registered. GETs an http(s) URL, converts HTML to
+  readable markdown-ish text (dependency-free converter), follows redirects,
+  clips to 50k chars by default. Every call goes through the permission gate
+  (`tool: fetch`, command = URL), so the usual remember-for-session /
+  remember-for-project rules apply to domains you trust.
+- **`web_search`** — registered only when a search backend is configured in
+  `~/.chimera/config.json`:
+
+  ```json
+  {
+    "webSearch": { "provider": "tavily", "apiKey": "env:TAVILY_API_KEY" }
+  }
+  ```
+
+  Supported providers: `tavily`, `brave`. Results come back as
+  title/URL/snippet triples; the model is nudged to `fetch` promising hits.
+
 ## Subagents
 
 The `spawn_agent` tool lets a parent agent delegate a focused task to a fresh

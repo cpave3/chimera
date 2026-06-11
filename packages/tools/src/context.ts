@@ -1,6 +1,7 @@
 import type { Executor, PermissionGate, SandboxMode } from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
 import type { DiagnosticsRunner } from './diagnostics';
+import type { WebSearchProvider } from './web-search';
 
 export interface ToolContext {
   sandboxExecutor: Executor;
@@ -19,4 +20,6 @@ export interface ToolContext {
    * so the model sees breakage in the same step that caused it.
    */
   diagnostics?: DiagnosticsRunner;
+  /** When present, the web_search tool is registered. */
+  webSearch?: WebSearchProvider;
 }
