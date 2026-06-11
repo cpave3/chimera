@@ -1,5 +1,6 @@
 import type { Executor, PermissionGate, SandboxMode } from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
+import type { DiagnosticsRunner } from './diagnostics';
 
 export interface ToolContext {
   sandboxExecutor: Executor;
@@ -12,4 +13,10 @@ export interface ToolContext {
    * always run on the host.
    */
   backgroundProcesses?: BackgroundProcessManager;
+  /**
+   * When present, edit/write run the matching checks after each successful
+   * mutation and attach failures to the tool result as a `diagnostics` field,
+   * so the model sees breakage in the same step that caused it.
+   */
+  diagnostics?: DiagnosticsRunner;
 }

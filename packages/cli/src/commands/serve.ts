@@ -158,6 +158,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,
+    diagnostics: config.diagnostics,
   });
 
   const registry = new AgentRegistry({

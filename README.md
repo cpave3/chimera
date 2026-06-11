@@ -228,6 +228,40 @@ onto the session's event stream and the TUI prints an info line. All
 background processes for a session are killed when the server shuts down.
 Background commands always run on the host — `target: 'sandbox'` is refused.
 
+## Post-edit diagnostics
+
+After every successful `edit`/`write`, Chimera can run fast project checks
+against the changed file and feed failures back to the model **inside the tool
+result** — so type errors and lint breakage get fixed in the same step that
+caused them instead of surfacing steps later.
+
+Checks are auto-detected from project config files:
+
+- **biome** — when `biome.json`/`biome.jsonc` and the local
+  `node_modules/@biomejs/biome` binary exist, changed JS/TS/JSON/CSS files are
+  checked with `biome check <file>`.
+- **cerberus** — when `.cerberus/config.yaml` exists, `cerberus run quick`
+  runs after each change.
+
+Add or override checks in `~/.chimera/config.json` (`{file}` expands to the
+shell-quoted changed path; exit 0 means clean, anything else feeds the
+command's output to the model, clipped to 4 kB):
+
+```json
+{
+  "diagnostics": {
+    "checks": [
+      { "name": "tsc", "command": "node ./node_modules/typescript/bin/tsc --noEmit", "match": "\\.tsx?$" }
+    ]
+  }
+}
+```
+
+Set `"diagnostics": { "enabled": false }` to turn the feature off, or
+`"autoDetect": false` to keep only your explicit checks. Heavy checks (tsc,
+test suites) are deliberately not auto-detected — they run on every edit, so
+opt in only where the project is small enough.
+
 ## Subagents
 
 The `spawn_agent` tool lets a parent agent delegate a focused task to a fresh

@@ -147,6 +147,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       compaction: compactionConfig,
       compactor,
       responseTimeoutMs: config.responseTimeoutMs,
+    diagnostics: config.diagnostics,
     });
     factory = cliFactory;
   }

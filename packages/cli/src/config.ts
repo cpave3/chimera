@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { CompactionConfig, ModelConfig } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { ProviderSpec, ProvidersConfig } from '@chimera/providers';
+import type { DiagnosticsConfig } from '@chimera/tools';
 
 export interface ModelOptions {
   contextWindow?: number;
@@ -56,6 +57,13 @@ export interface ChimeraConfig {
     /** Model override for compaction summaries (providerId/modelId). */
     model?: string;
   };
+  /**
+   * Post-edit diagnostics feedback. Fast checks (biome, cerberus) are
+   * auto-detected from project config files; `checks` adds or overrides
+   * commands run after each edit/write, whose failures are fed back to the
+   * model inside the tool result.
+   */
+  diagnostics?: DiagnosticsConfig;
 }
 
 export function configPath(home = homedir()): string {

@@ -5,6 +5,7 @@ export * from './build';
 export * from './define';
 export * from './types';
 export * from './background';
+export * from './diagnostics';
 export { buildBashKillTool, buildBashOutputTool } from './background-tools';
 export { buildBashTool } from './bash';
 export { buildReadTool } from './read';

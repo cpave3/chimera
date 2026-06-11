@@ -20,6 +20,7 @@ type EditResult = {
   startLine: number;
   contextBefore: string[];
   contextAfter: string[];
+  diagnostics?: string;
 };
 
 const CONTEXT_LINES = 3;
@@ -56,7 +57,14 @@ export function buildEditTool(ctx: ToolContext) {
       await ctx.sandboxExecutor.writeFile(args.path, next);
       const afterEnd = matchIndex + args.new_string.length;
       const contextAfter = linesBelow(next, afterEnd, CONTEXT_LINES);
-      return { replacements: count, startLine, contextBefore, contextAfter };
+      const diagnostics = await ctx.diagnostics?.collect(args.path);
+      return {
+        replacements: count,
+        startLine,
+        contextBefore,
+        contextAfter,
+        ...(diagnostics ? { diagnostics } : {}),
+      };
     },
     formatScrollback: (args, result) => {
       const head = relPath(args.path, cwd);

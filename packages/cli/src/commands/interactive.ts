@@ -131,6 +131,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,
+    diagnostics: config.diagnostics,
   });
 
   const commands = loadReloadingCommandsFromConfig({

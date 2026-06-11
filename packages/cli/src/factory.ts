@@ -29,7 +29,9 @@ import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills'
 import { type AgentRegistry, buildSpawnAgentTool } from '@chimera/subagents';
 import {
   BackgroundProcessManager,
+  buildDiagnosticsRunner,
   buildTools,
+  type DiagnosticsConfig,
   type FormatScrollback,
   LocalExecutor,
 } from '@chimera/tools';
@@ -115,6 +117,8 @@ export interface CliAgentFactoryOptions {
    * A value of `0` disables the timeout. Defaults to 120000.
    */
   responseTimeoutMs?: number;
+  /** Post-edit diagnostics feedback config (auto-detection on by default). */
+  diagnostics?: DiagnosticsConfig;
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -137,6 +141,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveAgents = new Map<SessionId, Agent>();
   private readonly liveBackgroundManagers = new Map<SessionId, BackgroundProcessManager>();
   private readonly compaction: CompactionConfig | undefined;
+  private readonly diagnosticsConfig: DiagnosticsConfig | undefined;
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
   /**
@@ -166,6 +171,7 @@ export class CliAgentFactory implements AgentFactory {
     this.compaction = opts.compaction;
     this.compactor = opts.compactor;
     this.responseTimeoutMs = opts.responseTimeoutMs;
+    this.diagnosticsConfig = opts.diagnostics;
   }
 
   /**
@@ -358,12 +364,19 @@ export class CliAgentFactory implements AgentFactory {
     });
     this.liveBackgroundManagers.set(agent.session.id, backgroundProcesses);
 
+    const diagnostics = await buildDiagnosticsRunner({
+      cwd: init.cwd,
+      executor: sandboxExecutor,
+      config: this.diagnosticsConfig,
+    });
+
     const built = buildTools({
       sandboxExecutor,
       hostExecutor,
       permissionGate: gate,
       sandboxMode: init.sandboxMode,
       backgroundProcesses,
+      diagnostics,
     });
     const tools = built.tools;
     const formatters = { ...built.formatters };

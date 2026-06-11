@@ -8,7 +8,7 @@ const WRITE_SCHEMA = z.object({
   content: z.string(),
 });
 type WriteArgs = z.infer<typeof WRITE_SCHEMA>;
-type WriteResult = { bytes_written: number; created: boolean };
+type WriteResult = { bytes_written: number; created: boolean; diagnostics?: string };
 
 export function buildWriteTool(ctx: ToolContext) {
   const cwd = ctx.sandboxExecutor.cwd();
@@ -21,9 +21,11 @@ export function buildWriteTool(ctx: ToolContext) {
       const existing = await ctx.sandboxExecutor.stat(args.path);
       const created = !existing;
       await ctx.sandboxExecutor.writeFile(args.path, args.content);
+      const diagnostics = await ctx.diagnostics?.collect(args.path);
       return {
         bytes_written: Buffer.byteLength(args.content, 'utf8'),
         created,
+        ...(diagnostics ? { diagnostics } : {}),
       };
     },
     formatScrollback: (args, result) => {
