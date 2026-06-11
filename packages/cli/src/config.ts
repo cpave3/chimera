@@ -53,7 +53,9 @@ export interface ChimeraConfig {
    * Optional compaction settings for context-window management.
    * Defaults are `enabled: true`, `reserveTokens: 16384`, `keepRecentTokens: 20000`.
    */
-  compaction?: Partial<Pick<CompactionConfig, 'enabled' | 'reserveTokens' | 'keepRecentTokens'>> & {
+  compaction?: Partial<
+    Pick<CompactionConfig, 'enabled' | 'reserveTokens' | 'keepRecentTokens' | 'thresholdPercent'>
+  > & {
     /** Model override for compaction summaries (providerId/modelId). */
     model?: string;
   };

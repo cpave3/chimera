@@ -1,20 +1,30 @@
 # Context Compaction
 
-Compaction keeps long-running sessions alive by replacing the oldest messages
-with a structured summary before the context window overflows.
+Compaction keeps long-running sessions alive by shrinking the conversation
+before the context window overflows. It runs in two tiers:
+
+1. **Prune** — large tool outputs in the old part of the conversation are
+   archived to the recall store and replaced in place with
+   `[Result archived — retrieve with: recall({ id: "pr_..." })]` stubs. Cheap
+   (no LLM call), near-lossless (the `recall` tool fetches archived content
+   back, with slicing), and the conversation skeleton survives. When pruning
+   alone gets the estimate back under budget, a threshold compaction stops
+   here (`strategy: "prune"`).
+2. **Summarize** — if pruning isn't enough (or the compaction was manual),
+   the oldest messages are replaced with a structured summary; the most
+   recent turns stay verbatim.
 
 ## When compaction runs
 
-There are two triggers:
-
 | trigger | how |
 |---------|-----|
-| **Threshold** (automatic) | Before each model step, Chimera estimates the token count of the current conversation. If `estimate > contextWindow - reserveTokens`, compaction runs automatically. The result is a summary message plus the most recent turns kept verbatim. |
-| **Manual** | Type `/compact` in the TUI (or call `POST /v1/sessions/:id/compact`). The server queues the compaction and emits `compaction_started { reason: "manual" }` → `compaction_finished` on the event stream. |
+| **Threshold** (automatic) | The agent projects the next prompt size as the provider's last reported `inputTokens` plus a char/4 estimate of messages appended since (pure estimate before the first usage report). When the projection crosses `min(contextWindow × thresholdPercent, contextWindow − reserve)` — where the reserve covers `maxOutputTokens` plus a growth margin — compaction runs. The check happens **at run start and between steps inside tool loops**, so a long agentic run compacts mid-run instead of dying on a window overflow. |
+| **Manual** | Type `/compact` in the TUI (or call `POST /v1/sessions/:id/compact`). Manual compactions always run the full prune + summarize pipeline. |
 
-If compaction is disabled via config or `--no-compaction`, `maybeCompact` is a
-no-op and the agent loop proceeds normally. An oversized prompt will then
-surface a provider error as usual.
+A failed threshold compaction emits `compaction_failed` and the run continues
+(degraded beats dead); further attempts are latched off until the next user
+turn. If compaction is disabled via config or `--no-compaction`, an oversized
+prompt will surface a provider error as usual.
 
 ## Summary format
 
@@ -77,12 +87,19 @@ All keys live under `compaction` in `~/.chimera/config.json`:
 | key | type | default | meaning |
 |---|------|---------|---------|
 | `enabled` | boolean | `true` | Turn compaction on/off globally. |
-| `reserveTokens` | number | `16384` | Safety margin below `contextWindow`. |
+| `thresholdPercent` | number | `85` | Compact when the projected prompt crosses this percentage of the window (must be 50–95). |
+| `reserveTokens` | number | `16384` | Absolute safety floor below `contextWindow`. |
 | `keepRecentTokens` | number | `20000` | Budget for the trailing verbatim tail. |
 | `model` | string | *(session model)* | Model used to generate summaries, in `providerId/modelId` format. |
 
-If `reserveTokens + keepRecentTokens >= contextWindow`, the CLI refuses to
-start with an error naming the violated invariant.
+The prune tier is configured under `recall` (see the README): `enabled`
+(default true), `archiveThresholdTokens` (default 500 — tool results above
+this estimated size are archived), and `ttlDays` (default 30).
+
+The CLI refuses to start when the config can't work: `thresholdPercent`
+outside [50, 95], `reserveTokens + keepRecentTokens >= contextWindow`, or a
+keep-tail + reserve that doesn't fit under the effective trigger (which would
+make every compaction re-trigger immediately).
 
 Disable for a single invocation with `--no-compaction`.
 

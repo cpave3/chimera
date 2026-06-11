@@ -15,4 +15,8 @@ export type {
   MessagePruner,
   PruneResult,
 } from './types';
-export { DEFAULT_RESERVE_TOKENS, DEFAULT_KEEP_RECENT_TOKENS } from './types';
+export {
+  DEFAULT_KEEP_RECENT_TOKENS,
+  DEFAULT_RESERVE_TOKENS,
+  DEFAULT_THRESHOLD_PERCENT,
+} from './types';
