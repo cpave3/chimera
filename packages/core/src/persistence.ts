@@ -21,6 +21,7 @@ import {
   type ModelConfig,
   type SandboxMode,
   type Session,
+  type TaskItem,
   type Usage,
 } from './types';
 
@@ -59,6 +60,8 @@ interface SessionMetadata {
   /** Additional read/write allow paths for tool calls outside cwd. */
   additionalReadPaths?: string[];
   additionalWritePaths?: string[];
+  /** Model-maintained task list (task_list tool). */
+  tasks?: TaskItem[];
 }
 
 function toMetadata(session: Session): SessionMetadata {
@@ -78,6 +81,7 @@ function toMetadata(session: Session): SessionMetadata {
     messageCount: session.messages.length,
     additionalReadPaths: session.additionalReadPaths,
     additionalWritePaths: session.additionalWritePaths,
+    tasks: session.tasks,
   };
 }
 
@@ -171,6 +175,7 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
     additionalWritePaths: Array.isArray(parsed.additionalWritePaths)
       ? parsed.additionalWritePaths
       : [],
+    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
   };
 
   const snapshot = await readLatestStepSnapshot(sessionId, home);
@@ -685,6 +690,7 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     },
     additionalReadPaths: [...parent.additionalReadPaths],
     additionalWritePaths: [...parent.additionalWritePaths],
+    tasks: [...parent.tasks],
   };
   await writeSessionMetadata(child, home);
 

@@ -40,6 +40,7 @@ import {
   type DiagnosticsConfig,
   type FormatScrollback,
   LocalExecutor,
+  TaskListStore,
   type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
@@ -389,6 +390,17 @@ export class CliAgentFactory implements AgentFactory {
       config: this.diagnosticsConfig,
     });
 
+    const taskList = new TaskListStore({
+      initial: agent.session.tasks,
+      onUpdate: (tasks) => {
+        agent.session.tasks = tasks;
+        agent.pushEvent({ type: 'task_list_updated', tasks });
+        void writeSessionMetadata(agent.session, this.home).catch((err) => {
+          this.warn(`task list persistence failed: ${(err as Error).message}`);
+        });
+      },
+    });
+
     const built = buildTools({
       sandboxExecutor,
       hostExecutor,
@@ -397,6 +409,7 @@ export class CliAgentFactory implements AgentFactory {
       backgroundProcesses,
       diagnostics,
       webSearch: this.webSearchProvider,
+      taskList,
     });
     const tools = built.tools;
     const formatters = { ...built.formatters };

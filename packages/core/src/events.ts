@@ -1,6 +1,6 @@
 import type { ModelMessage } from 'ai';
 import type { CallId, SessionId } from './ids';
-import type { ExecutionTarget, ToolCallRecord, Usage } from './types';
+import type { ExecutionTarget, TaskItem, ToolCallRecord, Usage } from './types';
 
 /**
  * Per-tool human-readable display payload, computed by a tool's
@@ -100,6 +100,7 @@ export type AgentEvent =
       status: 'exited' | 'killed';
       exitCode: number | null;
     }
+  | { type: 'task_list_updated'; tasks: TaskItem[] }
   | { type: 'step_finished'; stepNumber: number; finishReason: string }
   | {
       type: 'usage_updated';

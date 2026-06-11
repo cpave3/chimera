@@ -69,6 +69,14 @@ export interface FileOps {
   writes: Set<string>;
 }
 
+export type TaskItemStatus = 'pending' | 'in_progress' | 'completed';
+
+/** One entry in the model-maintained task list (task_list tool). */
+export interface TaskItem {
+  content: string;
+  status: TaskItemStatus;
+}
+
 export interface Session {
   id: SessionId;
   parentId: SessionId | null;
@@ -107,6 +115,11 @@ export interface Session {
    * tool calls. Persisted in session metadata so resuming/forking retains them.
    */
   additionalWritePaths: string[];
+  /**
+   * Model-maintained task list (task_list tool). Persisted in session
+   * metadata so it survives resume and context compaction.
+   */
+  tasks: TaskItem[];
 }
 
 /** Default mode for new sessions. Mirrored in `@chimera/modes`. */

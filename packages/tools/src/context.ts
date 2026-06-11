@@ -1,6 +1,7 @@
 import type { Executor, PermissionGate, SandboxMode } from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
 import type { DiagnosticsRunner } from './diagnostics';
+import type { TaskListStore } from './task-list';
 import type { WebSearchProvider } from './web-search';
 
 export interface ToolContext {
@@ -22,4 +23,6 @@ export interface ToolContext {
   diagnostics?: DiagnosticsRunner;
   /** When present, the web_search tool is registered. */
   webSearch?: WebSearchProvider;
+  /** When present, the task_list tool is registered. */
+  taskList?: TaskListStore;
 }

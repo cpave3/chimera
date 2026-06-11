@@ -193,6 +193,7 @@ export function App(props: AppProps): React.ReactElement {
     usedContextTokens: number;
     unknownWindow: boolean;
   } | null>(null);
+  const [tasks, setTasks] = useState<{ content: string; status: string }[]>([]);
   const wasBusyRef = useRef(false);
   // Id of the assistant entry currently receiving text deltas. Held out of
   // <Static> so its text can keep updating; committed once text_done fires.
@@ -344,6 +345,8 @@ export function App(props: AppProps): React.ReactElement {
         // Sync the TUI's UI state with the actual session mode and model.
         setActiveModeName(s.mode);
         setCurrentModelRef(`${s.model.providerId}/${s.model.modelId}`);
+        const sessionTasks = (s as { tasks?: { content: string; status: string }[] }).tasks;
+        setTasks(Array.isArray(sessionTasks) ? sessionTasks : []);
         // Only rehydrate if the session actually has prior messages — avoids
         // wiping a fresh "/new" session's empty scrollback unnecessarily.
         if (Array.isArray(s.messages) && s.messages.length > 0) {
@@ -522,6 +525,8 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'compaction_failed') {
       setCompacting(false);
       scrollback.addError(`compaction failed: ${ev.error}`);
+    } else if (ev.type === 'task_list_updated') {
+      setTasks(ev.tasks);
     } else if (ev.type === 'background_process_exited') {
       const outcome =
         ev.status === 'killed'
@@ -1531,8 +1536,22 @@ export function App(props: AppProps): React.ReactElement {
     ],
     [modeWidget, currentModelRef, activeSession.sessionId, activeParentId, theme.accent.primary, theme.text.muted, theme.accent.secondary],
   );
+  const tasksWidget = useMemo<StatusBarWidget>(() => {
+    if (tasks.length === 0) return null;
+    const completed = tasks.filter((task) => task.status === 'completed').length;
+    const active = tasks.find((task) => task.status === 'in_progress');
+    const label = active
+      ? `[tasks ${completed}/${tasks.length}: ${active.content.length > 40 ? `${active.content.slice(0, 40)}…` : active.content}]`
+      : `[tasks ${completed}/${tasks.length}${completed === tasks.length ? ' done' : ''}]`;
+    return (
+      <Text key="tasks" color={theme.accent.secondary}>
+        {label}
+      </Text>
+    );
+  }, [tasks, theme.accent.secondary]);
   const modelRight = useMemo<StatusBarWidget[]>(
     () => [
+      tasksWidget,
       usageState && (
         <UsageWidget
           key="usage"
@@ -1543,7 +1562,7 @@ export function App(props: AppProps): React.ReactElement {
         />
       ),
     ],
-    [usageState],
+    [tasksWidget, usageState],
   );
 
 

@@ -13,5 +13,6 @@ export { buildWriteTool } from './write';
 export { buildEditTool } from './edit';
 export { buildGlobTool } from './glob';
 export { buildGrepTool } from './grep';
+export * from './task-list';
 export { buildFetchTool, htmlToText } from './web';
 export * from './web-search';

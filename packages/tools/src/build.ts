@@ -6,6 +6,7 @@ import { buildEditTool } from './edit';
 import { buildGlobTool } from './glob';
 import { buildGrepTool } from './grep';
 import { buildReadTool } from './read';
+import { buildTaskListTool } from './task-list';
 import type { ChimeraToolDef, FormatScrollback } from './types';
 import { buildFetchTool } from './web';
 import { buildWebSearchTool } from './web-search';
@@ -28,6 +29,9 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
   };
   if (ctx.webSearch) {
     defs.web_search = buildWebSearchTool(ctx);
+  }
+  if (ctx.taskList) {
+    defs.task_list = buildTaskListTool(ctx);
   }
   if (ctx.backgroundProcesses) {
     defs.bash_output = buildBashOutputTool(ctx);

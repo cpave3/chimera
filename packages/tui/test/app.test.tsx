@@ -855,6 +855,59 @@ describe('App', () => {
     unmount();
   });
 
+  it('renders a task progress widget on task_list_updated', async () => {
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(ev: unknown) => void> = [];
+        pushEvent = (ev: unknown) => {
+          const w = waiters.shift();
+          if (w) w(ev);
+          else buffer.push(ev);
+        };
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as never;
+            continue;
+          }
+          yield await new Promise<never>((resolve) => {
+            waiters.push(resolve as (ev: unknown) => void);
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    pushEvent!({
+      type: 'task_list_updated',
+      tasks: [
+        { content: 'write failing test', status: 'completed' },
+        { content: 'implement feature', status: 'in_progress' },
+        { content: 'refactor', status: 'pending' },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lastFrame()!).toContain('[tasks 1/3: implement feature]');
+
+    pushEvent!({
+      type: 'task_list_updated',
+      tasks: [
+        { content: 'write failing test', status: 'completed' },
+        { content: 'implement feature', status: 'completed' },
+        { content: 'refactor', status: 'completed' },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lastFrame()!).toContain('[tasks 3/3 done]');
+
+    unmount();
+  });
+
   it('/compact handler sets compacting immediately, and queued messages auto-send after compaction_finished', async () => {
     const sends: string[] = [];
     let pushEvent: ((ev: unknown) => void) | null = null;

@@ -206,6 +206,7 @@ export class Agent {
         fileOps: opts.session.fileOps ?? { reads: new Set(), writes: new Set() },
         additionalReadPaths: opts.session.additionalReadPaths ?? [],
         additionalWritePaths: opts.session.additionalWritePaths ?? [],
+        tasks: opts.session.tasks ?? [],
       };
     } else {
       this.session = {
@@ -225,6 +226,7 @@ export class Agent {
         fileOps: { reads: new Set(), writes: new Set() },
         additionalReadPaths: [],
         additionalWritePaths: [],
+        tasks: [],
       };
     }
   }

@@ -273,6 +273,17 @@ Set `"diagnostics": { "enabled": false }` to turn the feature off, or
 test suites) are deliberately not auto-detected — they run on every edit, so
 opt in only where the project is small enough.
 
+## Task list
+
+For multi-step work the model maintains a task list via the `task_list` tool
+(replace-whole-list semantics, statuses `pending` / `in_progress` /
+`completed`). The status bar shows live progress —
+`[tasks 2/5: implement feature]` — and the list is persisted in session
+metadata, so it survives resume, forks, and context compaction: after a
+compact, the plan is still structured state rather than a casualty of
+summarization. Scrollback renders each update as a compact progress line
+(`2/5 done → current task`).
+
 ## Web access
 
 Two tools give the agent eyes outside the working tree:
