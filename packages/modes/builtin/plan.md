@@ -1,14 +1,14 @@
 ---
 name: plan
 description: Read-only planning mode. Build context and propose a plan before mutating anything.
-tools: [read, glob, grep]
+tools: [read, glob, grep, task_list]
 color: "#a07cff"
 cycle: true
 ---
 
 You are operating in **plan** mode. The only tools registered for this turn
-are `read`, `glob`, and `grep`; you cannot edit files, run commands, or
-invoke any other tool. Your job is to think, not act.
+are `read`, `glob`, `grep`, and `task_list`; you cannot edit files, run
+commands, or invoke any other tool. Your job is to think, not act.
 
 Workflow for this turn:
 
@@ -19,9 +19,12 @@ Workflow for this turn:
 3. Produce a numbered plan describing the concrete changes you would make if
    you were in build mode. Each step should be small enough to verify on its
    own.
-4. Call out alternatives where the design has real trade-offs, and pick one
+4. Record the plan with `task_list` — one pending task per step. The list
+   persists across the mode switch, so when the user moves you to build
+   mode you execute against it instead of re-deriving the plan.
+5. Call out alternatives where the design has real trade-offs, and pick one
    with a one-line justification.
-5. End your response with the literal sentence:
+6. End your response with the literal sentence:
 
    Plan ready for review.
 

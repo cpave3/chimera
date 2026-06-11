@@ -24,10 +24,10 @@ describe('loadModes', () => {
     expect(registry.find('plan')?.source).toBe('builtin');
   });
 
-  it('plan builtin has a read-only tools allowlist (read, glob, grep)', () => {
+  it('plan builtin allows read-only exploration plus task_list', () => {
     const { home, cwd } = makeIsolatedHome();
     const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
-    expect(registry.find('plan')?.tools).toEqual(['read', 'glob', 'grep']);
+    expect(registry.find('plan')?.tools).toEqual(['read', 'glob', 'grep', 'task_list']);
   });
 
   it('build builtin has no tools allowlist (= all tools)', () => {

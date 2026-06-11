@@ -13,9 +13,11 @@ Chimera ships with two built-ins:
 - **`build`** — the default. No tool allowlist (every registered tool is
   available); minimal prompt fragment. New sessions start in `build` unless
   you pass `--mode <name>` or set `defaultMode` in config.
-- **`plan`** — read-only. `tools: [read]`; the body steers the model toward
-  building context, producing a numbered plan, surfacing assumptions, and
-  ending with `Plan ready for review.` rather than mutating anything.
+- **`plan`** — read-only exploration. `tools: [read, glob, grep, task_list]`;
+  the body steers the model toward building context, producing a numbered
+  plan, recording it via `task_list` (so the plan survives the switch to
+  build mode), surfacing assumptions, and ending with
+  `Plan ready for review.` rather than mutating anything.
 
 You can override either by dropping your own `build.md` / `plan.md` into a
 higher-priority discovery tier.
