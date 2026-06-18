@@ -1,5 +1,5 @@
-import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { realpath, stat } from 'node:fs/promises';
 import { Compactor } from '@chimera/compaction';
 import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
@@ -235,12 +235,15 @@ export class CliAgentFactory implements AgentFactory {
     // read the SKILL.md itself and any peer scripts bundled with it.
     const skillDirs = skillsReg ? skillsReg.all().map((s) => dirname(s.path)) : [];
     const tmpDir = tmpdir();
+    const userHome = this.home ?? homedir();
     // Merge persisted paths (on resume) with any newly-supplied CLI paths.
     const sessionReadPaths = session?.additionalReadPaths ?? [];
     const sessionWritePaths = session?.additionalWritePaths ?? [];
     const readAllowDirs = [
       ...skillDirs,
       tmpDir,
+      join(userHome, '.claude'),
+      join(userHome, '.agents'),
       ...sessionReadPaths,
       ...sessionWritePaths,
       ...(init.additionalReadPaths ?? []),

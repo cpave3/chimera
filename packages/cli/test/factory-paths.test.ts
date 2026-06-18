@@ -153,4 +153,21 @@ describe('CliAgentFactory.addSessionPath', () => {
       'session not found',
     );
   });
+
+  it('includes ~/.claude and ~/.agents in the default read allow list', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'chimera-home-'));
+    const factory = makeFactory(fakeHome);
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+
+    const executor = factory.getLocalExecutor(agent.session.id)!;
+    const dirs = executor.listReadAllowDirs();
+    expect(dirs).toContain(join(fakeHome, '.claude'));
+    expect(dirs).toContain(join(fakeHome, '.agents'));
+
+    await rm(fakeHome, { recursive: true, force: true });
+  });
 });
