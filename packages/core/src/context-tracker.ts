@@ -3,6 +3,21 @@ import type { ModelMessage } from 'ai';
 /** Fixed per-message overhead constant to account for role/formatting tokens. */
 export const PER_MESSAGE_OVERHEAD = 16;
 
+/** Rough per-image token overhead for vision inputs. Used by estimateTokens. */
+export const IMAGE_TOKEN_COST = 1000;
+
+function countImageParts(content: unknown): number {
+  if (typeof content === 'string') return 0;
+  if (!Array.isArray(content)) return 0;
+  let count = 0;
+  for (const part of content) {
+    if (part && typeof part === 'object' && (part as { type?: string }).type === 'image') {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 /**
  * Conservative char/4 heuristic for token estimation. Each message
  * contributes JSON-stringified length / 4 rounded up, plus a small overhead
@@ -12,7 +27,8 @@ export function estimateTokens(messages: ModelMessage[]): number {
   let total = 0;
   for (const msg of messages) {
     const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-    total += Math.ceil(text.length / 4) + PER_MESSAGE_OVERHEAD;
+    const imageTokens = msg.role === 'user' ? countImageParts(msg.content) * IMAGE_TOKEN_COST : 0;
+    total += Math.ceil(text.length / 4) + PER_MESSAGE_OVERHEAD + imageTokens;
   }
   return total;
 }

@@ -1,5 +1,4 @@
 import type { Command } from '@chimera/commands';
-import type { Mode } from '@chimera/modes';
 import type {
   AgentEvent,
   AgentEventEnvelope,
@@ -14,6 +13,7 @@ import type {
   SessionId,
   SessionInfo,
 } from '@chimera/core';
+import type { Mode } from '@chimera/modes';
 import type { Skill } from '@chimera/skills';
 import { ChimeraHttpError, PermissionAlreadyResolvedError } from './errors';
 import { parseSSE } from './sse';
@@ -286,13 +286,13 @@ export class ChimeraClient {
   /**
    * Append a user message to the session history without invoking the LLM.
    */
-  async appendMessage(sessionId: SessionId, content: string): Promise<void> {
+  async appendMessage(sessionId: SessionId, content: string, images?: string[]): Promise<void> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/v1/sessions/${sessionId}/messages?append=true`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, images }),
       },
     );
     if (!response.ok) {
@@ -308,7 +308,7 @@ export class ChimeraClient {
   async *send(
     sessionId: SessionId,
     message: string,
-    opts: { signal?: AbortSignal } = {},
+    opts: { images?: string[]; signal?: AbortSignal } = {},
   ): AsyncGenerator<AgentEvent | { type: 'permission_timeout'; requestId: string }, void, void> {
     // Open SSE connection up front.
     const eventsResponse = await this.fetchImpl(`${this.baseUrl}/v1/sessions/${sessionId}/events`, {
@@ -326,7 +326,7 @@ export class ChimeraClient {
     const postResponse = await this.fetchImpl(`${this.baseUrl}/v1/sessions/${sessionId}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content: message }),
+      body: JSON.stringify({ content: message, images: opts.images }),
       signal: opts.signal,
     });
     if (!postResponse.ok && postResponse.status !== 202) {

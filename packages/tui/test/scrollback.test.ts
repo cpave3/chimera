@@ -684,6 +684,33 @@ describe('Scrollback.rehydrateFromSession', () => {
     expect(entries[0]!.text).toBe('first part second part');
   });
 
+  it('counts image parts from array-shaped user content', () => {
+    const entries = rehydrate([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'image', image: '/path/to/img1.png' },
+          { type: 'image', image: '/path/to/img2.png' },
+        ],
+      },
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.kind).toBe('user');
+    const userEntry = entries[0]! as { imageCount?: number };
+    expect(userEntry.imageCount).toBe(2);
+  });
+
+  it('addUserMessage accepts an optional imageCount', () => {
+    const scrollback = new Scrollback();
+    scrollback.addUserMessage('hello', 3);
+    const rows = scrollback.all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('user');
+    const entry = rows[0]! as { imageCount?: number };
+    expect(entry.imageCount).toBe(3);
+  });
+
   it('pairs assistant tool-call with subsequent tool-result message', () => {
     const entries = rehydrate([
       { role: 'user', content: 'list files' },

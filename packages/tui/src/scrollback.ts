@@ -14,6 +14,7 @@ interface BaseEntry {
 
 export interface UserEntry extends BaseEntry {
   kind: 'user';
+  imageCount?: number;
 }
 
 export interface AssistantEntry extends BaseEntry {
@@ -442,8 +443,8 @@ export class Scrollback {
     }, 0);
   }
 
-  addUserMessage(content: string): void {
-    this.entries.push({ id: this.newId(), kind: 'user', text: content });
+  addUserMessage(content: string, imageCount?: number): void {
+    this.entries.push({ id: this.newId(), kind: 'user', text: content, imageCount });
     this.updateSnapshot();
     this.scheduleFlush();
   }
@@ -546,7 +547,10 @@ export class Scrollback {
       if (msg.role === 'system') continue;
       if (msg.role === 'user') {
         const text = extractText(msg.content);
-        if (text) this.apply({ type: 'user_message', content: text });
+        const imageCount = countImageParts(msg.content);
+        if (text || imageCount > 0) {
+          this.apply({ type: 'user_message', content: text, imageCount });
+        }
         continue;
       }
       if (msg.role === 'assistant') {
@@ -640,7 +644,7 @@ export class Scrollback {
           this.suppressUserContent = null;
           if (expected === ev.content) return;
         }
-        this.addUserMessage(ev.content);
+        this.addUserMessage(ev.content, (ev as { imageCount?: number }).imageCount);
         return;
       }
       if (ev.type === 'tool_call_start') {
@@ -977,4 +981,16 @@ function extractText(content: unknown): string {
     }
   }
   return parts.join('');
+}
+
+function countImageParts(content: unknown): number {
+  if (typeof content === 'string') return 0;
+  if (!Array.isArray(content)) return 0;
+  let count = 0;
+  for (const part of content) {
+    if (part && typeof part === 'object' && (part as { type?: string }).type === 'image') {
+      count += 1;
+    }
+  }
+  return count;
 }

@@ -7,14 +7,14 @@ import {
   listSessionsOnDisk,
   readCheckpoints,
   readSessionMetadata,
+  type SessionId,
+  type SessionInfo,
   truncateEventsAtIndex,
   WorkspaceCheckpoints,
   writeSessionMetadata,
-  type SessionId,
-  type SessionInfo,
 } from '@chimera/core';
-import { streamSSE } from 'hono/streaming';
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import type { AgentRegistry } from './agent-registry';
 
@@ -53,6 +53,7 @@ const createSessionSchema = z.object({
 
 const messageSchema = z.object({
   content: z.string(),
+  images: z.array(z.string()).optional(),
 });
 
 const forkSchema = z.object({
@@ -445,15 +446,16 @@ export function buildApp(opts: AppOptions): Hono {
     if (!parseResult.success) {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
+    const images = parseResult.data.images ?? [];
     if (append) {
-      const state = await registry.injectMessage(id, parseResult.data.content);
+      const state = await registry.injectMessage(id, parseResult.data.content, images);
       if (state === 'missing') return c.json({ error: 'not found' }, 404);
       if (state === 'already-running') {
         return c.json({ error: 'run already in progress' }, 409);
       }
       return c.body(null, 204);
     }
-    const state = await registry.run(id, parseResult.data.content);
+    const state = await registry.run(id, parseResult.data.content, images);
     if (state === 'missing') return c.json({ error: 'not found' }, 404);
     if (state === 'already-running') {
       return c.json({ error: 'run already in progress' }, 409);

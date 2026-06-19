@@ -15,7 +15,7 @@ export type ToolDisplay = {
 
 export type AgentEvent =
   | { type: 'session_started'; sessionId: SessionId }
-  | { type: 'user_message'; content: string }
+  | { type: 'user_message'; content: string; imageCount?: number }
   | { type: 'assistant_text_delta'; id?: string; delta: string }
   | { type: 'assistant_text_done'; id?: string; text: string }
   /** Streaming delta for model reasoning content (o1, DeepSeek-R1, etc.). */

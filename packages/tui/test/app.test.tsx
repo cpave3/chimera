@@ -52,7 +52,7 @@ describe('App', () => {
       <App client={stubClient()} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
     );
     expect(lastFrame()).toContain('Ctrl+Z');
-    expect(lastFrame()).toContain('/ commands');
+    expect(lastFrame()).toContain('Ctrl+V');
     unmount();
   });
 

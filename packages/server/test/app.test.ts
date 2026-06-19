@@ -634,6 +634,36 @@ describe('server app', () => {
       expect(response.status).toBe(400);
     });
 
+    it('POST /v1/sessions/:id/messages accepts images array', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'look at this', images: ['/path/to/img.png'] }),
+      });
+      expect(response.status).toBe(202);
+    });
+
+    it('POST /v1/sessions/:id/messages?append=true accepts images array', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const sessionId = await createSession(app);
+      const response = await app.request(`/v1/sessions/${sessionId}/messages?append=true`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'look at this', images: ['/path/to/img.png'] }),
+      });
+      expect(response.status).toBe(204);
+    });
+
     it('POST /v1/sessions/:id/fork rejects malformed JSON', async () => {
       const registry = new AgentRegistry({
         factory: makeFactory(home),

@@ -1,9 +1,5 @@
 import { resolve as resolvePath } from 'node:path';
-import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ChimeraClient, ChimeraHttpError } from '@chimera/client';
-import { parseAttachTokens, readForAttach } from './attach-paths';
-import { runBangCommand } from './bang';
 import type { CommandRegistry } from '@chimera/commands';
 import type {
   AgentEvent,
@@ -16,6 +12,12 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { parseAttachTokens, readForAttach } from './attach-paths';
+import { runBangCommand } from './bang';
+import { ChromeBar } from './ChromeBar';
+import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
 import { Header } from './Header';
 import {
   backspace,
@@ -23,6 +25,7 @@ import {
   endsWithUnescapedBackslashAtCursor,
   insertChar,
   insertNewline,
+  insertText,
   type MultilineBuffer,
   moveDown,
   moveLeft,
@@ -32,27 +35,26 @@ import {
   moveUp,
   replaceAll,
 } from './input/buffer';
-import { openInEditor as openInEditorImpl, type OpenInEditorResult } from './input/external-editor';
+import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
 import { renderMarkdown } from './markdown';
-import { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
+import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
-import { type Formatter, Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import { RewindPicker } from './RewindPicker';
-import { SessionPicker, buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
+import { buildSessionTreeRows, formatRelativeTime, SessionPicker } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
+import { type StatusBarWidget } from './StatusBar';
+import { type Formatter, Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import {
   BUILTIN_COMMANDS,
   findClosestCommand,
   isBuiltin,
   OVERLAY_COMMANDS,
 } from './slash-commands';
-import { type StatusBarWidget } from './StatusBar';
 import { renderToolBody } from './ToolBody';
-import { UsageWidget } from './UsageWidget';
-import { ChromeBar } from './ChromeBar';
 import { applyThemeByName, listThemes } from './theme/loader';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
+import { UsageWidget } from './UsageWidget';
 
 export interface OverlayHandlers {
   diff(): Promise<{ modified: string[]; added: string[]; deleted: string[] }>;
@@ -182,6 +184,7 @@ export function App(props: AppProps): React.ReactElement {
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [usageState, setUsageState] = useState<{
     usage: Usage;
     contextWindow: number;
@@ -626,6 +629,10 @@ export function App(props: AppProps): React.ReactElement {
       void runEditorHandoff();
       return;
     }
+    if (key.ctrl && char === 'v') {
+      void handlePasteImage();
+      return;
+    }
 
     if (key.return) {
       const insertNewlineKey =
@@ -791,9 +798,31 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
+  async function handlePasteImage(): Promise<void> {
+    const image = await readClipboardImage();
+    if (!image) {
+      scrollback.addInfo('clipboard: no image found');
+      return;
+    }
+    try {
+      const path = await saveImageToSession(activeSession.sessionId, image);
+      const label = `[Image #${pendingImages.length + 1}]`;
+      setPendingImages((prev) => [...prev, path]);
+      setBuffer((b) => insertText(b, ` ${label}`));
+    } catch (err) {
+      scrollback.addError(`clipboard paste failed: ${(err as Error).message}`);
+    }
+  }
+
   async function sendUserMessage(text: string): Promise<void> {
     const tokens = parseAttachTokens(text, props.cwd);
+    const imagePaths: string[] = [...pendingImages];
+
     for (const token of tokens) {
+      if (isImageFile(token.absolute)) {
+        imagePaths.push(token.absolute);
+        continue;
+      }
       try {
         await activeSession.client.addPath(activeSession.sessionId, token.kind, token.absolute);
       } catch (err) {
@@ -819,10 +848,14 @@ export function App(props: AppProps): React.ReactElement {
       );
     }
 
+    setPendingImages([]);
+    const cleanText = text.replace(/\[Image #\d+\]/g, '').trim();
     setRunning(true);
     setStreaming(false);
     try {
-      for await (const _ev of activeSession.client.send(activeSession.sessionId, text)) {
+      for await (const _ev of activeSession.client.send(activeSession.sessionId, cleanText, {
+        images: imagePaths.length > 0 ? imagePaths : undefined,
+      })) {
         // events flow through subscribe(); send() drives the POST side.
       }
     } catch (err) {
@@ -1936,7 +1969,12 @@ function renderEntryLines(
 
   if (entry.kind === 'user') {
     const prefix = 'you: ';
-    const lines = wrapToLines(entry.text, width, prefix.length);
+    const imageLabels =
+      entry.imageCount && entry.imageCount > 0
+        ? Array.from({ length: entry.imageCount }, (_, i) => `[Image #${i + 1}]`).join(' ')
+        : '';
+    const displayText = imageLabels ? `${entry.text} ${imageLabels}` : entry.text;
+    const lines = wrapToLines(displayText, width, prefix.length);
     return [
       <Box key={`${entry.id}:u`} flexDirection="column">
         <Text>

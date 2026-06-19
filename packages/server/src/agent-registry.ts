@@ -312,7 +312,11 @@ export class AgentRegistry {
    * session is not in the registry. Also returns `'already-running'` if a
    * compaction is currently active.
    */
-  async run(id: SessionId, content: string): Promise<'queued' | 'already-running' | 'missing'> {
+  async run(
+    id: SessionId,
+    content: string,
+    images?: string[],
+  ): Promise<'queued' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
     if (entry.runActive || entry.compactionActive || entry.rewindActive) return 'already-running';
@@ -320,7 +324,7 @@ export class AgentRegistry {
     entry.activeRun = (async () => {
       try {
         await this.snapshotWorkspace(entry, content);
-        for await (const event of entry.agent.run(content)) {
+        for await (const event of entry.agent.run(content, images)) {
           entry.bus.publish(event);
           if (event.type === 'run_finished') break;
         }
@@ -348,6 +352,7 @@ export class AgentRegistry {
   async injectMessage(
     id: SessionId,
     content: string,
+    images?: string[],
   ): Promise<'injected' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
@@ -356,7 +361,7 @@ export class AgentRegistry {
     entry.injectActive = true;
     try {
       await this.snapshotWorkspace(entry, content);
-      await entry.agent.appendMessage(content);
+      await entry.agent.appendMessage(content, images);
     } catch (err) {
       if ((err as Error).message === 'Agent is already running') return 'already-running';
       throw err;

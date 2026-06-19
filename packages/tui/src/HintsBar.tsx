@@ -13,7 +13,7 @@ export const HintsBar = memo(function HintsBar({ mutedColor }: HintsBarProps): R
   return (
     <Text color={mutedColor}>
       {
-        '\\<Enter> newline · Ctrl+G editor · Ctrl+Z suspend · Esc/Ctrl+C interrupt · / commands · Shift+Tab cycle mode'
+        '\\<Enter> newline · Ctrl+G editor · Ctrl+V paste image · Ctrl+Z suspend · Esc/Ctrl+C interrupt · / commands · Shift+Tab cycle mode'
       }
     </Text>
   );

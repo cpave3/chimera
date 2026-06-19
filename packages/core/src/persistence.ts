@@ -1,10 +1,11 @@
 import {
   appendFile,
   copyFile,
+  cp,
   mkdir,
   open,
-  readFile,
   readdir,
+  readFile,
   rename,
   rm,
   stat,
@@ -39,6 +40,10 @@ export function sessionMetadataPath(sessionId: SessionId, home = homedir()): str
 
 export function sessionEventsPath(sessionId: SessionId, home = homedir()): string {
   return join(sessionDir(sessionId, home), 'events.jsonl');
+}
+
+export function sessionImagesDir(sessionId: SessionId, home = homedir()): string {
+  return join(sessionDir(sessionId, home), 'images');
 }
 
 interface SessionMetadata {
@@ -651,6 +656,15 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
   } catch (err) {
     // ENOENT: parent had no events.jsonl yet; child starts empty.
     // Anything else (EACCES, ENOSPC, ...) is a real failure — surface it.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+
+  // Copy images directory so image paths in forked messages remain valid.
+  const parentImages = sessionImagesDir(opts.parentId, home);
+  const childImages = sessionImagesDir(childId, home);
+  try {
+    await cp(parentImages, childImages, { recursive: true });
+  } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
 

@@ -1,10 +1,12 @@
-import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { extname, resolve } from 'node:path';
 import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
+import { type ContextBreakdown, computeContextBreakdown } from './context-breakdown';
+import { ContextTracker, shouldCompact } from './context-tracker';
 import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
-
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
 import {
@@ -27,8 +29,6 @@ import {
   type ToolCallRecord,
   type UsageStep,
 } from './types';
-import { computeContextBreakdown, type ContextBreakdown } from './context-breakdown';
-import { ContextTracker, shouldCompact } from './context-tracker';
 import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
 export interface StopHook {
@@ -698,11 +698,11 @@ export class Agent {
    * Requires the agent to be idle (not running) to avoid corrupting
    * the message array the AI SDK may be reading.
    */
-  async appendMessage(content: string): Promise<void> {
+  async appendMessage(content: string, imagePaths?: string[]): Promise<void> {
     if (this.running) {
       throw new Error('Agent is already running');
     }
-    this.session.messages.push({ role: 'user', content });
+    this.session.messages.push(buildUserMessage(content, imagePaths));
     try {
       await persistSession(
         this.session,
@@ -719,7 +719,7 @@ export class Agent {
     }
   }
 
-  run(userMessage: string): AsyncIterable<AgentEvent> {
+  run(userMessage: string, imagePaths?: string[]): AsyncIterable<AgentEvent> {
     if (this.running) {
       throw new Error('Agent is already running');
     }
@@ -731,7 +731,7 @@ export class Agent {
     this.currentQueue = queue;
 
     // Start the engine in the background; consumer drains the queue.
-    void this.runInternal(userMessage, queue).finally(() => {
+    void this.runInternal(userMessage, queue, imagePaths).finally(() => {
       queue.close();
       this.currentQueue = null;
       this.running = false;
@@ -853,7 +853,11 @@ export class Agent {
     }
   }
 
-  private async runInternal(userMessage: string, queue: EventQueue<AgentEvent>): Promise<void> {
+  private async runInternal(
+    userMessage: string,
+    queue: EventQueue<AgentEvent>,
+    imagePaths?: string[],
+  ): Promise<void> {
     this.session.status = 'running';
 
     // Drain any queued mode switch before the user message lands. The resolver
@@ -914,7 +918,7 @@ export class Agent {
     const planHandoff = this.planHandoffPending;
     this.planHandoffPending = false;
 
-    this.session.messages.push({ role: 'user', content: userMessage });
+    this.session.messages.push(buildUserMessage(userMessage, imagePaths));
 
     queue.push({ type: 'session_started', sessionId: this.session.id });
 
@@ -931,7 +935,7 @@ export class Agent {
       });
     }
 
-    queue.push({ type: 'user_message', content: userMessage });
+    queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
 
     // Compaction: a fresh user turn clears the ineffective latch, then the
     // same projection-based trigger used between steps runs once up front.
@@ -1018,7 +1022,7 @@ export class Agent {
           const messageCountAtPrompt = this.session.messages.length;
           const stream = streamText({
             model: this.opts.languageModel,
-            messages: this.session.messages,
+            messages: await resolveImagePaths(this.session.messages),
             tools: this.opts.tools,
             system: this.composeSystemPrompt(planHandoff),
             stopWhen: stepCountIs(1),
@@ -1597,4 +1601,60 @@ export function buildPermissionRequest(args: {
     cwd: args.cwd,
     reason: args.reason,
   };
+}
+
+const EXT_TO_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
+
+function buildUserMessage(text: string, imagePaths?: string[]): ModelMessage {
+  if (!imagePaths || imagePaths.length === 0) {
+    return { role: 'user', content: text };
+  }
+  const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
+    { type: 'text', text },
+  ];
+  for (const path of imagePaths) {
+    parts.push({ type: 'image', image: path });
+  }
+  return { role: 'user', content: parts };
+}
+
+/**
+ * Resolve image file paths in user messages to base64 data URIs for the
+ * AI SDK. The original `session.messages` keeps paths for persistence; this
+ * creates a copy for the live prompt.
+ */
+async function resolveImagePaths(messages: ModelMessage[]): Promise<ModelMessage[]> {
+  const resolved: ModelMessage[] = [];
+  for (const msg of messages) {
+    if (msg.role !== 'user' || typeof msg.content === 'string') {
+      resolved.push(msg);
+      continue;
+    }
+    const parts = Array.isArray(msg.content) ? msg.content : [];
+    const newParts: typeof parts = [];
+    for (const part of parts) {
+      if (part.type === 'image' && typeof part.image === 'string') {
+        try {
+          const data = await readFile(part.image);
+          const ext = extname(part.image).toLowerCase();
+          const mime = EXT_TO_MIME[ext] ?? 'image/png';
+          const base64 = data.toString('base64');
+          newParts.push({ type: 'image', image: `data:${mime};base64,${base64}` });
+        } catch {
+          newParts.push(part);
+        }
+      } else {
+        newParts.push(part);
+      }
+    }
+    resolved.push({ ...msg, content: newParts });
+  }
+  return resolved;
 }
