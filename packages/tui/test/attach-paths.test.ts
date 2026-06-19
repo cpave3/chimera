@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -89,6 +89,17 @@ describe('parseAttachTokens', () => {
 
   it('ignores bare ## with no trailing text', () => {
     expect(parseAttachTokens('prefix ## ', '/tmp')).toEqual([]);
+  });
+
+  it('ignores [Image #N] placeholders', () => {
+    expect(parseAttachTokens('check this [Image #1]', '/tmp')).toEqual([]);
+    expect(parseAttachTokens('here [Image #12] and [Image #3]', '/tmp')).toEqual([]);
+  });
+
+  it('still detects real tokens next to image placeholders', () => {
+    expect(parseAttachTokens('see [Image #1] and @file.txt', '/tmp')).toEqual([
+      { kind: 'read', raw: 'file.txt', absolute: '/tmp/file.txt' },
+    ]);
   });
 });
 

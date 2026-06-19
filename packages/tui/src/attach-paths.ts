@@ -24,6 +24,9 @@ export function parseAttachTokens(input: string, cwd: string): AttachToken[] {
     if (prefix === '#' && rawPath.startsWith('#')) {
       // Skip markdown headings (`## Title`, `### Code`, etc.)
       match = pattern.exec(input);
+    } else if (prefix === '#' && /^\d+\]$/.test(rawPath)) {
+      // Skip `[Image #N]` placeholders inserted by Ctrl+V paste
+      match = pattern.exec(input);
     } else {
       const kind = prefix === '@' ? 'read' : 'write';
       let resolved: string;
