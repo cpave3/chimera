@@ -1,12 +1,14 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type LanguageModel, type ToolSet, tool } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { Agent, buildPermissionRequest } from '../src/agent';
-import type { ModelConfig } from '../src/types';
+import { Agent, buildPermissionRequest, type VisionModelResolution } from '../src/agent';
+import type { AgentEvent } from '../src/events';
+import { newSessionId } from '../src/ids';
+import { emptyUsage, type ModelConfig, type Session } from '../src/types';
 
 function makeModel(): ModelConfig {
   return { providerId: 'mock', modelId: 'm', maxSteps: 10 };
@@ -1895,4 +1897,602 @@ describe('system prompt composition (tasks + plan handoff)', () => {
     expect(parts[0].type).toBe('image');
     expect(parts[0].image).toBe(imageData);
   });
+});
+
+describe('vision routing', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'chimera-agent-vision-'));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  function textMock(text: string) {
+    return new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: text },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: {
+                inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+                outputTokens: { total: 5, text: 5, reasoning: 0 },
+              },
+            },
+          ],
+        }),
+      }),
+    });
+  }
+
+  async function writeTestImage(name = 'shot.png'): Promise<string> {
+    const path = join(home, name);
+    await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    return path;
+  }
+
+  function okResolution(visionMock: MockLanguageModelV3): VisionModelResolution {
+    return {
+      status: 'ok',
+      ref: 'vis/v',
+      model: { providerId: 'vis', modelId: 'v', maxSteps: 10, vision: true },
+      languageModel: visionMock as unknown as LanguageModel,
+      contextWindow: 100_000,
+      contextWindowIsApproximate: false,
+    };
+  }
+
+  it('routes a run with user images to the vision model and reverts after', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+    const imagePath = await writeTestImage();
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('what is this?', [imagePath])) {
+      events.push(ev);
+    }
+
+    expect(vision.doStreamCalls).toHaveLength(1);
+    expect(primary.doStreamCalls).toHaveLength(0);
+
+    const types = events.map((ev) => ev.type);
+    const started = events.find((ev) => ev.type === 'vision_route_started');
+    expect(started).toMatchObject({ from: 'mock/m', to: 'vis/v', trigger: 'user_images' });
+    const ended = events.find((ev) => ev.type === 'vision_route_ended');
+    expect(ended).toMatchObject({ restored: 'mock/m' });
+    expect(types.indexOf('vision_route_started')).toBeGreaterThan(types.indexOf('user_message'));
+    expect(types.indexOf('vision_route_ended')).toBeLessThan(types.indexOf('run_finished'));
+
+    for await (const _ev of agent.run('follow-up, no image')) {
+      // drain
+    }
+    expect(primary.doStreamCalls).toHaveLength(1);
+    expect(vision.doStreamCalls).toHaveLength(1);
+    expect(agent.session.userModelOverride).toBeNull();
+    expect(agent.session.model.providerId).toBe('mock');
+  });
+
+  it('does not route when the active model is vision-capable', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 10, vision: true },
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+    const imagePath = await writeTestImage();
+
+    const types: string[] = [];
+    for await (const ev of agent.run('what is this?', [imagePath])) {
+      types.push(ev.type);
+    }
+
+    expect(primary.doStreamCalls).toHaveLength(1);
+    expect(vision.doStreamCalls).toHaveLength(0);
+    expect(types).not.toContain('vision_route_started');
+  });
+
+  it('fails the turn upfront with an actionable error when no vision fallback exists', async () => {
+    const primary = textMock('primary');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    const imagePath = await writeTestImage();
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('see this', [imagePath])) {
+      events.push(ev);
+    }
+
+    const finished = events.find((ev) => ev.type === 'run_finished');
+    expect(finished).toMatchObject({ reason: 'error' });
+    expect((finished as { error?: string }).error).toContain('defaultVisionModel');
+    expect((finished as { error?: string }).error).toContain('mock/m');
+    expect(events.some((ev) => ev.type === 'user_message')).toBe(true);
+    expect(primary.doStreamCalls).toHaveLength(0);
+    expect(agent.session.messages).toHaveLength(0);
+    expect(agent.session.status).toBe('error');
+  });
+
+  it('routes when images arrived via appendMessage and the run itself has none', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+    const imagePath = await writeTestImage();
+
+    await agent.appendMessage('context screenshot', [imagePath]);
+    const types: string[] = [];
+    for await (const ev of agent.run('what do you see?')) {
+      types.push(ev.type);
+    }
+
+    expect(vision.doStreamCalls).toHaveLength(1);
+    expect(primary.doStreamCalls).toHaveLength(0);
+    expect(types).toContain('vision_route_started');
+  });
+
+  it('reports the vision model context window on usage_updated during a routed turn', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+    const imagePath = await writeTestImage();
+
+    const windows: number[] = [];
+    for await (const ev of agent.run('look', [imagePath])) {
+      if (ev.type === 'usage_updated') windows.push(ev.contextWindow);
+    }
+
+    expect(windows.length).toBeGreaterThan(0);
+    expect(windows.every((w) => w === 100_000)).toBe(true);
+  });
+
+  it('reverts to the primary model after an interrupted vision turn', async () => {
+    const primary = textMock('primary');
+    const slowVision = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          initialDelayInMs: 10,
+          chunkDelayInMs: 50,
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'looking...' },
+          ],
+        }),
+      }),
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    let resolverCalls = 0;
+    agent.setVisionModelResolver(() => {
+      resolverCalls += 1;
+      return okResolution(slowVision);
+    });
+    const imagePath = await writeTestImage();
+
+    const events: AgentEvent[] = [];
+    const drain = (async () => {
+      for await (const ev of agent.run('look', [imagePath])) {
+        events.push(ev);
+      }
+    })();
+    await new Promise((r) => setTimeout(r, 20));
+    agent.interrupt();
+    await drain;
+
+    const types = events.map((ev) => ev.type);
+    expect(types).toContain('vision_route_ended');
+    expect(types.indexOf('vision_route_ended')).toBeLessThan(types.indexOf('run_finished'));
+    expect(agent.session.model.providerId).toBe('mock');
+
+    // The interrupted turn never produced an assistant reply, so the image
+    // is still unseen: the follow-up must re-engage routing freshly (new
+    // resolver call + started event) rather than reuse a leaked override.
+    const followUpTypes: string[] = [];
+    const followUp = (async () => {
+      for await (const ev of agent.run('plain follow-up')) {
+        followUpTypes.push(ev.type);
+      }
+    })();
+    await new Promise((r) => setTimeout(r, 20));
+    agent.interrupt();
+    await followUp;
+
+    expect(resolverCalls).toBe(2);
+    expect(followUpTypes).toContain('vision_route_started');
+    expect(primary.doStreamCalls).toHaveLength(0);
+  });
+
+  function readToolCallMock() {
+    return new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'c1',
+              toolName: 'read',
+              input: JSON.stringify({ path: '/tmp/screenshot.png' }),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: {
+                inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+                outputTokens: { total: 5, text: 5, reasoning: 0 },
+              },
+            },
+          ],
+        }),
+      }),
+    });
+  }
+
+  const imageReadTool = tool({
+    description: 'read',
+    inputSchema: z.object({ path: z.string() }),
+    execute: async () => ({
+      kind: 'image',
+      data: 'data:image/png;base64,abc123',
+      mime: 'image/png',
+    }),
+  });
+
+  it('switches the rest of the run to the vision model when the read tool returns an image', async () => {
+    const primary = readToolCallMock();
+    const vision = textMock('vision sees it');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('open the screenshot')) {
+      events.push(ev);
+    }
+
+    expect(primary.doStreamCalls).toHaveLength(1);
+    expect(vision.doStreamCalls).toHaveLength(1);
+    const started = events.find((ev) => ev.type === 'vision_route_started');
+    expect(started).toMatchObject({ from: 'mock/m', to: 'vis/v', trigger: 'tool_image' });
+    const types = events.map((ev) => ev.type);
+    expect(types.indexOf('vision_route_ended')).toBeLessThan(types.indexOf('run_finished'));
+  });
+
+  it('records the read path on injected image parts so later turns can re-read the file', async () => {
+    const primary = readToolCallMock();
+    const vision = textMock('vision sees it');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+
+    for await (const _ev of agent.run('open the screenshot')) {
+      // drain
+    }
+
+    const injected = agent.session.messages.filter(
+      (msg) => msg.role === 'user' && Array.isArray(msg.content),
+    );
+    const imagePart = (injected[injected.length - 1].content as Array<Record<string, unknown>>)[0];
+    expect(imagePart.type).toBe('image');
+    expect(imagePart.providerOptions).toEqual({ chimera: { sourcePath: '/tmp/screenshot.png' } });
+  });
+
+  it('continues the run and warns once when a tool image appears with no vision fallback', async () => {
+    let call = 0;
+    const primary = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'read',
+                  input: JSON.stringify({ path: '/tmp/screenshot.png' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: {
+                    inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+                    outputTokens: { total: 5, text: 5, reasoning: 0 },
+                  },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'cannot see it' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: {
+                  inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+                  outputTokens: { total: 5, text: 5, reasoning: 0 },
+                },
+              },
+            ],
+          }),
+        };
+      },
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('open the screenshot')) {
+      events.push(ev);
+    }
+
+    const unavailable = events.filter((ev) => ev.type === 'vision_route_unavailable');
+    expect(unavailable).toHaveLength(1);
+    expect((unavailable[0] as { reason: string }).reason).toContain('resolver');
+    const finished = events.find((ev) => ev.type === 'run_finished');
+    expect(finished).toMatchObject({ reason: 'stop' });
+    expect(primary.doStreamCalls).toHaveLength(2);
+  });
+
+  function seededAgent(opts: {
+    languageModel: LanguageModel;
+    messages: unknown[];
+    model?: ModelConfig;
+  }) {
+    return new Agent({
+      cwd: '/tmp',
+      model: opts.model ?? makeModel(),
+      languageModel: opts.languageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      session: {
+        id: newSessionId(),
+        parentId: null,
+        children: [],
+        cwd: '/tmp',
+        createdAt: 1,
+        messages: opts.messages as Session['messages'],
+        toolCalls: [],
+        status: 'idle',
+        model: opts.model ?? makeModel(),
+        sandboxMode: 'off',
+        usage: emptyUsage(),
+        mode: 'build',
+        userModelOverride: null,
+        fileOps: { reads: new Set(), writes: new Set() },
+      },
+    });
+  }
+
+  it('substitutes historical images with a re-readable placeholder for non-vision models', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const imagePath = await writeTestImage();
+    const agent = seededAgent({
+      languageModel: primary as unknown as LanguageModel,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'look at this' },
+            { type: 'image', image: imagePath },
+          ],
+        },
+        { role: 'assistant', content: 'It shows a bar chart.' },
+      ],
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+
+    for await (const _ev of agent.run('tell me more')) {
+      // drain
+    }
+
+    expect(primary.doStreamCalls).toHaveLength(1);
+    const promptJson = JSON.stringify(primary.doStreamCalls[0].prompt);
+    expect(promptJson).toContain(`[Image: ${imagePath}`);
+    expect(promptJson).toContain('vis/v');
+    expect(promptJson).toContain('read');
+    expect(promptJson).not.toContain('iVBOR');
+
+    const seeded = agent.session.messages[0] as { content: Array<{ type: string }> };
+    expect(seeded.content.some((part) => part.type === 'image')).toBe(true);
+  });
+
+  it('drops the re-read hint when the image file no longer exists', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = seededAgent({
+      languageModel: primary as unknown as LanguageModel,
+      messages: [
+        { role: 'user', content: [{ type: 'image', image: join(home, 'gone.png') }] },
+        { role: 'assistant', content: 'A diagram.' },
+      ],
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+
+    for await (const _ev of agent.run('and?')) {
+      // drain
+    }
+
+    const promptJson = JSON.stringify(primary.doStreamCalls[0].prompt);
+    expect(promptJson).toContain('no longer exists');
+    expect(promptJson).not.toContain('Read the file again');
+  });
+
+  it('tells the model how the user can enable vision when no fallback is configured', async () => {
+    const primary = textMock('primary');
+    const imagePath = await writeTestImage();
+    const agent = seededAgent({
+      languageModel: primary as unknown as LanguageModel,
+      messages: [
+        { role: 'user', content: [{ type: 'image', image: imagePath }] },
+        { role: 'assistant', content: 'noted' },
+      ],
+    });
+
+    for await (const _ev of agent.run('and?')) {
+      // drain
+    }
+
+    const promptJson = JSON.stringify(primary.doStreamCalls[0].prompt);
+    expect(promptJson).toContain('defaultVisionModel');
+    expect(promptJson).toContain(imagePath);
+  });
+
+  it('marks inline images without a source path as not viewable', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = seededAgent({
+      languageModel: primary as unknown as LanguageModel,
+      messages: [
+        { role: 'user', content: [{ type: 'image', image: 'data:image/png;base64,legacy' }] },
+        { role: 'assistant', content: 'noted' },
+      ],
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+
+    for await (const _ev of agent.run('and?')) {
+      // drain
+    }
+
+    const promptJson = JSON.stringify(primary.doStreamCalls[0].prompt);
+    expect(promptJson).toContain('previously provided inline');
+    expect(promptJson).not.toContain('base64,legacy');
+  });
+
+  it('substitutes a text note when a vision model image path cannot be read', async () => {
+    const vision = textMock('vision');
+    const agent = seededAgent({
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 10, vision: true },
+      languageModel: vision as unknown as LanguageModel,
+      messages: [
+        { role: 'user', content: [{ type: 'image', image: join(home, 'missing.png') }] },
+        { role: 'assistant', content: 'noted' },
+      ],
+    });
+
+    for await (const _ev of agent.run('and?')) {
+      // drain
+    }
+
+    const promptJson = JSON.stringify(vision.doStreamCalls[0].prompt);
+    expect(promptJson).toContain('[Image unavailable');
+    expect(promptJson).toContain('missing.png');
+  });
+
+  it('instructs the vision model to describe images only while routed', async () => {
+    const primary = textMock('primary');
+    const vision = textMock('vision');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+    const imagePath = await writeTestImage();
+
+    for await (const _ev of agent.run('look', [imagePath])) {
+      // drain
+    }
+    const systemOf = (call: { prompt: Array<{ role: string; content: unknown }> }) => {
+      const sys = call.prompt.find((m) => m.role === 'system');
+      return typeof sys?.content === 'string' ? sys.content : JSON.stringify(sys?.content ?? '');
+    };
+    expect(systemOf(vision.doStreamCalls[0])).toContain('# Vision turn');
+
+    for await (const _ev of agent.run('plain follow-up')) {
+      // drain
+    }
+    expect(systemOf(primary.doStreamCalls[0])).not.toContain('# Vision turn');
+  });
+
 });

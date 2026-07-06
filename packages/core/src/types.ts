@@ -18,6 +18,13 @@ export interface ModelConfig {
    */
   maxOutputTokens?: number;
   temperature?: number;
+  /**
+   * True when the model accepts image content parts. Config-declared
+   * (`models[ref].vision` in `~/.chimera/config.json`); absent means the
+   * model is treated as text-only and image turns route to the configured
+   * `defaultVisionModel`.
+   */
+  vision?: boolean;
 }
 
 export interface ToolCallRecord {

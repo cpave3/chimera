@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
@@ -124,6 +125,22 @@ export interface AgentOptions {
   responseTimeoutMs?: number;
 }
 
+/**
+ * Result of resolving the configured `defaultVisionModel` for a turn that
+ * carries images the active model cannot see. `unavailable` reasons are
+ * user-facing (they end up in error messages / `vision_route_unavailable`).
+ */
+export type VisionModelResolution =
+  | {
+      status: 'ok';
+      ref: string;
+      model: ModelConfig;
+      languageModel: LanguageModel;
+      contextWindow: number;
+      contextWindowIsApproximate: boolean;
+    }
+  | { status: 'unavailable'; reason: string };
+
 export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<PermissionResolution>;
 
 export class Agent {
@@ -188,7 +205,16 @@ export class Agent {
    * each step that had tool calls, so the model sees the images as vision
    * inputs on the next turn.
    */
-  private pendingImageMessages: Array<{ type: 'image'; image: string }> = [];
+  private pendingImageMessages: Array<{
+    type: 'image';
+    image: string;
+    /**
+     * `chimera.sourcePath` records the read target so a later non-vision
+     * turn can substitute the image with a re-readable path reference.
+     * Providers ignore unknown providerOptions keys.
+     */
+    providerOptions?: { chimera: { sourcePath: string } };
+  }> = [];
   /**
    * Optional callback invoked when a queued mode switch is drained. Returns
    * the freshly-recomposed system prompt + filtered tool set + effective
@@ -215,6 +241,28 @@ export class Agent {
     contextWindowIsApproximate: boolean;
     systemPrompt: string;
   };
+  /**
+   * Optional callback resolving the configured `defaultVisionModel` when a
+   * turn carries images the active model cannot see. Registered by the
+   * factory; core never reads config directly.
+   */
+  private visionModelResolver?: () => VisionModelResolution;
+  /**
+   * Run-scoped model override engaged while a vision-routed turn is in
+   * flight. Layered over `opts` via the `active*()` accessors and cleared at
+   * the end of every run (plus defensively at run start), so interrupted or
+   * errored runs revert for free and `session.model` /
+   * `session.userModelOverride` are never touched.
+   */
+  private visionOverride: {
+    model: ModelConfig;
+    languageModel: LanguageModel;
+    contextWindow: number;
+    contextWindowIsApproximate: boolean;
+    trigger: 'user_images' | 'tool_image';
+  } | null = null;
+  /** Once-per-run latch for `vision_route_unavailable`. */
+  private visionUnavailableEmitted = false;
 
   constructor(opts: AgentOptions) {
     this.opts = opts;
@@ -460,6 +508,15 @@ export class Agent {
     },
   ): void {
     this.modelChangeResolver = resolver;
+  }
+
+  /**
+   * Register the callback used to resolve the configured vision fallback
+   * model when a turn carries images the active model cannot see. Called by
+   * the factory during session construction; invoked lazily per engagement.
+   */
+  setVisionModelResolver(resolver: () => VisionModelResolution): void {
+    this.visionModelResolver = resolver;
   }
 
   /**
@@ -734,6 +791,9 @@ export class Agent {
     this.running = true;
     // Fresh abort controller per run.
     this.abortController = new AbortController();
+    // Defensive: a crashed run must not leak its vision override into this one.
+    this.visionOverride = null;
+    this.visionUnavailableEmitted = false;
 
     const queue = new EventQueue<AgentEvent>();
     this.currentQueue = queue;
@@ -754,6 +814,25 @@ export class Agent {
    * model's view, not just on disk) and the one-shot plan-handoff note.
    * Evaluated per step, so mid-run task updates are visible on the next step.
    */
+  /** The model config in effect for the current step (vision override aware). */
+  private activeModel(): ModelConfig {
+    return this.visionOverride?.model ?? this.opts.model;
+  }
+
+  private activeLanguageModel(): LanguageModel {
+    return this.visionOverride?.languageModel ?? this.opts.languageModel;
+  }
+
+  private activeContextWindow(): number {
+    return this.visionOverride?.contextWindow ?? this.opts.contextWindow;
+  }
+
+  private activeContextWindowIsApproximate(): boolean {
+    return (
+      this.visionOverride?.contextWindowIsApproximate ?? !!this.opts.contextWindowIsApproximate
+    );
+  }
+
   private composeSystemPrompt(planHandoff: boolean): string | undefined {
     const parts: string[] = [];
     if (this.opts.systemPrompt) parts.push(this.opts.systemPrompt);
@@ -774,6 +853,15 @@ export class Agent {
           'per step, the first marked in_progress), then execute it step by step, ' +
           'updating statuses as you go. If they ask for changes instead, revise the ' +
           'plan before recording anything.',
+      );
+    }
+    if (this.visionOverride) {
+      parts.push(
+        '# Vision turn\n\n' +
+          "This turn is routed to you because it contains images the session's " +
+          'primary model cannot see. Briefly state what each image shows before ' +
+          'acting on it, so your description survives in the conversation for ' +
+          'models that cannot view the images.',
       );
     }
     if (parts.length === 0) return undefined;
@@ -805,10 +893,10 @@ export class Agent {
     if (!config?.enabled || !this.opts.compactor) return false;
     return shouldCompact({
       projected: this.contextTracker.projectedNextPrompt(this.session.messages),
-      contextWindow: this.opts.contextWindow,
+      contextWindow: this.activeContextWindow(),
       thresholdPercent: config.thresholdPercent ?? 85,
       reserveTokens: config.reserveTokens,
-      maxOutputTokens: this.opts.model.maxOutputTokens,
+      maxOutputTokens: this.activeModel().maxOutputTokens,
     });
   }
 
@@ -930,6 +1018,50 @@ export class Agent {
     // was interrupted before they could be injected.
     this.pendingImageMessages = [];
 
+    // Vision routing: a turn carrying new images while the active model is
+    // text-only runs entirely on the configured vision model (reverted at
+    // the end of the run).
+    const turnHasNewImages =
+      (imagePaths?.length ?? 0) > 0 || tailHasImageParts(this.session.messages);
+    if (turnHasNewImages && this.activeModel().vision !== true) {
+      const resolution = this.visionModelResolver?.() ?? {
+        status: 'unavailable' as const,
+        reason: 'no vision model resolver registered',
+      };
+      if (resolution.status === 'ok') {
+        this.visionOverride = {
+          model: { ...resolution.model, maxSteps: this.session.model.maxSteps },
+          languageModel: resolution.languageModel,
+          contextWindow: resolution.contextWindow,
+          contextWindowIsApproximate: resolution.contextWindowIsApproximate,
+          trigger: 'user_images',
+        };
+      } else {
+        // No usable fallback: reject the turn before the user message lands
+        // anywhere, so the user can fix the config and simply resend.
+        const currentRef = `${this.opts.model.providerId}/${this.opts.model.modelId}`;
+        const error =
+          `Cannot send images: model ${currentRef} is not vision-capable and no usable ` +
+          `vision fallback is configured (${resolution.reason}). Set "defaultVisionModel" ` +
+          `in ~/.chimera/config.json (and mark it "vision": true under "models"), or use ` +
+          `/model to switch to a vision-capable model.`;
+        queue.push({ type: 'session_started', sessionId: this.session.id });
+        queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
+        this.session.status = 'error';
+        try {
+          await persistSession(
+            this.session,
+            { type: 'run_finished', reason: 'error', error },
+            this.opts.home,
+          );
+        } catch {
+          // best-effort persistence
+        }
+        queue.push({ type: 'run_finished', reason: 'error', error });
+        return;
+      }
+    }
+
     this.session.messages.push(buildUserMessage(userMessage, imagePaths));
 
     queue.push({ type: 'session_started', sessionId: this.session.id });
@@ -941,13 +1073,22 @@ export class Agent {
       queue.push({
         type: 'usage_updated',
         usage: cloneUsage(this.session.usage),
-        contextWindow: this.opts.contextWindow,
+        contextWindow: this.activeContextWindow(),
         usedContextTokens: this.session.usage.lastStep?.inputTokens ?? 0,
-        unknownWindow: this.opts.contextWindowIsApproximate ?? false,
+        unknownWindow: this.activeContextWindowIsApproximate(),
       });
     }
 
     queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
+
+    if (this.visionOverride) {
+      queue.push({
+        type: 'vision_route_started',
+        from: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
+        to: `${this.visionOverride.model.providerId}/${this.visionOverride.model.modelId}`,
+        trigger: this.visionOverride.trigger,
+      });
+    }
 
     // Compaction: a fresh user turn clears the ineffective latch, then the
     // same projection-based trigger used between steps runs once up front.
@@ -986,6 +1127,9 @@ export class Agent {
     let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' = 'stop';
     let errorMessage: string | undefined;
     let stopRetryCount = 0;
+    // Lazy once-per-run probe of the vision fallback, used to word image
+    // placeholders when a text-only model receives history with images.
+    let visionFallbackProbe: { configured: boolean; ref?: string } | null = null;
 
     while (true) {
       let usageMissingLogged = false;
@@ -1032,15 +1176,25 @@ export class Agent {
           // Message count the prompt was built from; pairs with the step's
           // reported inputTokens in the context tracker.
           const messageCountAtPrompt = this.session.messages.length;
+          const activeVision = this.activeModel().vision === true;
+          if (!activeVision && visionFallbackProbe === null) {
+            const probe = this.visionModelResolver?.();
+            visionFallbackProbe =
+              probe?.status === 'ok' ? { configured: true, ref: probe.ref } : { configured: false };
+          }
           const stream = streamText({
-            model: this.opts.languageModel,
-            messages: await resolveImagePaths(this.session.messages),
+            model: this.activeLanguageModel(),
+            messages: await prepareMessagesForModel(this.session.messages, {
+              vision: activeVision,
+              visionConfigured: activeVision || (visionFallbackProbe?.configured ?? false),
+              visionRef: visionFallbackProbe?.ref,
+            }),
             tools: this.opts.tools,
             system: this.composeSystemPrompt(planHandoff),
             stopWhen: stepCountIs(1),
             abortSignal: this.abortController.signal,
-            temperature: this.opts.model.temperature,
-            maxOutputTokens: this.opts.model.maxOutputTokens,
+            temperature: this.activeModel().temperature,
+            maxOutputTokens: this.activeModel().maxOutputTokens,
           });
 
           for await (const part of stream.fullStream) {
@@ -1338,9 +1492,11 @@ export class Agent {
                     'data' in result &&
                     typeof (result as { data?: unknown }).data === 'string'
                   ) {
+                    const sourcePath = extractReadPath(rec?.args);
                     this.pendingImageMessages.push({
                       type: 'image',
                       image: (result as { data: string }).data,
+                      ...(sourcePath ? { providerOptions: { chimera: { sourcePath } } } : {}),
                     });
                   }
                 } else if (info.name === 'write' || info.name === 'edit') {
@@ -1387,9 +1543,9 @@ export class Agent {
                   queue.push({
                     type: 'usage_updated',
                     usage: cloneUsage(this.session.usage),
-                    contextWindow: this.opts.contextWindow,
+                    contextWindow: this.activeContextWindow(),
                     usedContextTokens: stepUsage.inputTokens,
-                    unknownWindow: this.opts.contextWindowIsApproximate ?? false,
+                    unknownWindow: this.activeContextWindowIsApproximate(),
                   });
                 } else if (!usageMissingLogged) {
                   usageMissingLogged = true;
@@ -1425,9 +1581,9 @@ export class Agent {
                   queue.push({
                     type: 'usage_updated',
                     usage: cloneUsage(this.session.usage),
-                    contextWindow: this.opts.contextWindow,
+                    contextWindow: this.activeContextWindow(),
                     usedContextTokens: this.session.usage.inputTokens,
-                    unknownWindow: this.opts.contextWindowIsApproximate ?? false,
+                    unknownWindow: this.activeContextWindowIsApproximate(),
                   });
                 }
                 break;
@@ -1466,6 +1622,35 @@ export class Agent {
               content: this.pendingImageMessages,
             });
             this.pendingImageMessages = [];
+
+            // Mid-run vision routing: a tool just produced images the active
+            // model cannot see, so the remaining steps of this run switch to
+            // the vision model (the next iteration's streamText picks the
+            // override up through the active*() accessors).
+            if (this.activeModel().vision !== true) {
+              const resolution = this.visionModelResolver?.() ?? {
+                status: 'unavailable' as const,
+                reason: 'no vision model resolver registered',
+              };
+              if (resolution.status === 'ok') {
+                this.visionOverride = {
+                  model: { ...resolution.model, maxSteps: this.session.model.maxSteps },
+                  languageModel: resolution.languageModel,
+                  contextWindow: resolution.contextWindow,
+                  contextWindowIsApproximate: resolution.contextWindowIsApproximate,
+                  trigger: 'tool_image',
+                };
+                queue.push({
+                  type: 'vision_route_started',
+                  from: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
+                  to: `${resolution.model.providerId}/${resolution.model.modelId}`,
+                  trigger: 'tool_image',
+                });
+              } else if (!this.visionUnavailableEmitted) {
+                this.visionUnavailableEmitted = true;
+                queue.push({ type: 'vision_route_unavailable', reason: resolution.reason });
+              }
+            }
           }
 
           if (terminalReason !== 'stop') {
@@ -1594,6 +1779,14 @@ export class Agent {
       // ignore
     }
 
+    if (this.visionOverride) {
+      queue.push({
+        type: 'vision_route_ended',
+        restored: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
+      });
+      this.visionOverride = null;
+    }
+
     queue.push({
       type: 'run_finished',
       reason: terminalReason,
@@ -1650,6 +1843,22 @@ const EXT_TO_MIME: Record<string, string> = {
   '.bmp': 'image/bmp',
 };
 
+/**
+ * True when a user message *after the last assistant/tool message* carries
+ * image parts — i.e. images the model has not seen yet. Covers images
+ * attached via `appendMessage` while idle, followed by a plain `run()`.
+ */
+function tailHasImageParts(messages: ModelMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'user') return false;
+    if (Array.isArray(msg.content) && msg.content.some((part) => part.type === 'image')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function buildUserMessage(text: string, imagePaths?: string[]): ModelMessage {
   if (!imagePaths || imagePaths.length === 0) {
     return { role: 'user', content: text };
@@ -1663,40 +1872,97 @@ function buildUserMessage(text: string, imagePaths?: string[]): ModelMessage {
   return { role: 'user', content: parts };
 }
 
+interface MessagePrepOptions {
+  /** Whether the model receiving this prompt accepts image parts. */
+  vision: boolean;
+  /** Whether a usable vision fallback model is configured. */
+  visionConfigured: boolean;
+  /** Ref ("provider/model") of the vision fallback, when configured. */
+  visionRef?: string;
+}
+
 /**
- * Resolve image file paths in user messages to base64 data URIs for the
- * AI SDK. The original `session.messages` keeps paths for persistence; this
- * creates a copy for the live prompt.
+ * The file path an image part originated from: the part value itself for
+ * user-attached images (persisted as paths), or the recorded read target
+ * for tool-produced images (persisted as data URIs).
  */
-async function resolveImagePaths(messages: ModelMessage[]): Promise<ModelMessage[]> {
-  const resolved: ModelMessage[] = [];
+function imageSourcePath(part: { image: unknown; providerOptions?: unknown }): string | undefined {
+  if (typeof part.image === 'string' && !part.image.startsWith('data:')) return part.image;
+  const chimeraOptions = (part.providerOptions as { chimera?: { sourcePath?: unknown } })?.chimera;
+  return typeof chimeraOptions?.sourcePath === 'string' ? chimeraOptions.sourcePath : undefined;
+}
+
+/**
+ * Text stand-in for an image part when the active model cannot see images.
+ * Points the model back at the file (re-reading routes to the vision model
+ * again) or, with no fallback configured, tells it how the user can fix it.
+ */
+function imagePlaceholder(sourcePath: string | undefined, opts: MessagePrepOptions): string {
+  if (!opts.visionConfigured) {
+    const subject = sourcePath ? `Image at ${sourcePath}` : 'Image';
+    return (
+      `[${subject}: this model cannot view images and no defaultVisionModel is ` +
+      'configured. Tell the user to set "defaultVisionModel" in ~/.chimera/config.json ' +
+      'if image understanding is needed.]'
+    );
+  }
+  if (!sourcePath) {
+    return '[Image: previously provided inline; not viewable by the current model.]';
+  }
+  const viewed =
+    `[Image: ${sourcePath} — viewed by the vision model (${opts.visionRef}) earlier in ` +
+    'this conversation; its description appears in the assistant messages that follow.';
+  return existsSync(sourcePath)
+    ? `${viewed} Read the file again with the read tool to re-examine it.]`
+    : `${viewed} The file no longer exists on disk.]`;
+}
+
+/**
+ * Build the live prompt copy of `messages` for the model about to be called.
+ * Vision-capable models get image paths resolved to base64 data URIs;
+ * text-only models get image parts replaced with text placeholders. The
+ * original `session.messages` is untouched (paths persist small on disk).
+ */
+async function prepareMessagesForModel(
+  messages: ModelMessage[],
+  opts: MessagePrepOptions,
+): Promise<ModelMessage[]> {
+  const prepared: ModelMessage[] = [];
   for (const msg of messages) {
     if (msg.role !== 'user' || typeof msg.content === 'string') {
-      resolved.push(msg);
+      prepared.push(msg);
       continue;
     }
     const parts = Array.isArray(msg.content) ? msg.content : [];
     const newParts: typeof parts = [];
     for (const part of parts) {
-      if (
-        part.type === 'image' &&
-        typeof part.image === 'string' &&
-        !part.image.startsWith('data:')
-      ) {
-        try {
-          const data = await readFile(part.image);
-          const ext = extname(part.image).toLowerCase();
-          const mime = EXT_TO_MIME[ext] ?? 'image/png';
-          const base64 = data.toString('base64');
-          newParts.push({ type: 'image', image: `data:${mime};base64,${base64}` });
-        } catch {
-          newParts.push(part);
-        }
-      } else {
+      if (part.type !== 'image' || typeof part.image !== 'string') {
         newParts.push(part);
+        continue;
+      }
+      if (!opts.vision) {
+        newParts.push({ type: 'text', text: imagePlaceholder(imageSourcePath(part), opts) });
+        continue;
+      }
+      if (part.image.startsWith('data:')) {
+        newParts.push(part);
+        continue;
+      }
+      try {
+        const data = await readFile(part.image);
+        const ext = extname(part.image).toLowerCase();
+        const mime = EXT_TO_MIME[ext] ?? 'image/png';
+        const base64 = data.toString('base64');
+        newParts.push({ type: 'image', image: `data:${mime};base64,${base64}` });
+      } catch {
+        // A raw path would be rejected by the provider; degrade to text.
+        newParts.push({
+          type: 'text',
+          text: `[Image unavailable: ${part.image} could not be read]`,
+        });
       }
     }
-    resolved.push({ ...msg, content: newParts });
+    prepared.push({ ...msg, content: newParts });
   }
-  return resolved;
+  return prepared;
 }

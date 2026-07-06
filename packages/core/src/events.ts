@@ -72,6 +72,24 @@ export type AgentEvent =
       from: string;
       to: string;
     }
+  /**
+   * A turn carrying images was routed to the configured vision model because
+   * the active model is not vision-capable. Run-scoped: `vision_route_ended`
+   * fires before the same run's `run_finished`.
+   */
+  | {
+      type: 'vision_route_started';
+      from: string;
+      to: string;
+      trigger: 'user_images' | 'tool_image';
+    }
+  | { type: 'vision_route_ended'; restored: string }
+  /**
+   * Images appeared mid-run but no usable vision fallback is configured;
+   * the run continues on the current model with images substituted by text
+   * placeholders.
+   */
+  | { type: 'vision_route_unavailable'; reason: string }
   | {
       type: 'subagent_spawned';
       subagentId: string;
