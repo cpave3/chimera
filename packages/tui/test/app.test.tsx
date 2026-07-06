@@ -208,6 +208,56 @@ describe('App', () => {
     unmount();
   });
 
+  describe('vision routing events', () => {
+    function eventStreamClient(events: unknown[]): ChimeraClient {
+      return stubClient({
+        subscribe: async function* () {
+          for (const ev of events) yield ev as never;
+          await new Promise(() => undefined);
+        } as unknown as ChimeraClient['subscribe'],
+      });
+    }
+
+    it('announces the route and marks the status bar while a vision turn runs', async () => {
+      const client = eventStreamClient([
+        { type: 'vision_route_started', from: 'text/m', to: 'vis/v', trigger: 'user_images' },
+      ]);
+      const { lastFrame, unmount } = render(
+        <App client={client} sessionId="01ABCDEFGH" modelRef="text/m" cwd="/tmp" />,
+      );
+      await new Promise((r) => setTimeout(r, 30));
+      expect(lastFrame()).toContain('vision: routing this turn to vis/v');
+      expect(lastFrame()).toContain('→ vis/v (vision)');
+      unmount();
+    });
+
+    it('clears the indicator and announces the revert when the vision turn ends', async () => {
+      const client = eventStreamClient([
+        { type: 'vision_route_started', from: 'text/m', to: 'vis/v', trigger: 'tool_image' },
+        { type: 'vision_route_ended', restored: 'text/m' },
+      ]);
+      const { lastFrame, unmount } = render(
+        <App client={client} sessionId="01ABCDEFGH" modelRef="text/m" cwd="/tmp" />,
+      );
+      await new Promise((r) => setTimeout(r, 30));
+      expect(lastFrame()).toContain('vision: turn finished, back on text/m');
+      expect(lastFrame()).not.toContain('(vision)');
+      unmount();
+    });
+
+    it('surfaces vision_route_unavailable as an error line', async () => {
+      const client = eventStreamClient([
+        { type: 'vision_route_unavailable', reason: 'defaultVisionModel is not set' },
+      ]);
+      const { lastFrame, unmount } = render(
+        <App client={client} sessionId="01ABCDEFGH" modelRef="text/m" cwd="/tmp" />,
+      );
+      await new Promise((r) => setTimeout(r, 30));
+      expect(lastFrame()).toContain('vision: defaultVisionModel is not set');
+      unmount();
+    });
+  });
+
   it('Esc during a run calls interrupt(sessionId)', async () => {
     let sendResolve: (() => void) | null = null;
     const interrupts: string[] = [];

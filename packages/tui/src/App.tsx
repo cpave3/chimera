@@ -179,6 +179,8 @@ export function App(props: AppProps): React.ReactElement {
   const [activeModeName, setActiveModeName] = useState<string>(props.initialMode ?? 'build');
   const [pendingModeName, setPendingModeName] = useState<string | null>(null);
   const [currentModelRef, setCurrentModelRef] = useState<string>(props.modelRef);
+  /** Vision model the in-flight turn is routed to; null when not routed. */
+  const [visionRouteRef, setVisionRouteRef] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -477,6 +479,7 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'run_finished') {
       setRunning(false);
       setStreaming(false);
+      setVisionRouteRef(null);
       if (ev.reason !== 'stop') {
         const statusMsg =
           ev.reason === 'max_steps'
@@ -502,6 +505,14 @@ export function App(props: AppProps): React.ReactElement {
     } else if (ev.type === 'model_changed') {
       setCurrentModelRef(ev.to);
       scrollback.addInfo(`model changed: ${ev.from} → ${ev.to}`);
+    } else if (ev.type === 'vision_route_started') {
+      setVisionRouteRef(ev.to);
+      scrollback.addInfo(`vision: routing this turn to ${ev.to} (images present)`);
+    } else if (ev.type === 'vision_route_ended') {
+      setVisionRouteRef(null);
+      scrollback.addInfo(`vision: turn finished, back on ${ev.restored}`);
+    } else if (ev.type === 'vision_route_unavailable') {
+      scrollback.addError(`vision: ${ev.reason}`);
     } else if (ev.type === 'compaction_started') {
       setCompacting(true);
     } else if (ev.type === 'compaction_finished') {
@@ -1551,7 +1562,7 @@ export function App(props: AppProps): React.ReactElement {
     () => [
       modeWidget,
       <Text key="model" color={theme.accent.primary}>
-        {currentModelRef}
+        {`${currentModelRef}${visionRouteRef ? ` → ${visionRouteRef} (vision)` : ''}`}
       </Text>,
       <Text key="session" color={theme.text.muted}>
         {`session ${activeSession.sessionId.slice(-8)}`}
@@ -1565,6 +1576,7 @@ export function App(props: AppProps): React.ReactElement {
     [
       modeWidget,
       currentModelRef,
+      visionRouteRef,
       activeSession.sessionId,
       activeParentId,
       theme.accent.primary,
