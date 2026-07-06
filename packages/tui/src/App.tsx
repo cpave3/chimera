@@ -2007,7 +2007,7 @@ function renderEntryLines(
   if (entry.kind === 'assistant') {
     return [
       <Box key={`${entry.id}:a`} flexDirection="column" paddingLeft={2}>
-        {renderMarkdown(entry.text, theme)}
+        {renderMarkdown(entry.text, theme, Math.max(10, width - 2))}
       </Box>,
     ];
   }

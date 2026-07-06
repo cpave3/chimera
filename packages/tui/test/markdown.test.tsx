@@ -5,9 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { renderMarkdown } from '../src/markdown';
 import { defaultTheme } from '../src/theme/tokens';
 
-function frame(text: string): string {
+function frame(text: string, width?: number): string {
   const { lastFrame, unmount } = render(
-    <Box flexDirection="column">{renderMarkdown(text, defaultTheme)}</Box>,
+    <Box flexDirection="column">{renderMarkdown(text, defaultTheme, width)}</Box>,
   );
   const out = lastFrame() ?? '';
   unmount();
@@ -59,5 +59,53 @@ describe('renderMarkdown', () => {
     expect(out).toContain('run()');
     expect(out).not.toContain('**');
     expect(out).not.toContain('`run()`');
+  });
+
+  it('renders a table with a bordered grid instead of raw pipes', () => {
+    const out = frame(
+      ['| Name | Age |', '| ---- | --- |', '| Alice | 30 |', '| Bob | 25 |'].join('\n'),
+    );
+    expect(out).toContain('Alice');
+    expect(out).toContain('Bob');
+    expect(out).toContain('Name');
+    expect(out).toContain('┌');
+    expect(out).toContain('┐');
+    expect(out).toContain('└');
+    expect(out).toContain('┘');
+    expect(out).toContain('│');
+    expect(out).toContain('─');
+  });
+
+  it('preserves inline formatting inside table cells', () => {
+    const out = frame(
+      [
+        '| Package | Status |',
+        '| ------- | ------ |',
+        '| **tui** | `ready` |',
+        '| *cli* | done |',
+      ].join('\n'),
+    );
+    expect(out).toContain('tui');
+    expect(out).toContain('ready');
+    expect(out).toContain('cli');
+    expect(out).toContain('done');
+    expect(out).not.toContain('**tui**');
+    expect(out).not.toContain('`ready`');
+    expect(out).not.toContain('*cli*');
+  });
+
+  it('wraps wide table cells to fit the width without crashing', () => {
+    const wide = [
+      '| Col1 | Col2 | Col3 | Col4 |',
+      '| ---- | ---- | ---- | ---- |',
+      '| short | this is a much longer cell value | x | another long value here yes |',
+    ].join('\n');
+    const out = frame(wide, 40);
+    expect(out).toContain('short');
+    expect(out).toContain('longer');
+    expect(out).toContain('another');
+    expect(out).toContain('┌');
+    expect(out).toContain('└');
+    expect(out).not.toContain('| ----');
   });
 });
