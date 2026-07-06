@@ -18,7 +18,7 @@ import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
-import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
+import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface InteractiveOptions {
@@ -133,6 +133,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       maxDepth: opts.maxSubagentDepth,
     },
     models: config.models,
+    defaultVisionModel: config.defaultVisionModel,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,

@@ -15,7 +15,7 @@ import { CliAgentFactory } from '../factory';
 import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
-import { parseSandboxFlags, type ParseSandboxFlagsInput } from '../sandbox-config';
+import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
 export interface ServeOptions {
@@ -160,6 +160,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     systemPromptOverride,
     toolsAllowlist,
     models: config.models,
+    defaultVisionModel: config.defaultVisionModel,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,

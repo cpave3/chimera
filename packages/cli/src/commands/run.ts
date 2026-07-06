@@ -149,6 +149,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         maxDepth: opts.maxSubagentDepth,
       },
       models: config.models,
+      defaultVisionModel: config.defaultVisionModel,
       compaction: compactionConfig,
       compactor,
       responseTimeoutMs: config.responseTimeoutMs,

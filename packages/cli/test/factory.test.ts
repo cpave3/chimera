@@ -140,6 +140,105 @@ describe('CliAgentFactory', () => {
     expect(description).toContain('anthropic/claude-sonnet-4-5');
   });
 
+  describe('vision model resolver', () => {
+    const providersConfig = {
+      providers: {
+        anthropic: {
+          shape: 'anthropic' as const,
+          baseUrl: 'https://example.invalid',
+          apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+        },
+      },
+    };
+
+    async function buildAgent(opts: {
+      defaultVisionModel?: string;
+      models?: ConstructorParameters<typeof CliAgentFactory>[0]['models'];
+    }) {
+      const factory = new CliAgentFactory({
+        providersConfig,
+        autoApprove: 'all',
+        home: cwd,
+        warn: () => {},
+        defaultVisionModel: opts.defaultVisionModel,
+        models: opts.models,
+      });
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+      return agent as unknown as {
+        visionModelResolver?: () =>
+          | {
+              status: 'ok';
+              ref: string;
+              model: { vision?: boolean; maxSteps: number };
+              languageModel: unknown;
+              contextWindow: number;
+            }
+          | { status: 'unavailable'; reason: string };
+        session: { model: { vision?: boolean } };
+        setUserModelOverride: (ref: string) => { status: string };
+      };
+    }
+
+    it('resolves a configured, vision-flagged defaultVisionModel', async () => {
+      const agent = await buildAgent({
+        defaultVisionModel: 'anthropic/claude-sonnet-4-5',
+        models: { 'anthropic/claude-sonnet-4-5': { vision: true } },
+      });
+      const result = agent.visionModelResolver?.();
+      expect(result).toMatchObject({
+        status: 'ok',
+        ref: 'anthropic/claude-sonnet-4-5',
+        contextWindow: 200_000,
+      });
+      if (result?.status === 'ok') {
+        expect(result.model.vision).toBe(true);
+        expect(result.languageModel).toBeDefined();
+      }
+    });
+
+    it('is unavailable when defaultVisionModel is not set', async () => {
+      const agent = await buildAgent({});
+      const result = agent.visionModelResolver?.();
+      expect(result).toMatchObject({ status: 'unavailable' });
+      if (result?.status === 'unavailable') {
+        expect(result.reason).toContain('defaultVisionModel');
+      }
+    });
+
+    it('is unavailable when the fallback is not marked vision-capable', async () => {
+      const agent = await buildAgent({
+        defaultVisionModel: 'anthropic/claude-sonnet-4-5',
+      });
+      const result = agent.visionModelResolver?.();
+      expect(result).toMatchObject({ status: 'unavailable' });
+      if (result?.status === 'unavailable') {
+        expect(result.reason).toContain('vision');
+      }
+    });
+
+    it('is unavailable when the fallback references an unknown provider', async () => {
+      const agent = await buildAgent({
+        defaultVisionModel: 'nonesuch/some-model',
+        models: { 'nonesuch/some-model': { vision: true } },
+      });
+      const result = agent.visionModelResolver?.();
+      expect(result).toMatchObject({ status: 'unavailable' });
+    });
+
+    it('carries the vision flag through runtime /model changes', async () => {
+      const agent = await buildAgent({
+        models: { 'anthropic/claude-sonnet-4-5': { vision: true } },
+      });
+      const result = agent.setUserModelOverride('anthropic/claude-sonnet-4-5');
+      expect(result.status).toBe('applied');
+      expect(agent.session.model.vision).toBe(true);
+    });
+  });
+
   it('honors a per-model contextWindow override from config', async () => {
     const factory = new CliAgentFactory({
       providersConfig: {

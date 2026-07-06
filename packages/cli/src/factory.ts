@@ -1,14 +1,20 @@
+import { realpath, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { realpath, stat } from 'node:fs/promises';
 import { Compactor } from '@chimera/compaction';
-import type { CompactionConfig, Executor, ModelConfig, SessionId } from '@chimera/core';
+import type {
+  CompactionConfig,
+  Executor,
+  ModelConfig,
+  SessionId,
+  VisionModelResolution,
+} from '@chimera/core';
 import {
   Agent,
   composeSystemPrompt,
+  type InterruptHook,
   loadSession,
   newSessionId,
-  type InterruptHook,
   type StopHook,
   type TimeoutHook,
   writeSessionMetadata,
@@ -28,6 +34,7 @@ import {
   type ProvidersConfig,
   resolveContextWindow,
 } from '@chimera/providers';
+import { RecallStore } from '@chimera/recall';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
@@ -43,7 +50,6 @@ import {
   TaskListStore,
   type WebSearchProvider,
 } from '@chimera/tools';
-import { RecallStore } from '@chimera/recall';
 import type { ToolSet } from 'ai';
 import type { ModelOptions } from './config';
 import type { CliSandboxOptions } from './sandbox-config';
@@ -132,6 +138,12 @@ export interface CliAgentFactoryOptions {
   webSearch?: { provider: 'tavily' | 'brave'; apiKey: string };
   /** Archived-output recall store config. enabled defaults to true. */
   recall?: { enabled?: boolean; archiveThresholdTokens?: number; ttlDays?: number };
+  /**
+   * Model ref image turns route to when the active model is not
+   * vision-capable. Resolved lazily per engagement, so a broken value only
+   * surfaces (as an actionable error) when images actually appear.
+   */
+  defaultVisionModel?: string;
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -160,6 +172,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveRecallStores = new Map<SessionId, RecallStore>();
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
+  private readonly defaultVisionModel: string | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
    * The TUI consumes this via `getFormatters()` so its scrollback can render
@@ -187,6 +200,7 @@ export class CliAgentFactory implements AgentFactory {
     this.compaction = opts.compaction;
     this.compactor = opts.compactor;
     this.responseTimeoutMs = opts.responseTimeoutMs;
+    this.defaultVisionModel = opts.defaultVisionModel;
     this.diagnosticsConfig = opts.diagnostics;
     this.recallConfig = opts.recall;
     this.webSearchProvider = opts.webSearch
@@ -554,6 +568,7 @@ export class CliAgentFactory implements AgentFactory {
         maxSteps: agent.session.model.maxSteps,
         maxOutputTokens: modelOpts?.maxOutputTokens,
         temperature: agent.session.model.temperature,
+        vision: modelOpts?.vision,
       };
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
       const newSystemPrompt = composeSystemPrompt({
@@ -570,6 +585,52 @@ export class CliAgentFactory implements AgentFactory {
         contextWindow: newWindow.value,
         contextWindowIsApproximate: newWindow.source === 'fallback',
       };
+    });
+
+    // Vision fallback resolver: turns carrying images run on
+    // `defaultVisionModel` when the active model is text-only.
+    agent.setVisionModelResolver((): VisionModelResolution => {
+      const visionRef = this.defaultVisionModel;
+      if (!visionRef) {
+        return {
+          status: 'unavailable',
+          reason: '"defaultVisionModel" is not set in ~/.chimera/config.json',
+        };
+      }
+      if (this.modelsConfig[visionRef]?.vision !== true) {
+        return {
+          status: 'unavailable',
+          reason: `defaultVisionModel "${visionRef}" is not marked "vision": true under "models" in ~/.chimera/config.json`,
+        };
+      }
+      try {
+        const { provider: visionProvider, modelId: visionModelId } =
+          this.registry.resolve(visionRef);
+        const visionProviderSpec = this.providersConfig.providers[visionProvider.id];
+        const visionWindow = resolveContextWindow({
+          providerShape: visionProviderSpec?.shape ?? visionProvider.shape,
+          providerId: visionProvider.id,
+          modelId: visionModelId,
+          override: this.modelsConfig[visionRef]?.contextWindow,
+          warn: this.warn,
+        });
+        return {
+          status: 'ok',
+          ref: visionRef,
+          model: {
+            providerId: visionProvider.id,
+            modelId: visionModelId,
+            maxSteps: agent.session.model.maxSteps,
+            maxOutputTokens: this.modelsConfig[visionRef]?.maxOutputTokens,
+            vision: true,
+          },
+          languageModel: visionProvider.getModel(visionModelId, agent.session.id),
+          contextWindow: visionWindow.value,
+          contextWindowIsApproximate: visionWindow.source === 'fallback',
+        };
+      } catch (err) {
+        return { status: 'unavailable', reason: (err as Error).message };
+      }
     });
 
     return { agent, gate, hookRunner };

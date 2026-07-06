@@ -9,10 +9,23 @@ import type { DiagnosticsConfig } from '@chimera/tools';
 export interface ModelOptions {
   contextWindow?: number;
   maxOutputTokens?: number;
+  /**
+   * Marks the model vision-capable. Only models with `vision: true` ever
+   * receive image parts; image turns on other models route to
+   * `defaultVisionModel`.
+   */
+  vision?: boolean;
 }
 
 export interface ChimeraConfig {
   defaultModel?: string;
+  /**
+   * Model (`<providerId>/<modelId>`) that turns carrying images run on when
+   * the active model is not vision-capable. The whole turn (tools included)
+   * runs on this model, then the session reverts to the selected model.
+   * Must itself be marked `vision: true` under `models`.
+   */
+  defaultVisionModel?: string;
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
   commands?: {
@@ -146,6 +159,7 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
       modelId,
       maxSteps: opts.maxSteps ?? 100,
       maxOutputTokens: modelOpts?.maxOutputTokens,
+      vision: modelOpts?.vision,
     },
     providersConfig: { providers, defaultModel: opts.config.defaultModel },
   };

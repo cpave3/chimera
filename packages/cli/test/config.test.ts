@@ -59,4 +59,21 @@ describe('resolveModel', () => {
     });
     expect(r.model.maxOutputTokens).toBeUndefined();
   });
+
+  it('forwards models[ref].vision to ModelConfig and defaults it to undefined', () => {
+    const providers = {
+      synthetic: { shape: 'openai' as const, baseUrl: 'x', apiKey: 'env:S' },
+    };
+    const flagged = resolveModel({
+      cliModel: 'synthetic/k',
+      config: { providers, models: { 'synthetic/k': { vision: true } } },
+    });
+    expect(flagged.model.vision).toBe(true);
+
+    const unflagged = resolveModel({
+      cliModel: 'synthetic/k',
+      config: { providers },
+    });
+    expect(unflagged.model.vision).toBeUndefined();
+  });
 });
