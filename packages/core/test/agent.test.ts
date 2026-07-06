@@ -2495,4 +2495,40 @@ describe('vision routing', () => {
     expect(systemOf(primary.doStreamCalls[0])).not.toContain('# Vision turn');
   });
 
+  it('elides the base64 payload from read-image tool results in every prompt', async () => {
+    const primary = readToolCallMock();
+    const vision = textMock('vision sees it');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+
+    for await (const _ev of agent.run('open the screenshot')) {
+      // drain
+    }
+
+    // The vision step's prompt carries the image once, as the injected user
+    // image part — not a second time as JSON text inside the tool result.
+    const visionPrompt = vision.doStreamCalls[0].prompt as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    const toolMessage = visionPrompt.find((msg) => msg.role === 'tool');
+    expect(toolMessage).toBeDefined();
+    expect(JSON.stringify(toolMessage)).toContain('elided');
+    expect(JSON.stringify(toolMessage)).not.toContain('base64,abc123');
+    const hasUserImagePart = visionPrompt.some(
+      (msg) =>
+        msg.role === 'user' &&
+        Array.isArray(msg.content) &&
+        (msg.content as Array<{ type: string }>).some((part) => part.type === 'file'),
+    );
+    expect(hasUserImagePart).toBe(true);
+  });
 });

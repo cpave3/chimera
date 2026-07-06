@@ -1918,6 +1918,42 @@ function imagePlaceholder(sourcePath: string | undefined, opts: MessagePrepOptio
 }
 
 /**
+ * Read-image tool results duplicate the whole image as base64 JSON text in
+ * every later prompt — the model already sees it as the injected image
+ * message. Strip the payload from the prompt copy (persisted history keeps
+ * it for scrollback/rehydration).
+ */
+function elideImageToolResults(msg: ModelMessage): ModelMessage {
+  if (!Array.isArray(msg.content)) return msg;
+  let changed = false;
+  const parts = msg.content.map((part) => {
+    if (part.type !== 'tool-result') return part;
+    const output = (part as { output?: { type?: string; value?: unknown } }).output;
+    const value = output?.value;
+    if (
+      value &&
+      typeof value === 'object' &&
+      (value as { kind?: unknown }).kind === 'image' &&
+      typeof (value as { data?: unknown }).data === 'string'
+    ) {
+      changed = true;
+      return {
+        ...part,
+        output: {
+          ...output,
+          value: {
+            ...(value as Record<string, unknown>),
+            data: '[image data elided — see accompanying image message]',
+          },
+        },
+      };
+    }
+    return part;
+  });
+  return changed ? ({ ...msg, content: parts } as ModelMessage) : msg;
+}
+
+/**
  * Build the live prompt copy of `messages` for the model about to be called.
  * Vision-capable models get image paths resolved to base64 data URIs;
  * text-only models get image parts replaced with text placeholders. The
@@ -1929,6 +1965,10 @@ async function prepareMessagesForModel(
 ): Promise<ModelMessage[]> {
   const prepared: ModelMessage[] = [];
   for (const msg of messages) {
+    if (msg.role === 'tool') {
+      prepared.push(elideImageToolResults(msg));
+      continue;
+    }
     if (msg.role !== 'user' || typeof msg.content === 'string') {
       prepared.push(msg);
       continue;
