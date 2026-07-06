@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildTools } from '../src/build';
 import { LocalExecutor } from '../src/local-executor';
 
+/** Minimal valid 1x1 PNG (67 bytes). */
+const MINI_PNG = Buffer.from(
+  '89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d763f8cfc00000000300010005f8d24f0000000049454e44ae426082',
+  'hex',
+);
+
 type AnyTool = { execute: (args: any, opts?: any) => Promise<any> };
 
 describe('buildTools', () => {
@@ -95,6 +101,33 @@ describe('buildTools', () => {
     const result = await toolset.read!.execute({ path: 'huge.txt' }, {});
     expect(result.total_lines).toBe(2500);
     expect(result.truncated).toBe(true);
+  });
+
+  it('read returns a base64 data URI for PNG files', async () => {
+    await writeFile(join(root, 'test.png'), MINI_PNG);
+    const toolset = tools();
+    const result = await toolset.read!.execute({ path: 'test.png' }, {});
+    expect(result.kind).toBe('image');
+    expect(result.mime).toBe('image/png');
+    expect(result.data).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it('read returns a base64 data URI for JPEG files', async () => {
+    await writeFile(join(root, 'test.jpg'), MINI_PNG);
+    const toolset = tools();
+    const result = await toolset.read!.execute({ path: 'test.jpg' }, {});
+    expect(result.kind).toBe('image');
+    expect(result.mime).toBe('image/jpeg');
+    expect(result.data).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
+  it('read returns file content for non-image files even with image-like names', async () => {
+    await writeFile(join(root, 'fake.png'), 'not an image');
+    const toolset = tools();
+    const result = await toolset.read!.execute({ path: 'fake.png' }, {});
+    expect(result.kind).toBe('image');
+    expect(result.mime).toBe('image/png');
+    expect(result.data).toMatch(/^data:image\/png;base64,/);
   });
 
   it('write creates files and reports bytes', async () => {

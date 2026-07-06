@@ -178,7 +178,7 @@ export class ChimeraClient {
   }
 
   /**
-   * Reload session configuration (e.g., AGENTS.md/CLAUDE.md changes).
+   * Reload session configuration (e.g., AGENTS.md/AGENTS.local.md/CLAUDE.md changes).
    * The server composes the new system prompt; this method accepts it
    * as an argument because the server may need additional context
    * (cwd, extensions) to compose it correctly.

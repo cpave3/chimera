@@ -5,10 +5,11 @@ import { type ContextBreakdown, computeContextBreakdown } from './context-breakd
 import { ContextTracker, shouldCompact } from './context-tracker';
 import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
-
-export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
+
+export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
+
 import {
   appendSessionEvent,
   forkSession,
@@ -181,6 +182,13 @@ export class Agent {
    * loop. Cleared at the next user turn.
    */
   private compactionIneffective = false;
+  /**
+   * Pending image data URIs collected from `read` tool results during the
+   * current step. Injected as a user message with image parts at the end of
+   * each step that had tool calls, so the model sees the images as vision
+   * inputs on the next turn.
+   */
+  private pendingImageMessages: Array<{ type: 'image'; image: string }> = [];
   /**
    * Optional callback invoked when a queued mode switch is drained. Returns
    * the freshly-recomposed system prompt + filtered tool set + effective
@@ -412,7 +420,7 @@ export class Agent {
 
   /**
    * Replace the system prompt. Called by the server when the user runs
-   * `/reload` to pick up changes to AGENTS.md/CLAUDE.md files.
+   * `/reload` to pick up changes to AGENTS.md/AGENTS.local.md/CLAUDE.md files.
    */
   setSystemPrompt(systemPrompt: string): void {
     this.opts = { ...this.opts, systemPrompt };
@@ -918,6 +926,10 @@ export class Agent {
     const planHandoff = this.planHandoffPending;
     this.planHandoffPending = false;
 
+    // Fresh run: discard any stale pending images from a previous run that
+    // was interrupted before they could be injected.
+    this.pendingImageMessages = [];
+
     this.session.messages.push(buildUserMessage(userMessage, imagePaths));
 
     queue.push({ type: 'session_started', sessionId: this.session.id });
@@ -1314,8 +1326,23 @@ export class Agent {
                     }
                   }
                 }
+                // When the read tool returns an image, queue it for injection
+                // as a user message so the model can see it as a vision input.
                 if (info.name === 'read') {
                   this.resolveAndTrackPath(rec?.args, false);
+                  if (
+                    result &&
+                    typeof result === 'object' &&
+                    'kind' in result &&
+                    (result as { kind?: string }).kind === 'image' &&
+                    'data' in result &&
+                    typeof (result as { data?: unknown }).data === 'string'
+                  ) {
+                    this.pendingImageMessages.push({
+                      type: 'image',
+                      image: (result as { data: string }).data,
+                    });
+                  }
                 } else if (info.name === 'write' || info.name === 'edit') {
                   this.resolveAndTrackPath(rec?.args, true);
                 }
@@ -1428,6 +1455,17 @@ export class Agent {
           const response = await stream.response;
           if (response && Array.isArray(response.messages)) {
             this.session.messages.push(...(response.messages as ModelMessage[]));
+          }
+
+          // Inject queued images as a user message so the model sees them as
+          // vision inputs on the next turn. Do this after the response messages
+          // are attached so the image parts land in the right order.
+          if (this.pendingImageMessages.length > 0) {
+            this.session.messages.push({
+              role: 'user',
+              content: this.pendingImageMessages,
+            });
+            this.pendingImageMessages = [];
           }
 
           if (terminalReason !== 'stop') {
@@ -1640,7 +1678,11 @@ async function resolveImagePaths(messages: ModelMessage[]): Promise<ModelMessage
     const parts = Array.isArray(msg.content) ? msg.content : [];
     const newParts: typeof parts = [];
     for (const part of parts) {
-      if (part.type === 'image' && typeof part.image === 'string') {
+      if (
+        part.type === 'image' &&
+        typeof part.image === 'string' &&
+        !part.image.startsWith('data:')
+      ) {
         try {
           const data = await readFile(part.image);
           const ext = extname(part.image).toLowerCase();

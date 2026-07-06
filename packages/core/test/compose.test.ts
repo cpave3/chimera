@@ -77,6 +77,70 @@ describe('composeSystemPrompt', () => {
     expect(subIdx).toBeGreaterThan(rootIdx);
   });
 
+  it('places AGENTS.local.md after AGENTS.md at the same level', async () => {
+    const repo = join(home, 'repo');
+    await mkdir(join(repo, '.git'), { recursive: true });
+    await writeFile(join(repo, 'AGENTS.md'), 'ROOT-INSTRUCTIONS');
+    await writeFile(join(repo, 'AGENTS.local.md'), 'ROOT-LOCAL-OVERRIDE');
+
+    const files = discoverAgentsFiles(repo, home);
+    expect(files).toHaveLength(2);
+    expect(files[0]).toMatch(/\/repo\/AGENTS\.md$/);
+    expect(files[1]).toMatch(/\/repo\/AGENTS\.local\.md$/);
+
+    const prompt = composeSystemPrompt({ cwd: repo, home });
+    const normalIdx = prompt.indexOf('ROOT-INSTRUCTIONS');
+    const localIdx = prompt.indexOf('ROOT-LOCAL-OVERRIDE');
+    expect(normalIdx).toBeGreaterThan(0);
+    expect(localIdx).toBeGreaterThan(normalIdx);
+  });
+
+  it('places AGENTS.local.md after CLAUDE.md when AGENTS.md is absent', async () => {
+    const repo = join(home, 'repo');
+    await mkdir(join(repo, '.git'), { recursive: true });
+    await writeFile(join(repo, 'CLAUDE.md'), 'CLAUDE-INSTRUCTIONS');
+    await writeFile(join(repo, 'AGENTS.local.md'), 'LOCAL-OVERRIDE');
+
+    const files = discoverAgentsFiles(repo, home);
+    expect(files).toHaveLength(2);
+    expect(files[0]).toMatch(/\/repo\/CLAUDE\.md$/);
+    expect(files[1]).toMatch(/\/repo\/AGENTS\.local\.md$/);
+
+    const prompt = composeSystemPrompt({ cwd: repo, home });
+    const claudeIdx = prompt.indexOf('CLAUDE-INSTRUCTIONS');
+    const localIdx = prompt.indexOf('LOCAL-OVERRIDE');
+    expect(claudeIdx).toBeGreaterThan(0);
+    expect(localIdx).toBeGreaterThan(claudeIdx);
+  });
+
+  it('orders multi-level AGENTS.local.md files correctly', async () => {
+    const repo = join(home, 'repo');
+    const sub = join(repo, 'pkg');
+    await mkdir(sub, { recursive: true });
+    await mkdir(join(repo, '.git'), { recursive: true });
+    await writeFile(join(repo, 'AGENTS.md'), 'ROOT-INSTRUCTIONS');
+    await writeFile(join(repo, 'AGENTS.local.md'), 'ROOT-LOCAL-OVERRIDE');
+    await writeFile(join(sub, 'AGENTS.md'), 'SUB-INSTRUCTIONS');
+    await writeFile(join(sub, 'AGENTS.local.md'), 'SUB-LOCAL-OVERRIDE');
+
+    const files = discoverAgentsFiles(sub, home);
+    expect(files).toHaveLength(4);
+    expect(files[0]).toMatch(/\/repo\/AGENTS\.md$/);
+    expect(files[1]).toMatch(/\/repo\/AGENTS\.local\.md$/);
+    expect(files[2]).toMatch(/\/pkg\/AGENTS\.md$/);
+    expect(files[3]).toMatch(/\/pkg\/AGENTS\.local\.md$/);
+
+    const prompt = composeSystemPrompt({ cwd: sub, home });
+    const rootIdx = prompt.indexOf('ROOT-INSTRUCTIONS');
+    const rootLocalIdx = prompt.indexOf('ROOT-LOCAL-OVERRIDE');
+    const subIdx = prompt.indexOf('SUB-INSTRUCTIONS');
+    const subLocalIdx = prompt.indexOf('SUB-LOCAL-OVERRIDE');
+    expect(rootIdx).toBeGreaterThan(0);
+    expect(rootLocalIdx).toBeGreaterThan(rootIdx);
+    expect(subIdx).toBeGreaterThan(rootLocalIdx);
+    expect(subLocalIdx).toBeGreaterThan(subIdx);
+  });
+
   it('runs extension hooks after AGENTS.md concatenation', () => {
     const prompt = composeSystemPrompt({
       cwd: home,

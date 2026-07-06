@@ -30,7 +30,7 @@ export interface MountOptions {
   overlay?: OverlayHandlers;
   /**
    * When provided, called by `/reload` to re-compose the system prompt
-   * (e.g., after AGENTS.md/CLAUDE.md changes). Returns the new prompt
+   * (e.g., after AGENTS.md/AGENTS.local.md/CLAUDE.md changes). Returns the new prompt
    * to send to the server.
    */
   reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;

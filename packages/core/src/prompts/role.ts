@@ -13,7 +13,7 @@ All file paths are relative to the session's working directory; the file tools r
 
 ## Project conventions
 
-If \`AGENTS.md\` or \`CLAUDE.md\` exists at the repo root or above the file you're editing, read it before making changes. Project rules — comment style, error handling, migration patterns, commit conventions — override your defaults; skipping them produces work that has to be rewritten.
+If \`AGENTS.md\` or \`CLAUDE.md\` exists at the repo root or above the file you're editing, read it before making changes. Also check for \`AGENTS.local.md\` at each level — it is a higher-priority local override. Project rules — comment style, error handling, migration patterns, commit conventions — override your defaults; skipping them produces work that has to be rewritten.
 
 ## Style
 

@@ -23,7 +23,10 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: '/rules', description: 'List permission rules (/rules rm <n> to delete)' },
   { name: '/add-read-path', description: 'Grant read access to a file or directory' },
   { name: '/add-write-path', description: 'Grant read+write access to a file or directory' },
-  { name: '/reload', description: 'Re-read user commands and AGENTS.md/CLAUDE.md from disk' },
+  {
+    name: '/reload',
+    description: 'Re-read user commands and AGENTS.md/AGENTS.local.md/CLAUDE.md from disk',
+  },
   { name: '/theme', description: 'List or apply a colour theme (/theme <name>)' },
   { name: '/subagents', description: 'List active subagents of the current session' },
   { name: '/attach', description: 'Attach the TUI to a subagent by id (/attach <id>)' },

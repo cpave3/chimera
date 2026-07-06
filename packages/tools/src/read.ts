@@ -1,3 +1,4 @@
+import { extname } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
@@ -6,6 +7,20 @@ import { relPath } from './format';
 const MAX_LINES = 2000;
 const MAX_BYTES = 100 * 1024;
 const MAX_DIR_ENTRIES = 200;
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+const EXT_TO_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
+
+function isImageFile(path: string): boolean {
+  return IMAGE_EXTS.has(extname(path).toLowerCase());
+}
 
 const READ_SCHEMA = z.object({
   path: z.string(),
@@ -24,7 +39,12 @@ type ReadDirResult = {
   entries: { name: string; isDir: boolean }[];
   truncated: boolean;
 };
-type ReadResult = ReadFileResult | ReadDirResult;
+type ReadImageResult = {
+  kind: 'image';
+  data: string;
+  mime: string;
+};
+type ReadResult = ReadFileResult | ReadDirResult | ReadImageResult;
 
 export function buildReadTool(ctx: ToolContext) {
   const cwd = ctx.sandboxExecutor.cwd();
@@ -32,7 +52,8 @@ export function buildReadTool(ctx: ToolContext) {
     description:
       'Read a file from the working directory or /tmp. Returns line-number-prefixed content. ' +
       'Limited to 2000 lines or 100 KB (whichever is smaller); specify start_line/end_line to read a slice. ' +
-      'When the path is a directory, returns its entries instead — use `glob` for recursive discovery.',
+      'When the path is a directory, returns its entries instead — use `glob` for recursive discovery. ' +
+      'Image files (.png, .jpg, .jpeg, .gif, .webp, .bmp) are returned as base64 data URIs suitable for vision models.',
     inputSchema: READ_SCHEMA,
     execute: async (args) => {
       const stat = await ctx.sandboxExecutor.stat(args.path);
@@ -44,6 +65,16 @@ export function buildReadTool(ctx: ToolContext) {
           entries: truncated ? entries.slice(0, MAX_DIR_ENTRIES) : entries,
           truncated,
         };
+      }
+
+      // Detect images by extension and return a base64 data URI so the agent
+      // can inject them into the conversation as vision inputs.
+      if (isImageFile(args.path)) {
+        const bytes = await ctx.sandboxExecutor.readFileBytes(args.path);
+        const ext = extname(args.path).toLowerCase();
+        const mime = EXT_TO_MIME[ext] ?? 'image/png';
+        const base64 = Buffer.from(bytes).toString('base64');
+        return { kind: 'image', data: `data:${mime};base64,${base64}`, mime };
       }
 
       const raw = await ctx.sandboxExecutor.readFile(args.path);
@@ -91,6 +122,9 @@ export function buildReadTool(ctx: ToolContext) {
           ? ` (${result.entries.length}+ entries, truncated)`
           : ` (${result.entries.length} entries)`;
         return { summary: `${head}/${tail}` };
+      }
+      if (result.kind === 'image') {
+        return { summary: `${head} (image)` };
       }
       const isSlice = args.start_line !== undefined || args.end_line !== undefined;
       const returned = result.content === '' ? 0 : result.content.split('\n').length;

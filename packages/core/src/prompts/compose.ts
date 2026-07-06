@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
 import { homedir, release as osRelease, type as osType } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import type { ModelConfig, SandboxMode } from '../types';
 import { ROLE_PROMPT } from './role';
 
@@ -56,8 +56,9 @@ function buildEnvironmentBlock(opts: ComposeOptions): string {
 }
 
 /**
- * Walk from cwd up to nearest git root (or home), collecting AGENTS.md files.
- * Returns in order root-first, closer-last so that closer files override.
+ * Walk from cwd up to nearest git root (or home), collecting AGENTS.md and
+ * optional AGENTS.local.md files at each level.  Returns in order
+ * root-first, closer-last so that closer files override.
  */
 export function discoverAgentsFiles(cwd: string, home = homedir()): string[] {
   const files: string[] = [];
@@ -68,7 +69,19 @@ export function discoverAgentsFiles(cwd: string, home = homedir()): string[] {
   while (true) {
     const agentsCandidate = join(dir, 'AGENTS.md');
     const claudeCandidate = join(dir, 'CLAUDE.md');
+    const localCandidate = join(dir, 'AGENTS.local.md');
     let foundAtThisLevel = false;
+
+    // Push AGENTS.local.md BEFORE the non-local file so that after the
+    // final reverse() it appears AFTER the non-local file at the same level.
+    try {
+      const st = statSync(localCandidate);
+      if (st.isFile()) {
+        files.push(localCandidate);
+      }
+    } catch {
+      // AGENTS.local.md absent
+    }
 
     try {
       const st = statSync(agentsCandidate);
@@ -114,8 +127,8 @@ export function discoverAgentsFiles(cwd: string, home = homedir()): string[] {
 }
 
 export function composeSystemPrompt(opts: ComposeOptions): string {
-  // Order: role → session block (system-injected) → AGENTS.md files
-  // (user-authored) → extensions. The session block goes BEFORE AGENTS.md
+  // Order: role → session block (system-injected) → AGENTS.md / AGENTS.local.md
+  // files (user-authored) → extensions. The session block goes BEFORE AGENTS.md
   // so the model can't mistake it for one of them.
   const parts: string[] = [ROLE_PROMPT, `\n\n${buildEnvironmentBlock(opts)}`];
 

@@ -1813,4 +1813,86 @@ describe('system prompt composition (tasks + plan handoff)', () => {
     }
     expect(systemOf(mock.doStreamCalls[0])).toContain('# Plan accepted');
   });
+
+  it('injects a user message with image parts when read tool returns an image', async () => {
+    const imageData = 'data:image/png;base64,abc123';
+    const readTool = tool({
+      description: 'read',
+      inputSchema: z.object({ path: z.string() }),
+      execute: async () => ({ kind: 'image', data: imageData, mime: 'image/png' }),
+    });
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'read',
+                  input: JSON.stringify({ path: 'screenshot.png' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'I see the image.' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+      languageModel: model,
+      tools: { read: readTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const events: string[] = [];
+    for await (const ev of agent.run('look at this')) {
+      events.push(ev.type);
+    }
+
+    // The run should complete normally.
+    expect(events[events.length - 1]).toBe('run_finished');
+
+    // Find the user message that was injected after the tool result.
+    const userMessages = agent.session.messages.filter(
+      (msg): msg is { role: 'user'; content: unknown } => msg.role === 'user',
+    );
+    expect(userMessages.length).toBeGreaterThanOrEqual(2);
+
+    // The last user message should be the image injection.
+    const lastUser = userMessages[userMessages.length - 1];
+    expect(Array.isArray(lastUser.content)).toBe(true);
+    const parts = lastUser.content as Array<{ type: string; image?: string }>;
+    expect(parts).toHaveLength(1);
+    expect(parts[0].type).toBe('image');
+    expect(parts[0].image).toBe(imageData);
+  });
 });

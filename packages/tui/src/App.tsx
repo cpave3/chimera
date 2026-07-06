@@ -80,7 +80,7 @@ export interface AppProps {
   overlay?: OverlayHandlers;
   /**
    * When provided, called by `/reload` to re-compose the system prompt
-   * (e.g., after AGENTS.md/CLAUDE.md changes). Returns the new prompt
+   * (e.g., after AGENTS.md/AGENTS.local.md/CLAUDE.md changes). Returns the new prompt
    * to send to the server.
    */
   reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
@@ -1247,7 +1247,7 @@ export function App(props: AppProps): React.ReactElement {
           try {
             // Reload user commands.
             await reloadFn.call(reg);
-            // Reload AGENTS.md/CLAUDE.md if the hook is provided.
+            // Reload AGENTS.md/AGENTS.local.md/CLAUDE.md if the hook is provided.
             if (props.reloadSystemPrompt) {
               const newPrompt = await props.reloadSystemPrompt({ cwd: props.cwd });
               await props.client.reloadSession(props.sessionId, newPrompt);
