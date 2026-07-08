@@ -347,7 +347,13 @@ export class AgentRegistry {
   /**
    * Append a user message to the session history without invoking the LLM.
    * Returns `'injected'` on success, `'missing'` if the session is not found,
-   * and `'already-running'` if a run is currently active.
+   * and `'already-running'` if a compaction, idle-inject, or rewind is active.
+   *
+   * When a run is active, the message is queued on the agent's mid-run
+   * injection buffer and drained at the next clean step boundary — so the
+   * model sees it after its current tool call finishes rather than only
+   * after the whole run ends. The run loop emits the `user_message` event at
+   * drain time, so no event is published here for the mid-run path.
    */
   async injectMessage(
     id: SessionId,
@@ -356,8 +362,13 @@ export class AgentRegistry {
   ): Promise<'injected' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive)
+    if (entry.compactionActive || entry.injectActive || entry.rewindActive) {
       return 'already-running';
+    }
+    if (entry.runActive) {
+      entry.agent.injectRunMessage(content, images);
+      return 'injected';
+    }
     entry.injectActive = true;
     try {
       await this.snapshotWorkspace(entry, content);

@@ -2531,4 +2531,175 @@ describe('vision routing', () => {
     );
     expect(hasUserImagePart).toBe(true);
   });
+
+  it('drains mid-run injected messages at the next step boundary', async () => {
+    // Step 1 emits a tool call whose body injects a correction mid-run; step 2
+    // must see that correction in its prompt and respond to it. Exercises the
+    // core injection path: injectRunMessage -> pendingInjectMessages -> drain
+    // after the tool-call step -> terminal-step continue -> model responds.
+    let agentRef: Agent | undefined;
+    const echoTool = tool({
+      description: 'echo',
+      inputSchema: z.object({ text: z.string() }),
+      execute: async () => {
+        // Inject while step 1 is in flight (tool executing). The buffer is
+        // only read at the step boundary, after this returns.
+        agentRef?.injectRunMessage('CORRECTION: use uppercase');
+        return { ok: true };
+      },
+    });
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: 'let me echo' },
+                { type: 'text-end', id: 't1' },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'echo',
+                  input: JSON.stringify({ text: 'x' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'OK UPPERCASE' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: { echo: echoTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agentRef = agent;
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('echo something')) {
+      events.push(ev);
+    }
+
+    // Two doStream calls: step 1 (tool call) + step 2 (response to correction).
+    const calls = (model as unknown as { doStreamCalls: unknown[] }).doStreamCalls;
+    expect(calls).toHaveLength(2);
+    // The injected correction appears in step 2's prompt.
+    const step2Prompt = JSON.stringify(
+      (model as unknown as { doStreamCalls: Array<{ prompt: unknown }> }).doStreamCalls[1]!.prompt,
+    );
+    expect(step2Prompt).toContain('CORRECTION: use uppercase');
+    // A user_message event was emitted for the injection.
+    expect(
+      events.some((ev) => ev.type === 'user_message' && ev.content === 'CORRECTION: use uppercase'),
+    ).toBe(true);
+    // The model's final text reflects acting on the correction.
+    const dones = events
+      .filter((ev) => ev.type === 'assistant_text_done')
+      .map((ev) => (ev as { text: string }).text);
+    expect(dones).toContain('OK UPPERCASE');
+  });
+
+  it('drops pending mid-run injects when the run is interrupted', async () => {
+    // An interrupted step must not carry injects into the next run — the
+    // drain sits after the terminalReason !== 'stop' break, and a fresh run
+    // clears the buffer. Verify by injecting during a tool call that aborts,
+    // then asserting a subsequent run starts clean.
+    let agentRef: Agent | undefined;
+    const slowTool = tool({
+      description: 'slow',
+      inputSchema: z.object({}),
+      execute: async () => {
+        agentRef?.injectRunMessage('should be dropped');
+        // Abort the run from within the tool.
+        agentRef?.interrupt();
+        return { ok: true };
+      },
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'c1',
+              toolName: 'slow',
+              input: JSON.stringify({}),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: { slow: slowTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agentRef = agent;
+
+    for await (const _ev of agent.run('go')) {
+      // drain; run aborts inside the tool
+    }
+    expect(agent.session.status).toBe('idle');
+
+    // A fresh run should not see the dropped injection in its prompt.
+    const cleanModel = textOnlyModel('done');
+    const cleanAgent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: cleanModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      session: agent.session,
+    });
+    for await (const _ev of cleanAgent.run('next')) {
+      // drain
+    }
+    const promptJson = JSON.stringify(
+      (cleanModel as unknown as { doStreamCalls: Array<{ prompt: unknown }> }).doStreamCalls[0]
+        .prompt,
+    );
+    expect(promptJson).not.toContain('should be dropped');
+  });
 });

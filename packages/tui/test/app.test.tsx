@@ -92,8 +92,9 @@ describe('App', () => {
     unmount();
   });
 
-  it('Enter while running queues the message instead of sending it', async () => {
+  it('Enter while running injects the message mid-run instead of queuing it', async () => {
     const sends: string[] = [];
+    const appendCalls: string[] = [];
     let firstSendResolve: (() => void) | null = null;
     const client = stubClient({
       // Each send() call pushes its text and (for the first call) stays pending
@@ -107,6 +108,9 @@ describe('App', () => {
           });
         }
       } as unknown as ChimeraClient['send'],
+      appendMessage: async (_id: string, content: string) => {
+        appendCalls.push(content);
+      },
     });
 
     const { lastFrame, stdin, unmount } = render(
@@ -129,16 +133,20 @@ describe('App', () => {
     }
     await new Promise((r) => setTimeout(r, 20));
 
+    // The first message was sent (started the run); the second was injected
+    // mid-run via appendMessage rather than queued.
     expect(sends).toEqual(['first']);
-    expect(lastFrame()).toContain('queued (1)');
-    expect(lastFrame()).toContain('second');
+    expect(appendCalls).toEqual(['second']);
+    expect(lastFrame()).toContain('injected:');
+    expect(lastFrame()).not.toContain('queued (');
 
     firstSendResolve?.();
     unmount();
   });
 
-  it('after run ends, queued messages are concatenated and sent as one user turn', async () => {
+  it('after run ends, queued ! commands run individually (regular messages inject mid-run)', async () => {
     const sends: string[] = [];
+    const appendCalls: string[] = [];
     const sendResolvers: Array<() => void> = [];
     let pushEvent: ((ev: unknown) => void) | null = null;
 
@@ -151,6 +159,9 @@ describe('App', () => {
           sendResolvers.push(r);
         });
       } as unknown as ChimeraClient['send'],
+      appendMessage: async (_id: string, content: string) => {
+        appendCalls.push(content);
+      },
       subscribe: async function* () {
         const buffer: unknown[] = [];
         const waiters: Array<(ev: unknown) => void> = [];
@@ -184,13 +195,15 @@ describe('App', () => {
     }
     await new Promise((r) => setTimeout(r, 20));
 
+    // A regular message while busy injects mid-run (via appendMessage).
     for (const ch of 'second follow-up\r') {
       write(ch);
       await new Promise((r) => setTimeout(r, 1));
     }
     await new Promise((r) => setTimeout(r, 20));
 
-    for (const ch of 'third follow-up\r') {
+    // A ! command while busy queues (post-run action, not model-facing).
+    for (const ch of '!echo hi\r') {
       write(ch);
       await new Promise((r) => setTimeout(r, 1));
     }
@@ -201,7 +214,10 @@ describe('App', () => {
     pushEvent?.({ type: 'run_finished', reason: 'interrupted' });
     await new Promise((r) => setTimeout(r, 30));
 
-    expect(sends).toEqual(['first follow-up', 'second follow-up\n\nthird follow-up']);
+    // The regular "second follow-up" was injected mid-run, not queued.
+    expect(appendCalls).toContain('second follow-up');
+    // The first message was sent; the ! command ran after the run ended.
+    expect(sends[0]).toBe('first follow-up');
     expect(lastFrame()).not.toContain('queued (');
 
     sendResolvers[1]?.();

@@ -780,7 +780,13 @@ export function App(props: AppProps): React.ReactElement {
       handleSlash(text.trim());
       return;
     }
+    if (running) {
+      void injectMidRun(text);
+      return;
+    }
     if (busy) {
+      // Compacting or a ! command is in flight (no active run to inject into);
+      // queue so the message lands as the next turn once the run is idle.
       setQueue((q) => [...q, text]);
       scrollback.addInfo(`queued: ${previewLine(text)}`);
       return;
@@ -822,6 +828,24 @@ export function App(props: AppProps): React.ReactElement {
       setBuffer((b) => insertText(b, ` ${label}`));
     } catch (err) {
       scrollback.addError(`clipboard paste failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Inject a regular user message into the active run so the agent sees it at
+   * the next step boundary (usually after the current tool call), instead of
+   * queueing it until the run ends. The run loop emits `user_message` at drain
+   * time, which renders the "you: ..." scrollback row; we only surface an
+   * "injected: ..." info line here for immediate feedback. Attach tokens and
+   * images are not processed for mid-run injects — keep it to plain text so
+   * the injection is fast and predictable.
+   */
+  async function injectMidRun(text: string): Promise<void> {
+    try {
+      await activeSession.client.appendMessage(activeSession.sessionId, text);
+      scrollback.addInfo(`injected: ${previewLine(text)}`);
+    } catch (err) {
+      scrollback.addError(`inject failed: ${(err as Error).message}`);
     }
   }
 
@@ -1423,8 +1447,7 @@ export function App(props: AppProps): React.ReactElement {
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(expanded);
           if (running) {
-            setQueue((q) => [...q, expanded]);
-            scrollback.addInfo(`queued: ${previewLine(raw)}`);
+            void injectMidRun(expanded);
             return;
           }
           void sendUserMessage(expanded);
@@ -1436,8 +1459,7 @@ export function App(props: AppProps): React.ReactElement {
           scrollback.addUserMessage(raw);
           scrollback.suppressUserMessageMatching(body);
           if (running) {
-            setQueue((q) => [...q, body]);
-            scrollback.addInfo(`queued: ${previewLine(raw)}`);
+            void injectMidRun(body);
             return;
           }
           void sendUserMessage(body);
