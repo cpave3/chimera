@@ -4,7 +4,10 @@ export type SkillSource =
   | 'user'
   | 'claude-project'
   | 'claude-ancestor'
-  | 'claude-user';
+  | 'claude-user'
+  | 'agents-project'
+  | 'agents-ancestor'
+  | 'agents-user';
 
 export interface Skill {
   /** Matches the directory name that contains the SKILL.md file. */
@@ -33,6 +36,12 @@ export interface LoadSkillsOptions {
   userHome?: string;
   /** Defaults to true. When false, the three `.claude/skills/` tiers are skipped. */
   includeClaudeCompat?: boolean;
+  /**
+   * Defaults to true. When true, the three `.agents/skills/` tiers (project /
+   * ancestor / user-home) are searched after the `.claude/` tiers as a
+   * cross-tool compatibility root. When false, they are skipped.
+   */
+  includeAgentsCompat?: boolean;
   /** Invoked once per skipped file or tier collision. */
   onWarning?: (message: string) => void;
 }

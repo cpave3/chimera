@@ -100,6 +100,45 @@ describe('LocalExecutor', () => {
     }
   });
 
+  it('readAllowDirs resolves symlinked allow-dir against realpath', async () => {
+    // Reproduces the systemd-homed mismatch: an allow-dir stored lexically
+    // (e.g. /home/u/.claude) never matches a target realpath'd through a
+    // symlinked prefix (/home → /var/home). canonicalizeDir() must realpath
+    // the allow-dir so the containment check compares like-for-like.
+    const real = await mkdtemp(join(tmpdir(), 'chimera-sym-real-'));
+    const linkDir = join(tmpdir(), `chimera-sym-link-${process.pid}-${Date.now()}`);
+    try {
+      await symlink(real, linkDir);
+      const skillDir = join(linkDir, 'pdf');
+      await mkdir(skillDir);
+      await writeFile(join(skillDir, 'SKILL.md'), 'hello-via-symlink');
+
+      const exec = new LocalExecutor({
+        cwd: root,
+        readAllowDirs: [linkDir],
+      });
+      const content = await exec.readFile(join(skillDir, 'SKILL.md'));
+      expect(content).toBe('hello-via-symlink');
+
+      // A sibling under the *real* path is also reachable through the link
+      // because the allow-dir canonicalizes to the realpath.
+      await writeFile(join(real, 'other.txt'), 'sibling');
+      expect(await exec.readFile(join(linkDir, 'other.txt'))).toBe('sibling');
+
+      // A path outside the allow tree is still rejected.
+      const outside = await mkdtemp(join(tmpdir(), 'chimera-sym-out-'));
+      try {
+        await writeFile(join(outside, 'nope'), 'x');
+        await expect(exec.readFile(join(outside, 'nope'))).rejects.toBeInstanceOf(PathEscapeError);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    } finally {
+      await rm(real, { recursive: true, force: true });
+      await rm(linkDir, { force: true });
+    }
+  });
+
   it('readAllowDirs does NOT permit writes outside cwd', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'chimera-allow-w-'));
     try {

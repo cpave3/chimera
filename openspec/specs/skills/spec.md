@@ -21,7 +21,7 @@ Optional frontmatter fields (`version`, `license`) SHALL be preserved on the reg
 
 ### Requirement: Discovery paths
 
-`loadSkills({ cwd, userHome, includeClaudeCompat })` SHALL search, in this priority order:
+`loadSkills({ cwd, userHome, includeClaudeCompat, includeAgentsCompat })` SHALL search, in this priority order:
 
 1. `<cwd>/.chimera/skills/<name>/SKILL.md`
 2. Ancestor walk from `cwd` (exclusive) toward the nearest `.git/` directory (or `userHome` if no git root is encountered): `<ancestor>/.chimera/skills/<name>/SKILL.md`
@@ -33,6 +33,12 @@ When `includeClaudeCompat !== false`, the following tiers SHALL be searched afte
 5. Ancestor walk for `.claude/skills/<name>/SKILL.md`
 6. `<userHome>/.claude/skills/<name>/SKILL.md`
 
+When `includeAgentsCompat !== false` (the default), the following tiers SHALL be searched after the `.claude/` tiers as a cross-tool compatibility root:
+
+7. `<cwd>/.agents/skills/<name>/SKILL.md`
+8. Ancestor walk for `.agents/skills/<name>/SKILL.md`
+9. `<userHome>/.agents/skills/<name>/SKILL.md`
+
 On name collision between tiers, the higher-priority tier SHALL win and the registry SHALL log a single warning line listing the losing path and the winning path.
 
 #### Scenario: Project skill shadows home skill
@@ -40,9 +46,24 @@ On name collision between tiers, the higher-priority tier SHALL win and the regi
 - **WHEN** `.chimera/skills/pdf/SKILL.md` exists in the cwd AND `~/.chimera/skills/pdf/SKILL.md` exists
 - **THEN** `registry.find("pdf").source` SHALL equal `"project"` and its `path` SHALL be the cwd copy; the user-home copy SHALL NOT appear in `registry.all()`
 
+#### Scenario: .agents user-home skill resolves when nothing higher exists
+
+- **WHEN** `~/.agents/skills/pdf/SKILL.md` exists and no higher-priority tier defines `pdf`
+- **THEN** `registry.find("pdf").source` SHALL equal `"agents-user"`
+
+#### Scenario: .chimera skill shadows .agents skill
+
+- **WHEN** `.chimera/skills/git/SKILL.md` exists in the cwd AND `~/.agents/skills/git/SKILL.md` exists
+- **THEN** `registry.find("git").source` SHALL equal `"project"` and the `.agents/` copy SHALL NOT appear in `registry.all()`; one collision warning SHALL be logged
+
 #### Scenario: Claude-compat opt-out
 
 - **WHEN** `loadSkills({ ..., includeClaudeCompat: false })` is called and `.claude/skills/git/SKILL.md` is the only skill named `git`
+- **THEN** `registry.find("git")` SHALL return `null`
+
+#### Scenario: Agents-compat opt-out
+
+- **WHEN** `loadSkills({ ..., includeAgentsCompat: false })` is called and `~/.agents/skills/git/SKILL.md` is the only skill named `git`
 - **THEN** `registry.find("git")` SHALL return `null`
 
 ### Requirement: System prompt index

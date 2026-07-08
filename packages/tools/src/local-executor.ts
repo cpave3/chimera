@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import {
   chmod,
   lstat,
   mkdir,
-  realpath,
   readdir,
   readFile,
+  realpath,
   rename,
   stat,
   writeFile,
@@ -13,6 +14,21 @@ import {
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { PathEscapeError } from './errors';
+
+/**
+ * Canonicalize a directory path: `realpathSync` it so symlinked prefixes
+ * (e.g. `/home` → `/var/home` on systemd-homed) match the realpath-resolved
+ * targets checked in `resolveSafe`/`resolveReadable`. Falls back to `resolve`
+ * on any error (notably `ENOENT` for allow-dirs that don't exist yet, such as
+ * `~/.agents`), so callers never throw at construction for a missing dir.
+ */
+function canonicalizeDir(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const SIGKILL_DELAY_MS = 2_000;
@@ -51,25 +67,25 @@ export class LocalExecutor implements Executor {
   private readonly maxOutputBytes: number;
 
   constructor(opts: LocalExecutorOptions) {
-    this.rootCwd = resolve(opts.cwd);
-    this.readAllowDirs = (opts.readAllowDirs ?? []).map((d) => resolve(d));
-    this.writeAllowDirs = (opts.writeAllowDirs ?? []).map((d) => resolve(d));
+    this.rootCwd = canonicalizeDir(opts.cwd);
+    this.readAllowDirs = (opts.readAllowDirs ?? []).map((d) => canonicalizeDir(d));
+    this.writeAllowDirs = (opts.writeAllowDirs ?? []).map((d) => canonicalizeDir(d));
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
   /** Add an absolute directory to the read-allow list. Deduplicates silently. */
   addReadAllowDir(absolutePath: string): void {
-    const resolved = resolve(absolutePath);
-    if (!this.readAllowDirs.some((d) => resolve(d) === resolved)) {
-      this.readAllowDirs.push(resolved);
+    const canonical = canonicalizeDir(absolutePath);
+    if (!this.readAllowDirs.some((d) => canonicalizeDir(d) === canonical)) {
+      this.readAllowDirs.push(canonical);
     }
   }
 
   /** Add an absolute directory to the write-allow list. Deduplicates silently. */
   addWriteAllowDir(absolutePath: string): void {
-    const resolved = resolve(absolutePath);
-    if (!this.writeAllowDirs.some((d) => resolve(d) === resolved)) {
-      this.writeAllowDirs.push(resolved);
+    const canonical = canonicalizeDir(absolutePath);
+    if (!this.writeAllowDirs.some((d) => canonicalizeDir(d) === canonical)) {
+      this.writeAllowDirs.push(canonical);
     }
   }
 

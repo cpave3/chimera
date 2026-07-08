@@ -11,6 +11,12 @@ describe('categorizeSkillSource', () => {
     expect(categorizeSkillSource('claude-ancestor')).toBe('claude-compat');
     expect(categorizeSkillSource('claude-user')).toBe('claude-compat');
   });
+
+  it('maps .agents-* sources to claude-compat (cross-tool compat root)', () => {
+    expect(categorizeSkillSource('agents-project')).toBe('claude-compat');
+    expect(categorizeSkillSource('agents-ancestor')).toBe('claude-compat');
+    expect(categorizeSkillSource('agents-user')).toBe('claude-compat');
+  });
 });
 
 describe('buildSkillActivationLookup', () => {

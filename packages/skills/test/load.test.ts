@@ -103,6 +103,64 @@ describe('loadSkills discovery', () => {
     expect(registry.find('git')).toBeUndefined();
   });
 
+  it('discovers a ~/.agents/skills entry as agents-user when nothing higher exists', async () => {
+    await mkdir(join(home, '.agents', 'skills', 'pdf'), { recursive: true });
+    await writeFile(
+      join(home, '.agents', 'skills', 'pdf', 'SKILL.md'),
+      '---\nname: pdf\ndescription: agents-home pdf\n---',
+    );
+    const cwd = join(home, 'somewhere');
+    await mkdir(cwd, { recursive: true });
+    const registry = loadSkills({ cwd, userHome: home });
+    const skill = registry.find('pdf');
+    expect(skill).toBeDefined();
+    expect(skill?.source).toBe('agents-user');
+  });
+
+  it('discovers a <cwd>/.agents/skills entry as agents-project', async () => {
+    const cwd = join(home, 'p-agents-proj');
+    await mkdir(join(cwd, '.agents', 'skills', 'pdf'), { recursive: true });
+    await writeFile(
+      join(cwd, '.agents', 'skills', 'pdf', 'SKILL.md'),
+      '---\nname: pdf\ndescription: agents-project pdf\n---',
+    );
+    const registry = loadSkills({ cwd, userHome: home });
+    expect(registry.find('pdf')?.source).toBe('agents-project');
+  });
+
+  it('.chimera/skills shadows ~/.agents/skills with one warning', async () => {
+    const cwd = join(home, 'p-agents-shadow');
+    await mkdir(join(cwd, '.chimera', 'skills', 'git'), { recursive: true });
+    await mkdir(join(home, '.agents', 'skills', 'git'), { recursive: true });
+    await writeFile(
+      join(cwd, '.chimera', 'skills', 'git', 'SKILL.md'),
+      '---\nname: git\ndescription: chimera-native git\n---',
+    );
+    await writeFile(
+      join(home, '.agents', 'skills', 'git', 'SKILL.md'),
+      '---\nname: git\ndescription: agents git\n---',
+    );
+    const warnings: string[] = [];
+    const registry = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
+    const gitSkill = registry.find('git');
+    expect(gitSkill?.source).toBe('project');
+    expect(gitSkill?.description).toBe('chimera-native git');
+    expect(registry.collisions().length).toBe(1);
+    expect(warnings.some((w) => /shadowed/.test(w))).toBe(true);
+  });
+
+  it('includeAgentsCompat=false skips .agents/skills tiers', async () => {
+    await mkdir(join(home, '.agents', 'skills', 'git'), { recursive: true });
+    await writeFile(
+      join(home, '.agents', 'skills', 'git', 'SKILL.md'),
+      '---\nname: git\ndescription: only-agents\n---',
+    );
+    const cwd = join(home, 'p-no-agents');
+    await mkdir(cwd, { recursive: true });
+    const registry = loadSkills({ cwd, userHome: home, includeAgentsCompat: false });
+    expect(registry.find('git')).toBeUndefined();
+  });
+
   it('discovers user-home skills when nothing in cwd', async () => {
     await mkdir(join(home, '.chimera', 'skills', 'pdf'), { recursive: true });
     await writeFile(

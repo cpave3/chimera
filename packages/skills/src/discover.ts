@@ -13,6 +13,7 @@ export function discover(opts: LoadSkillsOptions): DiscoverResult {
     cwd: opts.cwd,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
+    includeAgentsCompat: opts.includeAgentsCompat ?? true,
     assetType: 'skills',
   });
   const byName = new Map<string, Skill>();

@@ -130,6 +130,12 @@ export interface BuildTiersOptions {
   cwd: string;
   userHome?: string;
   includeClaudeCompat?: boolean;
+  /**
+   * When true, append three `.agents/` tiers (project / ancestor / user-home)
+   * after the `.claude/` tiers, as a cross-tool compatibility root analogous
+   * to `.claude/`. Defaults to false.
+   */
+  includeAgentsCompat?: boolean;
   /** Subdirectory name under `.chimera/` and `.claude/`, e.g. 'commands', 'skills'. */
   assetType: string;
   /** If provided, appended as the lowest-priority tier. */
@@ -146,12 +152,16 @@ export interface BuildTiersOptions {
  *   4. <cwd>/.claude/<assetType>/                       (if includeClaudeCompat)
  *   5. ancestors/.claude/<assetType>/                   (if includeClaudeCompat)
  *   6. <userHome>/.claude/<assetType>/                  (if includeClaudeCompat)
- *   7. <builtinDir>                                     (if provided)
+ *   7. <cwd>/.agents/<assetType>/                        (if includeAgentsCompat)
+ *   8. ancestors/.agents/<assetType>/                    (if includeAgentsCompat)
+ *   9. <userHome>/.agents/<assetType>/                   (if includeAgentsCompat)
+ *  10. <builtinDir>                                     (if provided)
  */
 export function buildTiers(opts: BuildTiersOptions): Tier[] {
   const cwd = resolve(opts.cwd);
   const userHome = resolve(opts.userHome ?? homedir());
   const includeClaudeCompat = opts.includeClaudeCompat !== false;
+  const includeAgentsCompat = opts.includeAgentsCompat === true;
   const assetType = opts.assetType;
 
   const ancestors = ancestorsBetween(cwd, userHome);
@@ -169,6 +179,14 @@ export function buildTiers(opts: BuildTiersOptions): Tier[] {
       tiers.push({ source: 'claude-ancestor', dir: join(anc, '.claude', assetType) });
     }
     tiers.push({ source: 'claude-user', dir: join(userHome, '.claude', assetType) });
+  }
+
+  if (includeAgentsCompat) {
+    tiers.push({ source: 'agents-project', dir: join(cwd, '.agents', assetType) });
+    for (const anc of ancestors) {
+      tiers.push({ source: 'agents-ancestor', dir: join(anc, '.agents', assetType) });
+    }
+    tiers.push({ source: 'agents-user', dir: join(userHome, '.agents', assetType) });
   }
 
   if (opts.builtinDir) {

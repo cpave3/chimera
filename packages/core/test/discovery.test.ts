@@ -106,6 +106,45 @@ describe('buildTiers', () => {
     expect(tiers[tiers.length - 1]).toEqual({ source: 'builtin', dir: '/builtin' });
   });
 
+  it('omits .agents tiers by default', () => {
+    const tiers = buildTiers({ cwd: '/proj', userHome: '/home', assetType: 'skills' });
+    expect(tiers.some((t) => t.dir.includes('.agents'))).toBe(false);
+  });
+
+  it('appends .agents project/ancestor/user tiers when includeAgentsCompat is true', () => {
+    const tiers = buildTiers({
+      cwd: '/proj',
+      userHome: '/home',
+      assetType: 'skills',
+      includeClaudeCompat: true,
+      includeAgentsCompat: true,
+    });
+    const dirs = tiers.map((t) => t.dir);
+    expect(dirs).toContain('/proj/.agents/skills');
+    expect(dirs).toContain('/home/.agents/skills');
+    const sources = tiers.map((t) => t.source);
+    expect(sources).toContain('agents-project');
+    expect(sources).toContain('agents-user');
+    // .agents tiers come after the .claude tiers.
+    const claudeUserIdx = sources.indexOf('claude-user');
+    const agentsProjectIdx = sources.indexOf('agents-project');
+    expect(agentsProjectIdx).toBeGreaterThan(claudeUserIdx);
+  });
+
+  it('appends .agents tiers even when .claude compat is disabled', () => {
+    const tiers = buildTiers({
+      cwd: '/proj',
+      userHome: '/home',
+      assetType: 'skills',
+      includeClaudeCompat: false,
+      includeAgentsCompat: true,
+    });
+    const dirs = tiers.map((t) => t.dir);
+    expect(dirs).toContain('/proj/.agents/skills');
+    expect(dirs).toContain('/home/.agents/skills');
+    expect(dirs.some((d) => d.includes('.claude'))).toBe(false);
+  });
+
   it('defaults userHome to os.homedir()', () => {
     const tiers = buildTiers({ cwd: '/proj', assetType: 'agents' });
     expect(tiers.some((t) => t.source === 'user')).toBe(true);
