@@ -140,6 +140,54 @@ describe('CliAgentFactory', () => {
     expect(description).toContain('anthropic/claude-sonnet-4-5');
   });
 
+  it('uses the Codex tool surface when the model is configured for it', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          synthetic: {
+            shape: 'openai',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      models: {
+        'synthetic/codex': { toolCallShape: 'codex' },
+      },
+      subagents: { enabled: false },
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: {
+        providerId: 'synthetic',
+        modelId: 'codex',
+        maxSteps: 1,
+        toolCallShape: 'codex',
+      },
+      sandboxMode: 'off',
+    });
+
+    const tools = (agent as unknown as { opts: { tools: Record<string, unknown> } }).opts.tools;
+    expect(Object.keys(tools).sort()).toEqual([
+      'bash',
+      'edit',
+      'find',
+      'grep',
+      'ls',
+      'read',
+      'write',
+    ]);
+    const systemPrompt = (agent as unknown as { opts: { systemPrompt: string } }).opts
+      .systemPrompt;
+    expect(systemPrompt).toContain('# Active tools');
+    expect(systemPrompt).toContain('- find: Find files by glob pattern');
+    expect(systemPrompt).toContain('- ls: List directory contents');
+    expect(systemPrompt).not.toContain('- glob:');
+  });
+
   describe('vision model resolver', () => {
     const providersConfig = {
       providers: {

@@ -11,6 +11,11 @@ export interface ToolContext {
   permissionGate?: PermissionGate;
   sandboxMode: SandboxMode;
   /**
+   * Tool-call compatibility surface exposed to the model. Undefined uses
+   * Chimera's native tool names and schemas.
+   */
+  toolCallShape?: 'chimera' | 'codex';
+  /**
    * When present, the bash tool accepts `run_in_background` and the
    * `bash_output` / `bash_kill` tools are registered. Background processes
    * always run on the host.

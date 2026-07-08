@@ -34,6 +34,15 @@ describe('buildTools', () => {
     }).tools as unknown as Record<string, AnyTool>;
   }
 
+  function codexTools() {
+    return buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      toolCallShape: 'codex',
+    }).tools as unknown as Record<string, AnyTool>;
+  }
+
   it('returns the full default tool set', () => {
     const toolset = tools();
     expect(Object.keys(toolset).sort()).toEqual([
@@ -47,11 +56,39 @@ describe('buildTools', () => {
     ]);
   });
 
+  it('returns a Pi-like Codex tool set when toolCallShape is codex', () => {
+    const toolset = codexTools();
+    expect(Object.keys(toolset).sort()).toEqual([
+      'bash',
+      'edit',
+      'find',
+      'grep',
+      'ls',
+      'read',
+      'write',
+    ]);
+  });
+
   it('bash runs the command and returns stdout', async () => {
     const toolset = tools();
     const result = await toolset.bash!.execute({ command: 'echo hi' }, {});
     expect(result.stdout).toContain('hi');
     expect(result.exit_code).toBe(0);
+  });
+
+  it('codex bash maps timeout seconds onto the native timeout_ms argument', async () => {
+    const toolset = codexTools();
+    const result = await toolset.bash!.execute({ command: 'sleep 0.2', timeout: 0.01 }, {});
+    expect(result.timed_out).toBe(true);
+  });
+
+  it('codex ls lists directory contents through the native read behavior', async () => {
+    await mkdir(join(root, 'sub'));
+    await writeFile(join(root, 'a.txt'), 'x');
+    const toolset = codexTools();
+    const result = await toolset.ls!.execute({ path: '.' }, {});
+    expect(result.entries).toEqual(['a.txt', 'sub/']);
+    expect(result.truncated).toBe(false);
   });
 
   it('bash refuses destructive patterns without running them', async () => {

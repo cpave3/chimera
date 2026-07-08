@@ -10,6 +10,11 @@ export interface ModelOptions {
   contextWindow?: number;
   maxOutputTokens?: number;
   /**
+   * Tool-call compatibility mode for models with strong expectations about
+   * tool names and argument schemas. Undefined uses Chimera's native surface.
+   */
+  toolCallShape?: 'chimera' | 'codex';
+  /**
    * Marks the model vision-capable. Only models with `vision: true` ever
    * receive image parts; image turns on other models route to
    * `defaultVisionModel`.
@@ -160,6 +165,7 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
       maxSteps: opts.maxSteps ?? 100,
       maxOutputTokens: modelOpts?.maxOutputTokens,
       vision: modelOpts?.vision,
+      toolCallShape: modelOpts?.toolCallShape,
     },
     providersConfig: { providers, defaultModel: opts.config.defaultModel },
   };

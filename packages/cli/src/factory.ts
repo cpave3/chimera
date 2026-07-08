@@ -439,6 +439,7 @@ export class CliAgentFactory implements AgentFactory {
       hostExecutor,
       permissionGate: gate,
       sandboxMode: init.sandboxMode,
+      toolCallShape: init.model.toolCallShape,
       backgroundProcesses,
       diagnostics,
       webSearch: this.webSearchProvider,
@@ -511,6 +512,9 @@ export class CliAgentFactory implements AgentFactory {
       }
       const filtered = applyAllowlist(tools, allowlist);
       agent.setTools(filtered as ToolSet);
+      agent.setSystemPrompt(
+        appendToolSurfacePrompt(effectiveSystemPrompt, filtered as ToolSet, init.model.toolCallShape),
+      );
 
       // The resolver lets the agent recompose its own system prompt + tool
       // set when a queued mode switch is drained at the top of the next run.
@@ -539,7 +543,11 @@ export class CliAgentFactory implements AgentFactory {
         const previousModel =
           agent.session.userModelOverride ?? previousMode?.model ?? sessionModelRef;
         return {
-          systemPrompt: nextSystemPrompt,
+          systemPrompt: appendToolSurfacePrompt(
+            nextSystemPrompt,
+            nextTools,
+            agent.session.model.toolCallShape,
+          ),
           tools: nextTools,
           effectiveModel,
           effectiveModelChanged: effectiveModel !== previousModel,
@@ -547,6 +555,7 @@ export class CliAgentFactory implements AgentFactory {
       });
     } else {
       agent.setTools(tools);
+      agent.setSystemPrompt(appendToolSurfacePrompt(effectiveSystemPrompt, tools, init.model.toolCallShape));
     }
 
     // Model-change resolver: allows the user to switch models at runtime via
@@ -569,6 +578,9 @@ export class CliAgentFactory implements AgentFactory {
         maxOutputTokens: modelOpts?.maxOutputTokens,
         temperature: agent.session.model.temperature,
         vision: modelOpts?.vision,
+        // Runtime /model changes swap the language model, not the registered
+        // tool set. Preserve the session's existing tool surface.
+        toolCallShape: agent.session.model.toolCallShape,
       };
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
       const newSystemPrompt = composeSystemPrompt({
@@ -581,7 +593,11 @@ export class CliAgentFactory implements AgentFactory {
       return {
         model: newModel,
         languageModel: newProvider.getModel(newModelId, agent.session.id),
-        systemPrompt: newSystemPrompt,
+        systemPrompt: appendToolSurfacePrompt(
+          newSystemPrompt,
+          tools,
+          agent.session.model.toolCallShape,
+        ),
         contextWindow: newWindow.value,
         contextWindowIsApproximate: newWindow.source === 'fallback',
       };
@@ -623,6 +639,7 @@ export class CliAgentFactory implements AgentFactory {
             maxSteps: agent.session.model.maxSteps,
             maxOutputTokens: this.modelsConfig[visionRef]?.maxOutputTokens,
             vision: true,
+            toolCallShape: this.modelsConfig[visionRef]?.toolCallShape,
           },
           languageModel: visionProvider.getModel(visionModelId, agent.session.id),
           contextWindow: visionWindow.value,
@@ -715,6 +732,48 @@ async function tryLoadSession(sessionId: string, home?: string) {
     throw new Error(
       `Could not resume session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+}
+
+function appendToolSurfacePrompt(
+  systemPrompt: string,
+  tools: ToolSet,
+  toolCallShape: ModelConfig['toolCallShape'],
+): string {
+  if (toolCallShape !== 'codex') return systemPrompt;
+  const names = Object.keys(tools).sort();
+  if (names.length === 0) return systemPrompt;
+
+  const snippets = names.map((name) => `- ${name}: ${toolPromptSnippet(name)}`);
+  const lines = [
+    '# Active tools',
+    '',
+    'Only call tools from this list. If a tool name is not listed here, it is unavailable in this session.',
+    ...snippets,
+    '',
+    'Use the tool-calling channel for tools; do not print JSON as assistant text. The bash tool takes { command, timeout? }, where timeout is seconds.',
+  ];
+  return `${systemPrompt}\n\n${lines.join('\n')}`;
+}
+
+function toolPromptSnippet(name: string): string {
+  switch (name) {
+    case 'bash':
+      return 'Run a shell command with { command, timeout? }.';
+    case 'read':
+      return 'Read a file or directory.';
+    case 'write':
+      return 'Create or overwrite a file.';
+    case 'edit':
+      return 'Replace exact text in a file.';
+    case 'grep':
+      return 'Search file contents for patterns.';
+    case 'find':
+      return 'Find files by glob pattern.';
+    case 'ls':
+      return 'List directory contents.';
+    default:
+      return 'Project-specific tool.';
   }
 }
 

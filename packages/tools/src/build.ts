@@ -1,6 +1,7 @@
 import type { ToolSet } from 'ai';
 import { buildBashKillTool, buildBashOutputTool } from './background-tools';
 import { buildBashTool } from './bash';
+import { buildCodexToolDefs } from './codex-adapter';
 import type { ToolContext } from './context';
 import { buildEditTool } from './edit';
 import { buildGlobTool } from './glob';
@@ -40,6 +41,9 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
   if (ctx.backgroundProcesses) {
     defs.bash_output = buildBashOutputTool(ctx);
     defs.bash_kill = buildBashKillTool(ctx);
+  }
+  if (ctx.toolCallShape === 'codex') {
+    return splitDefs(buildCodexToolDefs(defs));
   }
   return splitDefs(defs);
 }

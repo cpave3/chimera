@@ -177,6 +177,46 @@ describe('Agent', () => {
     expect(mock.doStreamCalls[0].maxOutputTokens).toBeUndefined();
   });
 
+  it('passes registered tools through to the language model call', async () => {
+    const mock = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'ok' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: 'stop',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    });
+    const bashTool = tool({
+      description: 'Run a shell command',
+      inputSchema: z.object({ command: z.string() }),
+      execute: async () => ({ stdout: '', stderr: '', exit_code: 0 }),
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: mock as unknown as LanguageModel,
+      tools: { bash: bashTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    for await (const _ev of agent.run('list files')) {
+      // drain
+    }
+
+    expect(mock.doStreamCalls[0].tools?.map((entry) => entry.name)).toEqual(['bash']);
+  });
+
   it('awaitCallId resolves to distinct CallIds for parallel tool-calls (resolveCallId races)', async () => {
     const lookups: Array<{
       aiSdkId: string;
@@ -273,6 +313,71 @@ describe('Agent', () => {
     expect(a?.async).toBeDefined();
     expect(b?.async).toBeDefined();
     expect(a?.async).not.toBe(b?.async);
+  });
+
+  it('returns a tool-result error and continues when the model calls an unknown tool', async () => {
+    let callCount = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'bad-call',
+                  toolName: 'apply_patch',
+                  input: JSON.stringify({ patch: 'nope' }),
+                },
+                {
+                  type: 'finish',
+                  finishReason: 'tool-calls',
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't1' },
+              { type: 'text-delta', id: 't1', delta: 'recovered' },
+              { type: 'text-end', id: 't1' },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+      languageModel: model,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of agent.run('go')) {
+      events.push(ev);
+    }
+
+    expect(callCount).toBe(2);
+    expect(events.some((ev) => ev.type === 'tool_call_error')).toBe(true);
+    const secondPrompt = JSON.stringify(model.doStreamCalls[1].prompt);
+    expect(secondPrompt).toContain("unavailable tool 'apply_patch'");
+    expect(secondPrompt).toContain('tool-result');
   });
 
   it('does NOT swallow text in step 2 when the provider reuses the step-1 text-id', async () => {

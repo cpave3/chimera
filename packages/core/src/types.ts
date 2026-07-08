@@ -25,6 +25,11 @@ export interface ModelConfig {
    * `defaultVisionModel`.
    */
   vision?: boolean;
+  /**
+   * Optional compatibility mode for the tool surface exposed to this model.
+   * Undefined means Chimera's native tool names and argument schemas.
+   */
+  toolCallShape?: 'chimera' | 'codex';
 }
 
 export interface ToolCallRecord {

@@ -76,4 +76,21 @@ describe('resolveModel', () => {
     });
     expect(unflagged.model.vision).toBeUndefined();
   });
+
+  it('forwards models[ref].toolCallShape to ModelConfig and defaults it to undefined', () => {
+    const providers = {
+      synthetic: { shape: 'openai' as const, baseUrl: 'x', apiKey: 'env:S' },
+    };
+    const flagged = resolveModel({
+      cliModel: 'synthetic/k',
+      config: { providers, models: { 'synthetic/k': { toolCallShape: 'codex' } } },
+    });
+    expect(flagged.model.toolCallShape).toBe('codex');
+
+    const unflagged = resolveModel({
+      cliModel: 'synthetic/k',
+      config: { providers },
+    });
+    expect(unflagged.model.toolCallShape).toBeUndefined();
+  });
 });

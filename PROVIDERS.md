@@ -54,13 +54,38 @@ default), add a `models` block keyed by `<providerId>/<modelId>`:
 {
   "models": {
     "openrouter/anthropic/claude-opus-4-7": { "contextWindow": 1000000 },
-    "local/some-experimental-2026": { "contextWindow": 256000 }
+    "local/some-experimental-2026": { "contextWindow": 256000 },
+    "openai/codex": { "toolCallShape": "codex" }
   }
 }
 ```
 
 Resolution order: config override → built-in table → `128000` fallback (with
 a one-shot stderr warning so unknown models are visible).
+
+`toolCallShape: "codex"` is an opt-in compatibility mode for Codex-style
+models. It exposes a Pi-like coding tool surface (`bash`, `read`, `edit`,
+`write`, `grep`, `find`, `ls`) while routing execution through Chimera's
+native tools. The default is Chimera's native tool surface.
+
+When Codex is reached through Manticore's OpenAI-compatible proxy, keep the
+provider as normal chat-completions and opt the model into the Codex tool
+surface:
+
+```json
+{
+  "providers": {
+    "manticore": {
+      "shape": "openai",
+      "baseUrl": "http://localhost:3000/v1",
+      "apiKey": "env:MANTICORE_API_KEY"
+    }
+  },
+  "models": {
+    "manticore/codex/gpt-5-codex": { "toolCallShape": "codex" }
+  }
+}
+```
 
 ## Nested model IDs
 
