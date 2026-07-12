@@ -8,6 +8,10 @@ export function newSessionId(): SessionId {
   return ulid();
 }
 
+export function isValidSessionId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id);
+}
+
 export function newEventId(): EventId {
   return ulid();
 }

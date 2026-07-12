@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import * as core from '@chimera/core';
 import { emptyUsage, newSessionId, persistSession, type Session } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { findLatestSessionInCwd, resolveSessionId } from '../src/commands/sessions';
+import {
+  findLatestSessionInCwd,
+  pickSessionInteractive,
+  resolveSessionId,
+  runSessionsList,
+} from '../src/commands/sessions';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -40,6 +45,58 @@ async function persistEmptySession(session: Session, home: string) {
     home,
   );
 }
+
+describe('session displays', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows a session name in the list while retaining its id', async () => {
+    const session = {
+      id: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+      name: 'Investigate auth timeout',
+      cwd: '/tmp/proj-a',
+      parentId: null,
+      children: [],
+      createdAt: 1,
+      lastActivityAt: 2,
+      messageCount: 3,
+    } as unknown as core.SessionInfo;
+    vi.spyOn(core, 'listSessionsOnDisk').mockResolvedValue([session]);
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await runSessionsList({ all: true, home: '/tmp/home' });
+
+    const rendered = output.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(rendered).toContain('NAME');
+    expect(rendered).toContain('Investigate auth timeout');
+    expect(rendered).toContain(session.id);
+  });
+
+  it('shows a session name in the interactive picker while selecting by id', async () => {
+    const session = {
+      id: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+      name: 'Investigate auth timeout',
+      cwd: '/tmp/proj-a',
+      parentId: null,
+      children: [],
+      createdAt: 1,
+      lastActivityAt: Date.now(),
+      messageCount: 3,
+    } as unknown as core.SessionInfo;
+    vi.spyOn(core, 'listSessionsOnDisk').mockResolvedValue([session]);
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    const selection = pickSessionInteractive('/tmp/proj-a', '/tmp/home');
+    await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+    process.stdin.emit('data', Buffer.from('1\n'));
+
+    await expect(selection).resolves.toBe(session.id);
+    expect(output.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(
+      'Investigate auth timeout',
+    );
+  });
+});
 
 describe('resolveSessionId', () => {
   let home: string;

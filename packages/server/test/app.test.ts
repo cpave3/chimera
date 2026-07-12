@@ -36,11 +36,7 @@ const model: ModelConfig = { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
   return {
     build: async (init) => {
-      // Honor the SessionInit contract: when a sessionId is provided and
-      // already exists on disk, load it so messages/toolCalls round-trip.
-      const session = init.sessionId
-        ? await loadSession(init.sessionId, home).catch(() => undefined)
-        : undefined;
+      const session = init.sessionId ? await loadSession(init.sessionId, home) : undefined;
       const agent = new Agent({
         cwd: '/tmp',
         model,
@@ -49,7 +45,8 @@ function makeFactory(home: string, text = 'hello from agent'): AgentFactory {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        sessionId: init.sessionId,
+        sessionId: init.requestedSessionId ?? init.sessionId,
+        sessionName: init.name,
         session,
       });
       await writeSessionMetadata(agent.session, home);
@@ -145,6 +142,45 @@ describe('server app', () => {
 
     const goneResponse = await app.request(`/v1/sessions/${sessionId}`);
     expect(goneResponse.status).toBe(404);
+  });
+
+  it('creates a named session with an explicitly requested ID', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const requestedSessionId = 'my-session_1';
+
+    const response = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/tmp', model, name: 'My session', requestedSessionId }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ sessionId: requestedSessionId });
+    expect(registry.get(requestedSessionId)?.agent.session.name).toBe('My session');
+  });
+
+  it('rejects invalid and existing requested session IDs', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const create = (requestedSessionId: string) =>
+      app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, requestedSessionId }),
+      });
+
+    expect((await create('../invalid')).status).toBe(400);
+    expect((await create('existing-id')).status).toBe(201);
+    const conflict = await create('existing-id');
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: 'SESSION_ID_EXISTS' });
   });
 
   it('interrupt responds 204 whether or not a run is active', async () => {

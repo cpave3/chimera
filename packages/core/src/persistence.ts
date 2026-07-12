@@ -48,6 +48,7 @@ export function sessionImagesDir(sessionId: SessionId, home = homedir()): string
 
 interface SessionMetadata {
   id: SessionId;
+  name?: string;
   parentId: SessionId | null;
   children: SessionId[];
   cwd: string;
@@ -72,6 +73,7 @@ interface SessionMetadata {
 function toMetadata(session: Session): SessionMetadata {
   return {
     id: session.id,
+    name: session.name,
     parentId: session.parentId,
     children: session.children,
     cwd: session.cwd,
@@ -151,6 +153,7 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
 
   const session: Session = {
     id: sessionId,
+    name: typeof parsed.name === 'string' ? parsed.name : undefined,
     parentId: typeof parsed.parentId === 'string' ? parsed.parentId : null,
     children: Array.isArray(parsed.children) ? (parsed.children as SessionId[]) : [],
     cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
@@ -197,6 +200,7 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
 
 export interface SessionMetadataReadResult {
   id: SessionId;
+  name?: string;
   cwd: string;
   model: ModelConfig;
   sandboxMode: SandboxMode;
@@ -240,6 +244,7 @@ export async function readSessionMetadata(
 
   return {
     id: sessionId,
+    name: typeof parsed.name === 'string' ? parsed.name : undefined,
     cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
     model: (parsed.model as ModelConfig) ?? {
       providerId: 'unknown',
@@ -292,24 +297,20 @@ async function readLatestStepSnapshot(
   }
 
   let chunkSize = Math.min(CHUNK_SIZE, stats.size);
-  let position = stats.size;
 
   try {
     while (true) {
-      position = Math.max(0, position - chunkSize);
-      const actualChunkSize = position === 0 ? stats.size - position : chunkSize;
-      const buffer = Buffer.alloc(actualChunkSize);
-      const { bytesRead } = await handle.read(buffer, 0, actualChunkSize, position);
+      const position = stats.size - chunkSize;
+      const buffer = Buffer.alloc(chunkSize);
+      const { bytesRead } = await handle.read(buffer, 0, chunkSize, position);
       const chunk = buffer.subarray(0, bytesRead).toString('utf8');
       const lines = chunk.split('\n');
 
-      // If this is not the first chunk, the first line is a fragment (the
-      // rest of the line lives in the preceding chunk). Skip it.
-      const skipFirst = position > 0;
-      const start = skipFirst ? 1 : 0;
-      const isLastChunk = position + bytesRead >= stats.size;
+      // Until the window reaches the start of the file, its first line may be
+      // a fragment. Expanding the same tail window reconstructs it before any
+      // older snapshot can be selected.
+      const start = position > 0 ? 1 : 0;
 
-      let latest: StepSnapshot | null = null;
       for (let i = lines.length - 1; i >= start; i--) {
         const line = lines[i];
         if (!line) continue;
@@ -317,25 +318,18 @@ async function readLatestStepSnapshot(
         try {
           parsed = JSON.parse(line) as PersistedEvent;
         } catch {
-          // When reading from the tail of the file, warn for any malformed
-          // line so data corruption near the end is still visible.
-          if (isLastChunk) {
-            process.stderr.write(`[chimera] warn: skipping malformed line in ${path}\n`);
-          }
+          process.stderr.write(`[chimera] warn: skipping malformed line in ${path}\n`);
           continue;
         }
         if (parsed && (parsed.type === 'step_finished' || parsed.type === 'message_appended')) {
-          latest = {
+          return {
             messages: parsed.messages,
             toolCalls: parsed.toolCalls,
             usage: parsed.usage,
           };
-          break;
         }
       }
-      if (latest) return latest;
       if (position === 0) return null;
-      // Snapshot might span chunk boundary; double chunk and retry.
       chunkSize = Math.min(chunkSize * 2, stats.size);
     }
   } finally {
@@ -721,6 +715,7 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
 
 export interface SessionInfo {
   id: SessionId;
+  name?: string;
   parentId: SessionId | null;
   children: SessionId[];
   createdAt: number;
@@ -789,6 +784,7 @@ export async function listSessionsOnDisk(home = homedir()): Promise<SessionInfo[
       }
       out.push({
         id: parsed.id,
+        name: typeof parsed.name === 'string' ? parsed.name : undefined,
         parentId: parsed.parentId ?? null,
         children: parsed.children ?? [],
         createdAt: parsed.createdAt,

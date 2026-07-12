@@ -47,6 +47,8 @@ describe('ChimeraClient end-to-end', () => {
             sandboxMode: init.sandboxMode,
             home,
             contextWindow: 200_000,
+            sessionId: init.requestedSessionId ?? init.sessionId,
+            sessionName: init.name,
           }),
         }),
       },
@@ -76,6 +78,21 @@ describe('ChimeraClient end-to-end', () => {
     const s = await client.getSession(sessionId);
     expect(s.id).toBe(sessionId);
     expect(s.cwd).toBe('/tmp');
+  });
+
+  it('createSession sends name and requestedSessionId semantics', async () => {
+    const client = new ChimeraClient({ baseUrl: server.url });
+    const requestedSessionId = 'client-requested-id';
+
+    const result = await client.createSession({
+      cwd: '/tmp',
+      model,
+      name: 'Client session',
+      requestedSessionId,
+    });
+
+    expect(result).toEqual({ sessionId: requestedSessionId });
+    expect((await client.getSession(requestedSessionId)).name).toBe('Client session');
   });
 
   it('send yields events ending with run_finished', async () => {

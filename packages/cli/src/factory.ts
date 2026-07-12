@@ -228,7 +228,7 @@ export class CliAgentFactory implements AgentFactory {
     const ref = `${init.model.providerId}/${init.model.modelId}`;
     const { provider, modelId } = this.registry.resolve(ref);
     const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
-    const sessionId = session?.id ?? init.sessionId ?? newSessionId();
+    const sessionId = session?.id ?? init.requestedSessionId ?? newSessionId();
     const languageModel = provider.getModel(modelId, sessionId);
 
     const providerSpec = this.providersConfig.providers[init.model.providerId];
@@ -326,6 +326,7 @@ export class CliAgentFactory implements AgentFactory {
       sandboxMode: init.sandboxMode,
       session,
       sessionId,
+      sessionName: init.name,
       home: this.home,
       skillActivation,
       contextWindow: resolvedWindow.value,

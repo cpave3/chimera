@@ -92,6 +92,30 @@ exit 0
     expect(envBody).toContain(`PWD=${cwd}`);
   });
 
+  it('passes SessionCreated identity and optional name to hooks', async () => {
+    const captured = join(root, 'session-created.json');
+    await dropScript(
+      'SessionCreated',
+      'capture.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+exit 0
+`,
+    );
+
+    await newRunner().fire({ event: 'SessionCreated', session_name: 'release-work' });
+
+    await expect(readFile(captured, 'utf8')).resolves.toSatisfy((body: string) => {
+      expect(JSON.parse(body)).toEqual({
+        event: 'SessionCreated',
+        session_id: sessionId,
+        cwd,
+        session_name: 'release-work',
+      });
+      return true;
+    });
+  });
+
   it('reports blocked when a pre-event hook exits with code 2', async () => {
     await dropScript(
       'PermissionRequest',

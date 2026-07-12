@@ -1,12 +1,12 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { LanguageModel, ToolSet } from 'ai';
-import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { Agent, type ModelConfig } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
+import type { LanguageModel, ToolSet } from 'ai';
+import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AgentRegistry, type AgentFactory } from '../src/agent-registry';
+import { type AgentFactory, AgentRegistry } from '../src/agent-registry';
 
 function quietModel(): LanguageModel {
   return new MockLanguageModelV3({
@@ -39,6 +39,8 @@ function makeFactory(
         languageModel: quietModel(),
         tools: {} as ToolSet,
         sandboxMode: 'off',
+        sessionId: init.requestedSessionId ?? init.sessionId,
+        sessionName: init.name,
         home,
         contextWindow: 200_000,
       });
@@ -78,6 +80,109 @@ describe('hook integration via registry', () => {
     await chmod(path, 0o755);
     return path;
   }
+
+  it('fires SessionCreated for a fresh custom ID with the session name payload', async () => {
+    const captured = join(cwd, 'session-created.json');
+    await dropScript(
+      'SessionCreated',
+      'capture.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+`,
+    );
+    const registry = new AgentRegistry({
+      factory: makeFactory(
+        home,
+        (sessionId, theCwd) =>
+          new DefaultHookRunner({
+            sessionId,
+            cwd: theCwd,
+            globalRoot,
+            timeoutMs: 5_000,
+            log: () => {},
+          }),
+      ),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+
+    const { sessionId } = await registry.create({
+      cwd,
+      model,
+      sandboxMode: 'off',
+      requestedSessionId: 'custom-session',
+      name: 'Named session',
+    });
+
+    expect(sessionId).toBe('custom-session');
+    expect(JSON.parse(await readFile(captured, 'utf8'))).toMatchObject({
+      event: 'SessionCreated',
+      session_id: 'custom-session',
+      cwd,
+      session_name: 'Named session',
+    });
+  });
+
+  it('fires SessionCreated for a fresh generated ID', async () => {
+    const captured = join(cwd, 'generated-session-created.json');
+    await dropScript(
+      'SessionCreated',
+      'capture.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+`,
+    );
+    const registry = new AgentRegistry({
+      factory: makeFactory(
+        home,
+        (sessionId, theCwd) =>
+          new DefaultHookRunner({
+            sessionId,
+            cwd: theCwd,
+            globalRoot,
+            timeoutMs: 5_000,
+            log: () => {},
+          }),
+      ),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+
+    const { sessionId } = await registry.create({ cwd, model, sandboxMode: 'off' });
+
+    expect(JSON.parse(await readFile(captured, 'utf8'))).toMatchObject({
+      event: 'SessionCreated',
+      session_id: sessionId,
+      cwd,
+    });
+  });
+
+  it('does not fire SessionCreated when resuming a session', async () => {
+    const captured = join(cwd, 'resumed-session-created.json');
+    await dropScript(
+      'SessionCreated',
+      'capture.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+`,
+    );
+    const registry = new AgentRegistry({
+      factory: makeFactory(
+        home,
+        (sessionId, theCwd) =>
+          new DefaultHookRunner({
+            sessionId,
+            cwd: theCwd,
+            globalRoot,
+            timeoutMs: 5_000,
+            log: () => {},
+          }),
+      ),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+
+    await registry.create({ cwd, model, sandboxMode: 'off', sessionId: 'resumed-session' });
+
+    await expect(readFile(captured, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 
   it('runs a PostToolUse script when tool_call_result is published, with the expected payload', async () => {
     const captured = join(cwd, 'captured.json');

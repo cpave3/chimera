@@ -5,8 +5,8 @@ import {
   deleteSession,
   listSessionsOnDisk,
   readSessionMetadata,
-  sessionDir,
   type SessionInfo,
+  sessionDir,
 } from '@chimera/core';
 
 export interface RunSessionsListOpts {
@@ -37,10 +37,12 @@ export async function runSessionsList(opts: RunSessionsListOpts = {}): Promise<v
     }
     return;
   }
-  process.stdout.write('ID\tCWD\tMESSAGES\tLAST ACTIVITY\tPARENT\n');
+  process.stdout.write('ID\tNAME\tCWD\tMESSAGES\tLAST ACTIVITY\tPARENT\n');
   for (const s of filtered) {
     const last = new Date(s.lastActivityAt).toISOString();
-    process.stdout.write(`${s.id}\t${s.cwd}\t${s.messageCount}\t${last}\t${s.parentId ?? '-'}\n`);
+    process.stdout.write(
+      `${s.id}\t${s.name ?? '-'}\t${s.cwd}\t${s.messageCount}\t${last}\t${s.parentId ?? '-'}\n`,
+    );
   }
 }
 
@@ -168,7 +170,7 @@ export async function pickSessionInteractive(
     const last = formatRelative(Date.now(), s.lastActivityAt);
     const fork = s.parentId ? ' (forked)' : '';
     process.stdout.write(
-      `  [${i + 1}] ${s.id.slice(-8)}  ${last.padEnd(10)}  ${s.messageCount} msg${fork}\n`,
+      `  [${i + 1}] ${s.id.slice(-8)}  ${s.name ? `${s.name}  ` : ''}${last.padEnd(10)}  ${s.messageCount} msg${fork}\n`,
     );
   });
   process.stdout.write('Pick a session [1]: ');

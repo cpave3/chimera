@@ -91,6 +91,7 @@ export interface TaskItem {
 
 export interface Session {
   id: SessionId;
+  name?: string;
   parentId: SessionId | null;
   children: SessionId[];
   cwd: string;

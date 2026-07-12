@@ -2,9 +2,9 @@ import type { SessionInfo } from '@chimera/core';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { SessionPicker, buildSessionTreeRows } from '../src/SessionPicker';
-import { ThemeProvider } from '../src/theme/ThemeProvider';
+import { buildSessionTreeRows, SessionPicker } from '../src/SessionPicker';
 import { pickBaseTheme } from '../src/theme/loader';
+import { ThemeProvider } from '../src/theme/ThemeProvider';
 
 function info(overrides: Partial<SessionInfo> & { id: string }): SessionInfo {
   return {
@@ -107,6 +107,35 @@ describe('SessionPicker', () => {
     expect(out).toContain('AAAAAAAA');
     expect(out).toContain('BBBBBBBB');
     expect(out).toContain('←'); // current session marker
+    rendered.unmount();
+  });
+
+  it('renders a session name when present and falls back to the cwd basename', async () => {
+    const sessions = [
+      info({
+        id: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+        name: 'Investigate auth timeout',
+        cwd: '/tmp/named-project',
+        createdAt: 2,
+      } as Partial<SessionInfo> & { id: string }),
+      info({ id: '01BBBBBBBBBBBBBBBBBBBBBBBB', cwd: '/tmp/fallback-project', createdAt: 1 }),
+    ];
+    const rendered = render(
+      withTheme(
+        <SessionPicker
+          sessions={sessions}
+          currentSessionId="01AAAAAAAAAAAAAAAAAAAAAAAA"
+          onSelect={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      ),
+    );
+    await tick();
+
+    const output = rendered.lastFrame() ?? '';
+    expect(output).toContain('Investigate auth timeout');
+    expect(output).not.toContain('named-project');
+    expect(output).toContain('fallback-project');
     rendered.unmount();
   });
 

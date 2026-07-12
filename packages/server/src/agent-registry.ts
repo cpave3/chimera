@@ -19,13 +19,12 @@ export interface SessionInit {
   cwd: string;
   model: ModelConfig;
   sandboxMode: SandboxMode;
-  /**
-   * When set, the factory MUST call `loadSession(sessionId)` to populate
-   * the new Agent's `messages` and `toolCalls`. This is the resume
-   * contract: routes that pass `sessionId` (e.g. `POST /v1/sessions/:id/resume`)
-   * rely on the factory honoring it.
-   */
+  /** ID to load from persistence for an explicit resume. */
   sessionId?: SessionId;
+  /** ID to use for a fresh session without loading persisted state. */
+  requestedSessionId?: SessionId;
+  /** Optional display name for a fresh session. */
+  name?: string;
   /**
    * Extra absolute paths granted for read/write tool calls outside cwd.
    * Factory must merge these into its executor allow lists and set them
@@ -248,6 +247,12 @@ export class AgentRegistry {
     });
     this.entries.set(agent.session.id, entry);
     bus.publish({ type: 'session_started', sessionId: agent.session.id });
+    if (hookRunner && !init.sessionId) {
+      await hookRunner.fire({
+        event: 'SessionCreated',
+        session_name: agent.session.name,
+      });
+    }
     return { sessionId: agent.session.id, entry };
   }
 

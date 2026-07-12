@@ -57,6 +57,7 @@ export interface AgentOptions {
   systemPrompt?: string;
   sandboxMode: SandboxMode;
   sessionId?: SessionId;
+  sessionName?: string;
   session?: Session;
   /** Home directory for session persistence. Defaults to os.homedir(). */
   home?: string;
@@ -295,6 +296,7 @@ export class Agent {
     } else {
       this.session = {
         id: opts.sessionId ?? newSessionId(),
+        name: opts.sessionName,
         parentId: null,
         children: [],
         cwd: opts.cwd,

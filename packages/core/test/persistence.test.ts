@@ -51,6 +51,22 @@ describe('persistence', () => {
     };
   }
 
+  it('round-trips a session name through metadata, loading, and listings', async () => {
+    const session = makeSession({ name: 'Release investigation' });
+
+    await writeSessionMetadata(session, home);
+
+    await expect(readSessionMetadata(session.id, home)).resolves.toMatchObject({
+      name: 'Release investigation',
+    });
+    await expect(loadSession(session.id, home)).resolves.toMatchObject({
+      name: 'Release investigation',
+    });
+    await expect(listSessionsOnDisk(home)).resolves.toEqual([
+      expect.objectContaining({ id: session.id, name: 'Release investigation' }),
+    ]);
+  });
+
   it('writes session.json without messages or toolCalls and appends event line', async () => {
     const session = makeSession();
     await persistSession(
@@ -612,25 +628,42 @@ describe('persistence', () => {
       expect(loaded.messages[0]!.content).toBe('small');
     });
 
-    it('doubles chunk size when snapshot spans chunk boundary', async () => {
+    it.each([
+      ['with a trailing newline', '\n'],
+      ['without a trailing newline', ''],
+    ])('loads the newest oversized snapshot %s', async (_description, trailingNewline) => {
       const session = makeSession();
-      // Write events so the snapshot line starts before the first chunk boundary.
-      const bigPrefix = 'x'.repeat(50_000);
-      const noise = JSON.stringify({ type: 'user_message', content: bigPrefix });
-      const snapshot = JSON.stringify({
+      const noise = JSON.stringify({ type: 'user_message', content: 'n'.repeat(200_000) });
+      const olderSnapshot = JSON.stringify({
         type: 'step_finished',
         stepNumber: 1,
         finishReason: 'stop',
-        messages: [{ role: 'user', content: 'spans-chunk' }],
+        messages: [{ role: 'user', content: 'older' }],
         toolCalls: [],
         usage: emptyUsage(),
       });
+      const newestSnapshot = JSON.stringify({
+        type: 'step_finished',
+        stepNumber: 2,
+        finishReason: 'stop',
+        messages: [
+          { role: 'user', content: 'newest' },
+          { role: 'assistant', content: 'x'.repeat(70_000) },
+        ],
+        toolCalls: [],
+        usage: emptyUsage(),
+      });
+      const runFinished = JSON.stringify({ type: 'run_finished', reason: 'stop' });
       await writeSessionMetadata(session, home);
-      await writeFile(sessionEventsPath(session.id, home), `${noise}\n${snapshot}\n`, 'utf8');
+      await writeFile(
+        sessionEventsPath(session.id, home),
+        `${noise}\n${olderSnapshot}\n${newestSnapshot}\n${runFinished}${trailingNewline}`,
+        'utf8',
+      );
 
       const loaded = await loadSession(session.id, home);
-      expect(loaded.messages).toHaveLength(1);
-      expect(loaded.messages[0]!.content).toBe('spans-chunk');
+      expect(loaded.messages).toHaveLength(2);
+      expect(loaded.messages[0]!.content).toBe('newest');
     });
 
     it('warns on malformed line in the last chunk', async () => {

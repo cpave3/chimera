@@ -62,6 +62,23 @@ describe('Agent', () => {
     expect(agent.session.messages).toEqual([]);
   });
 
+  it('uses the requested custom session id and name for a fresh session', () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hi'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      sessionId: 'release.2026-07_11',
+      sessionName: 'Release investigation',
+      home,
+      contextWindow: 200_000,
+    });
+
+    expect(agent.session.id).toBe('release.2026-07_11');
+    expect(agent.session.name).toBe('Release investigation');
+  });
+
   it('runs a single-turn no-tool conversation and emits expected events', async () => {
     const agent = new Agent({
       cwd: '/tmp',

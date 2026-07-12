@@ -16,6 +16,7 @@ import {
 } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
@@ -27,6 +28,9 @@ export interface InteractiveOptions {
   maxSteps?: number;
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   session?: string;
+  sessionName?: string;
+  sessionId?: string;
+  sessionExists?: SessionExistsPolicy;
   home?: string;
   claudeCompat?: boolean;
   /** False → skip skill discovery + injection (from `--no-skills`). */
@@ -175,14 +179,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const server = await startServer({ app });
 
   const client = new ChimeraClient({ baseUrl: server.url });
-  const { sessionId } = await client.createSession({
-    cwd: opts.cwd,
-    model,
-    sandboxMode,
-    sessionId: opts.session,
-    additionalReadPaths: opts.additionalReadPaths,
-    additionalWritePaths: opts.additionalWritePaths,
-  });
+  const { sessionId } = await launchSession(
+    client,
+    {
+      cwd: opts.cwd,
+      model,
+      sandboxMode,
+      name: opts.sessionName,
+      requestedSessionId: opts.sessionId,
+      additionalReadPaths: opts.additionalReadPaths,
+      additionalWritePaths: opts.additionalWritePaths,
+    },
+    { resumeSessionId: opts.session, sessionExists: opts.sessionExists },
+  );
 
   const overlay: OverlayHandlers | undefined =
     sandboxMode === 'overlay'

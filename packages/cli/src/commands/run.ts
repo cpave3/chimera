@@ -13,6 +13,7 @@ import {
 } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
@@ -26,6 +27,9 @@ export interface RunOptions {
   cwd: string;
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   session?: string;
+  sessionName?: string;
+  sessionId?: string;
+  sessionExists?: SessionExistsPolicy;
   home?: string;
   /** Name of a user command template to expand into the prompt. */
   command?: string;
@@ -197,14 +201,19 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   const client = new ChimeraClient({ baseUrl: server.url });
   let sessionId: string | undefined;
   try {
-    const sessionResult = await client.createSession({
-      cwd: opts.cwd,
-      model,
-      sandboxMode,
-      sessionId: opts.session,
-      additionalReadPaths: opts.additionalReadPaths,
-      additionalWritePaths: opts.additionalWritePaths,
-    });
+    const sessionResult = await launchSession(
+      client,
+      {
+        cwd: opts.cwd,
+        model,
+        sandboxMode,
+        name: opts.sessionName,
+        requestedSessionId: opts.sessionId,
+        additionalReadPaths: opts.additionalReadPaths,
+        additionalWritePaths: opts.additionalWritePaths,
+      },
+      { resumeSessionId: opts.session, sessionExists: opts.sessionExists },
+    );
     sessionId = sessionResult.sessionId;
 
     let finalText = '';

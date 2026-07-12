@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   deleteSession as coreDeleteSession,
   forkSession as coreForkSession,
+  isValidSessionId,
   listSessionsOnDisk,
   readCheckpoints,
   readSessionMetadata,
@@ -30,11 +31,6 @@ export interface AppOptions {
   onFork?: (parentInfo: SessionInfo, childId: SessionId) => Promise<void> | void;
 }
 
-const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-
-function isValidUlid(id: string): boolean {
-  return ULID_RE.test(id);
-}
 
 const createSessionSchema = z.object({
   cwd: z.string(),
@@ -46,7 +42,8 @@ const createSessionSchema = z.object({
     temperature: z.number().optional(),
   }),
   sandboxMode: z.enum(['off', 'bind', 'overlay', 'ephemeral']).optional(),
-  sessionId: z.string().optional(),
+  name: z.string().optional(),
+  requestedSessionId: z.string().optional(),
   additionalReadPaths: z.array(z.string()).optional(),
   additionalWritePaths: z.array(z.string()).optional(),
 });
@@ -138,11 +135,27 @@ export function buildApp(opts: AppOptions): Hono {
     if (!parseResult.success) {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
+    const requestedSessionId = parseResult.data.requestedSessionId;
+    if (requestedSessionId) {
+      if (!isValidSessionId(requestedSessionId)) {
+        return c.json({ error: 'invalid requested session ID' }, 400);
+      }
+      if (registry.get(requestedSessionId)) {
+        return c.json({ error: 'session ID already exists', code: 'SESSION_ID_EXISTS' }, 409);
+      }
+      try {
+        await readSessionMetadata(requestedSessionId, home);
+        return c.json({ error: 'session ID already exists', code: 'SESSION_ID_EXISTS' }, 409);
+      } catch {
+        // The requested ID is available.
+      }
+    }
     const { sessionId } = await registry.create({
       cwd: parseResult.data.cwd,
       model: parseResult.data.model,
       sandboxMode: parseResult.data.sandboxMode ?? 'off',
-      sessionId: parseResult.data.sessionId,
+      name: parseResult.data.name,
+      requestedSessionId,
       additionalReadPaths: parseResult.data.additionalReadPaths,
       additionalWritePaths: parseResult.data.additionalWritePaths,
     });
@@ -157,7 +170,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.get('/v1/sessions/:id', async (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     const entry = registry.get(id);
     if (!entry) return c.json({ error: 'not found' }, 404);
 
@@ -193,7 +206,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.delete('/v1/sessions/:id', async (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     try {
       // Refuse if the persisted record has children. The in-memory registry
       // doesn't track child links, so we always check disk metadata first.
@@ -229,7 +242,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.post('/v1/sessions/:id/resume', async (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     const existing = registry.get(id);
     if (existing) {
       return c.json({ sessionId: id });
@@ -251,7 +264,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.post('/v1/sessions/:id/fork', async (c) => {
     const parentId = c.req.param('id');
-    if (!isValidUlid(parentId)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(parentId)) return c.json({ error: 'not found' }, 404);
     let body: unknown;
     try {
       body = await c.req.json();
@@ -305,7 +318,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.get('/v1/sessions/:id/checkpoints', async (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     try {
       await readSessionMetadata(id, home);
     } catch {
@@ -317,7 +330,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.post('/v1/sessions/:id/rewind', async (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     let body: unknown;
     try {
       body = await c.req.json();
@@ -472,7 +485,7 @@ export function buildApp(opts: AppOptions): Hono {
 
   app.post('/v1/sessions/:id/compact', (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     const state = registry.compact(id);
     if (state === 'missing') return c.json({ error: 'not found' }, 404);
     if (state === 'already-running') {
@@ -544,7 +557,7 @@ export function buildApp(opts: AppOptions): Hono {
   // --- Model --------------------------------------------------------------
   app.post('/v1/sessions/:id/model', async (c) => {
     const id = c.req.param('id');
-    if (!isValidUlid(id)) return c.json({ error: 'not found' }, 404);
+    if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
     const entry = registry.get(id);
     if (!entry) return c.json({ error: 'not found' }, 404);
     let body: unknown;

@@ -56,6 +56,26 @@ describe('chimera CLI smoke', () => {
     expect(defaultResult.stdout).toMatch(/--no-compaction/);
   });
 
+  it('advertises session launch flags on supported commands', () => {
+    for (const args of [[], ['run'], ['serve']]) {
+      const result = spawnSync('node', [BIN, ...args, '--help'], { encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/--session-name/);
+      expect(result.stdout).toMatch(/--session-id/);
+      expect(result.stdout).toMatch(/--session-exists/);
+    }
+  });
+
+  it('rejects explicit resume combined with a requested session ID', () => {
+    const result = spawnSync(
+      'node',
+      [BIN, 'run', '--session', 'existing', '--session-id', 'requested', 'hello'],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/--session cannot be combined with --session-id/);
+  });
+
   it('--help advertises --prompt on the default command', () => {
     const helpResult = spawnSync('node', [BIN, '--help'], { encoding: 'utf8' });
     expect(helpResult.status).toBe(0);

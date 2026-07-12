@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { ChimeraClient } from '@chimera/client';
 import { Compactor } from '@chimera/compaction';
 import type { SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
@@ -12,6 +13,7 @@ import {
 } from '../compaction';
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
+import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
@@ -25,6 +27,9 @@ export interface ServeOptions {
   parent?: string;
   cwd: string;
   model?: string;
+  sessionName?: string;
+  sessionId?: string;
+  sessionExists?: SessionExistsPolicy;
   maxSteps?: number;
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   home?: string;
@@ -195,14 +200,20 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   });
   const server = await startServer({ app, port: opts.port, host: opts.host });
 
-  // Create a default session bound to the working directory.
-  const { sessionId } = await registry.create({
-    cwd: opts.cwd,
-    model,
-    sandboxMode,
-    additionalReadPaths: opts.additionalReadPaths,
-    additionalWritePaths: opts.additionalWritePaths,
-  });
+  const client = new ChimeraClient({ baseUrl: server.url });
+  const { sessionId } = await launchSession(
+    client,
+    {
+      cwd: opts.cwd,
+      model,
+      sandboxMode,
+      name: opts.sessionName,
+      requestedSessionId: opts.sessionId,
+      additionalReadPaths: opts.additionalReadPaths,
+      additionalWritePaths: opts.additionalWritePaths,
+    },
+    { sessionExists: opts.sessionExists },
+  );
 
   writeLockfile(
     {

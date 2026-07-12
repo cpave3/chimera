@@ -55,7 +55,8 @@ export interface CreateSessionOpts {
   cwd: string;
   model: ModelConfig;
   sandboxMode?: SandboxMode;
-  sessionId?: SessionId;
+  name?: string;
+  requestedSessionId?: SessionId;
   additionalReadPaths?: string[];
   additionalWritePaths?: string[];
 }

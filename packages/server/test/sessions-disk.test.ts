@@ -43,11 +43,7 @@ const model: ModelConfig = { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 function makeFactory(home: string, text = 'reply'): AgentFactory {
   return {
     build: async (init) => {
-      // Honor the SessionInit contract: when a sessionId is provided and
-      // already exists on disk, load it so messages/toolCalls are restored.
-      const session = init.sessionId
-        ? await loadSession(init.sessionId, home).catch(() => undefined)
-        : undefined;
+      const session = init.sessionId ? await loadSession(init.sessionId, home) : undefined;
       const agent = new Agent({
         cwd: init.cwd,
         model: init.model,
@@ -56,7 +52,8 @@ function makeFactory(home: string, text = 'reply'): AgentFactory {
         sandboxMode: init.sandboxMode,
         home,
         contextWindow: 200_000,
-        sessionId: init.sessionId,
+        sessionId: init.requestedSessionId ?? init.sessionId,
+        sessionName: init.name,
         session,
       });
       await writeSessionMetadata(agent.session, home);

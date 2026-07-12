@@ -1,6 +1,6 @@
+import type { SessionId, SessionInfo } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useEffect, useMemo, useState } from 'react';
-import type { SessionInfo, SessionId } from '@chimera/core';
 import { useTheme } from './theme/ThemeProvider';
 
 export interface SessionPickerRow {
@@ -129,8 +129,9 @@ export function SessionPicker(props: SessionPickerProps): React.ReactElement {
           const childMark = row.info.children.length > 0 ? `(${row.info.children.length})` : '   ';
           const rel = formatRelativeTime(now, row.info.createdAt);
           const cwdName = basename(row.info.cwd) || row.info.cwd;
+          const displayName = row.info.name ?? cwdName;
           const marker = isCurrent ? '←' : ' ';
-          const text = `${row.prefix}${truncId} ${childMark}  ${rel.padEnd(10)}  ${row.info.messageCount} msg  ${cwdName} ${marker}`;
+          const text = `${row.prefix}${truncId} ${childMark}  ${rel.padEnd(10)}  ${row.info.messageCount} msg  ${displayName} ${marker}`;
           return (
             <Text
               key={row.info.id}

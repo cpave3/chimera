@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { runAgentsList } from './commands/agents';
 import { runAttach } from './commands/attach';
 import { runCommandsList } from './commands/commands';
@@ -97,6 +97,14 @@ export function buildProgram(): Command {
               .option('--auto-approve <level>', 'none|sandbox|host|all')
               .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
               .option('--session <id>', 'Resume a persisted session')
+              .option('--session-name <name>', 'Name for a newly created session')
+              .option('--session-id <id>', 'Requested ID for a newly created session')
+              .addOption(
+                new Option(
+                  '--session-exists <policy>',
+                  'Collision policy: resume|new|error',
+                ).choices(['resume', 'new', 'error']),
+              )
               .option('--stdin', 'Read prompt from stdin', false)
               .option('--command <name>', 'Run a user command template by name')
               .option('--args <args>', 'Arguments for --command (quoted string)')
@@ -109,6 +117,9 @@ export function buildProgram(): Command {
       ),
     ),
   ).action(async (promptArgs: string[], opts) => {
+    if (opts.session && opts.sessionId) {
+      throw new Error('error: --session cannot be combined with --session-id');
+    }
     let prompt = promptArgs.join(' ');
     if (opts.stdin) {
       prompt = await readStdin();
@@ -130,6 +141,9 @@ export function buildProgram(): Command {
       cwd: opts.cwd,
       autoApprove: opts.autoApprove,
       session: opts.session,
+      sessionName: opts.sessionName,
+      sessionId: opts.sessionId,
+      sessionExists: opts.sessionExists,
       command: opts.command,
       commandArgs: opts.args,
       claudeCompat: opts.claudeCompat,
@@ -231,7 +245,15 @@ export function buildProgram(): Command {
                 '--tools <list>',
                 'Internal: comma-separated tool allowlist for the session (e.g. "read,grep,glob")',
               )
-              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10)),
+              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+              .option('--session-name <name>', 'Name for the default session')
+              .option('--session-id <id>', 'Requested ID for the default session')
+              .addOption(
+                new Option(
+                  '--session-exists <policy>',
+                  'Collision policy: resume|new|error',
+                ).choices(['resume', 'new', 'error']),
+              ),
           ),
         ),
       ),
@@ -245,6 +267,9 @@ export function buildProgram(): Command {
       parent: opts.parent,
       cwd: opts.cwd,
       model: opts.model,
+      sessionName: opts.sessionName,
+      sessionId: opts.sessionId,
+      sessionExists: opts.sessionExists,
       maxSteps: opts.maxSteps,
       autoApprove: opts.autoApprove,
       sandboxFlags: opts,
@@ -436,6 +461,14 @@ export function buildProgram(): Command {
               .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
               .option('--auto-approve <level>', 'none|sandbox|host|all')
               .option('--session <id>', 'Resume a persisted session')
+              .option('--session-name <name>', 'Name for a newly created session')
+              .option('--session-id <id>', 'Requested ID for a newly created session')
+              .addOption(
+                new Option(
+                  '--session-exists <policy>',
+                  'Collision policy: resume|new|error',
+                ).choices(['resume', 'new', 'error']),
+              )
               .option('--prompt <text>', 'Send an initial message on session start')
               .option(
                 '--resume [id]',
@@ -454,6 +487,9 @@ export function buildProgram(): Command {
     ),
   ).action(async (opts) => {
     const cwd = opts.cwd ?? process.cwd();
+    if ((opts.session || opts.resume !== undefined || opts.continue) && opts.sessionId) {
+      throw new Error('error: session resume cannot be combined with --session-id');
+    }
     if (opts.session && opts.resume !== undefined) {
       process.stderr.write('warning: --session takes precedence over --resume; --resume ignored\n');
     }
@@ -506,6 +542,9 @@ export function buildProgram(): Command {
       maxSteps: opts.maxSteps,
       autoApprove: opts.autoApprove,
       session,
+      sessionName: opts.sessionName,
+      sessionId: opts.sessionId,
+      sessionExists: opts.sessionExists,
       initialPrompt: opts.prompt,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,

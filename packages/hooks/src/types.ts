@@ -1,4 +1,5 @@
 export type HookEvent =
+  | 'SessionCreated'
   | 'UserPromptSubmit'
   | 'PostToolUse'
   | 'PermissionRequest'
@@ -12,6 +13,7 @@ export type HookEvent =
 export const PRE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(['PermissionRequest']);
 
 export const ALL_HOOK_EVENTS: readonly HookEvent[] = [
+  'SessionCreated',
   'UserPromptSubmit',
   'PostToolUse',
   'PermissionRequest',
@@ -27,6 +29,11 @@ export interface HookPayloadBase {
   event: HookEvent;
   session_id: string;
   cwd: string;
+}
+
+export interface SessionCreatedPayload extends HookPayloadBase {
+  event: 'SessionCreated';
+  session_name?: string;
 }
 
 export interface UserPromptSubmitPayload extends HookPayloadBase {
@@ -79,6 +86,7 @@ export interface CompactionEndPayload extends HookPayloadBase {
 }
 
 export type HookPayload =
+  | SessionCreatedPayload
   | UserPromptSubmitPayload
   | PostToolUsePayload
   | PermissionRequestPayload
@@ -90,6 +98,7 @@ export type HookPayload =
   | CompactionEndPayload;
 
 export type FirePayload =
+  | { event: 'SessionCreated'; session_name?: string }
   | { event: 'UserPromptSubmit'; user_message: string }
   | {
       event: 'PostToolUse';
