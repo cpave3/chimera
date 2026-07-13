@@ -4,10 +4,10 @@ import type { ModelConfig, SandboxMode, SessionId } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
-import React from 'react';
 import { App, type OverlayHandlers } from './App';
-import type { Formatter } from './scrollback';
+import { PasteRegistry } from './input/paste';
 import { createFilteredStdin } from './input/stdin-filter';
+import type { Formatter } from './scrollback';
 import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
 
@@ -133,6 +133,9 @@ export function mountTui(opts: MountOptions): TuiHandle {
   const isUserTheme = result.kind === 'ok';
   const activeName = result.kind === 'ok' ? result.activeName : undefined;
 
+  const pasteRegistry = new PasteRegistry();
+  if (process.stdout.isTTY) process.stdout.write('\x1b[?2004h');
+
   const instance = render(
     <ThemeProvider theme={theme} isUserTheme={isUserTheme} activeName={activeName}>
       <App
@@ -151,11 +154,12 @@ export function mountTui(opts: MountOptions): TuiHandle {
         reloadSystemPrompt={opts.reloadSystemPrompt}
         formatters={opts.formatters}
         initialPrompt={opts.initialPrompt}
+        pasteRegistry={pasteRegistry}
       />
     </ThemeProvider>,
     {
       exitOnCtrlC: false,
-      stdin: createFilteredStdin(process.stdin),
+      stdin: createFilteredStdin(process.stdin, pasteRegistry),
     },
   );
 
@@ -163,6 +167,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
     waitUntilExit: () => instance.waitUntilExit(),
     unmount: () => {
       cleanupSuspendHandlers();
+      if (process.stdout.isTTY) process.stdout.write('\x1b[?2004l');
       instance.unmount();
     },
   };

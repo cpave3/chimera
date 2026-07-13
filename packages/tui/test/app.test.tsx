@@ -2,6 +2,7 @@ import { ChimeraClient } from '@chimera/client';
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
+import { PasteRegistry } from '../src/input/paste';
 import { PermissionModal } from '../src/PermissionModal';
 
 function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
@@ -89,6 +90,44 @@ describe('App', () => {
     // Wait one tick so the subscribe generator yields and React flushes.
     await new Promise((r) => setTimeout(r, 30));
     expect(lastFrame()).toContain(badge);
+    unmount();
+  });
+
+  it('shows a pasted-text placeholder but sends its expanded content and attachment paths', async () => {
+    const sends: string[] = [];
+    const addedPaths: string[] = [];
+    const registry = new PasteRegistry();
+    const pastedText = 'first\nsecond\n@source.ts\nfourth\nfifth';
+    const label = registry.register(pastedText);
+    const client = stubClient({
+      send: async function* (_id: string, text: string) {
+        sends.push(text);
+        yield* [];
+      } as unknown as ChimeraClient['send'],
+      addPath: async (_id: string, _kind: string, path: string) => {
+        addedPaths.push(path);
+      },
+      appendMessage: async () => {},
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={client}
+        sessionId="01ABCDEFGH"
+        modelRef="m/m"
+        cwd="/tmp"
+        pasteRegistry={registry}
+      />,
+    );
+
+    for (const char of `${label}\r`) {
+      stdin.write(char);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(sends).toEqual([pastedText]);
+    expect(addedPaths).toEqual(['/tmp/source.ts']);
+    expect(lastFrame()).not.toContain('attach 1,');
     unmount();
   });
 

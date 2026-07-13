@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { PasteRegistry, shouldCompactPaste } from './paste';
 
 /**
  * Translate `modifyOtherKeys` / kitty-style CSI 27 sequences for Enter into
@@ -28,11 +29,11 @@ import { EventEmitter } from 'node:events';
  * and it falls through to deliver `input='\r'` with `key.return=false`,
  * which inserts a literal `\r` into the buffer instead of a newline.)
  */
-const MODIFIED_ENTER = /\x1b\[27;[2-8];13~/g;
-const LEGACY_ALT_ENTER = /\x1b\r/g;
+const MODIFIED_ENTER = new RegExp(`${String.fromCharCode(27)}\\[27;[2-8];13~`, 'g');
+const LEGACY_ALT_ENTER = `${String.fromCharCode(27)}\r`;
 
 export function translateModifiedKeys(chunk: string): string {
-  return chunk.replace(MODIFIED_ENTER, '\n').replace(LEGACY_ALT_ENTER, '\n');
+  return chunk.replace(MODIFIED_ENTER, '\n').replaceAll(LEGACY_ALT_ENTER, '\n');
 }
 
 /**
@@ -55,17 +56,69 @@ export function translateModifiedKeys(chunk: string): string {
  * 3. `setRawMode`, `setEncoding`, `ref`, `unref`, `pause`, `resume` all
  *    delegate to `upstream`.
  */
-export function createFilteredStdin(upstream: NodeJS.ReadStream): NodeJS.ReadStream {
+export function createFilteredStdin(
+  upstream: NodeJS.ReadStream,
+  pasteRegistry?: PasteRegistry,
+): NodeJS.ReadStream {
   const wrapper = new EventEmitter() as EventEmitter & Partial<NodeJS.ReadStream>;
   const queue: string[] = [];
+  const pasteStart = '\x1b[200~';
+  const pasteEnd = '\x1b[201~';
+  let pendingInput = '';
+  let pasteContent: string | null = null;
   let upstreamSubscribed = false;
+
+  function markerPrefixLength(input: string, marker: string): number {
+    for (let length = Math.min(marker.length - 1, input.length); length > 0; length -= 1) {
+      if (input.endsWith(marker.slice(0, length))) return length;
+    }
+    return 0;
+  }
+
+  function processInput(chunk: string): void {
+    pendingInput += chunk;
+    while (pendingInput.length > 0) {
+      if (pasteContent !== null) {
+        const endIndex = pendingInput.indexOf(pasteEnd);
+        if (endIndex < 0) {
+          const retainedLength = markerPrefixLength(pendingInput, pasteEnd);
+          pasteContent += pendingInput.slice(0, pendingInput.length - retainedLength);
+          pendingInput = retainedLength > 0 ? pendingInput.slice(-retainedLength) : '';
+          return;
+        }
+        pasteContent += pendingInput.slice(0, endIndex);
+        pendingInput = pendingInput.slice(endIndex + pasteEnd.length);
+        const output =
+          pasteRegistry && shouldCompactPaste(pasteContent)
+            ? pasteRegistry.register(pasteContent)
+            : pasteContent;
+        if (output.length > 0) queue.push(output);
+        pasteContent = null;
+        continue;
+      }
+
+      const startIndex = pendingInput.indexOf(pasteStart);
+      if (startIndex < 0) {
+        const retainedLength = markerPrefixLength(pendingInput, pasteStart);
+        const output = pendingInput.slice(0, pendingInput.length - retainedLength);
+        if (output.length > 0) queue.push(translateModifiedKeys(output));
+        pendingInput = retainedLength > 0 ? pendingInput.slice(-retainedLength) : '';
+        return;
+      }
+      const output = pendingInput.slice(0, startIndex);
+      if (output.length > 0) queue.push(translateModifiedKeys(output));
+      pendingInput = pendingInput.slice(startIndex + pasteStart.length);
+      pasteContent = '';
+    }
+  }
+
   function pump(): void {
-    let chunk: unknown;
-    while ((chunk = upstream.read()) !== null) {
+    let chunk: unknown = upstream.read();
+    while (chunk !== null) {
       const text =
         typeof chunk === 'string' ? chunk : Buffer.from(chunk as Uint8Array).toString('utf8');
-      const translated = translateModifiedKeys(text);
-      if (translated.length > 0) queue.push(translated);
+      processInput(text);
+      chunk = upstream.read();
     }
     if (queue.length > 0) wrapper.emit('readable');
   }

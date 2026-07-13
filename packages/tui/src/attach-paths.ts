@@ -24,8 +24,12 @@ export function parseAttachTokens(input: string, cwd: string): AttachToken[] {
     if (prefix === '#' && rawPath.startsWith('#')) {
       // Skip markdown headings (`## Title`, `### Code`, etc.)
       match = pattern.exec(input);
-    } else if (prefix === '#' && /^\d+\]$/.test(rawPath)) {
-      // Skip `[Image #N]` placeholders inserted by Ctrl+V paste
+    } else if (
+      prefix === '#' &&
+      (/^\d+\]$/.test(rawPath) ||
+        (/^\d+,$/.test(rawPath) && input.slice(0, match.index + 1).endsWith('[Pasted text ')))
+    ) {
+      // Skip generated image and large-text paste placeholders.
       match = pattern.exec(input);
     } else {
       const kind = prefix === '@' ? 'read' : 'write';

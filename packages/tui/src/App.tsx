@@ -36,6 +36,7 @@ import {
   replaceAll,
 } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
+import { PasteRegistry } from './input/paste';
 import { renderMarkdown } from './markdown';
 import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
@@ -101,6 +102,8 @@ export interface AppProps {
    * Goes through the same handling as if the user typed it and pressed Enter.
    */
   initialPrompt?: string;
+  /** Pending large text pastes captured by the terminal input filter. */
+  pasteRegistry?: PasteRegistry;
 }
 
 interface PendingPermission {
@@ -765,33 +768,35 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   async function handleSubmit(text: string): Promise<void> {
-    if (text.startsWith('!')) {
-      const command = text.slice(1).trim();
+    const expandedText = props.pasteRegistry?.expand(text) ?? text;
+    props.pasteRegistry?.clear();
+    if (expandedText.startsWith('!')) {
+      const command = expandedText.slice(1).trim();
       if (command.length === 0) return;
       if (busy) {
-        setQueue((q) => [...q, text]);
+        setQueue((q) => [...q, expandedText]);
         scrollback.addInfo(`queued: ${previewLine(text)}`);
         return;
       }
       await handleBang(command);
       return;
     }
-    if (text.startsWith('/')) {
-      handleSlash(text.trim());
+    if (expandedText.startsWith('/')) {
+      handleSlash(expandedText.trim());
       return;
     }
     if (running) {
-      void injectMidRun(text);
+      void injectMidRun(expandedText);
       return;
     }
     if (busy) {
       // Compacting or a ! command is in flight (no active run to inject into);
       // queue so the message lands as the next turn once the run is idle.
-      setQueue((q) => [...q, text]);
+      setQueue((q) => [...q, expandedText]);
       scrollback.addInfo(`queued: ${previewLine(text)}`);
       return;
     }
-    await sendUserMessage(text);
+    await sendUserMessage(expandedText);
   }
 
   async function handleBang(command: string): Promise<void> {

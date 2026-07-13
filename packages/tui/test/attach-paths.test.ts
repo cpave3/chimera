@@ -91,9 +91,10 @@ describe('parseAttachTokens', () => {
     expect(parseAttachTokens('prefix ## ', '/tmp')).toEqual([]);
   });
 
-  it('ignores [Image #N] placeholders', () => {
+  it('ignores generated image and pasted-text placeholders', () => {
     expect(parseAttachTokens('check this [Image #1]', '/tmp')).toEqual([]);
     expect(parseAttachTokens('here [Image #12] and [Image #3]', '/tmp')).toEqual([]);
+    expect(parseAttachTokens('review [Pasted text #1, 42 lines]', '/tmp')).toEqual([]);
   });
 
   it('still detects real tokens next to image placeholders', () => {

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
+import { PasteRegistry } from '../src/input/paste';
 import { createFilteredStdin, translateModifiedKeys } from '../src/input/stdin-filter';
 
 describe('translateModifiedKeys', () => {
@@ -59,6 +60,44 @@ describe('createFilteredStdin', () => {
     });
     (upstream as unknown as EventEmitter).emit('readable');
     expect(reads).toEqual(['a\nb', 'plain']);
+  });
+
+  it('replaces a large bracketed paste split across chunks with a registered placeholder', () => {
+    const queue: (string | null)[] = [
+      'before \x1b[20',
+      '0~one\ntwo\nthree',
+      '\nfour\nfive\x1b[201',
+      '~ after',
+      null,
+    ];
+    const upstream = new EventEmitter() as unknown as NodeJS.ReadStream;
+    Object.assign(upstream, {
+      isTTY: true,
+      pause() {},
+      resume() {},
+      setRawMode() {},
+      setEncoding() {},
+      read() {
+        return queue.shift() ?? null;
+      },
+      ref() {},
+      unref() {},
+    });
+    const registry = new PasteRegistry();
+    const filtered = createFilteredStdin(upstream, registry);
+    const reads: string[] = [];
+    filtered.on('readable', () => {
+      let chunk: unknown = filtered.read();
+      while (chunk !== null) {
+        reads.push(String(chunk));
+        chunk = filtered.read();
+      }
+    });
+
+    (upstream as unknown as EventEmitter).emit('readable');
+
+    expect(reads.join('')).toBe('before [Pasted text #1, 5 lines] after');
+    expect(registry.expand(reads.join(''))).toBe('before one\ntwo\nthree\nfour\nfive after');
   });
 
   it('exposes the TTY surface that Ink expects', () => {
