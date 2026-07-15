@@ -3,7 +3,7 @@ import { newCallId } from '@chimera/core';
 import { defineTool } from '@chimera/tools';
 import { z } from 'zod';
 import { parseToolsCsv } from './agents/frontmatter';
-import { driveChild, spawnChimeraChild, teardownChild, type ChildHandle } from './spawn-child';
+import { type ChildHandle, driveChild, spawnChimeraChild, teardownChild } from './spawn-child';
 import { driveInProcess, spawnInProcessChild } from './spawn-in-process';
 import type { SpawnAgentToolContext, SubagentResult } from './types';
 
@@ -325,12 +325,13 @@ function inheritSandboxMode(
 
 function parseModelRef(
   ref: string,
-  modelOptions?: Record<string, { maxOutputTokens?: number }>,
+  modelOptions?: Record<string, { maxOutputTokens?: number; parallelToolCalls?: boolean }>,
 ): {
   providerId: string;
   modelId: string;
   maxSteps: number;
   maxOutputTokens?: number;
+  parallelToolCalls?: boolean;
 } {
   const slash = ref.indexOf('/');
   if (slash <= 0) {
@@ -341,6 +342,7 @@ function parseModelRef(
     modelId: ref.slice(slash + 1),
     maxSteps: 50,
     maxOutputTokens: modelOptions?.[ref]?.maxOutputTokens,
+    parallelToolCalls: modelOptions?.[ref]?.parallelToolCalls,
   };
 }
 

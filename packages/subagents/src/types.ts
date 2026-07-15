@@ -120,7 +120,7 @@ export interface SpawnAgentToolContext {
    * back to the provider's server-side default (e.g. synthetic.new caps at
    * 2048, which truncates long syntheses mid-output).
    */
-  modelOptions?: Record<string, { maxOutputTokens?: number }>;
+  modelOptions?: Record<string, { maxOutputTokens?: number; parallelToolCalls?: boolean }>;
 }
 
 export type SpawnEmit = (event: AgentEvent) => void;

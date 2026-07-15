@@ -11,6 +11,14 @@ import type { PermissionRequest, PermissionResolution } from './interfaces';
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
 
+/**
+ * Provider-specific options forwarded to the AI SDK's `streamText` call.
+ * Structurally compatible with the AI SDK's `ProviderOptions`
+ * (`Record<string, JSONObject>`), which is not re-exported by the `ai`
+ * package so we define a local alias.
+ */
+export type ProviderOptions = Record<string, Record<string, unknown>>;
+
 import {
   appendSessionEvent,
   forkSession,
@@ -124,6 +132,13 @@ export interface AgentOptions {
    * A value of `0` disables the timeout. Defaults to 120000.
    */
   responseTimeoutMs?: number;
+  /**
+   * Provider-specific options forwarded to the AI SDK's `streamText` call
+   * (under the `providerOptions` parameter). Built by the factory from the
+   * provider shape and `ModelConfig.parallelToolCalls`. Keyed by provider
+   * name (e.g. `{ openai: { parallelToolCalls: true } }`).
+   */
+  providerOptions?: ProviderOptions;
 }
 
 /**
@@ -139,6 +154,7 @@ export type VisionModelResolution =
       languageModel: LanguageModel;
       contextWindow: number;
       contextWindowIsApproximate: boolean;
+      providerOptions?: ProviderOptions;
     }
   | { status: 'unavailable'; reason: string };
 
@@ -251,6 +267,7 @@ export class Agent {
     contextWindow: number;
     contextWindowIsApproximate: boolean;
     systemPrompt: string;
+    providerOptions?: ProviderOptions;
   };
   /**
    * Optional callback resolving the configured `defaultVisionModel` when a
@@ -270,6 +287,7 @@ export class Agent {
     languageModel: LanguageModel;
     contextWindow: number;
     contextWindowIsApproximate: boolean;
+    providerOptions?: ProviderOptions;
     trigger: 'user_images' | 'tool_image';
   } | null = null;
   /** Once-per-run latch for `vision_route_unavailable`. */
@@ -517,6 +535,7 @@ export class Agent {
       contextWindow: number;
       contextWindowIsApproximate: boolean;
       systemPrompt: string;
+      providerOptions?: ProviderOptions;
     },
   ): void {
     this.modelChangeResolver = resolver;
@@ -569,6 +588,7 @@ export class Agent {
       systemPrompt: resolved.systemPrompt,
       contextWindow: resolved.contextWindow,
       contextWindowIsApproximate: resolved.contextWindowIsApproximate,
+      providerOptions: resolved.providerOptions,
     };
     this.session.model = resolved.model;
     this.session.userModelOverride = ref;
@@ -856,6 +876,10 @@ export class Agent {
     );
   }
 
+  private activeProviderOptions(): ProviderOptions | undefined {
+    return this.visionOverride?.providerOptions ?? this.opts.providerOptions;
+  }
+
   private composeSystemPrompt(planHandoff: boolean): string | undefined {
     const parts: string[] = [];
     if (this.opts.systemPrompt) parts.push(this.opts.systemPrompt);
@@ -1059,6 +1083,7 @@ export class Agent {
           languageModel: resolution.languageModel,
           contextWindow: resolution.contextWindow,
           contextWindowIsApproximate: resolution.contextWindowIsApproximate,
+          providerOptions: resolution.providerOptions,
           trigger: 'user_images',
         };
       } else {
@@ -1220,6 +1245,9 @@ export class Agent {
             abortSignal: this.abortController.signal,
             temperature: this.activeModel().temperature,
             maxOutputTokens: this.activeModel().maxOutputTokens,
+            providerOptions: this.activeProviderOptions() as Parameters<
+              typeof streamText
+            >[0]['providerOptions'],
           });
 
           for await (const part of stream.fullStream) {
@@ -1663,6 +1691,7 @@ export class Agent {
                   languageModel: resolution.languageModel,
                   contextWindow: resolution.contextWindow,
                   contextWindowIsApproximate: resolution.contextWindowIsApproximate,
+                  providerOptions: resolution.providerOptions,
                   trigger: 'tool_image',
                 };
                 queue.push({

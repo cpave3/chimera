@@ -20,6 +20,14 @@ export interface ModelOptions {
    * `defaultVisionModel`.
    */
   vision?: boolean;
+  /**
+   * When `true`, the factory forwards `{ parallelToolCalls: true }` to the
+   * provider so the model emits multiple tool calls per step (which the AI
+   * SDK runs concurrently via `Promise.all`). When unset, the provider's
+   * default applies — which for some GPT models reached through proxies is
+   * serial, causing subagent spawns to run one-at-a-time.
+   */
+  parallelToolCalls?: boolean;
 }
 
 export interface ChimeraConfig {
@@ -166,6 +174,7 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
       maxOutputTokens: modelOpts?.maxOutputTokens,
       vision: modelOpts?.vision,
       toolCallShape: modelOpts?.toolCallShape,
+      parallelToolCalls: modelOpts?.parallelToolCalls,
     },
     providersConfig: { providers, defaultModel: opts.config.defaultModel },
   };

@@ -30,6 +30,15 @@ export interface ModelConfig {
    * Undefined means Chimera's native tool names and argument schemas.
    */
   toolCallShape?: 'chimera' | 'codex';
+  /**
+   * Explicitly enable/disable parallel tool calls in the provider request.
+   * When `true`, the factory forwards `{ parallelToolCalls: true }` under the
+   * provider's `providerOptions` key so the model emits multiple tool calls
+   * per step (which the AI SDK runs concurrently). When unset, the provider's
+   * default applies — which for some GPT models reached through proxies is
+   * serial, causing subagent spawns to run one-at-a-time.
+   */
+  parallelToolCalls?: boolean;
 }
 
 export interface ToolCallRecord {

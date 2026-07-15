@@ -1,5 +1,5 @@
 import type { AgentEvent, SessionId } from '@chimera/core';
-import { driveSubagent, type DriveResult, type SubagentTransport } from './subagent-driver';
+import { type DriveResult, driveSubagent, type SubagentTransport } from './subagent-driver';
 import type { InProcessAgentBuilder } from './types';
 
 export interface InProcessHandle {
@@ -18,6 +18,7 @@ export async function spawnInProcessChild(args: {
     modelId: string;
     maxSteps: number;
     maxOutputTokens?: number;
+    parallelToolCalls?: boolean;
   };
   sandboxMode: 'off' | 'bind' | 'overlay' | 'ephemeral';
   parentAbortSignal: AbortSignal;

@@ -6,6 +6,7 @@ import type {
   CompactionConfig,
   Executor,
   ModelConfig,
+  ProviderOptions,
   SessionId,
   VisionModelResolution,
 } from '@chimera/core';
@@ -232,8 +233,9 @@ export class CliAgentFactory implements AgentFactory {
     const languageModel = provider.getModel(modelId, sessionId);
 
     const providerSpec = this.providersConfig.providers[init.model.providerId];
+    const providerShape = providerSpec?.shape ?? provider.shape;
     const resolvedWindow = resolveContextWindow({
-      providerShape: providerSpec?.shape ?? provider.shape,
+      providerShape,
       providerId: init.model.providerId,
       modelId,
       override: this.modelsConfig[ref]?.contextWindow,
@@ -338,6 +340,7 @@ export class CliAgentFactory implements AgentFactory {
       timeoutHook,
       interruptHook,
       responseTimeoutMs: this.responseTimeoutMs,
+      providerOptions: buildProviderOptions(providerShape, init.model.parallelToolCalls),
     });
 
     // Propagate CLI-supplied additional paths onto the session so they are
@@ -514,7 +517,11 @@ export class CliAgentFactory implements AgentFactory {
       const filtered = applyAllowlist(tools, allowlist);
       agent.setTools(filtered as ToolSet);
       agent.setSystemPrompt(
-        appendToolSurfacePrompt(effectiveSystemPrompt, filtered as ToolSet, init.model.toolCallShape),
+        appendToolSurfacePrompt(
+          effectiveSystemPrompt,
+          filtered as ToolSet,
+          init.model.toolCallShape,
+        ),
       );
 
       // The resolver lets the agent recompose its own system prompt + tool
@@ -556,7 +563,9 @@ export class CliAgentFactory implements AgentFactory {
       });
     } else {
       agent.setTools(tools);
-      agent.setSystemPrompt(appendToolSurfacePrompt(effectiveSystemPrompt, tools, init.model.toolCallShape));
+      agent.setSystemPrompt(
+        appendToolSurfacePrompt(effectiveSystemPrompt, tools, init.model.toolCallShape),
+      );
     }
 
     // Model-change resolver: allows the user to switch models at runtime via
@@ -564,8 +573,9 @@ export class CliAgentFactory implements AgentFactory {
     agent.setModelChangeResolver((ref: string) => {
       const { provider: newProvider, modelId: newModelId } = this.registry.resolve(ref);
       const newProviderSpec = this.providersConfig.providers[newProvider.id];
+      const newProviderShape = newProviderSpec?.shape ?? newProvider.shape;
       const newWindow = resolveContextWindow({
-        providerShape: newProviderSpec?.shape ?? newProvider.shape,
+        providerShape: newProviderShape,
         providerId: newProvider.id,
         modelId: newModelId,
         override: this.modelsConfig[ref]?.contextWindow,
@@ -582,6 +592,7 @@ export class CliAgentFactory implements AgentFactory {
         // Runtime /model changes swap the language model, not the registered
         // tool set. Preserve the session's existing tool surface.
         toolCallShape: agent.session.model.toolCallShape,
+        parallelToolCalls: modelOpts?.parallelToolCalls,
       };
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
       const newSystemPrompt = composeSystemPrompt({
@@ -601,6 +612,7 @@ export class CliAgentFactory implements AgentFactory {
         ),
         contextWindow: newWindow.value,
         contextWindowIsApproximate: newWindow.source === 'fallback',
+        providerOptions: buildProviderOptions(newProviderShape, newModel.parallelToolCalls),
       };
     });
 
@@ -624,13 +636,15 @@ export class CliAgentFactory implements AgentFactory {
         const { provider: visionProvider, modelId: visionModelId } =
           this.registry.resolve(visionRef);
         const visionProviderSpec = this.providersConfig.providers[visionProvider.id];
+        const visionProviderShape = visionProviderSpec?.shape ?? visionProvider.shape;
         const visionWindow = resolveContextWindow({
-          providerShape: visionProviderSpec?.shape ?? visionProvider.shape,
+          providerShape: visionProviderShape,
           providerId: visionProvider.id,
           modelId: visionModelId,
           override: this.modelsConfig[visionRef]?.contextWindow,
           warn: this.warn,
         });
+        const visionModelOpts = this.modelsConfig[visionRef];
         return {
           status: 'ok',
           ref: visionRef,
@@ -638,13 +652,18 @@ export class CliAgentFactory implements AgentFactory {
             providerId: visionProvider.id,
             modelId: visionModelId,
             maxSteps: agent.session.model.maxSteps,
-            maxOutputTokens: this.modelsConfig[visionRef]?.maxOutputTokens,
+            maxOutputTokens: visionModelOpts?.maxOutputTokens,
             vision: true,
-            toolCallShape: this.modelsConfig[visionRef]?.toolCallShape,
+            toolCallShape: visionModelOpts?.toolCallShape,
+            parallelToolCalls: visionModelOpts?.parallelToolCalls,
           },
           languageModel: visionProvider.getModel(visionModelId, agent.session.id),
           contextWindow: visionWindow.value,
           contextWindowIsApproximate: visionWindow.source === 'fallback',
+          providerOptions: buildProviderOptions(
+            visionProviderShape,
+            visionModelOpts?.parallelToolCalls,
+          ),
         };
       } catch (err) {
         return { status: 'unavailable', reason: (err as Error).message };
@@ -753,6 +772,7 @@ function appendToolSurfacePrompt(
     ...snippets,
     '',
     'Use the tool-calling channel for tools; do not print JSON as assistant text. The bash tool takes { command, timeout? }, where timeout is seconds.',
+    'When multiple tool calls are independent (one does not need the result of another), call them together in the same step so they run in parallel.',
   ];
   return `${systemPrompt}\n\n${lines.join('\n')}`;
 }
@@ -795,4 +815,20 @@ export function resolveChimeraInvocation(): { bin: string; preArgs: string[] } {
 
 function _resolveChimeraBin(): string {
   return resolveChimeraInvocation().bin;
+}
+
+/**
+ * Build the AI SDK `providerOptions` for a model from its provider shape and
+ * config. Currently only forwards `parallelToolCalls` for OpenAI-shaped
+ * providers (Anthropic always allows parallel tool calls — its API has no
+ * `parallel_tool_calls` parameter). Returns `undefined` when there's nothing
+ * to forward, so `streamText` uses the provider's defaults.
+ */
+function buildProviderOptions(
+  providerShape: 'openai' | 'anthropic',
+  parallelToolCalls: boolean | undefined,
+): ProviderOptions | undefined {
+  if (parallelToolCalls === undefined) return undefined;
+  if (providerShape !== 'openai') return undefined;
+  return { openai: { parallelToolCalls } };
 }
