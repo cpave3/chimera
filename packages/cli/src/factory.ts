@@ -589,6 +589,7 @@ export class CliAgentFactory implements AgentFactory {
         maxOutputTokens: modelOpts?.maxOutputTokens,
         temperature: agent.session.model.temperature,
         vision: modelOpts?.vision,
+        imageLongEdge: modelOpts?.imageLongEdge,
         // Runtime /model changes swap the language model, not the registered
         // tool set. Preserve the session's existing tool surface.
         toolCallShape: agent.session.model.toolCallShape,
@@ -654,6 +655,7 @@ export class CliAgentFactory implements AgentFactory {
             maxSteps: agent.session.model.maxSteps,
             maxOutputTokens: visionModelOpts?.maxOutputTokens,
             vision: true,
+            imageLongEdge: visionModelOpts?.imageLongEdge,
             toolCallShape: visionModelOpts?.toolCallShape,
             parallelToolCalls: visionModelOpts?.parallelToolCalls,
           },

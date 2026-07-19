@@ -3,9 +3,9 @@ import type { SkillRegistry, SkillSource } from './types';
 
 /**
  * The `skill_activated` event uses a collapsed 3-value category rather than
- * the full tier `SkillSource`. Both `.claude-*` and `.agents-*` sources map to
- * `claude-compat` — they're cross-tool compatibility roots, indistinguishable
- * for activation display.
+ * the full tier `SkillSource`. `.claude-*`, `.codex-*`, and `.agents-*` sources
+ * map to `claude-compat` — they're cross-tool compatibility roots,
+ * indistinguishable for activation display.
  */
 export type ActivationCategory = 'project' | 'user' | 'claude-compat';
 

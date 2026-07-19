@@ -128,6 +128,50 @@ describe('loadSkills discovery', () => {
     expect(registry.find('pdf')?.source).toBe('agents-project');
   });
 
+  it('discovers a <cwd>/.codex/skills entry as codex-project', async () => {
+    const cwd = join(home, 'p-codex-proj');
+    await mkdir(join(cwd, '.codex', 'skills', 'pdf'), { recursive: true });
+    await writeFile(
+      join(cwd, '.codex', 'skills', 'pdf', 'SKILL.md'),
+      '---\nname: pdf\ndescription: codex-project pdf\n---',
+    );
+    const registry = loadSkills({ cwd, userHome: home });
+    expect(registry.find('pdf')?.source).toBe('codex-project');
+  });
+
+  it('.codex/skills shadows .agents/skills with one warning', async () => {
+    const cwd = join(home, 'p-codex-shadow');
+    await mkdir(join(cwd, '.codex', 'skills', 'git'), { recursive: true });
+    await mkdir(join(cwd, '.agents', 'skills', 'git'), { recursive: true });
+    await writeFile(
+      join(cwd, '.codex', 'skills', 'git', 'SKILL.md'),
+      '---\nname: git\ndescription: codex git\n---',
+    );
+    await writeFile(
+      join(cwd, '.agents', 'skills', 'git', 'SKILL.md'),
+      '---\nname: git\ndescription: agents git\n---',
+    );
+    const warnings: string[] = [];
+    const registry = loadSkills({ cwd, userHome: home, onWarning: (m) => warnings.push(m) });
+    expect(registry.find('git')).toMatchObject({
+      source: 'codex-project',
+      description: 'codex git',
+    });
+    expect(registry.collisions()).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('includeCodexCompat=false skips .codex/skills tiers', async () => {
+    const cwd = join(home, 'p-no-codex');
+    await mkdir(join(cwd, '.codex', 'skills', 'git'), { recursive: true });
+    await writeFile(
+      join(cwd, '.codex', 'skills', 'git', 'SKILL.md'),
+      '---\nname: git\ndescription: only-codex\n---',
+    );
+    const registry = loadSkills({ cwd, userHome: home, includeCodexCompat: false });
+    expect(registry.find('git')).toBeUndefined();
+  });
+
   it('.chimera/skills shadows ~/.agents/skills with one warning', async () => {
     const cwd = join(home, 'p-agents-shadow');
     await mkdir(join(cwd, '.chimera', 'skills', 'git'), { recursive: true });

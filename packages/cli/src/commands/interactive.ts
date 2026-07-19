@@ -117,6 +117,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     compactor = new Compactor({
       config: compactionConfig,
       contextWindow: resolvedWindow.value,
+      imageLongEdge: config.models?.[ref]?.imageLongEdge,
       resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),

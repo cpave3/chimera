@@ -141,6 +141,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     compactor = new Compactor({
       config: compactionConfig,
       contextWindow: resolvedWindow.value,
+      imageLongEdge: config.models?.[`${model.providerId}/${model.modelId}`]?.imageLongEdge,
       resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),

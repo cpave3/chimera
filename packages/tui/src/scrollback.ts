@@ -1,3 +1,4 @@
+import { countImageParts } from '@chimera/core';
 import type { AgentEvent, CallId, Session, ToolCallRecord, ToolDisplay } from '@chimera/core';
 
 /**
@@ -981,16 +982,4 @@ function extractText(content: unknown): string {
     }
   }
   return parts.join('');
-}
-
-function countImageParts(content: unknown): number {
-  if (typeof content === 'string') return 0;
-  if (!Array.isArray(content)) return 0;
-  let count = 0;
-  for (const part of content) {
-    if (part && typeof part === 'object' && (part as { type?: string }).type === 'image') {
-      count += 1;
-    }
-  }
-  return count;
 }

@@ -46,6 +46,19 @@ describe('chimera skills E2E', () => {
     expect(data[0]).toMatchObject({ name: 'pdf', source: 'project' });
   });
 
+  it('lists a project-scoped Codex skill as JSON', async () => {
+    await mkdir(join(workspace, '.codex', 'skills', 'pdf'), { recursive: true });
+    await writeFile(
+      join(workspace, '.codex', 'skills', 'pdf', 'SKILL.md'),
+      '---\nname: pdf\ndescription: Codex PDF things\n---',
+    );
+
+    const out = await capture(() => runSkillsList({ cwd: workspace, home, json: true }));
+    const data = JSON.parse(out);
+    expect(data).toHaveLength(1);
+    expect(data[0]).toMatchObject({ name: 'pdf', source: 'codex-project' });
+  });
+
   it('prefers .chimera tier over .claude tier on a name collision', async () => {
     await mkdir(join(workspace, '.chimera', 'skills', 'git'), { recursive: true });
     await mkdir(join(workspace, '.claude', 'skills', 'git'), { recursive: true });

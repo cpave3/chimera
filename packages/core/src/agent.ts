@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { type FileHandle, open, readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
 import { type ContextBreakdown, computeContextBreakdown } from './context-breakdown';
@@ -8,6 +8,8 @@ import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
+import { readImageDimensions } from './image-header';
+import { elideImageToolResults } from './message-parts';
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
 
@@ -724,6 +726,18 @@ export class Agent {
    * Resolve a path relative to session.cwd, then track it in fileOps.  Called
    * after a read/write/edit tool result arrives.
    */
+  /**
+   * Prefer a path reference over inline base64: history stays small on disk and
+   * `prepareMessagesForModel` re-reads the file at send time. Only valid when
+   * the host can actually see the file — with a sandbox on, `read` runs inside
+   * the container and the path need not resolve out here (an overlay's writes
+   * never touch the host), so the snapshot we already hold is the only copy.
+   */
+  private storableImage(result: ReadImageResult, sourcePath: string | undefined): string {
+    if (!sourcePath || this.opts.sandboxMode !== 'off') return result.data;
+    return sourcePath;
+  }
+
   private resolveAndTrackPath(args: unknown, write: boolean): void {
     const path = extractPathFromToolArgs(args);
     if (!path) return;
@@ -799,7 +813,7 @@ export class Agent {
     if (this.running) {
       throw new Error('Agent is already running');
     }
-    this.session.messages.push(buildUserMessage(content, imagePaths));
+    this.session.messages.push(await buildUserMessage(content, imagePaths));
     try {
       await persistSession(
         this.session,
@@ -926,6 +940,7 @@ export class Agent {
       contextWindow: this.opts.contextWindow,
       compaction: this.opts.compaction,
       maxOutputTokens: this.opts.model.maxOutputTokens,
+      imageLongEdge: this.activeModel().imageLongEdge,
     });
   }
 
@@ -939,7 +954,9 @@ export class Agent {
     const config = this.opts.compaction;
     if (!config?.enabled || !this.opts.compactor) return false;
     return shouldCompact({
-      projected: this.contextTracker.projectedNextPrompt(this.session.messages),
+      projected: this.contextTracker.projectedNextPrompt(this.session.messages, {
+        imageLongEdge: this.activeModel().imageLongEdge,
+      }),
       contextWindow: this.activeContextWindow(),
       thresholdPercent: config.thresholdPercent ?? 85,
       reserveTokens: config.reserveTokens,
@@ -1112,7 +1129,7 @@ export class Agent {
       }
     }
 
-    this.session.messages.push(buildUserMessage(userMessage, imagePaths));
+    this.session.messages.push(await buildUserMessage(userMessage, imagePaths));
 
     queue.push({ type: 'session_started', sessionId: this.session.id });
 
@@ -1545,11 +1562,18 @@ export class Agent {
                     'data' in result &&
                     typeof (result as { data?: unknown }).data === 'string'
                   ) {
-                    const sourcePath = extractReadPath(rec?.args);
+                    const readPath = extractReadPath(rec?.args);
+                    const sourcePath = readPath ? resolve(this.session.cwd, readPath) : undefined;
                     this.pendingImageMessages.push({
                       type: 'image',
-                      image: (result as { data: string }).data,
-                      ...(sourcePath ? { providerOptions: { chimera: { sourcePath } } } : {}),
+                      image: this.storableImage(result as ReadImageResult, sourcePath),
+                      ...(sourcePath
+                        ? {
+                            providerOptions: {
+                              chimera: { sourcePath, ...imageSize(result) },
+                            },
+                          }
+                        : {}),
                     });
                   }
                 } else if (info.name === 'write' || info.name === 'edit') {
@@ -1724,7 +1748,7 @@ export class Agent {
             const injects = this.pendingInjectMessages;
             this.pendingInjectMessages = [];
             for (const inject of injects) {
-              this.session.messages.push(buildUserMessage(inject.content, inject.images));
+              this.session.messages.push(await buildUserMessage(inject.content, inject.images));
               queue.push({
                 type: 'user_message',
                 content: inject.content,
@@ -1894,6 +1918,19 @@ export class Agent {
   }
 }
 
+interface ReadImageResult {
+  data: string;
+  width?: number;
+  height?: number;
+}
+
+/** The dimensions the read tool parsed, omitted entirely when it could not. */
+function imageSize(result: unknown): { width: number; height: number } | Record<string, never> {
+  const { width, height } = result as ReadImageResult;
+  if (typeof width !== 'number' || typeof height !== 'number') return {};
+  return { width, height };
+}
+
 function extractReadPath(args: unknown): string | undefined {
   if (args && typeof args === 'object' && 'path' in args) {
     const pathValue = (args as { path?: unknown }).path;
@@ -1958,17 +1995,49 @@ function tailHasImageParts(messages: ModelMessage[]): boolean {
   return false;
 }
 
-function buildUserMessage(text: string, imagePaths?: string[]): ModelMessage {
+/**
+ * Enough to reach the dimensions in any format we accept. PNG/GIF/WebP/BMP put
+ * them in the first bytes; a JPEG's SOF marker sits past whatever EXIF the
+ * camera wrote, so read a chunk rather than paying to load whole files.
+ */
+const IMAGE_HEADER_BYTES = 64 * 1024;
+
+async function readImageHeader(path: string): Promise<Uint8Array | undefined> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, 'r');
+    const buffer = Buffer.alloc(IMAGE_HEADER_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, IMAGE_HEADER_BYTES, 0);
+    return buffer.subarray(0, bytesRead);
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close();
+  }
+}
+
+type ImagePartParam = { type: 'image'; image: string; providerOptions?: unknown };
+
+/**
+ * Attached images persist as a path; the prompt builder inflates them to base64
+ * per request. Dimensions ride along so the estimator can price the image
+ * without re-reading it on every step.
+ */
+async function imagePartForPath(path: string): Promise<ImagePartParam> {
+  const header = await readImageHeader(path);
+  const dims = header ? readImageDimensions(header) : undefined;
+  return { type: 'image', image: path, ...(dims ? { providerOptions: { chimera: dims } } : {}) };
+}
+
+async function buildUserMessage(text: string, imagePaths?: string[]): Promise<ModelMessage> {
   if (!imagePaths || imagePaths.length === 0) {
     return { role: 'user', content: text };
   }
-  const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = [
-    { type: 'text', text },
-  ];
+  const parts: Array<{ type: 'text'; text: string } | ImagePartParam> = [{ type: 'text', text }];
   for (const path of imagePaths) {
-    parts.push({ type: 'image', image: path });
+    parts.push(await imagePartForPath(path));
   }
-  return { role: 'user', content: parts };
+  return { role: 'user', content: parts } as ModelMessage;
 }
 
 interface MessagePrepOptions {
@@ -2014,42 +2083,6 @@ function imagePlaceholder(sourcePath: string | undefined, opts: MessagePrepOptio
   return existsSync(sourcePath)
     ? `${viewed} Read the file again with the read tool to re-examine it.]`
     : `${viewed} The file no longer exists on disk.]`;
-}
-
-/**
- * Read-image tool results duplicate the whole image as base64 JSON text in
- * every later prompt — the model already sees it as the injected image
- * message. Strip the payload from the prompt copy (persisted history keeps
- * it for scrollback/rehydration).
- */
-function elideImageToolResults(msg: ModelMessage): ModelMessage {
-  if (!Array.isArray(msg.content)) return msg;
-  let changed = false;
-  const parts = msg.content.map((part) => {
-    if (part.type !== 'tool-result') return part;
-    const output = (part as { output?: { type?: string; value?: unknown } }).output;
-    const value = output?.value;
-    if (
-      value &&
-      typeof value === 'object' &&
-      (value as { kind?: unknown }).kind === 'image' &&
-      typeof (value as { data?: unknown }).data === 'string'
-    ) {
-      changed = true;
-      return {
-        ...part,
-        output: {
-          ...output,
-          value: {
-            ...(value as Record<string, unknown>),
-            data: '[image data elided — see accompanying image message]',
-          },
-        },
-      };
-    }
-    return part;
-  });
-  return changed ? ({ ...msg, content: parts } as ModelMessage) : msg;
 }
 
 /**

@@ -12,7 +12,10 @@ describe('categorizeSkillSource', () => {
     expect(categorizeSkillSource('claude-user')).toBe('claude-compat');
   });
 
-  it('maps .agents-* sources to claude-compat (cross-tool compat root)', () => {
+  it('maps compatibility sources to claude-compat', () => {
+    expect(categorizeSkillSource('codex-project')).toBe('claude-compat');
+    expect(categorizeSkillSource('codex-ancestor')).toBe('claude-compat');
+    expect(categorizeSkillSource('codex-user')).toBe('claude-compat');
     expect(categorizeSkillSource('agents-project')).toBe('claude-compat');
     expect(categorizeSkillSource('agents-ancestor')).toBe('claude-compat');
     expect(categorizeSkillSource('agents-user')).toBe('claude-compat');

@@ -2017,19 +2017,31 @@ describe('system prompt composition (tasks + plan handoff)', () => {
     const parts = lastUser.content as Array<{ type: string; image?: string }>;
     expect(parts).toHaveLength(1);
     expect(parts[0].type).toBe('image');
-    expect(parts[0].image).toBe(imageData);
+    // Stored as a path reference, resolved against the session cwd, rather
+    // than the base64 the tool returned.
+    expect(parts[0].image).toBe('/tmp/screenshot.png');
   });
 });
 
 describe('vision routing', () => {
   let home: string;
 
+  /** Real 1x1 PNG. `readToolCallMock` reads this path, so it must exist on disk
+   *  for the prompt builder to materialise the image part from its reference. */
+  const SCREENSHOT_PATH = '/tmp/screenshot.png';
+  const MINI_PNG = Buffer.from(
+    '89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d763f8cfc00000000300010005f8d24f0000000049454e44ae426082',
+    'hex',
+  );
+
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'chimera-agent-vision-'));
+    await writeFile(SCREENSHOT_PATH, MINI_PNG);
   });
 
   afterEach(async () => {
     await rm(home, { recursive: true, force: true });
+    await rm(SCREENSHOT_PATH, { force: true });
   });
 
   function textMock(text: string) {
@@ -2312,6 +2324,8 @@ describe('vision routing', () => {
       kind: 'image',
       data: 'data:image/png;base64,abc123',
       mime: 'image/png',
+      width: 7,
+      height: 3,
     }),
   });
 
@@ -2365,7 +2379,99 @@ describe('vision routing', () => {
     );
     const imagePart = (injected[injected.length - 1].content as Array<Record<string, unknown>>)[0];
     expect(imagePart.type).toBe('image');
-    expect(imagePart.providerOptions).toEqual({ chimera: { sourcePath: '/tmp/screenshot.png' } });
+    expect(imagePart.providerOptions).toEqual({
+      chimera: { sourcePath: '/tmp/screenshot.png', width: 7, height: 3 },
+    });
+  });
+
+  it('records dimensions for user-attached images so they are priced by pixels', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textMock('ok') as unknown as LanguageModel,
+      tools: {} as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    await agent.appendMessage('what is this', [SCREENSHOT_PATH]);
+
+    const lastUser = agent.session.messages[agent.session.messages.length - 1]!;
+    const parts = lastUser.content as Array<Record<string, unknown>>;
+    const imagePart = parts.find((part) => part.type === 'image')!;
+    expect(imagePart.image).toBe(SCREENSHOT_PATH);
+    expect(imagePart.providerOptions).toEqual({ chimera: { width: 1, height: 1 } });
+  });
+
+  it('attaches an image with no readable header without dimensions', async () => {
+    const notAnImage = join(home, 'broken.png');
+    await writeFile(notAnImage, 'definitely not a png');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textMock('ok') as unknown as LanguageModel,
+      tools: {} as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    await agent.appendMessage('what is this', [notAnImage]);
+
+    const lastUser = agent.session.messages[agent.session.messages.length - 1]!;
+    const parts = lastUser.content as Array<Record<string, unknown>>;
+    const imagePart = parts.find((part) => part.type === 'image')!;
+    expect(imagePart.image).toBe(notAnImage);
+    expect(imagePart.providerOptions).toBeUndefined();
+  });
+
+  it('stores a path reference rather than base64 so history stays small', async () => {
+    const primary = readToolCallMock();
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(textMock('vision sees it')));
+
+    for await (const _ev of agent.run('open the screenshot')) {
+      // drain
+    }
+
+    const injected = agent.session.messages.filter(
+      (msg) => msg.role === 'user' && Array.isArray(msg.content),
+    );
+    const imagePart = (injected[injected.length - 1].content as Array<Record<string, unknown>>)[0];
+    expect(imagePart.image).toBe('/tmp/screenshot.png');
+  });
+
+  it('keeps the image inline when a sandbox owns the file and the host cannot read it', async () => {
+    const primary = readToolCallMock();
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'overlay',
+      home,
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(textMock('vision sees it')));
+
+    for await (const _ev of agent.run('open the screenshot')) {
+      // drain
+    }
+
+    const injected = agent.session.messages.filter(
+      (msg) => msg.role === 'user' && Array.isArray(msg.content),
+    );
+    const imagePart = (injected[injected.length - 1].content as Array<Record<string, unknown>>)[0];
+    expect(imagePart.image).toBe('data:image/png;base64,abc123');
   });
 
   it('continues the run and warns once when a tool image appears with no vision fallback', async () => {

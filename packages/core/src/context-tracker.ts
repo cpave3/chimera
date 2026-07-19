@@ -1,36 +1,59 @@
 import type { ModelMessage } from 'ai';
+import {
+  DEFAULT_IMAGE_LONG_EDGE,
+  elideImageToolResults,
+  estimateImageTokens,
+  imageDimensions,
+  isImagePart,
+} from './message-parts';
 
 /** Fixed per-message overhead constant to account for role/formatting tokens. */
 export const PER_MESSAGE_OVERHEAD = 16;
 
-/** Rough per-image token overhead for vision inputs. Used by estimateTokens. */
-export const IMAGE_TOKEN_COST = 1000;
-
-function countImageParts(content: unknown): number {
-  if (typeof content === 'string') return 0;
-  if (!Array.isArray(content)) return 0;
-  let count = 0;
-  for (const part of content) {
-    if (part && typeof part === 'object' && (part as { type?: string }).type === 'image') {
-      count += 1;
-    }
-  }
-  return count;
+export interface EstimateOptions {
+  /** Long-edge pixel limit images are scaled to fit; defaults to DEFAULT_IMAGE_LONG_EDGE. */
+  imageLongEdge?: number;
 }
 
 /**
  * Conservative char/4 heuristic for token estimation. Each message
  * contributes JSON-stringified length / 4 rounded up, plus a small overhead
  * constant. (Moved here from @chimera/compaction, which re-exports it.)
+ *
+ * Images are charged by pixel count rather than by payload length — see
+ * `measurableText`.
  */
-export function estimateTokens(messages: ModelMessage[]): number {
+export function estimateTokens(messages: ModelMessage[], opts?: EstimateOptions): number {
+  const longEdge = opts?.imageLongEdge ?? DEFAULT_IMAGE_LONG_EDGE;
   let total = 0;
-  for (const msg of messages) {
-    const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-    const imageTokens = msg.role === 'user' ? countImageParts(msg.content) * IMAGE_TOKEN_COST : 0;
-    total += Math.ceil(text.length / 4) + PER_MESSAGE_OVERHEAD + imageTokens;
+  for (const message of messages) {
+    total += Math.ceil(measurableText(message).length / 4) + PER_MESSAGE_OVERHEAD;
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (isImagePart(part)) total += estimateImageTokens(imageDimensions(part), longEdge);
+    }
   }
   return total;
+}
+
+/**
+ * The estimator has to model what `prepareMessagesForModel` sends, not the raw
+ * session history: image payloads reach the provider as image tokens rather
+ * than base64 characters, and read-image tool results are elided from the
+ * prompt entirely. Measuring the history verbatim charged a 512KB screenshot
+ * ~175k tokens against a real cost near 1.6k, which tripped compaction on
+ * sight and then discarded the very images that tripped it.
+ *
+ * Blanking `image` rather than dropping the part keeps key order intact, so
+ * the JSON of image-free content is byte-identical to measuring it directly.
+ */
+function measurableText(message: ModelMessage): string {
+  if (typeof message.content === 'string') return message.content;
+  const elided = elideImageToolResults(message);
+  if (!Array.isArray(elided.content)) return JSON.stringify(elided.content);
+  return JSON.stringify(
+    elided.content.map((part) => (isImagePart(part) ? { ...part, image: '' } : part)),
+  );
 }
 
 /**
@@ -61,11 +84,11 @@ export class ContextTracker {
     this.messageCountAtPrompt = 0;
   }
 
-  projectedNextPrompt(messages: ModelMessage[]): number {
+  projectedNextPrompt(messages: ModelMessage[], opts?: EstimateOptions): number {
     if (this.lastInputTokens === null || messages.length < this.messageCountAtPrompt) {
-      return estimateTokens(messages);
+      return estimateTokens(messages, opts);
     }
-    return this.lastInputTokens + estimateTokens(messages.slice(this.messageCountAtPrompt));
+    return this.lastInputTokens + estimateTokens(messages.slice(this.messageCountAtPrompt), opts);
   }
 }
 

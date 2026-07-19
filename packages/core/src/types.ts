@@ -26,6 +26,13 @@ export interface ModelConfig {
    */
   vision?: boolean;
   /**
+   * Long edge, in pixels, this model's provider scales images down to before
+   * charging for them; sets how the context estimator prices an image.
+   * Config-declared (`models[ref].imageLongEdge`); absent uses
+   * `DEFAULT_IMAGE_LONG_EDGE`.
+   */
+  imageLongEdge?: number;
+  /**
    * Optional compatibility mode for the tool surface exposed to this model.
    * Undefined means Chimera's native tool names and argument schemas.
    */

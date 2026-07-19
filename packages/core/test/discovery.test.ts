@@ -1,15 +1,15 @@
-import { describe, expect, it } from 'vitest';
-import {
-  parseFrontmatter,
-  parseToolsCsv,
-  buildTiers,
-  ancestorsBetween,
-  isGitRoot,
-  walkMarkdownFiles,
-} from '../src/discovery';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  ancestorsBetween,
+  buildTiers,
+  isGitRoot,
+  parseFrontmatter,
+  parseToolsCsv,
+  walkMarkdownFiles,
+} from '../src/discovery';
 
 describe('parseFrontmatter', () => {
   it('returns empty frontmatter when no --- fence exists', () => {
@@ -109,6 +109,23 @@ describe('buildTiers', () => {
   it('omits .agents tiers by default', () => {
     const tiers = buildTiers({ cwd: '/proj', userHome: '/home', assetType: 'skills' });
     expect(tiers.some((t) => t.dir.includes('.agents'))).toBe(false);
+  });
+
+  it('appends .codex tiers before .agents tiers when both are enabled', () => {
+    const tiers = buildTiers({
+      cwd: '/proj',
+      userHome: '/home',
+      assetType: 'skills',
+      includeClaudeCompat: true,
+      includeCodexCompat: true,
+      includeAgentsCompat: true,
+    });
+    const dirs = tiers.map((t) => t.dir);
+    expect(dirs).toContain('/proj/.codex/skills');
+    expect(dirs).toContain('/home/.codex/skills');
+    const sources = tiers.map((t) => t.source);
+    expect(sources.indexOf('codex-project')).toBeGreaterThan(sources.indexOf('claude-user'));
+    expect(sources.indexOf('agents-project')).toBeGreaterThan(sources.indexOf('codex-user'));
   });
 
   it('appends .agents project/ancestor/user tiers when includeAgentsCompat is true', () => {

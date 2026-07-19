@@ -149,6 +149,22 @@ describe('buildTools', () => {
     expect(result.data).toMatch(/^data:image\/png;base64,/);
   });
 
+  it('read reports image dimensions so the estimator can price the image', async () => {
+    await writeFile(join(root, 'test.png'), MINI_PNG);
+    const toolset = tools();
+    const result = await toolset.read!.execute({ path: 'test.png' }, {});
+    expect(result.width).toBe(1);
+    expect(result.height).toBe(1);
+  });
+
+  it('read omits dimensions when the bytes are not a real image', async () => {
+    await writeFile(join(root, 'fake.png'), 'not an image');
+    const toolset = tools();
+    const result = await toolset.read!.execute({ path: 'fake.png' }, {});
+    expect(result.width).toBeUndefined();
+    expect(result.height).toBeUndefined();
+  });
+
   it('read returns a base64 data URI for JPEG files', async () => {
     await writeFile(join(root, 'test.jpg'), MINI_PNG);
     const toolset = tools();

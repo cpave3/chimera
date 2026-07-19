@@ -1,4 +1,5 @@
 import { extname } from 'node:path';
+import { readImageDimensions } from '@chimera/core';
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
@@ -43,6 +44,9 @@ type ReadImageResult = {
   kind: 'image';
   data: string;
   mime: string;
+  /** Absent when the header is unparseable; the estimator then falls back to a flat cost. */
+  width?: number;
+  height?: number;
 };
 type ReadResult = ReadFileResult | ReadDirResult | ReadImageResult;
 
@@ -74,7 +78,8 @@ export function buildReadTool(ctx: ToolContext) {
         const ext = extname(args.path).toLowerCase();
         const mime = EXT_TO_MIME[ext] ?? 'image/png';
         const base64 = Buffer.from(bytes).toString('base64');
-        return { kind: 'image', data: `data:${mime};base64,${base64}`, mime };
+        const dims = readImageDimensions(bytes);
+        return { kind: 'image', data: `data:${mime};base64,${base64}`, mime, ...dims };
       }
 
       const raw = await ctx.sandboxExecutor.readFile(args.path);

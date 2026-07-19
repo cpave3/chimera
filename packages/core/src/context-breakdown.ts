@@ -33,6 +33,8 @@ export interface ContextBreakdownInput {
   contextWindow: number;
   compaction?: CompactionConfig;
   maxOutputTokens?: number;
+  /** Long edge images are scaled to before pricing; see EstimateOptions. */
+  imageLongEdge?: number;
 }
 
 /**
@@ -53,7 +55,7 @@ export function computeContextBreakdown(input: ContextBreakdownInput): ContextBr
 
   for (let i = 0; i < input.messages.length; i++) {
     const message = input.messages[i]!;
-    const tokens = estimateTokens([message]);
+    const tokens = estimateTokens([message], { imageLongEdge: input.imageLongEdge });
     if (i === 0 && isCompactionSummary(message)) {
       summaryTokens += tokens;
       continue;

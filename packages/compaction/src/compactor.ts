@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { generateText } from 'ai';
 import type { FileOps, Session } from '@chimera/core';
 import type { LanguageModel, ModelMessage } from 'ai';
-import { estimateTokens } from './token-estimate';
+import { type EstimateOptions, estimateTokens } from './token-estimate';
 import { buildCompactionPrompt, formatArchivedBlock, formatFilesBlock } from './prompt';
 import type {
   ArchivedRef,
@@ -17,6 +17,13 @@ import type {
 export interface CompactorOptions {
   config: CompactionConfig;
   contextWindow: number;
+  /**
+   * Long edge images are scaled to before the estimator prices them. Resolved
+   * from the session model's config at construction, alongside `contextWindow`
+   * — so like that value it reflects the launch-time model, not a later
+   * `/model` switch.
+   */
+  imageLongEdge?: number;
   /**
    * Resolve a model reference string like `'providerId/modelId'` into a
    * `LanguageModel`. Injected so tests can stub the LLM. An optional
@@ -52,6 +59,10 @@ export class Compactor {
     this.opts = opts;
   }
 
+  private estimateOptions(): EstimateOptions {
+    return { imageLongEdge: this.opts.imageLongEdge };
+  }
+
   /**
    * If compaction is enabled and the session's messages are estimated to exceed
    * `contextWindow - reserveTokens`, runs a compaction pass and mutates the
@@ -61,7 +72,7 @@ export class Compactor {
   async maybeCompact(session: Session): Promise<{ ran: false } | ({ ran: true } & CompactResult)> {
     if (!this.opts.config.enabled) return { ran: false };
     const threshold = this.opts.contextWindow - this.opts.config.reserveTokens;
-    const estimated = estimateTokens(session.messages);
+    const estimated = estimateTokens(session.messages, this.estimateOptions());
     if (estimated > threshold) {
       const result = await this.compact(session, 'threshold');
       return { ran: true, ...result };
@@ -74,9 +85,13 @@ export class Compactor {
    * `session.messages` in place.
    */
   async compact(session: Session, reason: 'threshold' | 'manual'): Promise<CompactResult> {
-    const tokensBefore = estimateTokens(session.messages);
+    const tokensBefore = estimateTokens(session.messages, this.estimateOptions());
 
-    const adjusted = computeBoundary(session.messages, this.opts.config.keepRecentTokens);
+    const adjusted = computeBoundary(
+      session.messages,
+      this.opts.config.keepRecentTokens,
+      this.estimateOptions(),
+    );
     const keepStart = adjusted.keepStart;
 
     // Phase 1: prune. Rewrites head messages in place (large tool outputs →
@@ -94,7 +109,7 @@ export class Compactor {
       freshArchivedRefs = pruneResult.archived;
     }
     if (reason === 'threshold' && prunedCount > 0) {
-      const afterPrune = estimateTokens(session.messages);
+      const afterPrune = estimateTokens(session.messages, this.estimateOptions());
       const budget = this.opts.contextWindow - this.opts.config.reserveTokens;
       if (afterPrune <= budget) {
         const result: CompactResult = {
@@ -162,7 +177,7 @@ export class Compactor {
     const newMessages =
       toSummarize.length === 0 ? [...tailMessages] : [summaryMessage, ...tailMessages];
 
-    const tokensAfter = estimateTokens(newMessages);
+    const tokensAfter = estimateTokens(newMessages, this.estimateOptions());
     const messagesReplaced = keepStart;
 
     // Mutate the session in place
@@ -291,13 +306,14 @@ interface BoundaryResult {
 export function computeBoundary(
   messages: ModelMessage[],
   keepRecentTokens: number,
+  estimateOptions?: EstimateOptions,
 ): BoundaryResult {
   let tokenSum = 0;
   let keepCount = 0;
 
   // Walk from the end, accumulating token counts until we hit the budget.
   for (let i = messages.length - 1; i >= 0; i--) {
-    const tokens = estimateTokens([messages[i]]);
+    const tokens = estimateTokens([messages[i]], estimateOptions);
     if (tokenSum + tokens > keepRecentTokens) break;
     tokenSum += tokens;
     keepCount++;

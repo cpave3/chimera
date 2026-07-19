@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
+import { type Dirent, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -136,7 +136,12 @@ export interface BuildTiersOptions {
    * to `.claude/`. Defaults to false.
    */
   includeAgentsCompat?: boolean;
-  /** Subdirectory name under `.chimera/` and `.claude/`, e.g. 'commands', 'skills'. */
+  /**
+   * When true, append three `.codex/` tiers (project / ancestor / user-home)
+   * after the `.claude/` tiers. Defaults to false.
+   */
+  includeCodexCompat?: boolean;
+  /** Subdirectory name under compatibility roots, e.g. 'commands', 'skills'. */
   assetType: string;
   /** If provided, appended as the lowest-priority tier. */
   builtinDir?: string;
@@ -152,16 +157,20 @@ export interface BuildTiersOptions {
  *   4. <cwd>/.claude/<assetType>/                       (if includeClaudeCompat)
  *   5. ancestors/.claude/<assetType>/                   (if includeClaudeCompat)
  *   6. <userHome>/.claude/<assetType>/                  (if includeClaudeCompat)
- *   7. <cwd>/.agents/<assetType>/                        (if includeAgentsCompat)
- *   8. ancestors/.agents/<assetType>/                    (if includeAgentsCompat)
- *   9. <userHome>/.agents/<assetType>/                   (if includeAgentsCompat)
- *  10. <builtinDir>                                     (if provided)
+ *   7. <cwd>/.codex/<assetType>/                         (if includeCodexCompat)
+ *   8. ancestors/.codex/<assetType>/                     (if includeCodexCompat)
+ *   9. <userHome>/.codex/<assetType>/                    (if includeCodexCompat)
+ *  10. <cwd>/.agents/<assetType>/                        (if includeAgentsCompat)
+ *  11. ancestors/.agents/<assetType>/                    (if includeAgentsCompat)
+ *  12. <userHome>/.agents/<assetType>/                   (if includeAgentsCompat)
+ *  13. <builtinDir>                                     (if provided)
  */
 export function buildTiers(opts: BuildTiersOptions): Tier[] {
   const cwd = resolve(opts.cwd);
   const userHome = resolve(opts.userHome ?? homedir());
   const includeClaudeCompat = opts.includeClaudeCompat !== false;
   const includeAgentsCompat = opts.includeAgentsCompat === true;
+  const includeCodexCompat = opts.includeCodexCompat === true;
   const assetType = opts.assetType;
 
   const ancestors = ancestorsBetween(cwd, userHome);
@@ -179,6 +188,14 @@ export function buildTiers(opts: BuildTiersOptions): Tier[] {
       tiers.push({ source: 'claude-ancestor', dir: join(anc, '.claude', assetType) });
     }
     tiers.push({ source: 'claude-user', dir: join(userHome, '.claude', assetType) });
+  }
+
+  if (includeCodexCompat) {
+    tiers.push({ source: 'codex-project', dir: join(cwd, '.codex', assetType) });
+    for (const anc of ancestors) {
+      tiers.push({ source: 'codex-ancestor', dir: join(anc, '.codex', assetType) });
+    }
+    tiers.push({ source: 'codex-user', dir: join(userHome, '.codex', assetType) });
   }
 
   if (includeAgentsCompat) {

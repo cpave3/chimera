@@ -46,6 +46,24 @@ describe('computeBoundary', () => {
     expect(result.keepStart).toBe(0);
   });
 
+  it('keeps a freshly read image in the tail instead of summarizing it away', () => {
+    // An image measured by its base64 length never fit keepRecentTokens, so the
+    // backward walk broke on it and the compactor summarized away the images the
+    // model had just been shown.
+    const screenshot: ModelMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          image: `data:image/png;base64,${'A'.repeat(700_000)}`,
+          providerOptions: { chimera: { sourcePath: '/w/shot.png', width: 3840, height: 2160 } },
+        },
+      ],
+    } as ModelMessage;
+    const messages: ModelMessage[] = [user('a'), screenshot, user('b')];
+    expect(computeBoundary(messages, 5_000).keepStart).toBe(0);
+  });
+
   it('splits when only the last message fits', () => {
     const messages: ModelMessage[] = [
       user('first message long enough to overflow'),

@@ -5,6 +5,9 @@ export type SkillSource =
   | 'claude-project'
   | 'claude-ancestor'
   | 'claude-user'
+  | 'codex-project'
+  | 'codex-ancestor'
+  | 'codex-user'
   | 'agents-project'
   | 'agents-ancestor'
   | 'agents-user';
@@ -36,9 +39,11 @@ export interface LoadSkillsOptions {
   userHome?: string;
   /** Defaults to true. When false, the three `.claude/skills/` tiers are skipped. */
   includeClaudeCompat?: boolean;
+  /** Defaults to true. When false, the three `.codex/skills/` tiers are skipped. */
+  includeCodexCompat?: boolean;
   /**
    * Defaults to true. When true, the three `.agents/skills/` tiers (project /
-   * ancestor / user-home) are searched after the `.claude/` tiers as a
+   * ancestor / user-home) are searched after the `.codex/` tiers as a
    * cross-tool compatibility root. When false, they are skipped.
    */
   includeAgentsCompat?: boolean;

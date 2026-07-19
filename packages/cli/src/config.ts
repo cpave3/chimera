@@ -21,6 +21,13 @@ export interface ModelOptions {
    */
   vision?: boolean;
   /**
+   * Long edge, in pixels, this model's provider scales images down to before
+   * charging for them. Sets how the context estimator prices an image:
+   * roughly `(width * height) / 750` after scaling. Defaults to 1568; raise it
+   * (2576) for high-resolution vision tiers.
+   */
+  imageLongEdge?: number;
+  /**
    * When `true`, the factory forwards `{ parallelToolCalls: true }` to the
    * provider so the model emits multiple tool calls per step (which the AI
    * SDK runs concurrently via `Promise.all`). When unset, the provider's
@@ -173,6 +180,7 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
       maxSteps: opts.maxSteps ?? 100,
       maxOutputTokens: modelOpts?.maxOutputTokens,
       vision: modelOpts?.vision,
+      imageLongEdge: modelOpts?.imageLongEdge,
       toolCallShape: modelOpts?.toolCallShape,
       parallelToolCalls: modelOpts?.parallelToolCalls,
     },

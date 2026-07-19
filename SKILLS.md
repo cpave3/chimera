@@ -39,11 +39,14 @@ Discovery tiers, highest-priority first:
 4. `<cwd>/.claude/skills/<name>/SKILL.md`
 5. Ancestor `.claude/skills/<name>/SKILL.md`
 6. `~/.claude/skills/<name>/SKILL.md`
-7. `<cwd>/.agents/skills/<name>/SKILL.md`
-8. Ancestor `.agents/skills/<name>/SKILL.md`
-9. `~/.agents/skills/<name>/SKILL.md`
+7. `<cwd>/.codex/skills/<name>/SKILL.md`
+8. Ancestor `.codex/skills/<name>/SKILL.md`
+9. `~/.codex/skills/<name>/SKILL.md`
+10. `<cwd>/.agents/skills/<name>/SKILL.md`
+11. Ancestor `.agents/skills/<name>/SKILL.md`
+12. `~/.agents/skills/<name>/SKILL.md`
 
-Name collisions resolve higher-tier-wins with a stderr warning naming both paths. `.claude/skills/` and `.agents/skills/` tiers exist for zero-friction compatibility with skills authored for Claude Code and other `.agents`-aware tools. `.agents/skills/` is on by default (no toggle).
+Name collisions resolve higher-tier-wins with a stderr warning naming both paths. `.claude/skills/`, `.codex/skills/`, and `.agents/skills/` exist for zero-friction compatibility with skills authored for Claude Code, Codex, and other `.agents`-aware tools. Codex tiers take priority over the generic `.agents` fallback. `.codex/skills/` and `.agents/skills/` are on by default with no CLI or config toggle.
 
 ## Runtime behaviour
 

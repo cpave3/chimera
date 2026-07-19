@@ -5,6 +5,8 @@ export * from './interfaces';
 export * from './agent';
 export * from './persistence';
 export * from './workspace-checkpoints';
+export * from './image-header';
+export * from './message-parts';
 export * from './context-tracker';
 export * from './context-breakdown';
 export * from './prompts/compose';
