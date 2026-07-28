@@ -441,12 +441,7 @@ export function buildProgram(): Command {
     .command('attach <target>')
     .description('Attach to a running instance by id or URL.')
     .action(async (target: string) => {
-      const client = await runAttach({ target });
-      const info = await client.getInstance();
-      process.stdout.write(`attached to pid=${info.pid} at ${info.cwd}\n`);
-      process.stdout.write(
-        'The interactive TUI is not yet mounted in `attach`; use `chimera` for the TUI.\n',
-      );
+      await runAttach({ target });
     });
 
   // Default (no subcommand): interactive TUI session.

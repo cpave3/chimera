@@ -8,6 +8,7 @@ import {
   listSessionsOnDisk,
   readCheckpoints,
   readSessionMetadata,
+  type AgentEventEnvelope,
   type SessionId,
   type SessionInfo,
   truncateEventsAtIndex,
@@ -664,16 +665,22 @@ export function buildApp(opts: AppOptions): Hono {
     const since = c.req.query('since');
 
     return streamSSE(c, async (stream) => {
-      // Replay buffered events first.
-      for (const env of entry.bus.replay(since)) {
-        await stream.writeSSE({
-          event: 'agent_event',
-          id: env.eventId,
-          data: JSON.stringify(env),
-        });
-      }
+      // Subscribe BEFORE replaying buffered events.  If we replayed first
+      // then subscribed, any event published in the window between those
+      // two calls would be lost.  By subscribing first, we capture live
+      // events into a buffer, then replay the ring (which overlaps with
+      // the buffer for events already in the ring), then drain the buffer
+      // for any events that arrived after the ring snapshot but before
+      // the subscribe call returned.  Duplicates are eliminated by
+      // tracking the last replayed event ID.
+      const liveBuffer: AgentEventEnvelope[] = [];
+      let buffering = true;
 
       const unsubscribe = entry.bus.subscribe((env) => {
+        if (buffering) {
+          liveBuffer.push(env);
+          return;
+        }
         // Best-effort; the stream may be closing.
         void stream.writeSSE({
           event: 'agent_event',
@@ -681,6 +688,33 @@ export function buildApp(opts: AppOptions): Hono {
           data: JSON.stringify(env),
         });
       });
+
+      // Replay buffered events from the ring.
+      let lastReplayedId: string | undefined;
+      for (const env of entry.bus.replay(since)) {
+        await stream.writeSSE({
+          event: 'agent_event',
+          id: env.eventId,
+          data: JSON.stringify(env),
+        });
+        lastReplayedId = env.eventId;
+      }
+
+      // Drain the live buffer, skipping events already replayed from the
+      // ring (matched by event ID).
+      const seenIds = new Set(lastReplayedId ? [lastReplayedId] : []);
+      for (const env of liveBuffer) {
+        if (seenIds.has(env.eventId)) continue;
+        seenIds.add(env.eventId);
+        await stream.writeSSE({
+          event: 'agent_event',
+          id: env.eventId,
+          data: JSON.stringify(env),
+        });
+      }
+
+      // Switch to direct streaming mode.
+      buffering = false;
 
       // SSE comment heartbeat — keeps idle connections from being killed by
       // undici's keep-alive timeout or any intermediate proxy. Comments

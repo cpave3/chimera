@@ -17,6 +17,7 @@ import {
 import { loadConfig, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
+import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
@@ -194,6 +195,22 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     { resumeSessionId: opts.session, sessionExists: opts.sessionExists },
   );
 
+  // Make this instance discoverable by `chimera attach` and `chimera ls`.
+  // Same lockfile format as `chimera serve`; removed on exit so stale
+  // lockfiles don't accumulate.
+  writeLockfile(
+    {
+      pid: process.pid,
+      port: server.port,
+      cwd: opts.cwd,
+      sessionId,
+      startedAt: Date.now(),
+      version: '0.1.0',
+      url: server.url,
+    },
+    opts.home,
+  );
+
   const overlay: OverlayHandlers | undefined =
     sandboxMode === 'overlay'
       ? {
@@ -255,6 +272,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   try {
     await handle.waitUntilExit();
   } finally {
+    removeLockfile(process.pid, opts.home);
     (commands as Partial<ReloadingCommandRegistry>).close?.();
     (agents as Partial<ReloadingAgentRegistry>).close?.();
     await factory.dispose();
