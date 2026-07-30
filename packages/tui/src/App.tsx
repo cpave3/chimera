@@ -882,10 +882,14 @@ export function App(props: AppProps): React.ReactElement {
       }
 
       const prefix = token.kind === 'read' ? '@' : '#';
-      await activeSession.client.appendMessage(
-        activeSession.sessionId,
-        `[auto-attached ${prefix}${token.raw}]\n${info.body}`,
-      );
+      try {
+        await activeSession.client.appendMessage(
+          activeSession.sessionId,
+          `[auto-attached ${prefix}${token.raw}]\n${info.body}`,
+        );
+      } catch (err) {
+        scrollback.addError(`attach ${token.raw}: ${(err as Error).message}`);
+      }
     }
 
     setPendingImages([]);

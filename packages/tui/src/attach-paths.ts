@@ -21,7 +21,9 @@ export function parseAttachTokens(input: string, cwd: string): AttachToken[] {
   let match: RegExpExecArray | null = pattern.exec(input);
   while (match !== null) {
     const [, , prefix, rawPath] = match;
-    if (prefix === '#' && rawPath.startsWith('#')) {
+    if (!isAttachmentPath(rawPath)) {
+      match = pattern.exec(input);
+    } else if (prefix === '#' && rawPath.startsWith('#')) {
       // Skip markdown headings (`## Title`, `### Code`, etc.)
       match = pattern.exec(input);
     } else if (
@@ -54,6 +56,10 @@ export function parseAttachTokens(input: string, cwd: string): AttachToken[] {
  * - Directory: one entry per line, trailing `/` for subdirs, capped at 200 entries.
  * - Missing or on error: returns a descriptive body.
  */
+function isAttachmentPath(rawPath: string): boolean {
+  return /^[./~_\-a-zA-Z0-9]/.test(rawPath);
+}
+
 export async function readForAttach(absPath: string): Promise<{
   kind: 'file' | 'dir' | 'missing' | 'error';
   body: string;

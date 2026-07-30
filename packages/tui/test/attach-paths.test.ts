@@ -97,6 +97,10 @@ describe('parseAttachTokens', () => {
     expect(parseAttachTokens('review [Pasted text #1, 42 lines]', '/tmp')).toEqual([]);
   });
 
+  it('ignores punctuation-only markdown fragments', () => {
+    expect(parseAttachTokens('Selected lines (`@@ -1 +1 @@`):** and @`):**', '/tmp')).toEqual([]);
+  });
+
   it('still detects real tokens next to image placeholders', () => {
     expect(parseAttachTokens('see [Image #1] and @file.txt', '/tmp')).toEqual([
       { kind: 'read', raw: 'file.txt', absolute: '/tmp/file.txt' },

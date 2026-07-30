@@ -12,6 +12,7 @@ function stubClient(
     addPathSpy?: (kind: 'read' | 'write', path: string) => void;
     addPathError?: Error;
     appendMessageSpy?: (content: string) => void;
+    appendMessageError?: Error;
     sendSpy?: (msg: string) => void;
   } = {},
 ) {
@@ -72,6 +73,7 @@ function stubClient(
     compact: async () => {},
     appendMessage: async (_id: string, content: string) => {
       overrides.appendMessageSpy?.(content);
+      if (overrides.appendMessageError) throw overrides.appendMessageError;
     },
     addPath: async (_id: string, kind: 'read' | 'write', path: string) => {
       overrides.addPathSpy?.(kind, path);
@@ -123,6 +125,24 @@ describe('attach paths App flow', () => {
     // sendUserMessage receives the original text with @token still present
     expect(sendCalls).toEqual(['look at @/etc/hosts and tell me']);
 
+    unmount();
+  });
+
+  it('still sends when attachment content cannot be appended', async () => {
+    const sendCalls: string[] = [];
+    const client = stubClient({
+      appendMessageError: new Error('append unavailable'),
+      sendSpy: (msg) => sendCalls.push(msg),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="s" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    await type(stdin, 'look at @/etc/hosts and tell me\r');
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(sendCalls).toEqual(['look at @/etc/hosts and tell me']);
+    expect(lastFrame()).toContain('attach /etc/hosts');
     unmount();
   });
 
