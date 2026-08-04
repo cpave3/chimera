@@ -25,8 +25,13 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 | `UserPromptSubmit` | A user message is accepted, before the model is invoked.                       | post  |
 | `PostToolUse`      | A tool call completes (success or error).                                      | post  |
 | `PermissionRequest`| The permission gate would otherwise prompt the user.                           | pre   |
-| `Stop`             | An `Agent.run()` invocation ends.                                              | post  |
-| `SessionEnd`       | A session is disposed by the server (shutdown, explicit close, etc.).          | post  |
+| `Stop`             | A run reaches a clean stop, before any stop-hook retry.                         | post  |
+| `OnError`          | A run terminates with `run_finished.reason: "error"`.                          | post  |
+| `Timeout`          | A model response times out.                                                     | post  |
+| `Interrupt`        | An active run is interrupted.                                                   | post  |
+| `CompactionStart`  | Session compaction begins.                                                      | post  |
+| `CompactionEnd`    | Session compaction succeeds or fails.                                           | post  |
+| `SessionEnd`       | A session is disposed by the server (shutdown, explicit close, etc.).           | post  |
 
 ## Discovery
 
@@ -63,8 +68,20 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
   "tool_name": "bash", "tool_input": { ... }, "target": "host", "command": "..." }
 
 // Stop
-{ "event": "Stop", "session_id": "...", "cwd": "...",
-  "reason": "stop" /* | "max_steps" | "error" | "interrupted" */ }
+{ "event": "Stop", "session_id": "...", "cwd": "...", "reason": "stop" }
+
+// OnError
+{ "event": "OnError", "session_id": "...", "cwd": "...", "error": "terminated" }
+
+// Timeout / Interrupt
+{ "event": "Timeout", "session_id": "...", "cwd": "..." }
+{ "event": "Interrupt", "session_id": "...", "cwd": "..." }
+
+// CompactionStart / CompactionEnd
+{ "event": "CompactionStart", "session_id": "...", "cwd": "...", "reason": "manual" }
+{ "event": "CompactionEnd", "session_id": "...", "cwd": "...", "success": true }
+{ "event": "CompactionEnd", "session_id": "...", "cwd": "...",
+  "success": false, "error": "..." }
 
 // SessionEnd
 { "event": "SessionEnd", "session_id": "...", "cwd": "..." }
@@ -90,6 +107,8 @@ Events are classified as **pre** or **post**. Today only `PermissionRequest` is 
 | post  | ok      | warning                                                                   | warning        | warning        | warning        |
 
 Pre-hooks **fail open** — a crashing or timing-out hook never blocks the agent. If you want strict denial on internal error, exit 2 explicitly inside your script.
+
+`OnError` is observational: it fires only for a terminal `reason: "error"`, and its outcome cannot change the failed run. Chimera waits for the hook to complete (or reach the per-script timeout) before publishing the terminal event to clients. Timeout and interrupt completions use their dedicated events instead.
 
 When multiple `PermissionRequest` hooks are installed, the first one to exit 2 supplies the denial reason; remaining hooks still run to completion (their outputs are recorded but no longer change the outcome).
 

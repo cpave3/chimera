@@ -38,10 +38,10 @@ export interface BuildResult {
   agent: Agent;
   gate?: PermissionGate;
   /**
-   * Lifecycle-hook runner for this session. The registry wires it into the
-   * event bus (firing UserPromptSubmit / PostToolUse / Stop) and fires
-   * SessionEnd from `delete()`. Optional — factories that don't supply one
-   * (e.g., subagent test factories) skip hook integration entirely.
+   * Lifecycle-hook runner for this session. The registry wires event-driven
+   * hooks into the bus, awaits OnError at the terminal-run boundary, and fires
+   * SessionCreated / SessionEnd directly. Optional — factories that don't
+   * supply one (e.g., subagent test factories) skip hook integration entirely.
    */
   hookRunner?: HookRunner;
 }
@@ -198,6 +198,17 @@ export class AgentRegistry {
     await workspace.snapshot(content);
   }
 
+  private async fireOnError(entry: AgentEntry, error: string): Promise<void> {
+    try {
+      await entry.hookRunner?.fire({ event: 'OnError', error });
+    } catch (err) {
+      console.debug(
+        `[agent-registry] run(${entry.agent.session.id}): OnError hook rejection swallowed:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   getInstanceInfo(): InstanceInfo {
     return this.instance;
   }
@@ -330,6 +341,9 @@ export class AgentRegistry {
       try {
         await this.snapshotWorkspace(entry, content);
         for await (const event of entry.agent.run(content, images)) {
+          if (event.type === 'run_finished' && event.reason === 'error') {
+            await this.fireOnError(entry, event.error ?? 'unknown');
+          }
           entry.bus.publish(event);
           if (event.type === 'run_finished') break;
         }
@@ -340,6 +354,7 @@ export class AgentRegistry {
           reason: 'error',
           error: message,
         };
+        await this.fireOnError(entry, message);
         entry.bus.publish(finished);
       } finally {
         entry.runActive = false;

@@ -11,9 +11,10 @@ import type { EventBus } from './event-bus';
  *  - `compaction_finished` → `CompactionEnd` (success)
  *  - `compaction_failed`   → `CompactionEnd` (failure)
  *
- * `run_finished` is NOT translated here. The `Stop` hook is fired
- * synchronously inside `Agent.runInternal` so it can block the agent from
- * stopping. Bridging it here would fire the hook a second time, async.
+ * `run_finished` is NOT translated here. `Stop` is fired synchronously inside
+ * `Agent.runInternal` so it can block a clean stop, while `AgentRegistry.run`
+ * awaits `OnError` before publishing a terminal error. Bridging either here
+ * would duplicate the hook asynchronously.
  *
  * `tool_call_start` is consumed only to remember the tool's name + args so
  * the matching `tool_call_result` / `tool_call_error` event can be enriched

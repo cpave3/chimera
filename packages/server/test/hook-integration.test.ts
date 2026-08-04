@@ -1,8 +1,14 @@
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Agent, type ModelConfig } from '@chimera/core';
-import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
+import { Agent, type AgentEvent, type ModelConfig } from '@chimera/core';
+import {
+  DefaultHookRunner,
+  type FirePayload,
+  type HookFireResult,
+  type HookRunner,
+} from '@chimera/hooks';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -25,18 +31,32 @@ function quietModel(): LanguageModel {
   }) as unknown as LanguageModel;
 }
 
+function failingModel(message: string): LanguageModel {
+  return new MockLanguageModelV3({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: 'stream-start', warnings: [] },
+          { type: 'error', error: new Error(message) },
+        ],
+      }),
+    }),
+  }) as unknown as LanguageModel;
+}
+
 const model: ModelConfig = { providerId: 'mock', modelId: 'm', maxSteps: 10 };
 
 function makeFactory(
   home: string,
   runnerFactory: (sessionId: string, cwd: string) => HookRunner,
+  languageModel: LanguageModel = quietModel(),
 ): AgentFactory {
   return {
     build: async (init) => {
       const agent = new Agent({
         cwd: init.cwd,
         model,
-        languageModel: quietModel(),
+        languageModel,
         tools: {} as ToolSet,
         sandboxMode: 'off',
         sessionId: init.requestedSessionId ?? init.sessionId,
@@ -240,6 +260,173 @@ exit 1
 
     // Session is still operational despite the hook's non-zero exit.
     expect(registry.get(sessionId)).not.toBeNull();
+  });
+
+  it('awaits OnError before publishing a terminal model failure', async () => {
+    const captured = join(cwd, 'on-error.json');
+    const counter = join(cwd, 'on-error-count.txt');
+    await writeFile(counter, '');
+    await dropScript(
+      'OnError',
+      'capture.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+echo "$CHIMERA_EVENT" >> ${JSON.stringify(counter)}
+exit 1
+`,
+    );
+
+    const registry = new AgentRegistry({
+      factory: makeFactory(
+        home,
+        (sessionId, theCwd) =>
+          new DefaultHookRunner({
+            sessionId,
+            cwd: theCwd,
+            globalRoot,
+            timeoutMs: 5_000,
+            log: () => {},
+          }),
+        failingModel('terminated'),
+      ),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
+    let terminalEvent: { reason: string; error?: string } | undefined;
+    let hookCompletedBeforeTerminalEvent = false;
+    entry.bus.subscribe((event) => {
+      if (event.type === 'run_finished') {
+        terminalEvent = event;
+        hookCompletedBeforeTerminalEvent = existsSync(captured);
+      }
+    });
+
+    expect(await registry.run(sessionId, 'fail')).toBe('queued');
+    await entry.activeRun;
+
+    expect(hookCompletedBeforeTerminalEvent).toBe(true);
+    expect(terminalEvent).toMatchObject({ reason: 'error', error: 'terminated' });
+    expect(JSON.parse(await readFile(captured, 'utf8'))).toMatchObject({
+      event: 'OnError',
+      session_id: sessionId,
+      cwd,
+      error: 'terminated',
+    });
+    expect((await readFile(counter, 'utf8')).trim().split('\n')).toEqual(['OnError']);
+  });
+
+  it('fires OnError once when the agent iterator throws and preserves the synthesized error', async () => {
+    const fired: FirePayload[] = [];
+    const hookRunner: HookRunner = {
+      async fire(payload): Promise<HookFireResult> {
+        fired.push(payload);
+        return { blocked: false };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory: makeFactory(home, () => hookRunner),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
+    entry.agent.run = async function* (): AsyncGenerator<AgentEvent> {
+      yield* [];
+      throw new Error('iterator failed');
+    } as typeof entry.agent.run;
+
+    expect(await registry.run(sessionId, 'fail')).toBe('queued');
+    await entry.activeRun;
+
+    expect(fired.filter((payload) => payload.event === 'OnError')).toEqual([
+      { event: 'OnError', error: 'iterator failed' },
+    ]);
+    expect(entry.bus.snapshot().filter((event) => event.type === 'run_finished')).toHaveLength(1);
+    expect(entry.bus.snapshot().at(-1)).toMatchObject({
+      type: 'run_finished',
+      reason: 'error',
+      error: 'iterator failed',
+    });
+  });
+
+  it('publishes the original terminal error when OnError rejects', async () => {
+    const fired: FirePayload[] = [];
+    const hookRunner: HookRunner = {
+      async fire(payload): Promise<HookFireResult> {
+        fired.push(payload);
+        if (payload.event === 'OnError') throw new Error('notification failed');
+        return { blocked: false };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory: makeFactory(home, () => hookRunner),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
+    entry.agent.run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: 'run_finished', reason: 'error', error: 'terminated' };
+    } as typeof entry.agent.run;
+
+    expect(await registry.run(sessionId, 'fail')).toBe('queued');
+    await entry.activeRun;
+
+    expect(fired).toContainEqual({ event: 'OnError', error: 'terminated' });
+    expect(entry.bus.snapshot().at(-1)).toMatchObject({
+      type: 'run_finished',
+      reason: 'error',
+      error: 'terminated',
+    });
+  });
+
+  it('uses unknown when a terminal error has no text', async () => {
+    const fired: FirePayload[] = [];
+    const hookRunner: HookRunner = {
+      async fire(payload): Promise<HookFireResult> {
+        fired.push(payload);
+        return { blocked: false };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory: makeFactory(home, () => hookRunner),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
+    entry.agent.run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: 'run_finished', reason: 'error' };
+    } as typeof entry.agent.run;
+
+    expect(await registry.run(sessionId, 'fail')).toBe('queued');
+    await entry.activeRun;
+
+    expect(fired).toContainEqual({ event: 'OnError', error: 'unknown' });
+    expect(entry.bus.snapshot().at(-1)).toMatchObject({ type: 'run_finished', reason: 'error' });
+  });
+
+  it.each([
+    'stop',
+    'max_steps',
+    'timeout',
+    'interrupted',
+  ] as const)('does not fire OnError for %s completion', async (reason) => {
+    const fired: FirePayload[] = [];
+    const hookRunner: HookRunner = {
+      async fire(payload): Promise<HookFireResult> {
+        fired.push(payload);
+        return { blocked: false };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory: makeFactory(home, () => hookRunner),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
+    entry.agent.run = async function* (): AsyncGenerator<AgentEvent> {
+      yield { type: 'run_finished', reason };
+    } as typeof entry.agent.run;
+
+    expect(await registry.run(sessionId, 'finish')).toBe('queued');
+    await entry.activeRun;
+
+    expect(fired.filter((payload) => payload.event === 'OnError')).toEqual([]);
+    expect(entry.bus.snapshot().at(-1)).toMatchObject({ type: 'run_finished', reason });
   });
 
   it('fires SessionEnd exactly once when a session is deleted', async () => {

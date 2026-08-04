@@ -4,8 +4,9 @@
 
 The lifecycle-hooks subsystem provides a directory-based hook system: users
 drop executable scripts into well-known directories to react to session
-lifecycle events (`UserPromptSubmit`, `PostToolUse`, `PermissionRequest`,
-`Stop`, `SessionEnd`). Hooks run inside the `@chimera/server` process,
+lifecycle events (`SessionCreated`, `UserPromptSubmit`, `PostToolUse`,
+`PermissionRequest`, `Stop`, `OnError`, `Timeout`, `Interrupt`, compaction, and
+`SessionEnd`). Hooks run inside the `@chimera/server` process,
 receive event payloads via stdin and environment variables, and — for
 pre-events — can short-circuit the action by exiting with code 2.
 
@@ -15,13 +16,17 @@ pre-events — can short-circuit the action by exiting with code 2.
 
 The lifecycle-hooks subsystem SHALL define the following event names and fire each one at the corresponding point in a session's lifecycle:
 
+- `SessionCreated` — fires when a fresh session is registered, but not when a persisted session is resumed.
 - `UserPromptSubmit` — fires after a user message is accepted by the agent and before the model is invoked. Triggered by the `user_message` `AgentEvent`.
 - `PostToolUse` — fires after a tool call completes (success or error). Triggered by the `tool_call_result` and `tool_call_error` `AgentEvent`s.
 - `PermissionRequest` — fires inside the permission gate at the moment the gate would otherwise prompt the user. Triggered by `GatedExecutor`, **not** by the `permission_request` `AgentEvent`, so that an exit-code-2 block can short-circuit the prompt.
-- `Stop` — fires at the end of each `Agent.run()` call. Triggered by the `run_finished` `AgentEvent`.
-- `SessionEnd` — fires when a session is disposed by the server (e.g., process shutdown, explicit close, attached client disconnect). Triggered by the server's session-lifecycle code, not by the agent loop.
-
-The subsystem SHALL NOT define additional events in this change. Adding new events is a future change.
+- `Stop` — fires when an `Agent.run()` reaches a clean stop, before any stop-hook retry. It does not fire for other terminal reasons.
+- `OnError` — fires exactly once when a run terminates with `run_finished.reason: "error"`. The server registry awaits it before publishing that terminal event.
+- `Timeout` — fires when a model response timeout terminates a run.
+- `Interrupt` — fires when an active run is interrupted.
+- `CompactionStart` — fires when session compaction begins.
+- `CompactionEnd` — fires when session compaction succeeds or fails.
+- `SessionEnd` — fires when a session is disposed by the server (e.g., process shutdown or explicit close). Triggered by the server's session-lifecycle code, not by the agent loop.
 
 #### Scenario: PostToolUse fires after a successful bash call
 
@@ -69,15 +74,23 @@ Each hook invocation SHALL receive a single JSON object on stdin with these fiel
 - `session_id`: the session's ULID.
 - `cwd`: the session's `cwd` at session creation.
 
+For `SessionCreated`, the payload MAY additionally include `session_name: string`.
+
 For `UserPromptSubmit`, the payload SHALL additionally include `user_message: string` (the message the user just submitted).
 
 For `PostToolUse`, the payload SHALL additionally include `tool_name: string`, `tool_input: object`, and exactly one of `tool_result: any` (on success) or `tool_error: string` (on error).
 
 For `PermissionRequest`, the payload SHALL additionally include `tool_name: string`, `tool_input: object`, `target: string`, and (if the request includes a `command`) `command: string`.
 
-For `Stop`, the payload SHALL additionally include `reason: string` (the `run_finished.reason` value: `"stop"`, `"max_steps"`, `"error"`, or `"interrupted"`).
+For `Stop`, the payload SHALL additionally include `reason: "stop"`.
 
-For `SessionEnd`, no additional fields are required.
+For `OnError`, the payload SHALL additionally include `error: string`, containing the terminal run error or the stable fallback `"unknown"` when the `run_finished` event has no error value.
+
+For `CompactionStart`, the payload SHALL additionally include `reason: string`.
+
+For `CompactionEnd`, the payload SHALL additionally include `success: boolean` and SHALL include `error: string` when compaction fails with an error value.
+
+For `Timeout`, `Interrupt`, and `SessionEnd`, no additional fields are required.
 
 Each hook SHALL also receive these environment variables in addition to the parent process's environment:
 
@@ -99,7 +112,7 @@ The subsystem SHALL NOT pass any other channel — no command-line arguments, no
 The lifecycle-hooks subsystem SHALL classify each event as either **pre** or **post** and apply exit-code semantics accordingly:
 
 - **Pre events**: `PermissionRequest`. Exit code 0 SHALL be treated as "allow"; exit code 2 SHALL be treated as "block" and SHALL cause the gate to deny the underlying tool call without prompting the user; any other non-zero exit SHALL be logged as a warning and treated as "allow" (fail-open).
-- **Post events**: `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`. Any non-zero exit SHALL be logged as a warning and SHALL NOT alter session behavior.
+- **Post events**: `SessionCreated`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `OnError`, `Timeout`, `Interrupt`, `CompactionStart`, `CompactionEnd`, `SessionEnd`. Any non-zero exit SHALL be logged as a warning and SHALL NOT alter session behavior.
 
 When multiple hooks run for a single pre-event firing, the **first** hook to exit 2 SHALL block; subsequent hooks for that same firing SHALL still run to completion (their exit codes are recorded but no longer alter the outcome).
 
@@ -114,6 +127,17 @@ A blocked `PermissionRequest` SHALL surface to the model as `{ error: "denied by
 
 - **WHEN** a `PostToolUse` hook exits with code 1 after a successful tool call
 - **THEN** the failure SHALL be logged at warning level and the session SHALL continue as if the hook had succeeded
+
+#### Scenario: OnError completes before terminal publication
+
+- **WHEN** a run yields `run_finished` with `reason: "error"` and `error: "terminated"`
+- **THEN** the `OnError` hook SHALL run exactly once with `error: "terminated"` and complete or time out before the server publishes that terminal event to clients
+- **AND** hook failure SHALL NOT replace, suppress, or change the original terminal event
+
+#### Scenario: Non-error terminal reasons do not fire OnError
+
+- **WHEN** a run finishes with `reason: "stop"`, `"max_steps"`, `"timeout"`, or `"interrupted"`
+- **THEN** `OnError` SHALL NOT fire
 
 ### Requirement: Timeout
 

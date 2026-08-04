@@ -92,6 +92,31 @@ exit 0
     expect(envBody).toContain(`PWD=${cwd}`);
   });
 
+  it('passes terminal error details to observational OnError hooks', async () => {
+    const captured = join(root, 'on-error.json');
+    const envOut = join(root, 'on-error-env.txt');
+    await dropScript(
+      'OnError',
+      'notify.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+echo "$CHIMERA_EVENT" > ${JSON.stringify(envOut)}
+exit 1
+`,
+    );
+
+    const result = await newRunner().fire({ event: 'OnError', error: 'terminated' });
+
+    expect(result.blocked).toBe(false);
+    expect(JSON.parse(await readFile(captured, 'utf8'))).toEqual({
+      event: 'OnError',
+      session_id: sessionId,
+      cwd,
+      error: 'terminated',
+    });
+    expect((await readFile(envOut, 'utf8')).trim()).toBe('OnError');
+  });
+
   it('passes SessionCreated identity and optional name to hooks', async () => {
     const captured = join(root, 'session-created.json');
     await dropScript(
