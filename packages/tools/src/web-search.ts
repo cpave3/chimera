@@ -17,10 +17,9 @@ export interface WebSearchProvider {
   search(query: string, maxResults: number): Promise<WebSearchResult[]>;
 }
 
-export interface WebSearchProviderOptions {
-  provider: 'tavily' | 'brave';
-  getApiKey: () => string;
-}
+export type WebSearchProviderOptions =
+  | { provider: 'tavily' | 'brave'; getApiKey: () => string }
+  | { provider: 'searxng'; baseUrl: string };
 
 export function createWebSearchProvider(opts: WebSearchProviderOptions): WebSearchProvider {
   if (opts.provider === 'tavily') {
@@ -43,6 +42,31 @@ export function createWebSearchProvider(opts: WebSearchProviderOptions): WebSear
           results?: { title?: string; url?: string; content?: string }[];
         };
         return (payload.results ?? []).map((entry) => ({
+          title: entry.title ?? '',
+          url: entry.url ?? '',
+          snippet: entry.content ?? '',
+        }));
+      },
+    };
+  }
+  if (opts.provider === 'searxng') {
+    return {
+      name: 'searxng',
+      search: async (query, maxResults) => {
+        const baseUrl = opts.baseUrl.endsWith('/') ? opts.baseUrl : `${opts.baseUrl}/`;
+        const url = new URL('search', baseUrl);
+        url.searchParams.set('q', query);
+        url.searchParams.set('format', 'json');
+        const response = await fetch(url.toString(), {
+          signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+          throw new Error(`searxng returned ${response.status}: ${await response.text()}`);
+        }
+        const payload = (await response.json()) as {
+          results?: { title?: string; url?: string; content?: string }[];
+        };
+        return (payload.results ?? []).slice(0, maxResults).map((entry) => ({
           title: entry.title ?? '',
           url: entry.url ?? '',
           snippet: entry.content ?? '',

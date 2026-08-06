@@ -37,6 +37,10 @@ export interface ModelOptions {
   parallelToolCalls?: boolean;
 }
 
+export type WebSearchConfig =
+  | { provider: 'tavily' | 'brave'; apiKey: string }
+  | { provider: 'searxng'; baseUrl: string };
+
 export interface ChimeraConfig {
   defaultModel?: string;
   /**
@@ -100,13 +104,10 @@ export interface ChimeraConfig {
    */
   diagnostics?: DiagnosticsConfig;
   /**
-   * Enables the web_search tool. `apiKey` follows the provider convention:
-   * `env:VAR_NAME` resolves from the environment at call time.
+   * Enables the web_search tool with exactly one configured provider.
+   * Keyed providers accept `env:VAR_NAME`; SearXNG accepts its instance base URL.
    */
-  webSearch?: {
-    provider: 'tavily' | 'brave';
-    apiKey: string;
-  };
+  webSearch?: WebSearchConfig;
   /**
    * Shadow-git working-tree snapshots taken before each user message so
    * /rewind can restore file state. Default true; set false to make rewind

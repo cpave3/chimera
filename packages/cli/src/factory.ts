@@ -52,7 +52,7 @@ import {
   type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
-import type { ModelOptions } from './config';
+import type { ModelOptions, WebSearchConfig } from './config';
 import type { CliSandboxOptions } from './sandbox-config';
 
 export interface CliAgentFactoryOptions {
@@ -136,7 +136,7 @@ export interface CliAgentFactoryOptions {
   /** Post-edit diagnostics feedback config (auto-detection on by default). */
   diagnostics?: DiagnosticsConfig;
   /** Search backend for the web_search tool. Omitted = tool not registered. */
-  webSearch?: { provider: 'tavily' | 'brave'; apiKey: string };
+  webSearch?: WebSearchConfig;
   /** Archived-output recall store config. enabled defaults to true. */
   recall?: { enabled?: boolean; archiveThresholdTokens?: number; ttlDays?: number };
   /**
@@ -205,13 +205,15 @@ export class CliAgentFactory implements AgentFactory {
     this.diagnosticsConfig = opts.diagnostics;
     this.recallConfig = opts.recall;
     this.webSearchProvider = opts.webSearch
-      ? createWebSearchProvider({
-          provider: opts.webSearch.provider,
-          getApiKey: buildKeyResolver(opts.webSearch.apiKey, {
-            providerId: `webSearch/${opts.webSearch.provider}`,
-            warn: this.warn,
-          }),
-        })
+      ? opts.webSearch.provider === 'searxng'
+        ? createWebSearchProvider(opts.webSearch)
+        : createWebSearchProvider({
+            provider: opts.webSearch.provider,
+            getApiKey: buildKeyResolver(opts.webSearch.apiKey, {
+              providerId: `webSearch/${opts.webSearch.provider}`,
+              warn: this.warn,
+            }),
+          })
       : undefined;
   }
 
@@ -596,6 +598,9 @@ export class CliAgentFactory implements AgentFactory {
         parallelToolCalls: modelOpts?.parallelToolCalls,
       };
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
+      const currentTools = currentMode
+        ? (applyAllowlist(tools, computeAllowlist(currentMode)) as ToolSet)
+        : tools;
       const newSystemPrompt = composeSystemPrompt({
         cwd: init.cwd,
         model: newModel,
@@ -608,7 +613,7 @@ export class CliAgentFactory implements AgentFactory {
         languageModel: newProvider.getModel(newModelId, agent.session.id),
         systemPrompt: appendToolSurfacePrompt(
           newSystemPrompt,
-          tools,
+          currentTools,
           agent.session.model.toolCallShape,
         ),
         contextWindow: newWindow.value,
@@ -762,21 +767,28 @@ function appendToolSurfacePrompt(
   tools: ToolSet,
   toolCallShape: ModelConfig['toolCallShape'],
 ): string {
-  if (toolCallShape !== 'codex') return systemPrompt;
-  const names = Object.keys(tools).sort();
-  if (names.length === 0) return systemPrompt;
-
-  const snippets = names.map((name) => `- ${name}: ${toolPromptSnippet(name)}`);
-  const lines = [
-    '# Active tools',
-    '',
-    'Only call tools from this list. If a tool name is not listed here, it is unavailable in this session.',
-    ...snippets,
-    '',
-    'Use the tool-calling channel for tools; do not print JSON as assistant text. The bash tool takes { command, timeout? }, where timeout is seconds.',
-    'When multiple tool calls are independent (one does not need the result of another), call them together in the same step so they run in parallel.',
-  ];
-  return `${systemPrompt}\n\n${lines.join('\n')}`;
+  let prompt = systemPrompt;
+  if (toolCallShape === 'codex') {
+    const names = Object.keys(tools).sort();
+    if (names.length > 0) {
+      const snippets = names.map((name) => `- ${name}: ${toolPromptSnippet(name)}`);
+      const lines = [
+        '# Active tools',
+        '',
+        'Only call tools from this list. If a tool name is not listed here, it is unavailable in this session.',
+        ...snippets,
+        '',
+        'Use the tool-calling channel for tools; do not print JSON as assistant text. The bash tool takes { command, timeout? }, where timeout is seconds.',
+        'When multiple tool calls are independent (one does not need the result of another), call them together in the same step so they run in parallel.',
+      ];
+      prompt = `${prompt}\n\n${lines.join('\n')}`;
+    }
+  }
+  if (tools.web_search) {
+    prompt +=
+      '\n\n# Web search\n\nDo not invent, assume, or guess URLs. When you need an external URL that the user or trusted context has not already provided, use web_search first, then pass the exact URL returned by web_search to fetch.';
+  }
+  return prompt;
 }
 
 function toolPromptSnippet(name: string): string {

@@ -326,12 +326,23 @@ Two tools give the agent eyes outside the working tree:
 
   ```json
   {
-    "webSearch": { "provider": "tavily", "apiKey": "env:TAVILY_API_KEY" }
+    "webSearch": {
+      "provider": "searxng",
+      "baseUrl": "http://localhost:8080/"
+    }
   }
   ```
 
-  Supported providers: `tavily`, `brave`. Results come back as
-  title/URL/snippet triples; the model is nudged to `fetch` promising hits.
+  Supported providers: `searxng`, `tavily`, `brave`. SearXNG instances must
+  enable JSON output. For Tavily and Brave, use `apiKey` instead of `baseUrl`;
+  `env:VAR_NAME` values resolve from the environment at call time.
+
+  The configured provider is the session's only search backend; Chimera does
+  not fall back to another provider on failure. Results come back as
+  title/URL/snippet triples. When `web_search` is active, the model is told not
+  to guess URLs: it should search first, then pass an exact returned URL to
+  `fetch`. Existing URLs supplied by the user or trusted context can be fetched
+  directly.
 
 ## Subagents
 

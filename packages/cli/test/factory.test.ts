@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { InMemoryModeRegistry } from '@chimera/modes';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
 
 describe('CliAgentFactory', () => {
@@ -15,6 +16,7 @@ describe('CliAgentFactory', () => {
   afterEach(async () => {
     await rm(cwd, { recursive: true, force: true });
     process.env.CHIMERA_FACTORY_TEST_KEY = undefined;
+    vi.unstubAllGlobals();
   });
 
   it('threads the model identity into the composed system prompt', async () => {
@@ -140,6 +142,162 @@ describe('CliAgentFactory', () => {
     expect(description).toContain('anthropic/claude-sonnet-4-5');
   });
 
+  it('uses only the configured SearXNG provider and adds verified-URL guidance', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ results: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      webSearch: { provider: 'searxng', baseUrl: 'http://search.example:8181/' },
+      subagents: { enabled: false },
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const opts = (
+      agent as unknown as {
+        opts: {
+          tools: Record<
+            string,
+            { execute: (args: { query: string }, options: object) => Promise<unknown> }
+          >;
+          systemPrompt: string;
+        };
+      }
+    ).opts;
+
+    expect(opts.tools.web_search).toBeDefined();
+    expect(opts.systemPrompt).toContain('Do not invent, assume, or guess URLs');
+    expect(opts.systemPrompt).toContain('exact URL returned by web_search');
+    await opts.tools.web_search.execute({ query: 'private query' }, {});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('search.example:8181/search');
+  });
+
+  it('omits search guidance when web_search is unavailable', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const opts = (
+      agent as unknown as {
+        opts: { tools: Record<string, unknown>; systemPrompt: string };
+      }
+    ).opts;
+
+    expect(opts.tools.web_search).toBeUndefined();
+    expect(opts.tools.fetch).toBeDefined();
+    expect(opts.systemPrompt).not.toContain('Do not invent, assume, or guess URLs');
+  });
+
+  it('omits search guidance when an allowlist removes web_search', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      webSearch: { provider: 'searxng', baseUrl: 'http://search.example:8181/' },
+      toolsAllowlist: ['fetch'],
+      subagents: { enabled: false },
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const opts = (
+      agent as unknown as {
+        opts: { tools: Record<string, unknown>; systemPrompt: string };
+      }
+    ).opts;
+
+    expect(Object.keys(opts.tools)).toEqual(['fetch']);
+    expect(opts.systemPrompt).not.toContain('Do not invent, assume, or guess URLs');
+  });
+
+  it('keeps search guidance aligned with the current mode after a model change', async () => {
+    const modes = new InMemoryModeRegistry(
+      [
+        {
+          name: 'restricted',
+          description: 'Fetch only',
+          body: 'Restricted mode.',
+          tools: ['fetch'],
+          colorHex: '#000000',
+          path: '/builtin/restricted.md',
+          source: 'builtin',
+          cycle: true,
+        },
+      ],
+      [],
+    );
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      webSearch: { provider: 'searxng', baseUrl: 'http://search.example:8181/' },
+      modes,
+      initialMode: 'restricted',
+      models: { 'anthropic/claude-sonnet-4-5': {} },
+      subagents: { enabled: false },
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const result = agent.setUserModelOverride('anthropic/claude-sonnet-4-5');
+    const opts = (agent as unknown as { opts: { systemPrompt: string } }).opts;
+
+    expect(result.status).toBe('applied');
+    expect(opts.systemPrompt).not.toContain('Do not invent, assume, or guess URLs');
+  });
+
   it('uses the Codex tool surface when the model is configured for it', async () => {
     const factory = new CliAgentFactory({
       providersConfig: {
@@ -180,8 +338,7 @@ describe('CliAgentFactory', () => {
       'read',
       'write',
     ]);
-    const systemPrompt = (agent as unknown as { opts: { systemPrompt: string } }).opts
-      .systemPrompt;
+    const systemPrompt = (agent as unknown as { opts: { systemPrompt: string } }).opts.systemPrompt;
     expect(systemPrompt).toContain('# Active tools');
     expect(systemPrompt).toContain('- find: Find files by glob pattern');
     expect(systemPrompt).toContain('- ls: List directory contents');

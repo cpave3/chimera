@@ -53,6 +53,66 @@ describe('web_search tool', () => {
     expect((init.headers as Record<string, string>).Authorization).toContain('tvly-key');
   });
 
+  it('searxng provider queries the configured instance and limits normalized results', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { title: 'Result A', url: 'https://a.example', content: 'snippet a' },
+              { title: 'Result B', url: 'https://b.example', content: 'snippet b' },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createWebSearchProvider({
+      provider: 'searxng',
+      baseUrl: 'http://search.example:8181/',
+    });
+    const tool = asAny(buildWebSearchTool(makeCtx(provider)));
+    const result = await tool.execute({ query: 'chimera agent', max_results: 1 }, {});
+
+    expect(result.results).toEqual([
+      { title: 'Result A', url: 'https://a.example', snippet: 'snippet a' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe('http://search.example:8181/search?q=chimera+agent&format=json');
+  });
+
+  it('searxng provider preserves a path-prefixed base URL', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ results: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createWebSearchProvider({
+      provider: 'searxng',
+      baseUrl: 'https://example.com/private/search-instance',
+    });
+    await provider.search('path test', 3);
+
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe('https://example.com/private/search-instance/search?q=path+test&format=json');
+  });
+
+  it('searxng errors surface without falling back to another provider', async () => {
+    const fetchMock = vi.fn(async () => new Response('json format disabled', { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createWebSearchProvider({
+      provider: 'searxng',
+      baseUrl: 'https://search.example',
+    });
+    const tool = asAny(buildWebSearchTool(makeCtx(provider)));
+    const result = await tool.execute({ query: 'private query' }, {});
+
+    expect(result.error).toBe('search failed: searxng returned 403: json format disabled');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toContain('search.example');
+  });
+
   it('brave provider sends the query as a GET with the key header', async () => {
     const fetchMock = vi.fn(
       async () =>
