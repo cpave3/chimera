@@ -51,6 +51,14 @@ export interface SubagentInfo {
   status: 'running' | 'finished';
 }
 
+export interface ModelListEntry {
+  ref: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  vision?: boolean;
+  isDefault: boolean;
+}
+
 export interface CreateSessionOpts {
   cwd: string;
   model: ModelConfig;
@@ -246,6 +254,10 @@ export class ChimeraClient {
 
   async listModes(sessionId: SessionId): Promise<Mode[]> {
     return this.json<Mode[]>(`/v1/sessions/${sessionId}/modes`);
+  }
+
+  async listModels(sessionId: SessionId): Promise<ModelListEntry[]> {
+    return this.json<ModelListEntry[]>(`/v1/sessions/${sessionId}/models`);
   }
 
   async getMode(sessionId: SessionId): Promise<{ mode: string; pending: string | null }> {

@@ -3,7 +3,7 @@ import { Compactor } from '@chimera/compaction';
 import type { ModelConfig, SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
-import { type AgentFactory, AgentRegistry, buildApp, startServer } from '@chimera/server';
+import { type AgentFactory, AgentRegistry, buildApp, startServer, type ModelListEntry } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
 import {
@@ -187,12 +187,26 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     });
   }
 
+  const modelsList: ModelListEntry[] = Object.entries(config.models ?? {})
+    .map(([ref, opts]) => ({
+      ref,
+      contextWindow: opts.contextWindow,
+      maxOutputTokens: opts.maxOutputTokens,
+      vision: opts.vision,
+      isDefault: ref === config.defaultModel,
+    }))
+    .sort((a, b) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return a.ref.localeCompare(b.ref);
+    });
+
   const registry = new AgentRegistry({
     factory,
     instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode },
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
+    loadModels: () => modelsList,
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });

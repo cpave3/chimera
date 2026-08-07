@@ -1665,4 +1665,67 @@ describe('server app', () => {
       expect(childSession.messages).toHaveLength(0);
     });
   });
+
+  describe('models endpoint', () => {
+    it('returns models from the registry with default sorted first', async () => {
+      const modelsList = [
+        { ref: 'manticore/glm', contextWindow: 256_000, isDefault: true },
+        { ref: 'manticore/gpt', contextWindow: 256_000, isDefault: false, vision: false },
+        { ref: 'manticore/kimi', contextWindow: 256_000, isDefault: false, vision: true },
+      ];
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+        loadModels: () => modelsList,
+      });
+      const app = buildApp({ registry, home });
+
+      const createResponse = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      });
+      const { sessionId } = await createResponse.json();
+
+      const modelsResponse = await app.request(`/v1/sessions/${sessionId}/models`);
+      expect(modelsResponse.status).toBe(200);
+      const models = await modelsResponse.json();
+      expect(models).toHaveLength(3);
+      expect(models[0].ref).toBe('manticore/glm');
+      expect(models[0].isDefault).toBe(true);
+      expect(models[2].vision).toBe(true);
+    });
+
+    it('returns 404 for unknown session', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+        loadModels: () => [],
+      });
+      const app = buildApp({ registry, home });
+
+      const response = await app.request('/v1/sessions/nonexistent/models');
+      expect(response.status).toBe(404);
+    });
+
+    it('returns empty array when no loadModels configured', async () => {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+
+      const createResponse = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      });
+      const { sessionId } = await createResponse.json();
+
+      const modelsResponse = await app.request(`/v1/sessions/${sessionId}/models`);
+      expect(modelsResponse.status).toBe(200);
+      const models = await modelsResponse.json();
+      expect(models).toEqual([]);
+    });
+  });
 });

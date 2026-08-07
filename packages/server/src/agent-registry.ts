@@ -118,6 +118,16 @@ export type SkillsLoader = (ctx: { cwd: string }) => Skill[];
 
 export type ModesLoader = (ctx: { cwd: string }) => Mode[];
 
+export interface ModelListEntry {
+  ref: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  vision?: boolean;
+  isDefault: boolean;
+}
+
+export type ModelsLoader = () => ModelListEntry[];
+
 export interface AgentRegistryOptions {
   factory: AgentFactory;
   instance: InstanceInfo;
@@ -127,6 +137,8 @@ export interface AgentRegistryOptions {
   loadSkills?: SkillsLoader;
   /** Optional hook to load modes at session-creation time. */
   loadModes?: ModesLoader;
+  /** Optional hook to list available models for the API. */
+  loadModels?: ModelsLoader;
   /** Chimera home dir override, used by workspace checkpoints. */
   home?: string;
   /**
@@ -171,6 +183,7 @@ export class AgentRegistry {
   private readonly loadCommands?: CommandsLoader;
   private readonly loadSkills?: SkillsLoader;
   private readonly loadModes?: ModesLoader;
+  private readonly loadModels?: ModelsLoader;
   private readonly home?: string;
   private readonly workspaceCheckpoints: boolean;
 
@@ -180,6 +193,7 @@ export class AgentRegistry {
     this.loadCommands = opts.loadCommands;
     this.loadSkills = opts.loadSkills;
     this.loadModes = opts.loadModes;
+    this.loadModels = opts.loadModels;
     this.home = opts.home;
     this.workspaceCheckpoints = opts.workspaceCheckpoints ?? false;
   }
@@ -211,6 +225,10 @@ export class AgentRegistry {
 
   getInstanceInfo(): InstanceInfo {
     return this.instance;
+  }
+
+  listModels(): ModelListEntry[] {
+    return this.loadModels ? this.loadModels() : [];
   }
 
   async create(init: SessionInit): Promise<{ sessionId: SessionId; entry: AgentEntry }> {

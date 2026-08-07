@@ -401,6 +401,12 @@ export function buildApp(opts: AppOptions): Hono {
     return c.json(entry.modes);
   });
 
+  app.get('/v1/sessions/:id/models', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(registry.listModels());
+  });
+
   app.get('/v1/sessions/:id/subagents', (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
