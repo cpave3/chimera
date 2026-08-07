@@ -4,7 +4,7 @@ import { Compactor } from '@chimera/compaction';
 import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
-import { AgentRegistry, buildApp, startServer } from '@chimera/server';
+import { AgentRegistry, buildApp, startServer, type ModelListEntry } from '@chimera/server';
 import type { ReloadingAgentRegistry } from '@chimera/subagents';
 import { mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
@@ -155,6 +155,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     claudeCompatOverride: opts.claudeCompat,
   });
 
+  const modelsList: ModelListEntry[] = Object.entries(config.models ?? {})
+    .map(([ref, opts]) => ({
+      ref,
+      contextWindow: opts.contextWindow,
+      maxOutputTokens: opts.maxOutputTokens,
+      vision: opts.vision,
+      isDefault: ref === config.defaultModel,
+    }))
+    .sort((a, b) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return a.ref.localeCompare(b.ref);
+    });
+
   const registry = new AgentRegistry({
     factory,
     instance: {
@@ -166,6 +179,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
+    loadModels: () => modelsList,
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });
