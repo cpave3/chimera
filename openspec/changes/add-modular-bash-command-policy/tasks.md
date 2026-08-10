@@ -34,5 +34,5 @@
 
 - [x] 6.1 Update user configuration/permission documentation with provider, thresholds, platform support, and non-confinement limits
 - [x] 6.2 Run focused package suites, workspace build/test/lint, and available end-to-end host bash scenarios
-- [ ] 6.3 Run three-pass specialist review, fix findings, and record granular Legato review chapters/annotations
-- [ ] 6.4 Commit coherent changes, mark the OpenSpec tasks complete, and complete the approved Legato plan
+- [x] 6.3 Run three-pass specialist review, fix findings, and record granular Legato review chapters/annotations
+- [x] 6.4 Commit coherent changes, mark the OpenSpec tasks complete, and complete the approved Legato plan
