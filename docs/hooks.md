@@ -64,9 +64,16 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
 { "event": "PostToolUse", "session_id": "...", "cwd": "...",
   "tool_name": "bash", "tool_input": { ... }, "tool_error": "..." }
 
-// PermissionRequest
+// PermissionRequest (policy_analysis is present for host bash escalations)
 { "event": "PermissionRequest", "session_id": "...", "cwd": "...",
-  "tool_name": "bash", "tool_input": { ... }, "target": "host", "command": "..." }
+  "tool_name": "bash", "tool_input": { ... }, "target": "host", "command": "...",
+  "policy_analysis": {
+    "version": 1,
+    "outcome": "approval_required",
+    "stages": [{ "id": "risk", "status": "findings", "findings": [] }],
+    "findings": [{ "kind": "risk", "stageId": "risk", "level": "danger",
+      "score": 80, "message": "destructive command" }]
+  } }
 
 // Stop
 { "event": "Stop", "session_id": "...", "cwd": "...", "reason": "stop" }

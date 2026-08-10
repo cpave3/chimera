@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PiSafeShellRiskStage } from '../src/risk-stage';
+import { PiSafeShellAdapter } from '../src/pi-safe-shell-adapter';
+import { RiskStage } from '../src/risk-stage';
 
 const context = {
   command: 'ls -la',
@@ -11,9 +12,9 @@ const context = {
   facts: [],
 };
 
-describe('PiSafeShellRiskStage', () => {
+describe('RiskStage', () => {
   it('normalizes real provider results and only escalates above caution', async () => {
-    const stage = new PiSafeShellRiskStage('caution');
+    const stage = new RiskStage(new PiSafeShellAdapter(), 'caution');
 
     await expect(stage.evaluate(context)).resolves.toMatchObject({ status: 'pass' });
     await expect(stage.evaluate({ ...context, command: 'rm -rf /' })).resolves.toMatchObject({

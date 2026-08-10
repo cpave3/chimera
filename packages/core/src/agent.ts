@@ -177,7 +177,6 @@ export class Agent {
   readonly session: Session;
   private opts: AgentOptions;
   private abortController: AbortController;
-  private pendingPermissionFeedback: string[] = [];
   private pendingPermissions = new Map<
     string,
     {
@@ -443,7 +442,9 @@ export class Agent {
       this.rememberHandler(requestId, remember, pending.request);
     }
     if (feedback) {
-      this.pendingPermissionFeedback.push(feedback);
+      this.session.pendingPermissionFeedback ??= [];
+      this.session.pendingPermissionFeedback.push(feedback);
+      void writeSessionMetadata(this.session, this.opts.home);
     }
 
     pending.resolve({ decision, remembered: !!remember });
@@ -1790,15 +1791,25 @@ export class Agent {
           // interruptible, and `terminalStepCount` advances so a user spamming
           // injects cannot exceed `maxTerminalSteps`.
           let injectedThisStep = false;
-          if (this.pendingPermissionFeedback.length > 0) {
-            const feedbackMessages = this.pendingPermissionFeedback;
-            this.pendingPermissionFeedback = [];
+          if ((this.session.pendingPermissionFeedback?.length ?? 0) > 0) {
+            const feedbackMessages = this.session.pendingPermissionFeedback ?? [];
+            this.session.pendingPermissionFeedback = [];
             for (const feedback of feedbackMessages) {
               this.session.messages.push(await buildUserMessage(feedback));
               queue.push({ type: 'user_message', content: feedback });
             }
             injectedThisStep = true;
             this.abortController = new AbortController();
+            await persistSession(
+              this.session,
+              {
+                type: 'message_appended',
+                messages: this.session.messages,
+                toolCalls: this.session.toolCalls,
+                usage: cloneUsage(this.session.usage),
+              },
+              this.opts.home,
+            );
           }
           if (this.pendingInjectMessages.length > 0) {
             const injects = this.pendingInjectMessages;

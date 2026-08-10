@@ -90,6 +90,7 @@ export interface CommandPolicyEvaluator {
 }
 
 export interface CommandPolicyAnalysis {
+  version: 1;
   outcome: 'pass' | 'approval_required';
   stages: CommandPolicyStageSummary[];
   findings: CommandPolicyFinding[];

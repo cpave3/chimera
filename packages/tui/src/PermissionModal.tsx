@@ -1,29 +1,16 @@
-import type { AgentEvent } from '@chimera/core';
+import type { AgentEvent, PermissionDecisionAction } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
 import { useTheme } from './theme/ThemeProvider';
 
 type PolicyAnalysis = Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
-type PermissionAction =
-  | {
-      decision: 'allow';
-      remember?:
-        | { scope: 'session' }
-        | { scope: 'project'; pattern: string; patternKind: 'exact' | 'glob' };
-    }
-  | { decision: 'deny'; feedback?: string }
-  | {
-      decision: 'allow_with_grant';
-      grant: { id: string; kind: 'read' | 'write'; path: string };
-    };
-
 export interface PermissionModalProps {
   command: string;
   reason?: string;
   target: 'host';
   policyAnalysis?: PolicyAnalysis;
   header?: string;
-  onResolve: (action: PermissionAction) => void;
+  onResolve: (action: PermissionDecisionAction) => void;
 }
 
 type ModalMode =
@@ -126,6 +113,11 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       </Text>
       <Text> $ {props.command}</Text>
       {props.reason && <Text color={muted}>Reason: {props.reason}</Text>}
+      {props.policyAnalysis?.stages.map((stage) => (
+        <Text key={stage.id} color={muted}>
+          Stage {stage.id}: {stage.status}
+        </Text>
+      ))}
       {props.policyAnalysis?.findings.map((finding) => (
         <Text key={`${finding.stageId}:${finding.kind}:${finding.message}`} color={danger}>
           {formatFinding(finding)}

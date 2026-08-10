@@ -36,6 +36,7 @@ describe('DefaultPermissionGate', () => {
         evaluator: {
           async evaluate() {
             return {
+              version: 1,
               outcome: 'approval_required',
               stages: [
                 {
@@ -86,6 +87,61 @@ describe('DefaultPermissionGate', () => {
       kind: 'risk',
       level: 'critical',
     });
+  });
+
+  it('keeps explicit deny rules effective for mandatory findings', async () => {
+    let raised = 0;
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      commandPolicy: {
+        evaluator: {
+          async evaluate() {
+            return {
+              version: 1,
+              outcome: 'approval_required',
+              stages: [],
+              findings: [
+                {
+                  kind: 'risk',
+                  stageId: 'risk',
+                  level: 'danger',
+                  message: 'dangerous command',
+                },
+              ],
+            };
+          },
+        },
+        context: (request) => ({
+          command: request.command,
+          target: 'host',
+          cwd: request.cwd,
+          home: '/home/user',
+          projectRoot: request.cwd,
+          roots: { read: [request.cwd], write: [request.cwd] },
+        }),
+      },
+      raiseRequest: async () => {
+        raised++;
+        return { decision: 'allow', remembered: false };
+      },
+    });
+    gate.addRule(
+      {
+        tool: 'bash',
+        target: 'host',
+        pattern: 'rm -rf /',
+        patternKind: 'exact',
+        decision: 'deny',
+        createdAt: Date.now(),
+      },
+      'session',
+    );
+
+    await expect(gate.request(req({ command: 'rm -rf /' }))).resolves.toMatchObject({
+      decision: 'deny',
+    });
+    expect(raised).toBe(0);
   });
 
   it('auto-approves host calls at level=host', async () => {

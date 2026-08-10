@@ -15,6 +15,30 @@ const context = {
 };
 
 describe('CommandPolicyPipeline', () => {
+  it('fails closed for malformed results and stage timeouts', async () => {
+    const malformed = {
+      id: 'malformed',
+      evaluate: async () => ({ status: 'unknown' }),
+    } as unknown as CommandPolicyStage;
+    const hanging: CommandPolicyStage = {
+      id: 'hanging',
+      evaluate: async () => new Promise(() => {}),
+    };
+
+    await expect(new CommandPolicyPipeline([malformed]).evaluate(context)).resolves.toMatchObject({
+      version: 1,
+      outcome: 'approval_required',
+      findings: [{ kind: 'analyzer_error', stageId: 'malformed' }],
+    });
+    await expect(
+      new CommandPolicyPipeline([hanging], { timeoutMs: 10 }).evaluate(context),
+    ).resolves.toMatchObject({
+      version: 1,
+      outcome: 'approval_required',
+      findings: [{ kind: 'analyzer_error', stageId: 'hanging', message: 'stage timed out' }],
+    });
+  });
+
   it('runs stages in order and converts a thrown stage into a mandatory analyzer error', async () => {
     const calls: string[] = [];
     const stages: CommandPolicyStage[] = [

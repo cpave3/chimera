@@ -6,6 +6,7 @@ import type {
   ContextBreakdown,
   EventId,
   ModelConfig,
+  PermissionDecisionAction,
   PermissionRule,
   RememberScope,
   SandboxMode,
@@ -212,13 +213,7 @@ export class ChimeraClient {
   async resolvePermissionAction(
     sessionId: SessionId,
     requestId: string,
-    action:
-      | { decision: 'allow'; remember?: RememberScope }
-      | { decision: 'deny'; feedback?: string }
-      | {
-          decision: 'allow_with_grant';
-          grant: { id: string; kind: 'read' | 'write'; path: string };
-        },
+    action: PermissionDecisionAction,
   ): Promise<void> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/v1/sessions/${sessionId}/permissions/${requestId}`,

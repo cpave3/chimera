@@ -96,6 +96,18 @@ export class LocalExecutor implements Executor {
     }
   }
 
+  removeReadAllowDir(absolutePath: string): void {
+    const canonical = canonicalizeDir(absolutePath);
+    const index = this.readAllowDirs.indexOf(canonical);
+    if (index >= 0) this.readAllowDirs.splice(index, 1);
+  }
+
+  removeWriteAllowDir(absolutePath: string): void {
+    const canonical = canonicalizeDir(absolutePath);
+    const index = this.writeAllowDirs.indexOf(canonical);
+    if (index >= 0) this.writeAllowDirs.splice(index, 1);
+  }
+
   /** Return a shallow copy of the current read-allow directories. */
   listReadAllowDirs(): readonly string[] {
     return [...this.readAllowDirs];

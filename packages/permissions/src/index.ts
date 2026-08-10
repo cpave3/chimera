@@ -2,6 +2,7 @@ export * from './gate';
 export * from './gated-executor';
 export * from './matching';
 export * from './path-authorization-stage';
+export * from './pi-safe-shell-adapter';
 export * from './pipeline';
 export * from './risk-stage';
 export * from './rule-store';

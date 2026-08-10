@@ -1,11 +1,10 @@
-import { analyzeCommand, initParser } from '@aslamplr/pi-safe-shell/src/ast-analyzer.ts';
-import { scoreCommandV2 } from '@aslamplr/pi-safe-shell/src/ast-analyzer-v2.ts';
 import type {
   CommandPolicyStage,
   CommandPolicyStageContext,
   CommandPolicyStageResult,
   CommandRiskLevel,
 } from '@chimera/core';
+import type { CommandRiskClassifier } from './types';
 
 const RISK_RANK: Record<CommandRiskLevel | 'none', number> = {
   none: -1,
@@ -15,17 +14,16 @@ const RISK_RANK: Record<CommandRiskLevel | 'none', number> = {
   critical: 3,
 };
 
-let parserInitialization: Promise<void> | undefined;
-
-export class PiSafeShellRiskStage implements CommandPolicyStage {
+export class RiskStage implements CommandPolicyStage {
   readonly id = 'risk';
 
-  constructor(private readonly autoAllowThrough: CommandRiskLevel | 'none') {}
+  constructor(
+    private readonly classifier: CommandRiskClassifier,
+    private readonly autoAllowThrough: CommandRiskLevel | 'none',
+  ) {}
 
   async evaluate(context: CommandPolicyStageContext): Promise<CommandPolicyStageResult> {
-    parserInitialization ??= initParser();
-    await parserInitialization;
-    const risk = scoreCommandV2(analyzeCommand(context.command));
+    const risk = await this.classifier.classify(context.command);
     if (RISK_RANK[risk.level] <= RISK_RANK[this.autoAllowThrough]) {
       return { status: 'pass' };
     }

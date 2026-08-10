@@ -74,7 +74,7 @@ Create `~/.chimera/config.json`:
 }
 ```
 
-See `PROVIDERS.md` for known-good combinations including OpenRouter, local vLLM/Ollama, and Bedrock/Vertex proxies.
+See `PROVIDERS.md` for known-good combinations including OpenRouter, local vLLM/Ollama, and Bedrock/Vertex proxies. Host bash risk and filesystem approval policy is documented in [`docs/bash-command-policy.md`](docs/bash-command-policy.md).
 
 ## Run
 

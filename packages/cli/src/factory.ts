@@ -35,7 +35,8 @@ import {
   DefaultPermissionGate,
   GatedExecutor,
   PathAuthorizationStage,
-  PiSafeShellRiskStage,
+  PiSafeShellAdapter,
+  RiskStage,
   ShellEffectsStage,
 } from '@chimera/permissions';
 import {
@@ -383,11 +384,14 @@ export class CliAgentFactory implements AgentFactory {
     }
 
     const commandPolicy = this.hostBashPolicy.enabled
-      ? new CommandPolicyPipeline([
-          new PiSafeShellRiskStage(this.hostBashPolicy.autoAllowThrough),
-          new ShellEffectsStage(),
-          new PathAuthorizationStage(),
-        ])
+      ? (() => {
+          const shellAdapter = new PiSafeShellAdapter();
+          return new CommandPolicyPipeline([
+            new RiskStage(shellAdapter, this.hostBashPolicy.autoAllowThrough),
+            new ShellEffectsStage(shellAdapter),
+            new PathAuthorizationStage(),
+          ]);
+        })()
       : undefined;
     if (!this.hostBashPolicy.enabled) {
       this.warn(
@@ -768,12 +772,19 @@ export class CliAgentFactory implements AgentFactory {
       }
       executor.addReadAllowDir(resolved);
       agent.session.additionalReadPaths.push(resolved);
-      await writeSessionMetadata(agent.session, this.home);
+      try {
+        await writeSessionMetadata(agent.session, this.home);
+      } catch (error) {
+        executor.removeReadAllowDir(resolved);
+        agent.session.additionalReadPaths.pop();
+        throw error;
+      }
       return { absolute: resolved, added: true };
     }
 
     // kind === 'write': grant both write and read access.
-    if (!agent.session.additionalReadPaths.includes(resolved)) {
+    const addRead = !agent.session.additionalReadPaths.includes(resolved);
+    if (addRead) {
       executor.addReadAllowDir(resolved);
       agent.session.additionalReadPaths.push(resolved);
     }
@@ -782,7 +793,19 @@ export class CliAgentFactory implements AgentFactory {
       agent.session.additionalWritePaths.push(resolved);
     }
 
-    await writeSessionMetadata(agent.session, this.home);
+    try {
+      await writeSessionMetadata(agent.session, this.home);
+    } catch (error) {
+      if (addRead) {
+        executor.removeReadAllowDir(resolved);
+        agent.session.additionalReadPaths.pop();
+      }
+      if (!writeAlready) {
+        executor.removeWriteAllowDir(resolved);
+        agent.session.additionalWritePaths.pop();
+      }
+      throw error;
+    }
     return { absolute: resolved, added: !writeAlready };
   }
 

@@ -144,6 +144,8 @@ export interface Session {
    * tool calls. Persisted in session metadata so resuming/forking retains them.
    */
   additionalWritePaths: string[];
+  /** User feedback accepted with a denied permission, awaiting a clean step boundary. */
+  pendingPermissionFeedback?: string[];
   /**
    * Model-maintained task list (task_list tool). Persisted in session
    * metadata so it survives resume and context compaction.

@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   Checkpoint,
   ModelConfig,
+  PermissionDecisionAction,
   SandboxMode,
   SessionId,
   SessionInfo,
@@ -1500,20 +1501,7 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
-  function onResolve(
-    action:
-      | {
-          decision: 'allow';
-          remember?:
-            | { scope: 'session' }
-            | { scope: 'project'; pattern: string; patternKind: 'exact' | 'glob' };
-        }
-      | { decision: 'deny'; feedback?: string }
-      | {
-          decision: 'allow_with_grant';
-          grant: { id: string; kind: 'read' | 'write'; path: string };
-        },
-  ): void {
+  function onResolve(action: PermissionDecisionAction): void {
     if (!pending) return;
     const item = pending;
     const targetClient = item.subagent

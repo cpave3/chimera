@@ -1,10 +1,10 @@
-import { analyzeCommand, initParser } from '@aslamplr/pi-safe-shell/src/ast-analyzer.ts';
 import type {
   CommandPolicyFact,
   CommandPolicyStage,
   CommandPolicyStageContext,
   CommandPolicyStageResult,
 } from '@chimera/core';
+import type { ShellCommandParser } from './types';
 
 const READ_COMMANDS = new Set([
   'cat',
@@ -32,16 +32,24 @@ const NO_PATH_COMMANDS = new Set([
   'whoami',
 ]);
 
-let parserInitialization: Promise<void> | undefined;
-
 export class ShellEffectsStage implements CommandPolicyStage {
   readonly id = 'shell_effects';
 
-  async evaluate(context: CommandPolicyStageContext): Promise<CommandPolicyStageResult> {
-    parserInitialization ??= initParser();
-    await parserInitialization;
-    const analysis = analyzeCommand(context.command);
+  constructor(private readonly parser: ShellCommandParser) {}
 
+  async evaluate(context: CommandPolicyStageContext): Promise<CommandPolicyStageResult> {
+    const analysis = await this.parser.parse(context.command);
+
+    if (analysis.flags.includes('chained_command')) {
+      return this.unresolved('compound commands require complete effect analysis');
+    }
+    if (
+      (context.command.match(/(?:^|[^>])>(?!>)/g)?.length ?? 0) +
+        (context.command.match(/>>/g)?.length ?? 0) >
+      1
+    ) {
+      return this.unresolved('multiple redirects require complete effect analysis');
+    }
     if (analysis.flags.some((flag) => flag.startsWith('uses_var:'))) {
       return this.unresolved('filesystem effect depends on variable expansion');
     }
@@ -51,6 +59,9 @@ export class ShellEffectsStage implements CommandPolicyStage {
 
     const executable = analysis.executable?.replace(/^.*\//, '');
     if (!executable) return this.unresolved('command executable could not be resolved');
+    if (executable === 'git' && !isReadOnlyGit(analysis.args, analysis.flags)) {
+      return this.unresolved('unsupported or path-changing git invocation');
+    }
 
     const facts: CommandPolicyFact[] = [];
     if (analysis.hasRedirect) {
@@ -86,6 +97,11 @@ export class ShellEffectsStage implements CommandPolicyStage {
       findings: [{ kind: 'unresolved', stageId: this.id, message }],
     };
   }
+}
+
+function isReadOnlyGit(args: string[], flags: string[]): boolean {
+  if (flags.includes('-C') || flags.some((flag) => flag.startsWith('--git-dir'))) return false;
+  return ['branch', 'diff', 'log', 'show', 'status'].includes(args[0] ?? '');
 }
 
 function redirectPath(analysis: { hasRedirect: boolean; paths: string[] }): string | undefined {

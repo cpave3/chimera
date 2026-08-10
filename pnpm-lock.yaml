@@ -231,9 +231,6 @@ importers:
       '@chimera/hooks':
         specifier: workspace:*
         version: link:../hooks
-      '@chimera/tools':
-        specifier: workspace:*
-        version: link:../tools
       minimatch:
         specifier: ^10.2.5
         version: 10.2.5

@@ -133,6 +133,7 @@ export type FirePayload =
       tool_input: Record<string, unknown>;
       target: string;
       command?: string;
+      policy_analysis?: CommandPolicyAnalysis;
     }
   | { event: 'Stop'; reason: string }
   | { event: 'SessionEnd' }

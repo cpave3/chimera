@@ -93,6 +93,13 @@ export class DefaultPermissionGate implements PermissionGate {
         this.commandPolicy.context(req),
       );
       if (policyAnalysis.outcome === 'approval_required') {
+        const denyRule = matchRule(
+          req,
+          this.store.all().filter((rule) => rule.decision === 'deny'),
+        );
+        if (denyRule) {
+          return { decision: 'deny', remembered: true, denialSource: 'rule' };
+        }
         evaluatedRequest = { ...req, policyAnalysis };
         return this.prompt(evaluatedRequest);
       }

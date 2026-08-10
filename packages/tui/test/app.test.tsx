@@ -1465,6 +1465,7 @@ describe('PermissionModal', () => {
         command="echo x > /outside/file"
         target="host"
         policyAnalysis={{
+          version: 1,
           outcome: 'approval_required',
           stages: [],
           findings: [

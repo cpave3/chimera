@@ -1192,6 +1192,7 @@ describe('Agent', () => {
       command: 'rm -rf foo',
       cwd: '/tmp',
       policyAnalysis: {
+        version: 1,
         outcome: 'approval_required',
         stages: [
           {
