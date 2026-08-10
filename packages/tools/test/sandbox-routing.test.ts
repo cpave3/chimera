@@ -88,7 +88,7 @@ describe('bash tool — sandbox vs host routing', () => {
     expect(gate.request).not.toHaveBeenCalled();
   });
 
-  it('default target is host when sandbox is off', async () => {
+  it('default host target invokes the gate once when sandbox is off', async () => {
     const gate = new FakeGate();
     const tool = asAny(
       buildBashTool({
@@ -100,8 +100,6 @@ describe('bash tool — sandbox vs host routing', () => {
     );
     const r = await tool.execute({ command: 'echo hi' }, {});
     expect(r.exit_code).toBe(0);
-    // Sandbox-off path doesn't gate either; tool short-circuits to the
-    // executor without consulting the gate.
-    expect(gate.request).not.toHaveBeenCalled();
+    expect(gate.request).toHaveBeenCalledOnce();
   });
 });

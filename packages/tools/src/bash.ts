@@ -4,21 +4,6 @@ import type { ToolContext } from './context';
 import { defineTool } from './define';
 import { clip, stripCdPrefix } from './format';
 
-const DESTRUCTIVE_PATTERNS: { match: RegExp; label: string }[] = [
-  { match: /^\s*rm\s+(-[rRf]+\s+)*\/\s*(\*)?\s*(;.*)?$/, label: 'rm -rf /' },
-  { match: /^\s*rm\s+(-[rRf]+\s+)*\/\*\s*(;.*)?$/, label: 'rm -rf /*' },
-  { match: /:\(\)\s*\{\s*:\s*\|:&\s*\}\s*;\s*:/, label: 'fork bomb' },
-  { match: /(^|[;&|])\s*(>|>>|tee)\s+\/etc\//, label: 'write to /etc' },
-  { match: /(^|[;&|])\s*sh\s+(-c\s+)?['"]?.*>\s*\/etc\//, label: 'write to /etc' },
-];
-
-function checkDestructive(cmd: string): string | null {
-  for (const { match, label } of DESTRUCTIVE_PATTERNS) {
-    if (match.test(cmd)) return label;
-  }
-  return null;
-}
-
 const BASH_SCHEMA = z.object({
   command: z.string().describe('The shell command to run.'),
   timeout_ms: z.number().int().positive().optional().describe('Timeout in ms. Default 120000.'),
@@ -63,16 +48,6 @@ export function buildBashTool(ctx: ToolContext) {
     inputSchema: BASH_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const command = args.command;
-      const destructive = checkDestructive(command);
-      if (destructive) {
-        return {
-          stdout: '',
-          stderr: `refused by chimera: matches destructive pattern '${destructive}'`,
-          exit_code: -1,
-          timed_out: false,
-        };
-      }
-
       if (args.run_in_background) {
         return launchBackground(ctx, args);
       }
@@ -80,34 +55,33 @@ export function buildBashTool(ctx: ToolContext) {
       const target: 'sandbox' | 'host' =
         args.target ?? (ctx.sandboxMode === 'off' ? 'host' : 'sandbox');
 
-      const executor = target === 'host' ? ctx.hostExecutor : ctx.sandboxExecutor;
+      const executor =
+        target === 'host' ? (ctx.bashHostExecutor ?? ctx.hostExecutor) : ctx.sandboxExecutor;
 
-      if (ctx.sandboxMode !== 'off' && target === 'host') {
-        if (!args.reason) {
+      if (ctx.sandboxMode !== 'off' && target === 'host' && !args.reason) {
+        return {
+          stdout: '',
+          stderr: "refused by chimera: target='host' requires a 'reason'.",
+          exit_code: -1,
+          timed_out: false,
+        };
+      }
+      if (target === 'host' && ctx.permissionGate) {
+        const resolution = await ctx.permissionGate.request({
+          requestId: newRequestId(),
+          tool: 'bash',
+          target: 'host',
+          command,
+          cwd: executor.cwd(),
+          ...(args.reason ? { reason: args.reason } : {}),
+        });
+        if (resolution.decision === 'deny') {
           return {
             stdout: '',
-            stderr: "refused by chimera: target='host' requires a 'reason'.",
+            stderr: 'denied by user',
             exit_code: -1,
             timed_out: false,
           };
-        }
-        if (ctx.permissionGate) {
-          const resolution = await ctx.permissionGate.request({
-            requestId: newRequestId(),
-            tool: 'bash',
-            target: 'host',
-            command,
-            cwd: executor.cwd(),
-            reason: args.reason,
-          });
-          if (resolution.decision === 'deny') {
-            return {
-              stdout: '',
-              stderr: 'denied by user',
-              exit_code: -1,
-              timed_out: false,
-            };
-          }
         }
       }
 
@@ -152,7 +126,7 @@ async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashR
       tool: 'bash',
       target: 'host',
       command: args.command,
-      cwd: ctx.hostExecutor.cwd(),
+      cwd: (ctx.bashHostExecutor ?? ctx.hostExecutor).cwd(),
       ...(args.reason ? { reason: args.reason } : {}),
     });
     if (resolution.decision === 'deny') {

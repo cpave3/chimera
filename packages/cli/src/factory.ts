@@ -29,7 +29,15 @@ import {
   type Mode,
   type ModeRegistry,
 } from '@chimera/modes';
-import { type AutoApproveLevel, DefaultPermissionGate, GatedExecutor } from '@chimera/permissions';
+import {
+  type AutoApproveLevel,
+  CommandPolicyPipeline,
+  DefaultPermissionGate,
+  GatedExecutor,
+  PathAuthorizationStage,
+  PiSafeShellRiskStage,
+  ShellEffectsStage,
+} from '@chimera/permissions';
 import {
   buildKeyResolver,
   loadProviders,
@@ -368,9 +376,25 @@ export class CliAgentFactory implements AgentFactory {
       // best-effort
     }
 
+    const commandPolicy = new CommandPolicyPipeline([
+      new PiSafeShellRiskStage('caution'),
+      new ShellEffectsStage(),
+      new PathAuthorizationStage(),
+    ]);
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
       autoApprove: this.autoApprove,
+      commandPolicy: {
+        evaluator: commandPolicy,
+        context: (request) => ({
+          command: request.command,
+          target: 'host',
+          cwd: request.cwd,
+          home: this.home ?? homedir(),
+          projectRoot: init.cwd,
+          roots: local.commandPolicyRoots(),
+        }),
+      },
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
       hookRunner,
@@ -383,8 +407,7 @@ export class CliAgentFactory implements AgentFactory {
       gate.applyRemember(scope, req, 'allow');
     });
 
-    const hostExecutor =
-      this.autoApprove === 'all' ? local : new GatedExecutor({ inner: local, gate });
+    const hostExecutor = new GatedExecutor({ inner: local, gate });
 
     let sandboxExecutor: Executor = local;
     if (this.sandbox?.enabled && init.sandboxMode !== 'off') {
@@ -450,6 +473,7 @@ export class CliAgentFactory implements AgentFactory {
     const built = buildTools({
       sandboxExecutor,
       hostExecutor,
+      bashHostExecutor: local,
       permissionGate: gate,
       sandboxMode: init.sandboxMode,
       toolCallShape: init.model.toolCallShape,

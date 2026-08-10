@@ -85,6 +85,10 @@ export interface CommandPolicyStageSummary {
   findings: CommandPolicyFinding[];
 }
 
+export interface CommandPolicyEvaluator {
+  evaluate(context: CommandPolicyContext): Promise<CommandPolicyAnalysis>;
+}
+
 export interface CommandPolicyAnalysis {
   outcome: 'pass' | 'approval_required';
   stages: CommandPolicyStageSummary[];

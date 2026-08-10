@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { PermissionGate } from '@chimera/core';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTools } from '../src/build';
 import { LocalExecutor } from '../src/local-executor';
 
@@ -129,11 +130,26 @@ describe('buildTools', () => {
     expect(result.truncated).toBe(false);
   });
 
-  it('bash refuses destructive patterns without running them', async () => {
-    const toolset = tools();
+  it('bash returns policy denial without running the host executor', async () => {
+    const exec = vi.spyOn(executor, 'exec');
+    const permissionGate: PermissionGate = {
+      request: async () => ({ decision: 'deny', remembered: false }),
+      check: () => null,
+      addRule: () => {},
+      listRules: () => [],
+      removeRule: () => {},
+    };
+    const toolset = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      permissionGate,
+    }).tools as unknown as Record<string, AnyTool>;
+
     const result = await toolset.bash!.execute({ command: 'rm -rf /' }, {});
-    expect(result.exit_code).toBe(-1);
-    expect(result.stderr).toMatch(/destructive/i);
+
+    expect(result).toMatchObject({ exit_code: -1, stderr: 'denied by user' });
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it('read returns line-number-prefixed content and total_lines', async () => {

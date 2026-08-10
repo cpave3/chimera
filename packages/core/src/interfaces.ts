@@ -1,4 +1,5 @@
 import type { LanguageModel } from 'ai';
+import type { CommandPolicyAnalysis } from './command-policy';
 import type { ExecutionTarget } from './types';
 
 export interface ExecOptions {
@@ -58,6 +59,8 @@ export interface PermissionRequest {
   command: string;
   reason?: string;
   cwd: string;
+  /** Set only for host bash requests that require mandatory policy approval. */
+  policyAnalysis?: CommandPolicyAnalysis;
 }
 
 export interface PermissionResolution {

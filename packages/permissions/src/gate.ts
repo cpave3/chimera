@@ -1,4 +1,6 @@
 import type {
+  CommandPolicyContext,
+  CommandPolicyEvaluator,
   PermissionGate,
   PermissionRequest,
   PermissionResolution,
@@ -37,6 +39,10 @@ export interface GateOptions {
    * `permission_resolved` event still fires for hook-decided denials.
    */
   emitResolved?: (requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void;
+  commandPolicy?: {
+    evaluator: CommandPolicyEvaluator;
+    context: (request: PermissionRequest) => CommandPolicyContext;
+  };
 }
 
 export class DefaultPermissionGate implements PermissionGate {
@@ -48,6 +54,7 @@ export class DefaultPermissionGate implements PermissionGate {
   private readonly emitResolved:
     | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void)
     | undefined;
+  private readonly commandPolicy: GateOptions['commandPolicy'];
 
   constructor(opts: GateOptions) {
     this.store = new RuleStore(opts.cwd);
@@ -56,6 +63,7 @@ export class DefaultPermissionGate implements PermissionGate {
     this.headlessAutoDeny = opts.headlessAutoDeny ?? false;
     this.hookRunner = opts.hookRunner;
     this.emitResolved = opts.emitResolved;
+    this.commandPolicy = opts.commandPolicy;
   }
 
   check(req: PermissionRequest): PermissionResolution | null {
@@ -79,6 +87,16 @@ export class DefaultPermissionGate implements PermissionGate {
    * 5. Otherwise call raiseRequest to suspend the agent for user decision.
    */
   async request(req: PermissionRequest): Promise<PermissionResolution> {
+    let evaluatedRequest = req;
+    if (req.tool === 'bash' && this.commandPolicy) {
+      const policyAnalysis = await this.commandPolicy.evaluator.evaluate(
+        this.commandPolicy.context(req),
+      );
+      if (policyAnalysis.outcome === 'approval_required') {
+        evaluatedRequest = { ...req, policyAnalysis };
+        return this.prompt(evaluatedRequest);
+      }
+    }
     if (this.autoApprove === 'all') {
       return { decision: 'allow', remembered: false };
     }
@@ -87,6 +105,10 @@ export class DefaultPermissionGate implements PermissionGate {
     }
     const byRule = this.check(req);
     if (byRule) return byRule;
+    return this.prompt(evaluatedRequest);
+  }
+
+  private async prompt(req: PermissionRequest): Promise<PermissionResolution> {
     if (this.hookRunner) {
       const result = await this.hookRunner.fire({
         event: 'PermissionRequest',
@@ -94,6 +116,7 @@ export class DefaultPermissionGate implements PermissionGate {
         tool_input: { command: req.command, ...(req.reason ? { reason: req.reason } : {}) },
         target: req.target,
         command: req.command,
+        ...(req.policyAnalysis ? { policy_analysis: req.policyAnalysis } : {}),
       });
       if (result.blocked) {
         this.emitResolved?.(req.requestId, 'deny', false);

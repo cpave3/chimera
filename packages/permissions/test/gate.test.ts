@@ -27,6 +27,67 @@ describe('DefaultPermissionGate', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
+  it('mandatory bash policy findings override auto-approve all', async () => {
+    let raisedRequest: PermissionRequest | undefined;
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      commandPolicy: {
+        evaluator: {
+          async evaluate() {
+            return {
+              outcome: 'approval_required',
+              stages: [
+                {
+                  id: 'risk',
+                  status: 'findings',
+                  findings: [
+                    {
+                      kind: 'risk',
+                      stageId: 'risk',
+                      level: 'critical',
+                      score: 100,
+                      message: 'critical command',
+                    },
+                  ],
+                },
+              ],
+              findings: [
+                {
+                  kind: 'risk',
+                  stageId: 'risk',
+                  level: 'critical',
+                  score: 100,
+                  message: 'critical command',
+                },
+              ],
+            };
+          },
+        },
+        context: (request) => ({
+          command: request.command,
+          target: 'host',
+          cwd: request.cwd,
+          home: '/home/user',
+          projectRoot: request.cwd,
+          roots: { read: [request.cwd], write: [request.cwd] },
+        }),
+      },
+      raiseRequest: async (request) => {
+        raisedRequest = request;
+        return { decision: 'deny', remembered: false };
+      },
+    });
+
+    const resolution = await gate.request(req({ command: 'rm -rf /' }));
+
+    expect(resolution.decision).toBe('deny');
+    expect(raisedRequest?.policyAnalysis?.findings[0]).toMatchObject({
+      kind: 'risk',
+      level: 'critical',
+    });
+  });
+
   it('auto-approves host calls at level=host', async () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({

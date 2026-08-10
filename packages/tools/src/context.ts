@@ -9,6 +9,8 @@ import type { WebSearchProvider } from './web-search';
 export interface ToolContext {
   sandboxExecutor: Executor;
   hostExecutor: Executor;
+  /** Raw host executor used only after the bash tool's explicit policy gate. */
+  bashHostExecutor?: Executor;
   permissionGate?: PermissionGate;
   sandboxMode: SandboxMode;
   /**
