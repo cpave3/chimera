@@ -42,6 +42,12 @@ export type CommandPolicyFinding =
       kind: 'analyzer_error';
       stageId: string;
       message: string;
+    }
+  | {
+      kind: 'blocked';
+      stageId: string;
+      ruleId: string;
+      message: string;
     };
 
 export type CommandPolicyFact =

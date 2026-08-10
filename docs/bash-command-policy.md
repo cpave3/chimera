@@ -2,42 +2,72 @@
 
 Chimera analyzes every agent-issued **host** bash command before execution. Sandbox-target commands keep the existing sandbox policy.
 
-The policy is an ordered pipeline:
+## Balanced mode
 
-1. `@aslamplr/pi-safe-shell@0.7.1` (MIT) classifies command risk as `safe`, `caution`, `danger`, or `critical`.
-2. Chimera derives read, write, and delete effects for supported literal Bash commands and redirects.
-3. Chimera checks those paths against the session's canonical read/write roots.
-
-A command can run unattended only when its risk is within the configured threshold and every filesystem effect is understood and authorized. Dynamic expansion, unsupported executables, analyzer failures, unauthorized paths, and above-threshold risk require approval. Critical commands always require one-time approval.
+Balanced mode is the default. It preserves agent freedom by automatically running safe/caution commands, unfamiliar executables, builds, tests, package scripts, pipelines, and compound commands unless Chimera finds a concrete known danger.
 
 ```json
 {
   "commandPolicy": {
     "hostBash": {
       "enabled": true,
+      "mode": "balanced",
       "autoAllowThrough": "caution"
     }
   }
 }
 ```
 
-`autoAllowThrough` accepts `none`, `safe`, `caution`, or `danger`; the default is `caution`. This threshold cannot bypass path, unresolved-effect, or analyzer-error findings. Existing remembered command allows also cannot bypass mandatory findings.
+Balanced mode intervenes for:
 
-`enabled: false` explicitly restores legacy host permission behavior and prints a warning. An unavailable analyzer never disables policy automatically: interactive sessions prompt and headless sessions deny.
+- danger or critical classifier results;
+- explicit unauthorized filesystem paths that Chimera can confidently identify;
+- force pushes;
+- recursive forced deletion;
+- production-targeted mutating `kubectl` and Terraform commands;
+- fork bombs and other deterministic scary-command rules.
+
+Deterministic scary rules are hard blocks and do not show an approval prompt. Other concrete danger/path findings use the normal approval flow. When Chimera is about to prompt, it fires the existing synchronous `PermissionRequest` lifecycle hook before entering `waiting_for_permission`.
+
+## Strict mode
+
+Strict mode retains allow-by-proof behavior and also prompts when shell effects are unresolved or an analyzer fails:
+
+```json
+{
+  "commandPolicy": {
+    "hostBash": {
+      "mode": "strict"
+    }
+  }
+}
+```
+
+`autoAllowThrough` accepts `none`, `safe`, `caution`, or `danger`; critical is never automatically allowed. `enabled: false` explicitly restores legacy host permission behavior and prints a warning.
+
+## Decision audit
+
+Every automatic allow, rule decision, hard block, hook/headless denial, and user approval/rejection is appended to:
+
+```text
+~/.chimera/logs/permission-decisions.jsonl
+```
+
+Records include session/request IDs, cwd, full command, mode, decision source, findings, remembered status, feedback, and grants where applicable. The file and logs directory are user-only (`0600`/`0700`). Commands may contain secrets, so treat the audit as sensitive.
+
+Review one persisted session with:
+
+```bash
+chimera sessions review-bash <session-id> --all
+chimera sessions review-bash <session-id> --all --json
+```
+
+The deterministic extractor reads session `events.jsonl`, deduplicates bash calls from step snapshots, joins audit outcomes, and redacts likely credentials. The bundled `review-bash-policy` skill uses this command to identify false positives, false negatives, repeated approvals, and candidate regression tests. It never modifies policy automatically.
 
 ## Approval actions
 
-For mandatory findings, the TUI offers:
-
-- allow once;
-- deny once;
-- deny with feedback to the continuing agent run;
-- allow once and add a proposed read/write directory to the current session, when one narrow grant can resolve all path findings.
-
-Session directory grants are revalidated and persisted before the command is allowed. The TUI queues concurrent parent and subagent permission requests.
+For promptable findings, the TUI offers allow once, deny once, deny with feedback, and—when one narrow grant resolves all path findings—allow once plus a session read/write directory. The TUI queues concurrent parent and subagent permission requests.
 
 ## Limits
 
-Static analysis is approval policy, not process confinement. Runtime data, scripts, approved commands, background processes, symlink races, and downloaded programs can behave differently after analysis. Use Chimera's sandbox when filesystem or process isolation is required.
-
-The initial analyzer build supports the Node platforms on which `web-tree-sitter` and the bundled Bash grammar WASM run. Analyzer initialization or packaging failures become visible approval errors rather than fail-open execution.
+Balanced static analysis is intentionally an advisory safety net, not process confinement. Runtime data, scripts, approved commands, background processes, symlink races, and downloaded programs can behave differently after analysis. Use Chimera's sandbox when filesystem or process isolation is required.

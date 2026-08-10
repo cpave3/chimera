@@ -17,7 +17,11 @@ it('surfaces malformed and invalid host bash policy config', async () => {
     JSON.stringify({ commandPolicy: { hostBash: { autoAllowThrough: 'critical' } } }),
   );
   expect(() => loadConfig(invalidHome)).toThrow(/autoAllowThrough/);
-  expect(resolveHostBashPolicy({})).toEqual({ enabled: true, autoAllowThrough: 'caution' });
+  expect(resolveHostBashPolicy({})).toEqual({
+    enabled: true,
+    mode: 'balanced',
+    autoAllowThrough: 'caution',
+  });
 });
 
 describe('resolveModel', () => {

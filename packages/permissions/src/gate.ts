@@ -1,6 +1,7 @@
 import type {
   CommandPolicyContext,
   CommandPolicyEvaluator,
+  PermissionDecisionSource,
   PermissionGate,
   PermissionRequest,
   PermissionResolution,
@@ -43,6 +44,11 @@ export interface GateOptions {
     evaluator: CommandPolicyEvaluator;
     context: (request: PermissionRequest) => CommandPolicyContext;
   };
+  audit?: (entry: {
+    request: PermissionRequest;
+    resolution: PermissionResolution;
+    source: PermissionDecisionSource;
+  }) => void;
 }
 
 export class DefaultPermissionGate implements PermissionGate {
@@ -55,6 +61,7 @@ export class DefaultPermissionGate implements PermissionGate {
     | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void)
     | undefined;
   private readonly commandPolicy: GateOptions['commandPolicy'];
+  private readonly audit: GateOptions['audit'];
 
   constructor(opts: GateOptions) {
     this.store = new RuleStore(opts.cwd);
@@ -64,6 +71,7 @@ export class DefaultPermissionGate implements PermissionGate {
     this.hookRunner = opts.hookRunner;
     this.emitResolved = opts.emitResolved;
     this.commandPolicy = opts.commandPolicy;
+    this.audit = opts.audit;
   }
 
   check(req: PermissionRequest): PermissionResolution | null {
@@ -92,30 +100,46 @@ export class DefaultPermissionGate implements PermissionGate {
       const policyAnalysis = await this.commandPolicy.evaluator.evaluate(
         this.commandPolicy.context(req),
       );
+      evaluatedRequest = { ...req, policyAnalysis };
+      if (policyAnalysis.findings.some((finding) => finding.kind === 'blocked')) {
+        this.emitResolved?.(req.requestId, 'deny', false);
+        return this.audited(
+          evaluatedRequest,
+          { decision: 'deny', remembered: false, denialSource: 'policy' },
+          'policy',
+        );
+      }
       if (policyAnalysis.outcome === 'approval_required') {
         const denyRule = matchRule(
           req,
           this.store.all().filter((rule) => rule.decision === 'deny'),
         );
         if (denyRule) {
-          return { decision: 'deny', remembered: true, denialSource: 'rule' };
+          return this.audited(
+            evaluatedRequest,
+            { decision: 'deny', remembered: true, denialSource: 'rule' },
+            'rule',
+          );
         }
-        evaluatedRequest = { ...req, policyAnalysis };
         return this.prompt(evaluatedRequest);
       }
     }
     const matchingRule = matchRule(req, this.store.all());
     if (matchingRule?.decision === 'deny') {
-      return { decision: 'deny', remembered: true, denialSource: 'rule' };
+      return this.audited(
+        evaluatedRequest,
+        { decision: 'deny', remembered: true, denialSource: 'rule' },
+        'rule',
+      );
     }
     if (this.autoApprove === 'all') {
-      return { decision: 'allow', remembered: false };
+      return this.audited(evaluatedRequest, { decision: 'allow', remembered: false }, 'automatic');
     }
     if (this.autoApprove === 'host' && req.target === 'host') {
-      return { decision: 'allow', remembered: false };
+      return this.audited(evaluatedRequest, { decision: 'allow', remembered: false }, 'automatic');
     }
     const byRule = matchingRule ? this.check(req) : null;
-    if (byRule) return byRule;
+    if (byRule) return this.audited(evaluatedRequest, byRule, 'rule');
     return this.prompt(evaluatedRequest);
   }
 
@@ -131,18 +155,36 @@ export class DefaultPermissionGate implements PermissionGate {
       });
       if (result.blocked) {
         this.emitResolved?.(req.requestId, 'deny', false);
-        return { decision: 'deny', remembered: false, denialSource: 'hook' };
+        return this.audited(
+          req,
+          { decision: 'deny', remembered: false, denialSource: 'hook' },
+          'hook',
+        );
       }
     }
     if (this.headlessAutoDeny && req.target === 'host') {
       this.emitResolved?.(req.requestId, 'deny', false);
-      return { decision: 'deny', remembered: false, denialSource: 'headless' };
+      return this.audited(
+        req,
+        { decision: 'deny', remembered: false, denialSource: 'headless' },
+        'headless',
+      );
     }
     const raised = await this.raise(req);
-    if (raised.decision === 'deny' && !raised.denialSource) {
-      return { ...raised, denialSource: 'user' };
-    }
-    return raised;
+    const resolution =
+      raised.decision === 'deny' && !raised.denialSource
+        ? { ...raised, denialSource: 'user' as const }
+        : raised;
+    return this.audited(req, resolution, 'user');
+  }
+
+  private audited(
+    request: PermissionRequest,
+    resolution: PermissionResolution,
+    source: PermissionDecisionSource,
+  ): PermissionResolution {
+    this.audit?.({ request, resolution, source });
+    return resolution;
   }
 
   addRule(rule: PermissionRule, persist: 'session' | 'project'): void {

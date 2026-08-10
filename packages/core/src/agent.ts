@@ -431,6 +431,7 @@ export class Agent {
     decision: 'allow' | 'deny',
     remember?: RememberScope,
     feedback?: string,
+    grant?: PermissionResolution['grant'],
   ): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
@@ -452,7 +453,12 @@ export class Agent {
     }
     this.pendingPermissions.delete(requestId);
 
-    pending.resolve({ decision, remembered: !!remember });
+    pending.resolve({
+      decision,
+      remembered: !!remember,
+      ...(feedback ? { feedback } : {}),
+      ...(grant ? { grant } : {}),
+    });
     this.session.status = 'running';
     this.currentQueue?.push({
       type: 'permission_resolved',

@@ -44,6 +44,7 @@ export type WebSearchConfig =
 
 export interface HostBashPolicyConfig {
   enabled: boolean;
+  mode: 'balanced' | 'strict';
   autoAllowThrough: 'none' | 'safe' | 'caution' | 'danger';
 }
 
@@ -144,6 +145,7 @@ export function configPath(home = homedir()): string {
 const hostBashPolicySchema = z
   .object({
     enabled: z.boolean().optional(),
+    mode: z.enum(['balanced', 'strict']).optional(),
     autoAllowThrough: z.enum(['none', 'safe', 'caution', 'danger']).optional(),
   })
   .strict();
@@ -173,6 +175,7 @@ export function loadConfig(home = homedir()): ChimeraConfig {
 export function resolveHostBashPolicy(config: ChimeraConfig): HostBashPolicyConfig {
   return {
     enabled: config.commandPolicy?.hostBash?.enabled ?? true,
+    mode: config.commandPolicy?.hostBash?.mode ?? 'balanced',
     autoAllowThrough: config.commandPolicy?.hostBash?.autoAllowThrough ?? 'caution',
   };
 }

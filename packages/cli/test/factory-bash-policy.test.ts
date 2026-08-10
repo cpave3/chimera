@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,7 +21,7 @@ describe('CliAgentFactory host bash policy', () => {
     process.env.CHIMERA_FACTORY_TEST_KEY = undefined;
   });
 
-  it('executes an in-scope safe command and headlessly denies a critical command', async () => {
+  it('auto-runs ordinary commands, hard-blocks scary commands, and audits both outcomes', async () => {
     const factory = new CliAgentFactory({
       providersConfig: {
         providers: {
@@ -48,9 +48,19 @@ describe('CliAgentFactory host bash policy', () => {
       stdout: 'safe\n',
       exit_code: 0,
     });
-    await expect(bash.execute({ command: 'rm -rf /' }, {})).resolves.toMatchObject({
+    await expect(bash.execute({ command: 'rm -rf build' }, {})).resolves.toMatchObject({
       stderr: 'denied by policy',
       exit_code: -1,
     });
+    const records = (
+      await readFile(join(cwd, '.chimera', 'logs', 'permission-decisions.jsonl'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    expect(records).toEqual([
+      expect.objectContaining({ command: 'echo safe', decision: 'allow', source: 'automatic' }),
+      expect.objectContaining({ command: 'rm -rf build', decision: 'deny', source: 'policy' }),
+    ]);
   });
 });

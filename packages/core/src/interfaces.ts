@@ -71,9 +71,19 @@ export type PermissionDecisionAction =
       grant: CommandPolicyGrantProposal;
     };
 
+export type PermissionDecisionSource =
+  | 'automatic'
+  | 'rule'
+  | 'hook'
+  | 'headless'
+  | 'policy'
+  | 'user';
+
 export interface PermissionResolution {
   decision: 'allow' | 'deny';
   remembered: boolean;
+  feedback?: string;
+  grant?: CommandPolicyGrantProposal;
   /**
    * Origin of the decision, used by the executor to render the right
    * "denied by ..." message and by consumers that need to distinguish
@@ -85,7 +95,7 @@ export interface PermissionResolution {
    * - `headless` — server-side auto-deny when the parent has no TTY.
    * - `user`     — interactively rejected at the prompt.
    */
-  denialSource?: 'rule' | 'hook' | 'headless' | 'user';
+  denialSource?: Exclude<PermissionDecisionSource, 'automatic'>;
 }
 
 export interface PermissionGate {

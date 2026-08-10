@@ -31,12 +31,15 @@ import {
 } from '@chimera/modes';
 import {
   type AutoApproveLevel,
+  BalancedPolicyEvaluator,
   CommandPolicyPipeline,
   DefaultPermissionGate,
   GatedExecutor,
   PathAuthorizationStage,
+  PermissionDecisionAudit,
   PiSafeShellAdapter,
   RiskStage,
+  ScaryCommandStage,
   ShellEffectsStage,
 } from '@chimera/permissions';
 import {
@@ -200,6 +203,7 @@ export class CliAgentFactory implements AgentFactory {
     this.autoApprove = opts.autoApprove;
     this.hostBashPolicy = opts.hostBashPolicy ?? {
       enabled: true,
+      mode: 'balanced',
       autoAllowThrough: 'caution',
     };
     this.home = opts.home;
@@ -386,11 +390,15 @@ export class CliAgentFactory implements AgentFactory {
     const commandPolicy = this.hostBashPolicy.enabled
       ? (() => {
           const shellAdapter = new PiSafeShellAdapter();
-          return new CommandPolicyPipeline([
+          const strictPolicy = new CommandPolicyPipeline([
+            new ScaryCommandStage(),
             new RiskStage(shellAdapter, this.hostBashPolicy.autoAllowThrough),
             new ShellEffectsStage(shellAdapter),
             new PathAuthorizationStage(),
           ]);
+          return this.hostBashPolicy.mode === 'balanced'
+            ? new BalancedPolicyEvaluator(strictPolicy)
+            : strictPolicy;
         })()
       : undefined;
     if (!this.hostBashPolicy.enabled) {
@@ -398,8 +406,15 @@ export class CliAgentFactory implements AgentFactory {
         'chimera: host bash command policy is explicitly disabled; using legacy permissions',
       );
     }
+    const decisionAudit = new PermissionDecisionAudit({
+      home: this.home,
+      sessionId: agent.session.id,
+      mode: this.hostBashPolicy.enabled ? this.hostBashPolicy.mode : 'disabled',
+      onWarning: this.warn,
+    });
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
+      audit: (entry) => decisionAudit.record(entry),
       autoApprove: this.autoApprove,
       ...(commandPolicy
         ? {
