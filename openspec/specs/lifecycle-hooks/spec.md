@@ -112,7 +112,7 @@ The subsystem SHALL NOT pass any other channel — no command-line arguments, no
 The lifecycle-hooks subsystem SHALL classify each event as either **pre** or **post** and apply exit-code semantics accordingly:
 
 - **Pre events**: `PermissionRequest`. Exit code 0 SHALL be treated as "allow"; exit code 2 SHALL be treated as "block" and SHALL cause the gate to deny the underlying tool call without prompting the user; any other non-zero exit SHALL be logged as a warning and treated as "allow" (fail-open).
-- **Post events**: `SessionCreated`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `OnError`, `Timeout`, `Interrupt`, `CompactionStart`, `CompactionEnd`, `SessionEnd`. Any non-zero exit SHALL be logged as a warning and SHALL NOT alter session behavior.
+- **Post events**: `SessionCreated`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `OnError`, `UserInputRequired`, `Timeout`, `Interrupt`, `CompactionStart`, `CompactionEnd`, `SessionEnd`. Any non-zero exit SHALL be logged as a warning and SHALL NOT alter session behavior.
 
 When multiple hooks run for a single pre-event firing, the **first** hook to exit 2 SHALL block; subsequent hooks for that same firing SHALL still run to completion (their exit codes are recorded but no longer alter the outcome).
 
@@ -167,3 +167,11 @@ This requirement preserves the `agent-core` invariant that `AgentEvent`s are the
 
 - **WHEN** a user runs `chimera attach <id>` and connects only the TUI to a remote server
 - **THEN** no hook scripts SHALL be invoked from the TUI process; all hook execution SHALL occur in the server process at the other end of the connection
+
+### Requirement: User input required notification
+The system SHALL discover observational `UserInputRequired` hooks and pass `{ event, session_id, cwd, request, kind? }` on stdin. The hook outcome SHALL be fail-open, and hook execution SHALL complete before the terminal waiting event is published.
+
+#### Scenario: Notify before terminal completion
+- **WHEN** an agent requests user input
+- **THEN** every discovered `UserInputRequired` hook receives the actionable request
+- **AND** clients receive `run_finished { reason: "waiting_for_input" }` only after hook completion

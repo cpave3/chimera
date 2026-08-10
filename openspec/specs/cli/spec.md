@@ -122,3 +122,11 @@ The subcommand SHALL exit 0 if it ran to completion, regardless of whether any h
 
 - **WHEN** the user runs `chimera hooks list --json`
 - **THEN** stdout SHALL contain exactly one JSON object whose top-level key is `events` and whose value is a map from each event name in `lifecycle-hooks` to `{ global: string[], project: string[] }`, and stdout SHALL contain no other text
+
+### Requirement: One-shot user-input handoff
+`chimera run` SHALL print an agent's requested assistance in text mode, return exit code 0 for `waiting_for_input`, and SHALL NOT apply a workspace overlay under `--apply-on-success` unless the terminal reason is `stop`.
+
+#### Scenario: One-shot run waits for a person
+- **WHEN** the agent ends with `waiting_for_input`
+- **THEN** the command reports the request and exits successfully
+- **AND** any workspace overlay is discarded rather than applied

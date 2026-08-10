@@ -18,6 +18,7 @@ import {
   newSessionId,
   type StopHook,
   type TimeoutHook,
+  type UserInputRequiredHook,
   writeSessionMetadata,
 } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
@@ -320,6 +321,11 @@ export class CliAgentFactory implements AgentFactory {
         await hookRunner.fire({ event: 'Interrupt' });
       },
     };
+    const userInputRequiredHook: UserInputRequiredHook = {
+      async fire(request) {
+        await hookRunner.fire({ event: 'UserInputRequired', ...request });
+      },
+    };
 
     const agent = new Agent({
       cwd: init.cwd,
@@ -341,6 +347,7 @@ export class CliAgentFactory implements AgentFactory {
       stopHook,
       timeoutHook,
       interruptHook,
+      userInputRequiredHook,
       responseTimeoutMs: this.responseTimeoutMs,
       providerOptions: buildProviderOptions(providerShape, init.model.parallelToolCalls),
     });
@@ -451,6 +458,7 @@ export class CliAgentFactory implements AgentFactory {
       webSearch: this.webSearchProvider,
       taskList,
       recall: recallStore,
+      requestUserInput: async (request) => agent.requestUserInput(request),
     });
     const tools = built.tools;
     const formatters = { ...built.formatters };
@@ -497,7 +505,7 @@ export class CliAgentFactory implements AgentFactory {
     if (this.toolsAllowlist) {
       const allowed = new Set(this.toolsAllowlist);
       for (const name of Object.keys(tools)) {
-        if (!allowed.has(name)) {
+        if (!allowed.has(name) && name !== 'request_user_input') {
           delete tools[name];
         }
       }
@@ -517,6 +525,7 @@ export class CliAgentFactory implements AgentFactory {
         }
       }
       const filtered = applyAllowlist(tools, allowlist);
+      filtered.request_user_input = tools.request_user_input;
       agent.setTools(filtered as ToolSet);
       agent.setSystemPrompt(
         appendToolSurfacePrompt(
@@ -542,6 +551,7 @@ export class CliAgentFactory implements AgentFactory {
         });
         const nextAllowlist = computeAllowlist(next);
         const nextTools = applyAllowlist(tools, nextAllowlist) as ToolSet;
+        nextTools.request_user_input = tools.request_user_input;
         const sessionModelRef = `${init.model.providerId}/${init.model.modelId}`;
         // Resolve previous mode dynamically from `agent.session.mode` —
         // the static `activeMode` captured at session construction is only
@@ -601,6 +611,7 @@ export class CliAgentFactory implements AgentFactory {
       const currentTools = currentMode
         ? (applyAllowlist(tools, computeAllowlist(currentMode)) as ToolSet)
         : tools;
+      currentTools.request_user_input = tools.request_user_input;
       const newSystemPrompt = composeSystemPrompt({
         cwd: init.cwd,
         model: newModel,

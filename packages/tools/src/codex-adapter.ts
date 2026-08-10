@@ -44,8 +44,10 @@ export function buildCodexToolDefs(
 
   return {
     read: nativeDefs.read,
+    ...(nativeDefs.request_user_input ? { request_user_input: nativeDefs.request_user_input } : {}),
     bash: defineTool({
-      description: 'Execute a bash command and return stdout, stderr, exit code, and timeout status.',
+      description:
+        'Execute a bash command and return stdout, stderr, exit code, and timeout status.',
       inputSchema: CODEX_BASH_SCHEMA,
       execute: async (args: { command: string; timeout?: number }, opts) => {
         return bash.execute(
@@ -61,7 +63,9 @@ export function buildCodexToolDefs(
             nativeDefs.bash.formatScrollback?.(
               {
                 command: args.command,
-                ...(args.timeout !== undefined ? { timeout_ms: Math.ceil(args.timeout * 1000) } : {}),
+                ...(args.timeout !== undefined
+                  ? { timeout_ms: Math.ceil(args.timeout * 1000) }
+                  : {}),
               },
               result,
             ) ?? { summary: args.command }
@@ -98,7 +102,10 @@ export function buildCodexToolDefs(
         );
       },
       formatScrollback: nativeDefs.grep.formatScrollback
-        ? (args: { pattern: string; path?: string; glob?: string; ignoreCase?: boolean }, result?: unknown) =>
+        ? (
+            args: { pattern: string; path?: string; glob?: string; ignoreCase?: boolean },
+            result?: unknown,
+          ) =>
             nativeDefs.grep.formatScrollback?.(
               {
                 pattern: args.pattern,
@@ -132,7 +139,8 @@ export function buildCodexToolDefs(
         : undefined,
     }),
     ls: defineTool({
-      description: 'List directory contents. Returns entries sorted alphabetically with / suffixes for directories.',
+      description:
+        'List directory contents. Returns entries sorted alphabetically with / suffixes for directories.',
       inputSchema: CODEX_LS_SCHEMA,
       execute: async (args: { path?: string; limit?: number }, opts) => {
         const result = (await read.execute({ path: args.path ?? '.' }, opts)) as {
@@ -155,7 +163,10 @@ export function buildCodexToolDefs(
           truncated: Boolean(result.truncated) || limited.length < formatted.length,
         };
       },
-      formatScrollback: (args: { path?: string }, result?: { entries?: string[]; truncated?: boolean }) => {
+      formatScrollback: (
+        args: { path?: string },
+        result?: { entries?: string[]; truncated?: boolean },
+      ) => {
         const path = args.path ?? '.';
         if (!result) return { summary: path };
         const suffix = result.truncated

@@ -2,7 +2,13 @@ import type { AgentEvent, CallId, ModelConfig, SandboxMode, SessionId } from '@c
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { AgentRegistry } from './agents/types';
 
-export type SubagentReason = 'stop' | 'max_steps' | 'error' | 'timeout' | 'interrupted';
+export type SubagentReason =
+  | 'stop'
+  | 'max_steps'
+  | 'error'
+  | 'timeout'
+  | 'interrupted'
+  | 'waiting_for_input';
 
 export interface SubagentSpawnOptions {
   prompt: string;

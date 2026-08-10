@@ -960,6 +960,39 @@ describe('App', () => {
     unmount();
   });
 
+  it('shows the requested assistance without error language', async () => {
+    let pushEvent: ((ev: unknown) => void) | null = null;
+    const client = stubClient({
+      subscribe: async function* () {
+        while (true) {
+          yield await new Promise<never>((resolve) => {
+            pushEvent = resolve as (ev: unknown) => void;
+          });
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    pushEvent!({
+      type: 'user_input_required',
+      request: 'Run X and paste the output',
+      kind: 'action',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    pushEvent!({ type: 'run_finished', reason: 'waiting_for_input' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(lastFrame()!).toContain('Waiting for input: Run X and paste the output');
+    expect(lastFrame()!).not.toContain('run error');
+    expect(lastFrame()!).not.toContain('run interrupted');
+
+    unmount();
+  });
+
   it('renders each tool call exactly once when results arrive out of order', async () => {
     let pushEvent: ((ev: unknown) => void) | null = null;
     const client = stubClient({

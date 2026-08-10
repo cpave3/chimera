@@ -69,6 +69,44 @@ describe('buildTools', () => {
     ]);
   });
 
+  it('registers request_user_input and forwards an actionable request', async () => {
+    const requests: unknown[] = [];
+    const built = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      requestUserInput: async (request) => {
+        requests.push(request);
+      },
+    });
+    const requestTool = built.tools.request_user_input as unknown as AnyTool;
+
+    const result = await requestTool.execute(
+      { request: 'Run the migration and paste its output', kind: 'action' },
+      {},
+    );
+
+    expect(requests).toEqual([
+      { request: 'Run the migration and paste its output', kind: 'action' },
+    ]);
+    expect(result).toEqual({ waiting: true });
+    expect(built.formatters.request_user_input?.({ request: 'Paste the output' })).toEqual({
+      summary: 'Paste the output',
+    });
+  });
+
+  it('preserves request_user_input in the Codex tool shape', () => {
+    const built = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      toolCallShape: 'codex',
+      requestUserInput: async () => {},
+    });
+
+    expect(built.tools.request_user_input).toBeDefined();
+  });
+
   it('bash runs the command and returns stdout', async () => {
     const toolset = tools();
     const result = await toolset.bash!.execute({ command: 'echo hi' }, {});

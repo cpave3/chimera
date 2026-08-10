@@ -1,7 +1,7 @@
 import type { AgentEvent, SessionId } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSpawnAgentTool } from '../src/spawn-tool';
 import * as spawnChildMod from '../src/spawn-child';
+import { buildSpawnAgentTool } from '../src/spawn-tool';
 import type { SpawnAgentToolContext } from '../src/types';
 
 function makeCtx(over: Partial<SpawnAgentToolContext> = {}): SpawnAgentToolContext {
@@ -69,6 +69,52 @@ afterEach(() => {
 });
 
 describe('parallel spawn_agent emission integrity', () => {
+  it('forwards a child input request and preserves its waiting reason', async () => {
+    const events: AgentEvent[] = [];
+    const builder: InProcessAgentBuilder = async () => ({
+      sessionId: 'waiting-child',
+      send: () =>
+        (async function* (): AsyncGenerator<AgentEvent> {
+          yield {
+            type: 'user_input_required',
+            request: 'Run X and paste the output',
+            kind: 'action',
+          };
+          yield { type: 'run_finished', reason: 'waiting_for_input' };
+        })(),
+      interrupt: () => {},
+      dispose: async () => {},
+    });
+    const ctx = makeCtx({
+      emit: (event) => events.push(event),
+      inProcess: builder,
+      resolveCallId: () => 'PARENT_CALL',
+    });
+    type ExecutableTool = {
+      execute: (args: Record<string, unknown>, opts: Record<string, unknown>) => Promise<unknown>;
+    };
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as ExecutableTool;
+
+    const result = await tool.execute(
+      { prompt: 'investigate', purpose: 'check handoff', in_process: true },
+      { toolCallId: 'ai-call' },
+    );
+
+    expect(events).toContainEqual({
+      type: 'subagent_event',
+      subagentId: expect.any(String),
+      event: {
+        type: 'user_input_required',
+        request: 'Run X and paste the output',
+        kind: 'action',
+      },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'subagent_finished', reason: 'waiting_for_input' }),
+    );
+    expect(result).toEqual(expect.objectContaining({ reason: 'waiting_for_input' }));
+  });
+
   it('emits distinct subagentId/parentCallId per parallel execute() call (single tool, shared ctx)', async () => {
     const events: AgentEvent[] = [];
     const builder: InProcessAgentBuilder = async ({ model: _m }) => {

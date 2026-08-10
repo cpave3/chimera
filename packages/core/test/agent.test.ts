@@ -234,6 +234,160 @@ describe('Agent', () => {
     expect(mock.doStreamCalls[0].tools?.map((entry) => entry.name)).toEqual(['bash']);
   });
 
+  it('ends the run after a user-input request without another model step', async () => {
+    let modelCalls = 0;
+    let agent: Agent;
+    const requestTool = tool({
+      description: 'request input',
+      inputSchema: z.object({
+        request: z.string(),
+        kind: z.enum(['information', 'action']).optional(),
+      }),
+      execute: async (input) => {
+        agent.requestUserInput(input);
+        return { waiting: true };
+      },
+    });
+    const hookCalls: unknown[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        modelCalls += 1;
+        if (modelCalls > 1) throw new Error('unexpected second model call');
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'tool-call',
+                toolCallId: 'request-1',
+                toolName: 'request_user_input',
+                input: JSON.stringify({ request: 'Run X and paste the output', kind: 'action' }),
+              },
+              {
+                type: 'finish',
+                finishReason: 'tool-calls',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+    agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: { request_user_input: requestTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      userInputRequiredHook: {
+        async fire(request) {
+          hookCalls.push(request);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          hookCalls.push('completed');
+        },
+      },
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const event of agent.run('continue')) events.push(event);
+
+    expect(modelCalls).toBe(1);
+    expect(events.find((event) => event.type === 'user_input_required')).toEqual({
+      type: 'user_input_required',
+      request: 'Run X and paste the output',
+      kind: 'action',
+    });
+    expect(hookCalls).toEqual([
+      { request: 'Run X and paste the output', kind: 'action' },
+      'completed',
+    ]);
+    expect(events.at(-1)).toEqual({
+      type: 'run_finished',
+      reason: 'waiting_for_input',
+      error: undefined,
+    });
+    expect(agent.session.status).toBe('waiting_for_input');
+    expect(agent.session.messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+    ]);
+  });
+
+  it('lets sibling tool calls settle before ending for user input', async () => {
+    let agent: Agent;
+    const completed: string[] = [];
+    const requestTool = tool({
+      description: 'request input',
+      inputSchema: z.object({ request: z.string() }),
+      execute: async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        agent.requestUserInput(input);
+        completed.push('request');
+        return { waiting: true };
+      },
+    });
+    const siblingTool = tool({
+      description: 'sibling',
+      inputSchema: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        completed.push('sibling');
+        return { done: true };
+      },
+    });
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'request-1',
+              toolName: 'request_user_input',
+              input: JSON.stringify({ request: 'Paste the output' }),
+            },
+            {
+              type: 'tool-call',
+              toolCallId: 'sibling-1',
+              toolName: 'sibling',
+              input: '{}',
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+    agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: model,
+      tools: { request_user_input: requestTool, sibling: siblingTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const event of agent.run('continue')) events.push(event);
+
+    expect(completed.sort()).toEqual(['request', 'sibling']);
+    const handoffIndex = events.findIndex((event) => event.type === 'user_input_required');
+    const lastToolResultIndex = events.findLastIndex((event) => event.type === 'tool_call_result');
+    expect(events.filter((event) => event.type === 'tool_call_result')).toHaveLength(2);
+    expect(handoffIndex).toBeGreaterThan(lastToolResultIndex);
+    expect(events.at(-1)).toMatchObject({
+      type: 'run_finished',
+      reason: 'waiting_for_input',
+    });
+  });
+
   it('awaitCallId resolves to distinct CallIds for parallel tool-calls (resolveCallId races)', async () => {
     const lookups: Array<{
       aiSdkId: string;

@@ -27,6 +27,7 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 | `PermissionRequest`| The permission gate would otherwise prompt the user.                           | pre   |
 | `Stop`             | A run reaches a clean stop, before any stop-hook retry.                         | post  |
 | `OnError`          | A run terminates with `run_finished.reason: "error"`.                          | post  |
+| `UserInputRequired`| The agent requests human assistance and ends its current run.                    | post  |
 | `Timeout`          | A model response times out.                                                     | post  |
 | `Interrupt`        | An active run is interrupted.                                                   | post  |
 | `CompactionStart`  | Session compaction begins.                                                      | post  |
@@ -73,6 +74,10 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
 // OnError
 { "event": "OnError", "session_id": "...", "cwd": "...", "error": "terminated" }
 
+// UserInputRequired (kind is optional: "information" or "action")
+{ "event": "UserInputRequired", "session_id": "...", "cwd": "...",
+  "request": "Run X and paste the output", "kind": "action" }
+
 // Timeout / Interrupt
 { "event": "Timeout", "session_id": "...", "cwd": "..." }
 { "event": "Interrupt", "session_id": "...", "cwd": "..." }
@@ -108,7 +113,7 @@ Events are classified as **pre** or **post**. Today only `PermissionRequest` is 
 
 Pre-hooks **fail open** — a crashing or timing-out hook never blocks the agent. If you want strict denial on internal error, exit 2 explicitly inside your script.
 
-`OnError` is observational: it fires only for a terminal `reason: "error"`, and its outcome cannot change the failed run. Chimera waits for the hook to complete (or reach the per-script timeout) before publishing the terminal event to clients. Timeout and interrupt completions use their dedicated events instead.
+`OnError` and `UserInputRequired` are observational, so their outcomes cannot change the terminal run. Chimera waits for these hooks to complete (or reach the per-script timeout) before publishing `run_finished` to clients. Timeout and interrupt completions use their dedicated events instead.
 
 When multiple `PermissionRequest` hooks are installed, the first one to exit 2 supplies the denial reason; remaining hooks still run to completion (their outputs are recorded but no longer change the outcome).
 

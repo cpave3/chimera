@@ -247,7 +247,7 @@ describe('CliAgentFactory', () => {
       }
     ).opts;
 
-    expect(Object.keys(opts.tools)).toEqual(['fetch']);
+    expect(Object.keys(opts.tools)).toEqual(['fetch', 'request_user_input']);
     expect(opts.systemPrompt).not.toContain('Do not invent, assume, or guess URLs');
   });
 
@@ -336,6 +336,7 @@ describe('CliAgentFactory', () => {
       'grep',
       'ls',
       'read',
+      'request_user_input',
       'write',
     ]);
     const systemPrompt = (agent as unknown as { opts: { systemPrompt: string } }).opts.systemPrompt;

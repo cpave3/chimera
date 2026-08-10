@@ -84,3 +84,11 @@ After a selection, the TUI SHALL call `client.resolvePermission` (and, for `A`/`
 
 - **WHEN** a user presses `A` in the modal and then `s` in the scope prompt for a `bash` call `pnpm run test`
 - **THEN** the TUI SHALL first POST a new session-scope exact rule `{ tool: "bash", pattern: "pnpm run test", patternKind: "exact", decision: "allow" }` and then POST the permission resolution with `decision: "allow"`, `remember: { scope: "session" }`
+
+### Requirement: User-input handoff presentation
+The TUI SHALL display the actionable request, stop its busy state on `waiting_for_input`, and keep the normal input composer available without presenting the handoff as an error or interruption.
+
+#### Scenario: Agent requests a manual action
+- **WHEN** the TUI receives `user_input_required` and terminal reason `waiting_for_input`
+- **THEN** the request is visible in scrollback
+- **AND** the user can submit the next ordinary message

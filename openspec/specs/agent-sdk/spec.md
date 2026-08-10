@@ -77,3 +77,11 @@ When iterating events from `send()` or `subscribe()`, if a `permission_request` 
 
 - **WHEN** the iterator has yielded a `permission_request` event with `requestId: R1` and no resolver calls the server for 5 minutes
 - **THEN** the iterator SHALL yield `{ type: "permission_timeout", requestId: "R1" }` and complete
+
+### Requirement: User-input handoff events
+SDK event streams SHALL expose `user_input_required` with `request` and optional `kind`, followed by `run_finished` with reason `waiting_for_input` after lifecycle hooks complete.
+
+#### Scenario: Integration marks a session waiting
+- **WHEN** an agent requests human assistance
+- **THEN** the client can read the exact request before the terminal waiting reason
+- **AND** later send the user's response through the ordinary message API

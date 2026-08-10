@@ -5,6 +5,7 @@ Chimera is a terminal-native AI coding agent:
 - **TUI-first** for interactive use (Ink-based).
 - **SDK-first**: every consumer — the TUI, future Slack harnesses, future subagents — talks to the same `ChimeraClient` over HTTP + SSE, so there is no "side channel" behavior.
 - **Permission-aware**: every shell call that would leave the agent's controlled scope is gated. Rules can be remembered session- or project-wide.
+- **Human handoffs**: agents can call `request_user_input` to end a run with an actionable request and notify integrations through a lifecycle hook.
 - **Shape-based providers**: any OpenAI-compatible or Anthropic-compatible endpoint works via `baseUrl` + `apiKey`.
 
 MCP is intentionally **not** in this release; it's a self-contained follow-on change. Docker sandbox, skills, user-defined slash commands, and subagents (`spawn_agent`) are in.
@@ -89,6 +90,8 @@ One-shot:
 chimera run "run the test suite and fix any failures"
 chimera run --json "list the top-level files" > events.ndjson
 ```
+
+When progress requires a person, the agent can use `request_user_input`. Chimera emits a machine-readable handoff and ends that run without another model step; see [Requesting user input](docs/request-user-input.md).
 
 Start just the server (useful for attaching from another terminal):
 

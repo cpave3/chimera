@@ -2,7 +2,7 @@ import type { AgentEvent } from '@chimera/core';
 
 export interface DriveResult {
   finalText: string;
-  reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout';
+  reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' | 'waiting_for_input';
   errorMessage?: string;
   steps: number;
   toolCallsCount: number;
@@ -61,6 +61,8 @@ export async function driveSubagent(
         if (ev.reason === 'stop') reason = 'stop';
         else if (ev.reason === 'max_steps') reason = 'max_steps';
         else if (ev.reason === 'interrupted') reason = 'interrupted';
+        else if (ev.reason === 'timeout') reason = 'timeout';
+        else if (ev.reason === 'waiting_for_input') reason = 'waiting_for_input';
         else {
           reason = 'error';
           errorMessage = ev.error;

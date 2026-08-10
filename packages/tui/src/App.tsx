@@ -479,11 +479,13 @@ export function App(props: AppProps): React.ReactElement {
       } else if (inner.type === 'permission_resolved' || inner.type === 'permission_timeout') {
         setPending((p) => (p && p.requestId === inner.requestId ? null : p));
       }
+    } else if (ev.type === 'user_input_required') {
+      scrollback.addInfo(`Waiting for input: ${ev.request}`);
     } else if (ev.type === 'run_finished') {
       setRunning(false);
       setStreaming(false);
       setVisionRouteRef(null);
-      if (ev.reason !== 'stop') {
+      if (ev.reason !== 'stop' && ev.reason !== 'waiting_for_input') {
         const statusMsg =
           ev.reason === 'max_steps'
             ? "run ended: max steps reached; type 'continue' to resume"

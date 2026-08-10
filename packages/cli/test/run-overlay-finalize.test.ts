@@ -58,6 +58,7 @@ describe('finalizeOverlay', () => {
     'error',
     'interrupted',
     'timeout',
+    'waiting_for_input',
   ] as const)("discards (no apply) on exit '%s' even with applyOnSuccess=true", async (reason) => {
     await finalizeOverlay({
       sessionId: SESSION,

@@ -28,7 +28,7 @@ The `Agent.run(userMessage)` method SHALL return an `AsyncIterable<AgentEvent>` 
 
 The loop SHALL translate `fullStream` parts to `AgentEvent`s as follows: `text-delta` → `assistant_text_delta`; `text` (accumulated) → `assistant_text_done`; `tool-call` → `tool_call_start` with the resolved `target`; `tool-result` → `tool_call_result`; `tool-error` → `tool_call_error`; `finish-step` → `step_finished`; `finish` ends the stream.
 
-The final event emitted SHALL be `run_finished` with a `reason` in `{"stop","max_steps","error","interrupted"}` and an optional `error` string.
+The final event emitted SHALL be `run_finished` with a `reason` in `{"stop","max_steps","error","interrupted","timeout","waiting_for_input"}` and an optional `error` string.
 
 #### Scenario: Single-turn run with no tool calls
 
@@ -100,3 +100,16 @@ Every state change that a consumer needs to observe (assistant text, tool calls,
 
 - **WHEN** a consumer records every event yielded from `run()` and replays them into an empty UI state machine
 - **THEN** the reconstructed UI SHALL be byte-equal to one that had observed the run live, including tool calls, permission prompts, and final assistant text
+
+### Requirement: Waiting-for-input terminal state
+The agent SHALL terminate a user-input handoff only after the current provider-emitted tool-call batch settles, SHALL set the live session status to `waiting_for_input`, and SHALL not invoke the model again in that run.
+
+#### Scenario: Handoff terminal ordering
+- **WHEN** a tool requests user input
+- **THEN** all current-batch tool results precede `user_input_required`
+- **AND** the awaited lifecycle hook completes before `run_finished { reason: "waiting_for_input" }`
+
+#### Scenario: Child handoff boundary
+- **WHEN** a child agent requests user input
+- **THEN** only the child run terminates as `waiting_for_input`
+- **AND** the parent receives the nested event and child result

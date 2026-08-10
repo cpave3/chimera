@@ -117,6 +117,61 @@ describe('chimera run E2E (stub provider)', () => {
     // The real assertion is that the run completed cleanly.
   });
 
+  it('exits 0 when the agent requests user input', { timeout: 20000 }, async () => {
+    let agent: Agent;
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: 'request-1',
+              toolName: 'request_user_input',
+              input: JSON.stringify({ request: 'Run X and paste the output', kind: 'action' }),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+    const factory: AgentFactory = {
+      build: async (init) => {
+        const executor = new LocalExecutor({ cwd: init.cwd });
+        const built = buildTools({
+          sandboxExecutor: executor,
+          hostExecutor: executor,
+          sandboxMode: 'off',
+          requestUserInput: async (request) => agent.requestUserInput(request),
+        });
+        agent = new Agent({
+          cwd: init.cwd,
+          model: init.model,
+          languageModel: model,
+          tools: built.tools,
+          sandboxMode: init.sandboxMode,
+          home,
+          contextWindow: 200_000,
+        });
+        return { agent };
+      },
+    };
+
+    const result = await runOneShot({
+      prompt: 'continue',
+      cwd: workspace,
+      home,
+      factoryOverride: factory,
+      modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+    });
+
+    expect(result.exitCode).toBe(0);
+  });
+
   it('--add-read-path and --add-write-path reach the factory', { timeout: 20000 }, async () => {
     const extraRead = join(home, 'allowed-read');
     const extraWrite = join(home, 'allowed-write');

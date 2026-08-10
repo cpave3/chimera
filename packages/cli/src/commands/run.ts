@@ -3,7 +3,13 @@ import { Compactor } from '@chimera/compaction';
 import type { ModelConfig, SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
-import { type AgentFactory, AgentRegistry, buildApp, startServer, type ModelListEntry } from '@chimera/server';
+import {
+  type AgentFactory,
+  AgentRegistry,
+  buildApp,
+  type ModelListEntry,
+  startServer,
+} from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
 import {
@@ -232,7 +238,13 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     sessionId = sessionResult.sessionId;
 
     let finalText = '';
-    let exitReason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout' = 'stop';
+    let exitReason:
+      | 'stop'
+      | 'error'
+      | 'max_steps'
+      | 'interrupted'
+      | 'timeout'
+      | 'waiting_for_input' = 'stop';
     let errorMessage: string | undefined;
 
     const activeSessionId = sessionId;
@@ -252,6 +264,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         process.stderr.write(`[tool] ${ev.name} ${formatArgsShort(ev.args)}\n`);
       } else if (ev.type === 'tool_call_error') {
         process.stderr.write(`[tool error] ${ev.error}\n`);
+      } else if (ev.type === 'user_input_required') {
+        process.stderr.write(`[waiting for input] ${ev.request}\n`);
       }
       if (ev.type === 'run_finished') {
         exitReason = ev.reason;
@@ -296,7 +310,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 export interface FinalizeOverlayInput {
   sessionId: string;
   cwd: string;
-  exitReason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout';
+  exitReason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout' | 'waiting_for_input';
   applyOnSuccess: boolean;
 }
 
@@ -312,8 +326,10 @@ export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void
   await discardOverlay(input.sessionId);
 }
 
-function exitCodeFor(reason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout'): number {
-  if (reason === 'stop') return 0;
+function exitCodeFor(
+  reason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout' | 'waiting_for_input',
+): number {
+  if (reason === 'stop' || reason === 'waiting_for_input') return 0;
   if (reason === 'max_steps') return 2;
   if (reason === 'interrupted') return 130;
   return 1;

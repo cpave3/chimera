@@ -117,6 +117,32 @@ exit 1
     expect((await readFile(envOut, 'utf8')).trim()).toBe('OnError');
   });
 
+  it('passes actionable requests to observational UserInputRequired hooks', async () => {
+    const captured = join(root, 'user-input-required.json');
+    await dropScript(
+      'UserInputRequired',
+      'notify.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+`,
+    );
+
+    const result = await newRunner().fire({
+      event: 'UserInputRequired',
+      request: 'Run X and paste the output',
+      kind: 'action',
+    });
+
+    expect(result.blocked).toBe(false);
+    expect(JSON.parse(await readFile(captured, 'utf8'))).toEqual({
+      event: 'UserInputRequired',
+      session_id: sessionId,
+      cwd,
+      request: 'Run X and paste the output',
+      kind: 'action',
+    });
+  });
+
   it('passes SessionCreated identity and optional name to hooks', async () => {
     const captured = join(root, 'session-created.json');
     await dropScript(

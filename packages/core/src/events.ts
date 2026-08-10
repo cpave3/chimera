@@ -119,6 +119,11 @@ export type AgentEvent =
       exitCode: number | null;
     }
   | { type: 'task_list_updated'; tasks: TaskItem[] }
+  | {
+      type: 'user_input_required';
+      request: string;
+      kind?: 'information' | 'action';
+    }
   | { type: 'step_finished'; stepNumber: number; finishReason: string }
   | {
       type: 'usage_updated';
@@ -129,7 +134,7 @@ export type AgentEvent =
     }
   | {
       type: 'run_finished';
-      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout';
+      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' | 'waiting_for_input';
       error?: string;
     }
   | {
@@ -189,7 +194,7 @@ export type PersistedEvent =
     }
   | {
       type: 'run_finished';
-      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout';
+      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' | 'waiting_for_input';
       error?: string;
     }
   | {

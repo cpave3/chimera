@@ -7,8 +7,8 @@ import { ContextTracker, shouldCompact } from './context-tracker';
 import { EventQueue } from './event-queue';
 import { type AgentEvent, type ToolDisplay } from './events';
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
-import type { PermissionRequest, PermissionResolution } from './interfaces';
 import { readImageDimensions } from './image-header';
+import type { PermissionRequest, PermissionResolution } from './interfaces';
 import { elideImageToolResults } from './message-parts';
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
@@ -57,6 +57,15 @@ export interface TimeoutHook {
 
 export interface InterruptHook {
   fire(): Promise<void>;
+}
+
+export interface UserInputRequest {
+  request: string;
+  kind?: 'information' | 'action';
+}
+
+export interface UserInputRequiredHook {
+  fire(request: UserInputRequest): Promise<void>;
 }
 
 export interface AgentOptions {
@@ -129,6 +138,8 @@ export interface AgentOptions {
    * or Ctrl+C in the TUI). Purely observational.
    */
   interruptHook?: InterruptHook;
+  /** Awaited before a user-input handoff emits its terminal run event. */
+  userInputRequiredHook?: UserInputRequiredHook;
   /**
    * Per-step wall-clock timeout for LLM `streamText` calls (ms).
    * A value of `0` disables the timeout. Defaults to 120000.
@@ -175,6 +186,7 @@ export class Agent {
     }
   >();
   private currentQueue: EventQueue<AgentEvent> | null = null;
+  private pendingUserInputRequest: UserInputRequest | null = null;
   private running = false;
   private static readonly MAX_STOP_RETRIES = 5;
   private toolFormatters: Record<string, ToolFormatter> = {};
@@ -384,6 +396,13 @@ export class Agent {
         reason: req.reason,
       });
     });
+  }
+
+  requestUserInput(request: UserInputRequest): void {
+    if (this.pendingUserInputRequest) {
+      throw new Error('User input has already been requested in this run');
+    }
+    this.pendingUserInputRequest = request;
   }
 
   /**
@@ -1019,6 +1038,7 @@ export class Agent {
     imagePaths?: string[],
   ): Promise<void> {
     this.session.status = 'running';
+    this.pendingUserInputRequest = null;
 
     // Drain any queued mode switch before the user message lands. The resolver
     // is responsible for recomposing the system prompt, filtering tools, and
@@ -1191,7 +1211,13 @@ export class Agent {
 
     let stepNumber = 0;
     let terminalStepCount = 0;
-    let terminalReason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' = 'stop';
+    let terminalReason:
+      | 'stop'
+      | 'max_steps'
+      | 'error'
+      | 'interrupted'
+      | 'timeout'
+      | 'waiting_for_input' = 'stop';
     let errorMessage: string | undefined;
     let stopRetryCount = 0;
     // Lazy once-per-run probe of the vision fallback, used to word image
@@ -1690,6 +1716,12 @@ export class Agent {
             this.session.messages.push(...(response.messages as ModelMessage[]));
           }
 
+          const userInputRequest = this.pendingUserInputRequest as UserInputRequest | null;
+          if (userInputRequest) {
+            terminalReason = 'waiting_for_input';
+            queue.push({ type: 'user_input_required', ...userInputRequest });
+          }
+
           // Inject queued images as a user message so the model sees them as
           // vision inputs on the next turn. Do this after the response messages
           // are attached so the image parts land in the right order.
@@ -1857,6 +1889,13 @@ export class Agent {
       if (terminalReason === 'interrupted' && this.opts.interruptHook) {
         await this.opts.interruptHook.fire();
       }
+      if (
+        terminalReason === 'waiting_for_input' &&
+        this.pendingUserInputRequest &&
+        this.opts.userInputRequiredHook
+      ) {
+        await this.opts.userInputRequiredHook.fire(this.pendingUserInputRequest);
+      }
 
       // Stop hook: only for clean "stop", not error/interrupted/timeout.
       if (
@@ -1887,7 +1926,11 @@ export class Agent {
     }
 
     this.session.status =
-      terminalReason === 'error' || terminalReason === 'timeout' ? 'error' : 'idle';
+      terminalReason === 'waiting_for_input'
+        ? 'waiting_for_input'
+        : terminalReason === 'error' || terminalReason === 'timeout'
+          ? 'error'
+          : 'idle';
     try {
       await persistSession(
         this.session,

@@ -1,5 +1,5 @@
-import { countImageParts } from '@chimera/core';
 import type { AgentEvent, CallId, Session, ToolCallRecord, ToolDisplay } from '@chimera/core';
+import { countImageParts } from '@chimera/core';
 
 /**
  * Structural type matching `@chimera/tools`' `FormatScrollback<I, O>`. Defined
@@ -758,6 +758,18 @@ export class Scrollback {
             id: this.newId(),
             kind: 'subagent',
             text: previewLine(inner.text),
+            subagentId: id,
+            subagentStatus: 'running',
+            parentEntryId,
+          });
+          dirty = true;
+          return;
+        }
+        if (inner.type === 'user_input_required') {
+          this.entries.push({
+            id: this.newId(),
+            kind: 'subagent',
+            text: `waiting for input: ${inner.request}`,
             subagentId: id,
             subagentStatus: 'running',
             parentEntryId,

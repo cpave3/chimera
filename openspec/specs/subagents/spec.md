@@ -154,3 +154,11 @@ Every successfully spawned child-process subagent SHALL:
 - **WHEN** a parent has one or more active child subagents and the user types `/subagents`
 - **THEN** the parent's TUI SHALL display each active child's full `subagentId` alongside its `purpose`, `status`, and server `url`, so the user can copy the id and run `chimera attach <subagentId>` from another terminal
 - **AND** every rendered `subagent_event` block in the parent's transcript SHALL include the subagent's id in its header label
+
+### Requirement: Child user-input handoff
+Subagent results SHALL represent `waiting_for_input` distinctly and SHALL forward the nested handoff event without automatically terminating the parent run.
+
+#### Scenario: Child needs human assistance
+- **WHEN** a child session ends with `waiting_for_input`
+- **THEN** the parent observes the child request and waiting result
+- **AND** decides independently whether to continue or hand off

@@ -109,3 +109,16 @@ If `old_string` occurs zero times, the call SHALL error with message `"old_strin
 
 - **WHEN** `edit` is called with `replace_all` unset on a file where `old_string` appears twice
 - **THEN** the file SHALL NOT be modified and the tool SHALL return an error result naming the count of matches
+
+### Requirement: Agent-requested user input handoff
+The system SHALL expose an always-available `request_user_input` tool accepting an actionable `request` and optional `kind` (`information` or `action`). Calling it SHALL preserve a successful tool result, allow sibling calls already emitted in that provider step to settle, and prevent a subsequent model step in the same run.
+
+#### Scenario: Tool hands control to the user
+- **WHEN** the model calls `request_user_input`
+- **THEN** the system emits `user_input_required` with the exact request
+- **AND** finishes the run with reason `waiting_for_input`
+- **AND** the next ordinary user message starts a fresh run with the prior tool exchange in history
+
+#### Scenario: Restricted tool surface
+- **WHEN** a mode or agent definition restricts its available tools
+- **THEN** `request_user_input` remains available
