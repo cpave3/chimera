@@ -6,9 +6,9 @@
 
 ## 2. Effect and path analysis
 
-- [ ] 2.1 Extract and test shared canonical containment/effective-root helpers from `LocalExecutor`
-- [ ] 2.2 Implement Bash AST dynamic-construct detection and known-command effect facts with vertical TDD slices
-- [ ] 2.3 Implement read/write/delete root authorization, symlink handling, and conservative grant proposals with vertical TDD slices
+- [x] 2.1 Extract and test shared canonical containment/effective-root helpers from `LocalExecutor`
+- [x] 2.2 Implement Bash AST dynamic-construct detection and known-command effect facts with vertical TDD slices
+- [x] 2.3 Implement read/write/delete root authorization, symlink handling, and conservative grant proposals with vertical TDD slices
 
 ## 3. Permission and bash routing
 

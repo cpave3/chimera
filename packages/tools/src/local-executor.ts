@@ -12,7 +12,14 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
+import type {
+  CommandPolicyRoots,
+  DirEntry,
+  ExecOptions,
+  ExecResult,
+  Executor,
+  StatResult,
+} from '@chimera/core';
 import { PathEscapeError } from './errors';
 
 /**
@@ -97,6 +104,16 @@ export class LocalExecutor implements Executor {
   /** Return a shallow copy of the current write-allow directories. */
   listWriteAllowDirs(): readonly string[] {
     return [...this.writeAllowDirs];
+  }
+
+  commandPolicyRoots(): CommandPolicyRoots {
+    const write = Object.freeze([this.rootCwd, ...this.writeAllowDirs]);
+    const read = Object.freeze([
+      this.rootCwd,
+      ...this.readAllowDirs.filter((path) => !write.includes(path)),
+      ...this.writeAllowDirs,
+    ]);
+    return { read, write };
   }
 
   cwd(): string {

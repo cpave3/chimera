@@ -3,6 +3,7 @@ import type {
   CommandPolicyContext,
   CommandPolicyFact,
   CommandPolicyFinding,
+  CommandPolicyGrantProposal,
   CommandPolicyStage,
   CommandPolicyStageSummary,
 } from '@chimera/core';
@@ -14,12 +15,16 @@ export class CommandPolicyPipeline {
     const facts: CommandPolicyFact[] = [];
     const findings: CommandPolicyFinding[] = [];
     const stages: CommandPolicyStageSummary[] = [];
+    let grantProposal: CommandPolicyGrantProposal | undefined;
 
     for (const stage of this.stages) {
       try {
         const result = await stage.evaluate({ ...context, facts });
         if (result.facts) facts.push(...result.facts);
         const stageFindings = result.status === 'findings' ? result.findings : [];
+        if (result.status === 'findings' && result.grantProposal) {
+          grantProposal = result.grantProposal;
+        }
         findings.push(...stageFindings);
         stages.push({ id: stage.id, status: result.status, findings: stageFindings });
       } catch (error) {
@@ -37,6 +42,7 @@ export class CommandPolicyPipeline {
       outcome: findings.length === 0 ? 'pass' : 'approval_required',
       stages,
       findings,
+      ...(grantProposal ? { grantProposal } : {}),
     };
   }
 }

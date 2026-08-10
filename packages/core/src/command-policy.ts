@@ -44,9 +44,21 @@ export type CommandPolicyFinding =
       message: string;
     };
 
-export interface CommandPolicyFact {
-  kind: string;
-  [key: string]: unknown;
+export type CommandPolicyFact =
+  | {
+      kind: 'shell_effect';
+      operation: 'read' | 'write' | 'delete';
+      path: string;
+    }
+  | {
+      kind: string;
+      [key: string]: unknown;
+    };
+
+export interface CommandPolicyGrantProposal {
+  id: string;
+  kind: 'read' | 'write';
+  path: string;
 }
 
 export type CommandPolicyStageResult =
@@ -55,6 +67,7 @@ export type CommandPolicyStageResult =
       status: 'findings';
       facts?: CommandPolicyFact[];
       findings: CommandPolicyFinding[];
+      grantProposal?: CommandPolicyGrantProposal;
     };
 
 export interface CommandPolicyStageContext extends CommandPolicyContext {
@@ -76,9 +89,5 @@ export interface CommandPolicyAnalysis {
   outcome: 'pass' | 'approval_required';
   stages: CommandPolicyStageSummary[];
   findings: CommandPolicyFinding[];
-  grantProposal?: {
-    id: string;
-    kind: 'read' | 'write';
-    path: string;
-  };
+  grantProposal?: CommandPolicyGrantProposal;
 }
