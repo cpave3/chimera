@@ -16,14 +16,15 @@ describe('skills ↔ composeSystemPrompt integration', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  it('empty registry contributes no header to the composed prompt', () => {
+  it('built-in registry contributes its skill index to the composed prompt', () => {
     const reg = loadSkills({ cwd: home, userHome: home });
     const prompt = composeSystemPrompt({
       cwd: home,
       home,
       extensions: [() => reg.buildIndex() || null],
     });
-    expect(prompt).not.toContain('# Available skills');
+    expect(prompt).toContain('# Available skills');
+    expect(prompt).toContain('review-bash-policy');
   });
 
   it('populated registry appends the index block after AGENTS.md content', async () => {

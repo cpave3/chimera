@@ -7,6 +7,7 @@ import { runCommandsList } from './commands/commands';
 import { runHooksList } from './commands/hooks';
 import { runInteractive } from './commands/interactive';
 import { runLs } from './commands/ls';
+import { runBashPolicyReview } from './commands/policy-review';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
 import { runServe } from './commands/serve';
@@ -304,6 +305,23 @@ export function buildProgram(): Command {
     .option('-a, --all', 'List sessions from every directory', false)
     .action(async (opts) => {
       await runSessionsList({ cwd: opts.cwd, all: opts.all });
+    });
+  sessions
+    .command('review-bash <id>')
+    .description('Review bash commands and permission outcomes from a persisted session.')
+    .option('--cwd <path>', 'Scope suffix matching to this directory', process.cwd())
+    .option('-a, --all', 'Resolve suffix across every directory', false)
+    .option('--json', 'Emit structured JSON', false)
+    .action(async (id: string, options: { cwd?: string; all?: boolean; json?: boolean }) => {
+      try {
+        const resolved = await resolveSessionId(id, {
+          cwd: options.all ? undefined : options.cwd,
+        });
+        await runBashPolicyReview({ sessionId: resolved, json: options.json });
+      } catch (err) {
+        process.stderr.write(`${(err as Error).message}\n`);
+        process.exitCode = 1;
+      }
     });
   sessions
     .command('rm <id>')

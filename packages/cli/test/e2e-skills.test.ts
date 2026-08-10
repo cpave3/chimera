@@ -42,8 +42,11 @@ describe('chimera skills E2E', () => {
 
     const out = await capture(() => runSkillsList({ cwd: workspace, home, json: true }));
     const data = JSON.parse(out);
-    expect(data).toHaveLength(1);
-    expect(data[0]).toMatchObject({ name: 'pdf', source: 'project' });
+    expect(data).toHaveLength(2);
+    expect(data).toContainEqual(expect.objectContaining({ name: 'pdf', source: 'project' }));
+    expect(data).toContainEqual(
+      expect.objectContaining({ name: 'review-bash-policy', source: 'builtin' }),
+    );
   });
 
   it('lists a project-scoped Codex skill as JSON', async () => {
@@ -55,8 +58,11 @@ describe('chimera skills E2E', () => {
 
     const out = await capture(() => runSkillsList({ cwd: workspace, home, json: true }));
     const data = JSON.parse(out);
-    expect(data).toHaveLength(1);
-    expect(data[0]).toMatchObject({ name: 'pdf', source: 'codex-project' });
+    expect(data).toHaveLength(2);
+    expect(data).toContainEqual(expect.objectContaining({ name: 'pdf', source: 'codex-project' }));
+    expect(data).toContainEqual(
+      expect.objectContaining({ name: 'review-bash-policy', source: 'builtin' }),
+    );
   });
 
   it('prefers .chimera tier over .claude tier on a name collision', async () => {

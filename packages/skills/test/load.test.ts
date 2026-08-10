@@ -15,6 +15,12 @@ describe('loadSkills discovery', () => {
     await rm(home, { recursive: true, force: true });
   });
 
+  it('loads the built-in bash policy review skill by default', () => {
+    const registry = loadSkills({ cwd: home, userHome: home });
+
+    expect(registry.find('review-bash-policy')).toMatchObject({ source: 'builtin' });
+  });
+
   it('loads a project skill with valid frontmatter', async () => {
     const cwd = join(home, 'proj');
     await mkdir(join(cwd, '.chimera', 'skills', 'pdf'), { recursive: true });
@@ -231,10 +237,10 @@ describe('loadSkills discovery', () => {
     expect(registry.find('team')?.source).toBe('ancestor');
   });
 
-  it('returns an empty registry when nothing exists', () => {
+  it('returns only built-in skills when no configured tiers exist', () => {
     const registry = loadSkills({ cwd: home, userHome: home });
-    expect(registry.all()).toEqual([]);
-    expect(registry.paths().size).toBe(0);
+    expect(registry.all().map((skill) => skill.name)).toEqual(['review-bash-policy']);
+    expect(registry.paths().size).toBe(1);
   });
 
   it('all() is stable-sorted by name', async () => {
@@ -250,7 +256,7 @@ describe('loadSkills discovery', () => {
       '---\nname: alpha\ndescription: a\n---',
     );
     const registry = loadSkills({ cwd, userHome: home });
-    expect(registry.all().map((s) => s.name)).toEqual(['alpha', 'bravo']);
+    expect(registry.all().map((s) => s.name)).toEqual(['alpha', 'bravo', 'review-bash-policy']);
   });
 
   it('paths() returns the absolute SKILL.md locations', async () => {
@@ -262,7 +268,8 @@ describe('loadSkills discovery', () => {
     );
     const registry = loadSkills({ cwd, userHome: home });
     const paths = registry.paths();
-    expect(paths.size).toBe(1);
-    expect([...paths][0]).toMatch(/\.chimera\/skills\/pdf\/SKILL\.md$/);
+    expect(paths.size).toBe(2);
+    expect([...paths].some((path) => /\.chimera\/skills\/pdf\/SKILL\.md$/.test(path))).toBe(true);
+    expect([...paths].some((path) => /review-bash-policy\/SKILL\.md$/.test(path))).toBe(true);
   });
 });

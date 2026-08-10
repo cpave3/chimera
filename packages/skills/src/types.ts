@@ -10,7 +10,8 @@ export type SkillSource =
   | 'codex-user'
   | 'agents-project'
   | 'agents-ancestor'
-  | 'agents-user';
+  | 'agents-user'
+  | 'builtin';
 
 export interface Skill {
   /** Matches the directory name that contains the SKILL.md file. */

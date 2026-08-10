@@ -1,10 +1,10 @@
-export * from './config';
-export * from './lockfile';
-export * from './factory';
-export * from './program';
-export * from './compaction';
-export { runOneShot, type RunOptions } from './commands/run';
-export { runServe, type ServeOptions } from './commands/serve';
+export { resolveAttachTarget, runAttach } from './commands/attach';
 export { runLs } from './commands/ls';
+export { type RunOptions, runOneShot } from './commands/run';
+export { runServe, type ServeOptions } from './commands/serve';
 export { runSessionsList, runSessionsRm } from './commands/sessions';
-export { runAttach, resolveAttachTarget } from './commands/attach';
+export * from './compaction';
+export * from './config';
+export * from './factory';
+export * from './lockfile';
+export * from './program';

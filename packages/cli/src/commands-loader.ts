@@ -1,4 +1,4 @@
-import { loadCommands, ReloadingCommandRegistry, type CommandRegistry } from '@chimera/commands';
+import { type CommandRegistry, loadCommands, ReloadingCommandRegistry } from '@chimera/commands';
 import type { ChimeraConfig } from './config';
 
 export interface LoadRegistryOpts {

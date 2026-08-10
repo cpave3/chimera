@@ -80,7 +80,10 @@ export async function runAttach(opts: AttachOptions): Promise<void> {
     commands: commandRegistry,
     skills: skillRegistry,
     modes: modeRegistry,
-    cycleModes: modeRegistry.all().filter((m) => m.cycle).map((m) => m.name),
+    cycleModes: modeRegistry
+      .all()
+      .filter((m) => m.cycle)
+      .map((m) => m.name),
     initialMode: currentMode.mode,
     sandboxMode: session.sandboxMode,
     // Attaching clients cannot perform owner-local overlay operations

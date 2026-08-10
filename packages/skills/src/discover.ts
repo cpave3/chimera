@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildTiers, parseFrontmatter } from '@chimera/core';
 import type { LoadSkillsOptions, Skill, SkillCollision, SkillSource } from './types';
 
@@ -9,6 +10,10 @@ export interface DiscoverResult {
 }
 
 export function discover(opts: LoadSkillsOptions): DiscoverResult {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const builtinDir = moduleDir.endsWith(`${join('packages', 'skills', 'src')}`)
+    ? join(moduleDir, '../builtin')
+    : join(moduleDir, 'builtin');
   const tiers = buildTiers({
     cwd: opts.cwd,
     userHome: opts.userHome,
@@ -16,6 +21,7 @@ export function discover(opts: LoadSkillsOptions): DiscoverResult {
     includeCodexCompat: opts.includeCodexCompat ?? true,
     includeAgentsCompat: opts.includeAgentsCompat ?? true,
     assetType: 'skills',
+    builtinDir,
   });
   const byName = new Map<string, Skill>();
   const collisions: SkillCollision[] = [];

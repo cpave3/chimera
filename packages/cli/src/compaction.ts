@@ -4,8 +4,8 @@ import {
   DEFAULT_THRESHOLD_PERCENT,
   type MessagePruner,
 } from '@chimera/compaction';
-import { createRecallPruner, RecallStore } from '@chimera/recall';
 import type { CompactionConfig } from '@chimera/core';
+import { createRecallPruner, RecallStore } from '@chimera/recall';
 import type { ChimeraConfig } from './config';
 
 /**
