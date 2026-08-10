@@ -100,10 +100,15 @@ export class ShellEffectsStage implements CommandPolicyStage {
 }
 
 function isReadOnlyGit(args: string[], flags: string[]): boolean {
-  if (flags.includes('-C') || flags.some((flag) => flag.startsWith('--git-dir'))) return false;
   const subcommand = args[0];
   if (!subcommand || !['branch', 'log', 'status'].includes(subcommand)) return false;
-  return args.length === 1;
+  if (args.length !== 1) return false;
+  const safeFlags: Record<string, Set<string>> = {
+    branch: new Set(['-a', '--all', '-r', '--remotes', '-v', '--verbose']),
+    log: new Set(['--decorate', '--oneline', '--stat']),
+    status: new Set(['--branch', '--porcelain', '--short']),
+  };
+  return flags.every((flag) => safeFlags[subcommand]?.has(flag));
 }
 
 function redirectPath(analysis: { hasRedirect: boolean; paths: string[] }): string | undefined {

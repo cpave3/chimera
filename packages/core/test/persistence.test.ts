@@ -67,6 +67,15 @@ describe('persistence', () => {
     ]);
   });
 
+  it('persists pending permission feedback across reload', async () => {
+    const session = makeSession({ pendingPermissionFeedback: ['Use the project cache'] });
+
+    await writeSessionMetadata(session, home);
+    const loaded = await loadSession(session.id, home);
+
+    expect(loaded?.pendingPermissionFeedback).toEqual(['Use the project cache']);
+  });
+
   it('writes session.json without messages or toolCalls and appends event line', async () => {
     const session = makeSession();
     await persistSession(

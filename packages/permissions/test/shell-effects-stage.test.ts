@@ -34,6 +34,8 @@ describe('ShellEffectsStage', () => {
       'git clean -fd',
       'git -C /outside status',
       'git diff --no-index /etc/shadow ./local-file',
+      'git --work-tree=/outside status',
+      'git log --output=/outside/file',
     ]) {
       await expect(stage.evaluate({ ...context, command })).resolves.toMatchObject({
         status: 'findings',
