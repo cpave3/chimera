@@ -68,7 +68,8 @@ export type CommandPolicyStageResult =
       facts?: CommandPolicyFact[];
       findings: CommandPolicyFinding[];
       grantProposal?: CommandPolicyGrantProposal;
-    };
+    }
+  | { status: 'error'; message: string };
 
 export interface CommandPolicyStageContext extends CommandPolicyContext {
   facts: readonly CommandPolicyFact[];

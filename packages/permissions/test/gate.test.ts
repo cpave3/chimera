@@ -144,6 +144,30 @@ describe('DefaultPermissionGate', () => {
     expect(raised).toBe(0);
   });
 
+  it('applies matching deny rules before safe-command auto-approval', async () => {
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'host',
+      raiseRequest: async () => ({ decision: 'allow', remembered: false }),
+    });
+    gate.addRule(
+      {
+        tool: 'bash',
+        target: 'host',
+        pattern: 'echo safe',
+        patternKind: 'exact',
+        decision: 'deny',
+        createdAt: Date.now(),
+      },
+      'session',
+    );
+
+    await expect(gate.request(req({ command: 'echo safe' }))).resolves.toMatchObject({
+      decision: 'deny',
+      denialSource: 'rule',
+    });
+  });
+
   it('auto-approves host calls at level=host', async () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({

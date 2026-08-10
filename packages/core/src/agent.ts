@@ -426,17 +426,16 @@ export class Agent {
     return this.pendingPermissions.get(requestId)?.request;
   }
 
-  resolvePermission(
+  async resolvePermission(
     requestId: string,
     decision: 'allow' | 'deny',
     remember?: RememberScope,
     feedback?: string,
-  ): void {
+  ): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request: ${requestId}`);
     }
-    this.pendingPermissions.delete(requestId);
 
     if (remember && this.rememberHandler) {
       this.rememberHandler(requestId, remember, pending.request);
@@ -444,8 +443,14 @@ export class Agent {
     if (feedback) {
       this.session.pendingPermissionFeedback ??= [];
       this.session.pendingPermissionFeedback.push(feedback);
-      void writeSessionMetadata(this.session, this.opts.home);
+      try {
+        await writeSessionMetadata(this.session, this.opts.home);
+      } catch (error) {
+        this.session.pendingPermissionFeedback.pop();
+        throw error;
+      }
     }
+    this.pendingPermissions.delete(requestId);
 
     pending.resolve({ decision, remembered: !!remember });
     this.session.status = 'running';

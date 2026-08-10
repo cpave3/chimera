@@ -1,5 +1,5 @@
 import type { LanguageModel } from 'ai';
-import type { CommandPolicyAnalysis } from './command-policy';
+import type { CommandPolicyAnalysis, CommandPolicyGrantProposal } from './command-policy';
 import type { ExecutionTarget, RememberScope } from './types';
 
 export interface ExecOptions {
@@ -68,7 +68,7 @@ export type PermissionDecisionAction =
   | { decision: 'deny'; feedback?: string }
   | {
       decision: 'allow_with_grant';
-      grant: { id: string; kind: 'read' | 'write'; path: string };
+      grant: CommandPolicyGrantProposal;
     };
 
 export interface PermissionResolution {

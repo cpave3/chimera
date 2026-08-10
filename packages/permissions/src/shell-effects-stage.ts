@@ -101,7 +101,9 @@ export class ShellEffectsStage implements CommandPolicyStage {
 
 function isReadOnlyGit(args: string[], flags: string[]): boolean {
   if (flags.includes('-C') || flags.some((flag) => flag.startsWith('--git-dir'))) return false;
-  return ['branch', 'diff', 'log', 'show', 'status'].includes(args[0] ?? '');
+  const subcommand = args[0];
+  if (!subcommand || !['branch', 'log', 'status'].includes(subcommand)) return false;
+  return args.length === 1;
 }
 
 function redirectPath(analysis: { hasRedirect: boolean; paths: string[] }): string | undefined {

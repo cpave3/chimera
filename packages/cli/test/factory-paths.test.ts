@@ -37,6 +37,24 @@ describe('CliAgentFactory.addSessionPath', () => {
     });
   }
 
+  it('rolls back live roots when session metadata persistence fails', async () => {
+    const invalidHome = join(cwd, 'not-a-directory');
+    await writeFile(invalidHome, 'file');
+    const factory = makeFactory(invalidHome);
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-6', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const executor = factory.getLocalExecutor(agent.session.id)!;
+    const before = executor.commandPolicyRoots();
+
+    await expect(factory.addSessionPath(agent.session.id, 'write', outsideDir)).rejects.toThrow();
+
+    expect(executor.commandPolicyRoots()).toEqual(before);
+    expect(agent.session.additionalWritePaths).not.toContain(outsideDir);
+  });
+
   it('adding a read path makes executor.readFile succeed where it previously threw PathEscapeError', async () => {
     const factory = makeFactory(cwd);
     const { agent } = await factory.build({

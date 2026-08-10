@@ -29,6 +29,7 @@ export class CommandPolicyPipeline {
           Math.max(1, deadline - Date.now()),
         );
         validateResult(result);
+        if (result.status === 'error') throw new Error(result.message);
         if (result.facts) facts.push(...result.facts);
         const stageFindings = result.status === 'findings' ? result.findings : [];
         if (result.status === 'findings' && result.grantProposal) {
@@ -58,13 +59,22 @@ export class CommandPolicyPipeline {
 }
 
 function validateResult(result: CommandPolicyStageResult): void {
-  if (!result || (result.status !== 'pass' && result.status !== 'findings')) {
+  if (
+    !result ||
+    (result.status !== 'pass' && result.status !== 'findings' && result.status !== 'error')
+  ) {
     throw new Error('stage returned malformed result');
   }
-  if (result.status === 'findings' && !Array.isArray(result.findings)) {
+  if (result.status === 'error' && !result.message) {
+    throw new Error('stage returned malformed error');
+  }
+  if (
+    result.status === 'findings' &&
+    (!Array.isArray(result.findings) || result.findings.length === 0)
+  ) {
     throw new Error('stage returned malformed findings');
   }
-  if (result.facts && !Array.isArray(result.facts)) {
+  if (result.status !== 'error' && result.facts && !Array.isArray(result.facts)) {
     throw new Error('stage returned malformed facts');
   }
 }

@@ -1219,7 +1219,7 @@ describe('Agent', () => {
       },
     });
     const p = agent.raisePermissionRequest(req);
-    agent.resolvePermission(req.requestId, 'allow');
+    await agent.resolvePermission(req.requestId, 'allow');
     const res = await p;
     expect(res.decision).toBe('allow');
     expect(res.remembered).toBe(false);
@@ -1244,12 +1244,18 @@ describe('Agent', () => {
     const request = buildPermissionRequest({ tool: 'bash', command: 'rm x', cwd: '/tmp' });
     const pending = agent.raisePermissionRequest(request);
 
-    agent.resolvePermission(request.requestId, 'deny', undefined, 'Do not delete generated files');
+    await agent.resolvePermission(
+      request.requestId,
+      'deny',
+      undefined,
+      'Do not delete generated files',
+    );
 
     await expect(pending).resolves.toMatchObject({ decision: 'deny' });
-    expect(() =>
+    expect(agent.session.pendingPermissionFeedback).toEqual(['Do not delete generated files']);
+    await expect(
       agent.resolvePermission(request.requestId, 'deny', undefined, 'stale feedback'),
-    ).toThrow(/No pending permission request/);
+    ).rejects.toThrow(/No pending permission request/);
   });
 
   it('emits skill_activated on a read of a known SKILL.md path', async () => {
@@ -1487,7 +1493,7 @@ describe('Agent', () => {
       cwd: '/tmp',
     });
     const p = agent.raisePermissionRequest(req);
-    agent.resolvePermission(req.requestId, 'allow', { scope: 'session' });
+    await agent.resolvePermission(req.requestId, 'allow', { scope: 'session' });
     const res = await p;
     expect(res.remembered).toBe(true);
     expect(rememberedScope).toEqual({ scope: 'session' });

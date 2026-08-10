@@ -20,6 +20,10 @@ describe('CommandPolicyPipeline', () => {
       id: 'malformed',
       evaluate: async () => ({ status: 'unknown' }),
     } as unknown as CommandPolicyStage;
+    const emptyFindings = {
+      id: 'empty',
+      evaluate: async () => ({ status: 'findings', findings: [] }),
+    } as unknown as CommandPolicyStage;
     const hanging: CommandPolicyStage = {
       id: 'hanging',
       evaluate: async () => new Promise(() => {}),
@@ -29,6 +33,12 @@ describe('CommandPolicyPipeline', () => {
       version: 1,
       outcome: 'approval_required',
       findings: [{ kind: 'analyzer_error', stageId: 'malformed' }],
+    });
+    await expect(
+      new CommandPolicyPipeline([emptyFindings]).evaluate(context),
+    ).resolves.toMatchObject({
+      outcome: 'approval_required',
+      findings: [{ kind: 'analyzer_error', stageId: 'empty' }],
     });
     await expect(
       new CommandPolicyPipeline([hanging], { timeoutMs: 10 }).evaluate(context),

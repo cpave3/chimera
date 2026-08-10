@@ -91,15 +91,22 @@ async function proposeGrant(
     pathFindings.map(async (finding) => {
       const resolvedPath = finding.resolvedPath ?? finding.path;
       const pathStat = await stat(resolvedPath).catch(() => null);
+      const proposalPath = pathStat?.isDirectory() ? resolvedPath : dirname(resolvedPath);
+      const proposalStat = await stat(proposalPath).catch(() => null);
+      if (!proposalStat?.isDirectory()) return null;
       return {
         kind: finding.requiredGrant,
-        path: pathStat?.isDirectory() ? resolvedPath : dirname(resolvedPath),
+        path: proposalPath,
       };
     }),
   );
-  if (paths.length === 0) return undefined;
-  const first = paths[0];
-  if (!first || paths.some((entry) => entry.kind !== first.kind || entry.path !== first.path)) {
+  if (paths.length === 0 || paths.some((entry) => entry === null)) return undefined;
+  const existingPaths = paths.filter((entry) => entry !== null);
+  const first = existingPaths[0];
+  if (
+    !first ||
+    existingPaths.some((entry) => entry.kind !== first.kind || entry.path !== first.path)
+  ) {
     return undefined;
   }
   if (first.path === '/' || first.path === home) return undefined;

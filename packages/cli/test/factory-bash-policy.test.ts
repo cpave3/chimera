@@ -49,7 +49,7 @@ describe('CliAgentFactory host bash policy', () => {
       exit_code: 0,
     });
     await expect(bash.execute({ command: 'rm -rf /' }, {})).resolves.toMatchObject({
-      stderr: 'denied by user',
+      stderr: 'denied by policy',
       exit_code: -1,
     });
   });

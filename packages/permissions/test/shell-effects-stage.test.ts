@@ -33,6 +33,7 @@ describe('ShellEffectsStage', () => {
       'echo x > /etc/passwd > safe-file',
       'git clean -fd',
       'git -C /outside status',
+      'git diff --no-index /etc/shadow ./local-file',
     ]) {
       await expect(stage.evaluate({ ...context, command })).resolves.toMatchObject({
         status: 'findings',

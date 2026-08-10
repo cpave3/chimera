@@ -1,4 +1,4 @@
-import { newRequestId } from '@chimera/core';
+import { newRequestId, permissionDenialMessage } from '@chimera/core';
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
@@ -78,7 +78,7 @@ export function buildBashTool(ctx: ToolContext) {
         if (resolution.decision === 'deny') {
           return {
             stdout: '',
-            stderr: 'denied by user',
+            stderr: permissionDenialMessage(resolution.denialSource),
             exit_code: -1,
             timed_out: false,
           };
@@ -130,7 +130,7 @@ async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashR
       ...(args.reason ? { reason: args.reason } : {}),
     });
     if (resolution.decision === 'deny') {
-      return refuse('denied by user');
+      return refuse(permissionDenialMessage(resolution.denialSource));
     }
   }
   const launched = manager.launch(args.command);

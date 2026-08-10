@@ -664,9 +664,9 @@ export function buildApp(opts: AppOptions): Hono {
           return c.json({ error: 'grant does not match pending request' }, 400);
         }
         await registry.addSessionPath(entry.agent.session.id, action.grant.kind, action.grant.path);
-        entry.agent.resolvePermission(requestId, 'allow');
+        await entry.agent.resolvePermission(requestId, 'allow');
       } else {
-        entry.agent.resolvePermission(
+        await entry.agent.resolvePermission(
           requestId,
           action.decision,
           action.decision === 'allow' ? action.remember : undefined,

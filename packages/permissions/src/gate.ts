@@ -104,13 +104,17 @@ export class DefaultPermissionGate implements PermissionGate {
         return this.prompt(evaluatedRequest);
       }
     }
+    const matchingRule = matchRule(req, this.store.all());
+    if (matchingRule?.decision === 'deny') {
+      return { decision: 'deny', remembered: true, denialSource: 'rule' };
+    }
     if (this.autoApprove === 'all') {
       return { decision: 'allow', remembered: false };
     }
     if (this.autoApprove === 'host' && req.target === 'host') {
       return { decision: 'allow', remembered: false };
     }
-    const byRule = this.check(req);
+    const byRule = matchingRule ? this.check(req) : null;
     if (byRule) return byRule;
     return this.prompt(evaluatedRequest);
   }
