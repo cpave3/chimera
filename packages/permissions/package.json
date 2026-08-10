@@ -22,10 +22,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aslamplr/pi-safe-shell": "0.7.1",
     "@chimera/core": "workspace:*",
     "@chimera/hooks": "workspace:*",
     "@chimera/tools": "workspace:*",
-    "minimatch": "^10.2.5"
+    "minimatch": "^10.2.5",
+    "web-tree-sitter": "0.26.8"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

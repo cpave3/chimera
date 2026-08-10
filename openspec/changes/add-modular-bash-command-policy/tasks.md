@@ -1,8 +1,8 @@
 ## 1. Policy foundation
 
-- [ ] 1.1 Spike pinned `@aslamplr/pi-safe-shell@0.7.1` import, parser initialization, tsup build, Node runtime, and representative classifications
-- [ ] 1.2 Add provider-neutral command-policy core contracts and deterministic ordered pipeline with failure-closed tests
-- [ ] 1.3 Implement and test the pinned risk adapter normalized to Chimera levels/evidence
+- [x] 1.1 Spike pinned `@aslamplr/pi-safe-shell@0.7.1` import, parser initialization, tsup build, Node runtime, and representative classifications
+- [x] 1.2 Add provider-neutral command-policy core contracts and deterministic ordered pipeline with failure-closed tests
+- [x] 1.3 Implement and test the pinned risk adapter normalized to Chimera levels/evidence
 
 ## 2. Effect and path analysis
 
