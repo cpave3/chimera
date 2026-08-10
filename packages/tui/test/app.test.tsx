@@ -16,6 +16,7 @@ function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
     addRule: async () => {},
     removeRule: async () => {},
     resolvePermission: async () => {},
+    resolvePermissionAction: async () => {},
     listSubagents: async () => [],
     createSession: async () => ({ sessionId: '01HZNEWSESS00000000000000000' }),
     listSessions: async () => [],
@@ -393,7 +394,7 @@ describe('App', () => {
     // are intercepted. The parent's stub has its own resolvePermission and
     // is not a real ChimeraClient instance, so the spy isolates the child path.
     const childResolveSpy = vi
-      .spyOn(ChimeraClient.prototype, 'resolvePermission')
+      .spyOn(ChimeraClient.prototype, 'resolvePermissionAction')
       .mockImplementation(async () => {});
     const parentResolveSpy = vi.fn(async () => {});
 
@@ -459,11 +460,64 @@ describe('App', () => {
     expect(childResolveSpy).toHaveBeenCalledTimes(1);
     expect(childResolveSpy.mock.calls[0]?.[0]).toBe('child-sess-A');
     expect(childResolveSpy.mock.calls[0]?.[1]).toBe('req-1');
-    expect(childResolveSpy.mock.calls[0]?.[2]).toBe('allow');
+    expect(childResolveSpy.mock.calls[0]?.[2]).toEqual({ decision: 'allow' });
 
     childResolveSpy.mockRestore();
     unmount();
   });
+  it('queues concurrent permission requests and reveals the next after resolution', async () => {
+    const actions: string[] = [];
+    let pushEvent: ((event: unknown) => void) | null = null;
+    const client = stubClient({
+      resolvePermissionAction: (async (_sessionId, requestId) => {
+        actions.push(requestId);
+      }) as ChimeraClient['resolvePermissionAction'],
+      subscribe: async function* () {
+        const buffer: unknown[] = [];
+        const waiters: Array<(event: unknown) => void> = [];
+        pushEvent = (event: unknown) => {
+          const waiter = waiters.shift();
+          if (waiter) waiter(event);
+          else buffer.push(event);
+        };
+        while (true) {
+          if (buffer.length > 0) yield buffer.shift() as never;
+          else {
+            yield await new Promise<never>((resolve) => {
+              waiters.push(resolve as (event: unknown) => void);
+            });
+          }
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="parent-sess" modelRef="m/m" cwd="/tmp" />,
+    );
+    pushEvent!({
+      type: 'permission_request',
+      requestId: 'req-1',
+      tool: 'bash',
+      target: 'host',
+      command: 'first command',
+    });
+    pushEvent!({
+      type: 'permission_request',
+      requestId: 'req-2',
+      tool: 'bash',
+      target: 'host',
+      command: 'second command',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastFrame()).toContain('first command');
+    expect(lastFrame()).not.toContain('second command');
+
+    (stdin as unknown as { write: (text: string) => void }).write('a');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(actions).toEqual(['req-1']);
+    expect(lastFrame()).toContain('second command');
+    unmount();
+  });
+
   it('preserves all subagent child tool rows when the parent spawn_agent commits to <Static>', async () => {
     // When the parent spawn_agent's tool_call_result lands, the parent entry
     // transitions from inFlight (re-rendered every tick) into <Static>
@@ -1298,14 +1352,12 @@ describe('PermissionModal', () => {
   });
 
   it('choose → scope: allow + session remembers with session scope only', async () => {
-    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const calls: unknown[] = [];
     const { stdin, lastFrame, unmount } = render(
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) =>
-          calls.push({ decision, remember: remember as Record<string, unknown> })
-        }
+        onResolve={(action) => calls.push(action)}
       />,
     );
 
@@ -1321,14 +1373,12 @@ describe('PermissionModal', () => {
   });
 
   it('choose → scope: allow + project remembers with exact pattern', async () => {
-    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const calls: unknown[] = [];
     const { stdin, lastFrame, unmount } = render(
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) =>
-          calls.push({ decision, remember: remember as Record<string, unknown> })
-        }
+        onResolve={(action) => calls.push(action)}
       />,
     );
 
@@ -1349,14 +1399,12 @@ describe('PermissionModal', () => {
   });
 
   it('choose → pattern → scope: allow uses pattern from editing mode', async () => {
-    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+    const calls: unknown[] = [];
     const { stdin, lastFrame, unmount } = render(
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) =>
-          calls.push({ decision, remember: remember as Record<string, unknown> })
-        }
+        onResolve={(action) => calls.push(action)}
       />,
     );
 
@@ -1385,39 +1433,75 @@ describe('PermissionModal', () => {
     unmount();
   });
 
-  it('choose → scope: deny + session remembers with session scope only', async () => {
-    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
+  it('deny with feedback submits one action', async () => {
+    const calls: unknown[] = [];
     const { stdin, lastFrame, unmount } = render(
       <PermissionModal
         command="rm -rf /tmp"
         target="host"
-        onResolve={(decision, remember) =>
-          calls.push({ decision, remember: remember as Record<string, unknown> })
-        }
+        onResolve={(action) => calls.push(action)}
       />,
     );
 
-    (stdin as unknown as { write: (s: string) => void }).write('D');
+    (stdin as unknown as { write: (s: string) => void }).write('f');
     await new Promise((r) => setTimeout(r, 5));
-    expect(lastFrame()).toContain('Remember for [s]ession');
-
-    (stdin as unknown as { write: (s: string) => void }).write('s');
-    await new Promise((r) => setTimeout(r, 5));
-    expect(calls).toEqual([{ decision: 'deny', remember: { scope: 'session' } }]);
+    expect(lastFrame()).toContain('Deny with feedback');
+    for (const char of 'use cache') {
+      (stdin as unknown as { write: (s: string) => void }).write(char);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await new Promise((r) => setTimeout(r, 20));
+    (stdin as unknown as { write: (s: string) => void }).write('\r');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual([{ decision: 'deny', feedback: 'use cache' }]);
 
     unmount();
   });
 
-  it('resolve emits plain allow (no remember) on [a]', () => {
-    const calls: Array<{ decision: 'allow' | 'deny'; remember?: Record<string, unknown> }> = [];
-    const { stdin, unmount } = render(
+  it('renders mandatory policy findings and submits the exact grant', async () => {
+    const calls: unknown[] = [];
+    const { stdin, lastFrame, unmount } = render(
       <PermissionModal
-        command="clear"
+        command="echo x > /outside/file"
         target="host"
-        onResolve={(decision, remember) =>
-          calls.push({ decision, remember: remember as Record<string, unknown> })
-        }
+        policyAnalysis={{
+          outcome: 'approval_required',
+          stages: [],
+          findings: [
+            {
+              kind: 'path',
+              stageId: 'path_authorization',
+              operation: 'write',
+              path: '/outside/file',
+              resolvedPath: '/outside/file',
+              requiredGrant: 'write',
+              message: 'outside allowed write directories',
+            },
+          ],
+          grantProposal: { id: 'write:/outside', kind: 'write', path: '/outside' },
+        }}
+        onResolve={(action) => calls.push(action)}
       />,
+    );
+
+    expect(lastFrame()).toContain('WRITE path: /outside/file');
+    expect(lastFrame()).toContain('Approval is not filesystem confinement');
+    expect(lastFrame()).not.toContain('Allow & remember');
+    (stdin as unknown as { write: (s: string) => void }).write('g');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toEqual([
+      {
+        decision: 'allow_with_grant',
+        grant: { id: 'write:/outside', kind: 'write', path: '/outside' },
+      },
+    ]);
+    unmount();
+  });
+
+  it('resolve emits plain allow (no remember) on [a]', () => {
+    const calls: unknown[] = [];
+    const { stdin, unmount } = render(
+      <PermissionModal command="clear" target="host" onResolve={(action) => calls.push(action)} />,
     );
 
     (stdin as unknown as { write: (s: string) => void }).write('a');

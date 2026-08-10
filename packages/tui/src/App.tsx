@@ -110,6 +110,7 @@ interface PendingPermission {
   requestId: string;
   command: string;
   reason?: string;
+  policyAnalysis?: Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
   /**
    * When set, the request was raised inside a subagent and resolution must
    * be sent to the child's server (via a freshly built ChimeraClient).
@@ -152,7 +153,8 @@ export function App(props: AppProps): React.ReactElement {
     scrollback.splitSnapshot.bind(scrollback),
   );
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
-  const [pending, setPending] = useState<PendingPermission | null>(null);
+  const [permissionQueue, setPermissionQueue] = useState<PendingPermission[]>([]);
+  const pending = permissionQueue[0] ?? null;
   // Active subagents indexed by subagentId. Updated from the parent's stream.
   const subagentsRef = useRef<Map<string, ActiveSubagent>>(new Map());
   // Active session/client. Swapped by `/attach <id>` so the TUI can drill
@@ -449,9 +451,17 @@ export function App(props: AppProps): React.ReactElement {
     if (ev.type === 'assistant_text_delta' || ev.type === 'reasoning_text_delta') {
       setStreaming(true);
     } else if (ev.type === 'permission_request') {
-      setPending({ requestId: ev.requestId, command: ev.command, reason: ev.reason });
+      setPermissionQueue((queue) => [
+        ...queue,
+        {
+          requestId: ev.requestId,
+          command: ev.command,
+          reason: ev.reason,
+          policyAnalysis: ev.policyAnalysis,
+        },
+      ]);
     } else if (ev.type === 'permission_resolved' || ev.type === 'permission_timeout') {
-      setPending(null);
+      setPermissionQueue((queue) => queue.filter((item) => item.requestId !== ev.requestId));
     } else if (ev.type === 'subagent_spawned') {
       subagentsRef.current.set(ev.subagentId, {
         subagentId: ev.subagentId,
@@ -465,19 +475,23 @@ export function App(props: AppProps): React.ReactElement {
       const inner = ev.event;
       const sa = subagentsRef.current.get(ev.subagentId);
       if (inner.type === 'permission_request' && sa && sa.url) {
-        setPending({
-          requestId: inner.requestId,
-          command: inner.command,
-          reason: inner.reason,
-          subagent: {
-            id: ev.subagentId,
-            purpose: sa.purpose,
-            sessionId: sa.childSessionId,
-            url: sa.url,
+        setPermissionQueue((queue) => [
+          ...queue,
+          {
+            requestId: inner.requestId,
+            command: inner.command,
+            reason: inner.reason,
+            policyAnalysis: inner.policyAnalysis,
+            subagent: {
+              id: ev.subagentId,
+              purpose: sa.purpose,
+              sessionId: sa.childSessionId,
+              url: sa.url,
+            },
           },
-        });
+        ]);
       } else if (inner.type === 'permission_resolved' || inner.type === 'permission_timeout') {
-        setPending((p) => (p && p.requestId === inner.requestId ? null : p));
+        setPermissionQueue((queue) => queue.filter((item) => item.requestId !== inner.requestId));
       }
     } else if (ev.type === 'user_input_required') {
       scrollback.addInfo(`Waiting for input: ${ev.request}`);
@@ -1487,21 +1501,32 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   function onResolve(
-    decision: 'allow' | 'deny',
-    remember?:
-      | { scope: 'session' }
-      | { scope: 'project'; pattern: string; patternKind: 'exact' | 'glob' },
+    action:
+      | {
+          decision: 'allow';
+          remember?:
+            | { scope: 'session' }
+            | { scope: 'project'; pattern: string; patternKind: 'exact' | 'glob' };
+        }
+      | { decision: 'deny'; feedback?: string }
+      | {
+          decision: 'allow_with_grant';
+          grant: { id: string; kind: 'read' | 'write'; path: string };
+        },
   ): void {
     if (!pending) return;
-    const requestId = pending.requestId;
-    const subagent = pending.subagent;
-    setPending(null);
-    const targetClient = subagent
-      ? new ChimeraClient({ baseUrl: subagent.url })
+    const item = pending;
+    const targetClient = item.subagent
+      ? new ChimeraClient({ baseUrl: item.subagent.url })
       : activeSession.client;
-    const targetSessionId = subagent ? subagent.sessionId : activeSession.sessionId;
+    const targetSessionId = item.subagent ? item.subagent.sessionId : activeSession.sessionId;
     void targetClient
-      .resolvePermission(targetSessionId, requestId, decision, remember)
+      .resolvePermissionAction(targetSessionId, item.requestId, action)
+      .then(() => {
+        setPermissionQueue((queue) =>
+          queue.filter((queued) => queued.requestId !== item.requestId),
+        );
+      })
       .catch((err) => {
         scrollback.addError(`resolvePermission: ${(err as Error).message}`);
       });
@@ -1724,6 +1749,7 @@ export function App(props: AppProps): React.ReactElement {
             command={pending.command}
             reason={pending.reason}
             target="host"
+            policyAnalysis={pending.policyAnalysis}
             header={
               pending.subagent
                 ? `[subagent ${pending.subagent.id.slice(-8)}: ${pending.subagent.purpose}]`

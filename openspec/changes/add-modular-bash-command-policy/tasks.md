@@ -26,9 +26,9 @@
 
 ## 5. TUI
 
-- [ ] 5.1 Replace single pending permission state with a parent/child-aware FIFO queue
-- [ ] 5.2 Render policy stages/findings and conditional ordinary/mandatory actions without color dependence
-- [ ] 5.3 Implement session grant and deny-feedback interactions with API failure recovery
+- [x] 5.1 Replace single pending permission state with a parent/child-aware FIFO queue
+- [x] 5.2 Render policy stages/findings and conditional ordinary/mandatory actions without color dependence
+- [x] 5.3 Implement session grant and deny-feedback interactions with API failure recovery
 
 ## 6. Documentation and verification
 
