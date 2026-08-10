@@ -1,4 +1,5 @@
 import type { ModelMessage } from 'ai';
+import type { CommandPolicyAnalysis } from './command-policy';
 import type { CallId, SessionId } from './ids';
 import type { ExecutionTarget, TaskItem, ToolCallRecord, Usage } from './types';
 
@@ -45,6 +46,7 @@ export type AgentEvent =
       target: 'host';
       command: string;
       reason?: string;
+      policyAnalysis?: CommandPolicyAnalysis;
     }
   | {
       type: 'permission_resolved';

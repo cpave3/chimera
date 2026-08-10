@@ -1150,7 +1150,26 @@ describe('Agent', () => {
     const agent = new Agent({
       cwd: '/tmp',
       model: makeModel(),
-      languageModel: textOnlyModel('ok'),
+      languageModel: new MockLanguageModelV3({
+        doStream: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                { type: 'stream-start', warnings: [] },
+                { type: 'text-start', id: 't1' },
+                { type: 'text-delta', id: 't1', delta: 'ok' },
+                { type: 'text-end', id: 't1' },
+                {
+                  type: 'finish',
+                  finishReason: { unified: 'stop', raw: 'stop' },
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ],
+            }),
+          };
+        },
+      }),
       tools: {} as ToolSet,
       sandboxMode: 'off',
       home,
@@ -1158,10 +1177,10 @@ describe('Agent', () => {
     });
 
     // Start a run in the background so currentQueue is attached.
-    const runEvents: string[] = [];
+    const runEvents: AgentEvent[] = [];
     const runPromise = (async () => {
-      for await (const ev of agent.run('trigger')) {
-        runEvents.push(ev.type);
+      for await (const event of agent.run('trigger')) {
+        runEvents.push(event);
       }
     })();
 
@@ -1172,6 +1191,31 @@ describe('Agent', () => {
       tool: 'bash',
       command: 'rm -rf foo',
       cwd: '/tmp',
+      policyAnalysis: {
+        outcome: 'approval_required',
+        stages: [
+          {
+            id: 'risk',
+            status: 'findings',
+            findings: [
+              {
+                kind: 'risk',
+                stageId: 'risk',
+                level: 'danger',
+                message: 'dangerous command',
+              },
+            ],
+          },
+        ],
+        findings: [
+          {
+            kind: 'risk',
+            stageId: 'risk',
+            level: 'danger',
+            message: 'dangerous command',
+          },
+        ],
+      },
     });
     const p = agent.raisePermissionRequest(req);
     agent.resolvePermission(req.requestId, 'allow');
@@ -1179,6 +1223,32 @@ describe('Agent', () => {
     expect(res.decision).toBe('allow');
     expect(res.remembered).toBe(false);
     await runPromise;
+    const requestEvent = runEvents.find((event) => event.type === 'permission_request');
+    expect(requestEvent).toMatchObject({
+      type: 'permission_request',
+      policyAnalysis: { findings: [{ kind: 'risk', level: 'danger' }] },
+    });
+  });
+
+  it('binds denial feedback to the exact pending request', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('ok'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    const request = buildPermissionRequest({ tool: 'bash', command: 'rm x', cwd: '/tmp' });
+    const pending = agent.raisePermissionRequest(request);
+
+    agent.resolvePermission(request.requestId, 'deny', undefined, 'Do not delete generated files');
+
+    await expect(pending).resolves.toMatchObject({ decision: 'deny' });
+    expect(() =>
+      agent.resolvePermission(request.requestId, 'deny', undefined, 'stale feedback'),
+    ).toThrow(/No pending permission request/);
   });
 
   it('emits skill_activated on a read of a known SKILL.md path', async () => {

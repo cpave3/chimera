@@ -1,6 +1,6 @@
 import type { LanguageModel } from 'ai';
 import type { CommandPolicyAnalysis } from './command-policy';
-import type { ExecutionTarget } from './types';
+import type { ExecutionTarget, RememberScope } from './types';
 
 export interface ExecOptions {
   cwd?: string;
@@ -62,6 +62,14 @@ export interface PermissionRequest {
   /** Set only for host bash requests that require mandatory policy approval. */
   policyAnalysis?: CommandPolicyAnalysis;
 }
+
+export type PermissionDecisionAction =
+  | { decision: 'allow'; remember?: RememberScope }
+  | { decision: 'deny'; feedback?: string }
+  | {
+      decision: 'allow_with_grant';
+      grant: { id: string; kind: 'read' | 'write'; path: string };
+    };
 
 export interface PermissionResolution {
   decision: 'allow' | 'deny';

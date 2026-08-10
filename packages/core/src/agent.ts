@@ -177,6 +177,7 @@ export class Agent {
   readonly session: Session;
   private opts: AgentOptions;
   private abortController: AbortController;
+  private pendingPermissionFeedback: string[] = [];
   private pendingPermissions = new Map<
     string,
     {
@@ -394,6 +395,7 @@ export class Agent {
         target: req.target,
         command: req.command,
         reason: req.reason,
+        policyAnalysis: req.policyAnalysis,
       });
     });
   }
@@ -421,7 +423,16 @@ export class Agent {
     req: PermissionRequest,
   ) => void;
 
-  resolvePermission(requestId: string, decision: 'allow' | 'deny', remember?: RememberScope): void {
+  pendingPermissionRequest(requestId: string): PermissionRequest | undefined {
+    return this.pendingPermissions.get(requestId)?.request;
+  }
+
+  resolvePermission(
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remember?: RememberScope,
+    feedback?: string,
+  ): void {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request: ${requestId}`);
@@ -430,6 +441,9 @@ export class Agent {
 
     if (remember && this.rememberHandler) {
       this.rememberHandler(requestId, remember, pending.request);
+    }
+    if (feedback) {
+      this.pendingPermissionFeedback.push(feedback);
     }
 
     pending.resolve({ decision, remembered: !!remember });
@@ -1776,6 +1790,16 @@ export class Agent {
           // interruptible, and `terminalStepCount` advances so a user spamming
           // injects cannot exceed `maxTerminalSteps`.
           let injectedThisStep = false;
+          if (this.pendingPermissionFeedback.length > 0) {
+            const feedbackMessages = this.pendingPermissionFeedback;
+            this.pendingPermissionFeedback = [];
+            for (const feedback of feedbackMessages) {
+              this.session.messages.push(await buildUserMessage(feedback));
+              queue.push({ type: 'user_message', content: feedback });
+            }
+            injectedThisStep = true;
+            this.abortController = new AbortController();
+          }
           if (this.pendingInjectMessages.length > 0) {
             const injects = this.pendingInjectMessages;
             this.pendingInjectMessages = [];
@@ -2002,6 +2026,7 @@ export function buildPermissionRequest(args: {
   command: string;
   cwd: string;
   reason?: string;
+  policyAnalysis?: PermissionRequest['policyAnalysis'];
 }): PermissionRequest {
   return {
     requestId: newRequestId(),
@@ -2010,6 +2035,7 @@ export function buildPermissionRequest(args: {
     command: args.command,
     cwd: args.cwd,
     reason: args.reason,
+    policyAnalysis: args.policyAnalysis,
   };
 }
 

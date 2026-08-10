@@ -2,13 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type AgentEventEnvelope,
   deleteSession as coreDeleteSession,
   forkSession as coreForkSession,
   isValidSessionId,
   listSessionsOnDisk,
   readCheckpoints,
   readSessionMetadata,
-  type AgentEventEnvelope,
   type SessionId,
   type SessionInfo,
   truncateEventsAtIndex,
@@ -31,7 +31,6 @@ export interface AppOptions {
    */
   onFork?: (parentInfo: SessionInfo, childId: SessionId) => Promise<void> | void;
 }
-
 
 const createSessionSchema = z.object({
   cwd: z.string(),
@@ -92,19 +91,22 @@ const permissionRuleSchema = z.object({
   scope: z.enum(['session', 'project']),
 });
 
-const permissionResolveSchema = z.object({
-  decision: z.enum(['allow', 'deny']),
-  remember: z
-    .union([
-      z.object({ scope: z.literal('session') }),
-      z.object({
-        scope: z.literal('project'),
-        pattern: z.string(),
-        patternKind: z.enum(['exact', 'glob']),
-      }),
-    ])
-    .optional(),
-});
+const rememberSchema = z.union([
+  z.object({ scope: z.literal('session') }),
+  z.object({
+    scope: z.literal('project'),
+    pattern: z.string(),
+    patternKind: z.enum(['exact', 'glob']),
+  }),
+]);
+const permissionResolveSchema = z.discriminatedUnion('decision', [
+  z.object({ decision: z.literal('allow'), remember: rememberSchema.optional() }),
+  z.object({
+    decision: z.literal('allow_with_grant'),
+    grant: z.object({ id: z.string(), kind: z.enum(['read', 'write']), path: z.string() }),
+  }),
+  z.object({ decision: z.literal('deny'), feedback: z.string().trim().min(1).optional() }),
+]);
 
 export function buildApp(opts: AppOptions): Hono {
   const { registry, home, onFork } = opts;
@@ -649,11 +651,28 @@ export function buildApp(opts: AppOptions): Hono {
       return c.json({ error: 'already resolved' }, 409);
     }
     try {
-      entry.agent.resolvePermission(
-        requestId,
-        parseResult.data.decision,
-        parseResult.data.remember,
-      );
+      const action = parseResult.data;
+      if (action.decision === 'allow_with_grant') {
+        const proposal =
+          entry.agent.pendingPermissionRequest(requestId)?.policyAnalysis?.grantProposal;
+        if (
+          !proposal ||
+          proposal.id !== action.grant.id ||
+          proposal.kind !== action.grant.kind ||
+          proposal.path !== action.grant.path
+        ) {
+          return c.json({ error: 'grant does not match pending request' }, 400);
+        }
+        await registry.addSessionPath(entry.agent.session.id, action.grant.kind, action.grant.path);
+        entry.agent.resolvePermission(requestId, 'allow');
+      } else {
+        entry.agent.resolvePermission(
+          requestId,
+          action.decision,
+          action.decision === 'allow' ? action.remember : undefined,
+          action.decision === 'deny' ? action.feedback : undefined,
+        );
+      }
       entry.resolvedPermissionIds.add(requestId);
       return c.body(null, 204);
     } catch (err) {

@@ -1,3 +1,5 @@
+import type { CommandPolicyAnalysis } from '@chimera/core';
+
 export type HookEvent =
   | 'SessionCreated'
   | 'UserPromptSubmit'
@@ -59,6 +61,7 @@ export interface PermissionRequestPayload extends HookPayloadBase {
   tool_input: Record<string, unknown>;
   target: string;
   command?: string;
+  policy_analysis?: CommandPolicyAnalysis;
 }
 
 export interface StopPayload extends HookPayloadBase {

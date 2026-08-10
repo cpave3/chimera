@@ -19,10 +19,10 @@
 
 ## 4. Contracts and decisions
 
-- [ ] 4.1 Propagate structured policy analysis through core events and the existing lifecycle hook
-- [ ] 4.2 Add server/client schemas for exact pending allow, deny, grant, and deny-with-feedback actions
-- [ ] 4.3 Implement atomic session grant persistence before allow and stale/tampered request handling
-- [ ] 4.4 Implement denial-result-before-feedback ordering and persistence across run interruption
+- [x] 4.1 Propagate structured policy analysis through core events and the existing lifecycle hook
+- [x] 4.2 Add server/client schemas for exact pending allow, deny, grant, and deny-with-feedback actions
+- [x] 4.3 Implement atomic session grant persistence before allow and stale/tampered request handling
+- [x] 4.4 Implement denial-result-before-feedback ordering and persistence across run interruption
 
 ## 5. TUI
 

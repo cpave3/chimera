@@ -206,12 +206,26 @@ export class ChimeraClient {
     decision: 'allow' | 'deny',
     remember?: RememberScope,
   ): Promise<void> {
+    return this.resolvePermissionAction(sessionId, requestId, { decision, remember });
+  }
+
+  async resolvePermissionAction(
+    sessionId: SessionId,
+    requestId: string,
+    action:
+      | { decision: 'allow'; remember?: RememberScope }
+      | { decision: 'deny'; feedback?: string }
+      | {
+          decision: 'allow_with_grant';
+          grant: { id: string; kind: 'read' | 'write'; path: string };
+        },
+  ): Promise<void> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/v1/sessions/${sessionId}/permissions/${requestId}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ decision, remember }),
+        body: JSON.stringify(action),
       },
     );
     if (response.status === 409) {
