@@ -15,7 +15,7 @@
 - [x] 3.1 Implement mandatory policy precedence over auto-approve and allow rules, preserving deny rules, hooks, and headless denial
 - [x] 3.2 Route foreground/background native/Codex host bash through one gate evaluation and one execution
 - [x] 3.3 Remove the `autoApprove: all` construction bypass and destructive regex path after regression parity tests
-- [ ] 3.4 Add shared validated `commandPolicy.hostBash` config to interactive, run, serve, resume, and subagent construction
+- [x] 3.4 Add shared validated `commandPolicy.hostBash` config to interactive, run, serve, resume, and subagent construction
 
 ## 4. Contracts and decisions
 

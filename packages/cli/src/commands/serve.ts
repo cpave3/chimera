@@ -4,14 +4,14 @@ import { Compactor } from '@chimera/compaction';
 import type { SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
-import { AgentRegistry, buildApp, startServer, type ModelListEntry } from '@chimera/server';
+import { AgentRegistry, buildApp, type ModelListEntry, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import {
   checkCompactionInvariant,
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
-import { loadConfig, resolveModel } from '../config';
+import { loadConfig, resolveHostBashPolicy, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
@@ -151,6 +151,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
+    hostBashPolicy: resolveHostBashPolicy(config),
     home: opts.home,
     skills,
     agents,

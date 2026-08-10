@@ -17,7 +17,7 @@ import {
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
-import { loadConfig, resolveModel } from '../config';
+import { loadConfig, resolveHostBashPolicy, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
@@ -149,6 +149,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     cliFactory = new CliAgentFactory({
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
+      hostBashPolicy: resolveHostBashPolicy(config),
       home: opts.home,
       skills,
       agents,

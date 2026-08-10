@@ -5,6 +5,7 @@ import type { CompactionConfig, ModelConfig } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { ProviderSpec, ProvidersConfig } from '@chimera/providers';
 import type { DiagnosticsConfig } from '@chimera/tools';
+import { z } from 'zod';
 
 export interface ModelOptions {
   contextWindow?: number;
@@ -41,6 +42,11 @@ export type WebSearchConfig =
   | { provider: 'tavily' | 'brave'; apiKey: string }
   | { provider: 'searxng'; baseUrl: string };
 
+export interface HostBashPolicyConfig {
+  enabled: boolean;
+  autoAllowThrough: 'none' | 'safe' | 'caution' | 'danger';
+}
+
 export interface ChimeraConfig {
   defaultModel?: string;
   /**
@@ -52,6 +58,9 @@ export interface ChimeraConfig {
   defaultVisionModel?: string;
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
+  commandPolicy?: {
+    hostBash?: Partial<HostBashPolicyConfig>;
+  };
   commands?: {
     enabled?: boolean;
     claudeCompat?: boolean;
@@ -132,13 +141,40 @@ export function configPath(home = homedir()): string {
   return join(home, '.chimera', 'config.json');
 }
 
+const hostBashPolicySchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    autoAllowThrough: z.enum(['none', 'safe', 'caution', 'danger']).optional(),
+  })
+  .strict();
+
 export function loadConfig(home = homedir()): ChimeraConfig {
+  const path = configPath(home);
+  let raw: string;
   try {
-    const raw = readFileSync(configPath(home), 'utf8');
-    return JSON.parse(raw) as ChimeraConfig;
-  } catch {
-    return {};
+    raw = readFileSync(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw error;
   }
+  let config: ChimeraConfig;
+  try {
+    config = JSON.parse(raw) as ChimeraConfig;
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${path}: ${(error as Error).message}`);
+  }
+  const result = hostBashPolicySchema.safeParse(config.commandPolicy?.hostBash ?? {});
+  if (!result.success) {
+    throw new Error(`Invalid commandPolicy.hostBash in ${path}: ${result.error.message}`);
+  }
+  return config;
+}
+
+export function resolveHostBashPolicy(config: ChimeraConfig): HostBashPolicyConfig {
+  return {
+    enabled: config.commandPolicy?.hostBash?.enabled ?? true,
+    autoAllowThrough: config.commandPolicy?.hostBash?.autoAllowThrough ?? 'caution',
+  };
 }
 
 export interface ResolvedModel {

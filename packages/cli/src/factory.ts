@@ -61,12 +61,13 @@ import {
   type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
-import type { ModelOptions, WebSearchConfig } from './config';
+import type { HostBashPolicyConfig, ModelOptions, WebSearchConfig } from './config';
 import type { CliSandboxOptions } from './sandbox-config';
 
 export interface CliAgentFactoryOptions {
   providersConfig: ProvidersConfig;
   autoApprove: AutoApproveLevel;
+  hostBashPolicy?: HostBashPolicyConfig;
   warn?: (msg: string) => void;
   home?: string;
   /**
@@ -159,6 +160,7 @@ export interface CliAgentFactoryOptions {
 export class CliAgentFactory implements AgentFactory {
   private readonly registry: ReturnType<typeof loadProviders>;
   private readonly autoApprove: AutoApproveLevel;
+  private readonly hostBashPolicy: HostBashPolicyConfig;
   private readonly home: string | undefined;
   private readonly skills: SkillRegistry | undefined;
   private readonly agents: AgentRegistry | undefined;
@@ -195,6 +197,10 @@ export class CliAgentFactory implements AgentFactory {
   constructor(opts: CliAgentFactoryOptions) {
     this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
     this.autoApprove = opts.autoApprove;
+    this.hostBashPolicy = opts.hostBashPolicy ?? {
+      enabled: true,
+      autoAllowThrough: 'caution',
+    };
     this.home = opts.home;
     this.skills = opts.skills;
     this.agents = opts.agents;
@@ -376,25 +382,36 @@ export class CliAgentFactory implements AgentFactory {
       // best-effort
     }
 
-    const commandPolicy = new CommandPolicyPipeline([
-      new PiSafeShellRiskStage('caution'),
-      new ShellEffectsStage(),
-      new PathAuthorizationStage(),
-    ]);
+    const commandPolicy = this.hostBashPolicy.enabled
+      ? new CommandPolicyPipeline([
+          new PiSafeShellRiskStage(this.hostBashPolicy.autoAllowThrough),
+          new ShellEffectsStage(),
+          new PathAuthorizationStage(),
+        ])
+      : undefined;
+    if (!this.hostBashPolicy.enabled) {
+      this.warn(
+        'chimera: host bash command policy is explicitly disabled; using legacy permissions',
+      );
+    }
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
       autoApprove: this.autoApprove,
-      commandPolicy: {
-        evaluator: commandPolicy,
-        context: (request) => ({
-          command: request.command,
-          target: 'host',
-          cwd: request.cwd,
-          home: this.home ?? homedir(),
-          projectRoot: init.cwd,
-          roots: local.commandPolicyRoots(),
-        }),
-      },
+      ...(commandPolicy
+        ? {
+            commandPolicy: {
+              evaluator: commandPolicy,
+              context: (request: { command: string; cwd: string }) => ({
+                command: request.command,
+                target: 'host' as const,
+                cwd: request.cwd,
+                home: this.home ?? homedir(),
+                projectRoot: init.cwd,
+                roots: local.commandPolicyRoots(),
+              }),
+            },
+          }
+        : {}),
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
       hookRunner,

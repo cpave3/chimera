@@ -1,5 +1,24 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveModel } from '../src/config';
+import { loadConfig, resolveHostBashPolicy, resolveModel } from '../src/config';
+
+it('surfaces malformed and invalid host bash policy config', async () => {
+  const malformedHome = await mkdtemp(join(tmpdir(), 'chimera-config-'));
+  await mkdir(join(malformedHome, '.chimera'), { recursive: true });
+  await writeFile(join(malformedHome, '.chimera', 'config.json'), '{bad json');
+  expect(() => loadConfig(malformedHome)).toThrow(/\.chimera\/config\.json.*JSON/i);
+
+  const invalidHome = await mkdtemp(join(tmpdir(), 'chimera-config-'));
+  await mkdir(join(invalidHome, '.chimera'), { recursive: true });
+  await writeFile(
+    join(invalidHome, '.chimera', 'config.json'),
+    JSON.stringify({ commandPolicy: { hostBash: { autoAllowThrough: 'critical' } } }),
+  );
+  expect(() => loadConfig(invalidHome)).toThrow(/autoAllowThrough/);
+  expect(resolveHostBashPolicy({})).toEqual({ enabled: true, autoAllowThrough: 'caution' });
+});
 
 describe('resolveModel', () => {
   it('uses CLI model over config defaultModel', () => {
