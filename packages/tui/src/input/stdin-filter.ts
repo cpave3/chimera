@@ -67,6 +67,8 @@ export function createFilteredStdin(
   let pendingInput = '';
   let pasteContent: string | null = null;
   let upstreamSubscribed = false;
+  let upstreamListening = false;
+  let paused = false;
 
   function markerPrefixLength(input: string, marker: string): number {
     for (let length = Math.min(marker.length - 1, input.length); length > 0; length -= 1) {
@@ -113,6 +115,7 @@ export function createFilteredStdin(
   }
 
   function pump(): void {
+    if (paused) return;
     let chunk: unknown = upstream.read();
     while (chunk !== null) {
       const text =
@@ -125,9 +128,19 @@ export function createFilteredStdin(
   function ensureSubscribed(): void {
     if (upstreamSubscribed) return;
     upstreamSubscribed = true;
-    upstream.on('readable', pump);
+    resumeUpstream();
     upstream.on('end', () => wrapper.emit('end'));
     upstream.on('close', () => wrapper.emit('close'));
+  }
+  function suspendUpstream(): void {
+    if (!upstreamListening) return;
+    upstream.removeListener('readable', pump);
+    upstreamListening = false;
+  }
+  function resumeUpstream(): void {
+    if (!upstreamSubscribed || upstreamListening || paused) return;
+    upstream.on('readable', pump);
+    upstreamListening = true;
   }
   const baseOn = wrapper.on.bind(wrapper);
   const baseAddListener = wrapper.addListener.bind(wrapper);
@@ -150,10 +163,14 @@ export function createFilteredStdin(
       return wrapper as NodeJS.ReadStream;
     },
     pause(): NodeJS.ReadStream {
+      paused = true;
+      suspendUpstream();
       upstream.pause();
       return wrapper as NodeJS.ReadStream;
     },
     resume(): NodeJS.ReadStream {
+      paused = false;
+      resumeUpstream();
       upstream.resume();
       return wrapper as NodeJS.ReadStream;
     },
@@ -169,6 +186,17 @@ export function createFilteredStdin(
       upstream.unref?.();
       return wrapper as NodeJS.ReadStream;
     },
+    drainForTerminalHandoff(): void {
+      queue.length = 0;
+      while (upstream.read() !== null) {
+        // Discard bytes entered while the child owned the terminal.
+      }
+    },
+  });
+  Object.defineProperty(wrapper, 'isRaw', {
+    configurable: true,
+    enumerable: true,
+    get: () => upstream.isRaw,
   });
   return wrapper as NodeJS.ReadStream;
 }

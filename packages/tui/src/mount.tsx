@@ -51,6 +51,8 @@ export interface MountOptions {
     requestId: string;
     command: string;
     signal?: AbortSignal;
+    stdin: NodeJS.ReadStream;
+    stdout: NodeJS.WriteStream;
   }) => Promise<HostAuthenticationResult>;
 }
 

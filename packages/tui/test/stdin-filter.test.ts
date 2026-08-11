@@ -62,6 +62,55 @@ describe('createFilteredStdin', () => {
     expect(reads).toEqual(['a\nb', 'plain']);
   });
 
+  it('stops pulling upstream bytes while paused for terminal handoff', () => {
+    const queue: (string | null)[] = ['secret-password\r', null];
+    let raw = false;
+    const upstream = new EventEmitter() as unknown as NodeJS.ReadStream;
+    Object.assign(upstream, {
+      isTTY: true,
+      get isRaw() {
+        return raw;
+      },
+      pause() {},
+      resume() {},
+      setRawMode(value: boolean) {
+        raw = value;
+      },
+      setEncoding() {},
+      read() {
+        return queue.shift() ?? null;
+      },
+      ref() {},
+      unref() {},
+    });
+    Object.defineProperty(upstream, 'isRaw', { get: () => raw });
+    const filtered = createFilteredStdin(upstream);
+    const reads: string[] = [];
+    filtered.on('readable', () => {
+      let chunk: unknown = filtered.read();
+      while (chunk !== null) {
+        reads.push(String(chunk));
+        chunk = filtered.read();
+      }
+    });
+
+    filtered.setRawMode(true);
+    expect(filtered.isRaw).toBe(true);
+    expect((upstream as unknown as EventEmitter).listenerCount('readable')).toBe(1);
+    filtered.pause();
+    expect((upstream as unknown as EventEmitter).listenerCount('readable')).toBe(0);
+    (upstream as unknown as EventEmitter).emit('readable');
+
+    expect(reads).toEqual([]);
+    expect(queue).toEqual(['secret-password\r', null]);
+
+    filtered.resume();
+    filtered.resume();
+    expect((upstream as unknown as EventEmitter).listenerCount('readable')).toBe(1);
+    (upstream as unknown as EventEmitter).emit('readable');
+    expect(reads).toEqual(['secret-password\r']);
+  });
+
   it('replaces a large bracketed paste split across chunks with a registered placeholder', () => {
     const queue: (string | null)[] = [
       'before \x1b[20',

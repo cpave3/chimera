@@ -8,6 +8,8 @@ export class OwnerLocalSudoAuthentication implements HostAuthenticationCapabilit
       requestId: string;
       command: string;
       signal?: AbortSignal;
+      stdin: NodeJS.ReadStream;
+      stdout: NodeJS.WriteStream;
     }) => Promise<HostAuthenticationResult>,
   ) {}
 
@@ -15,6 +17,8 @@ export class OwnerLocalSudoAuthentication implements HostAuthenticationCapabilit
     requestId: string;
     command: string;
     signal?: AbortSignal;
+    stdin: NodeJS.ReadStream;
+    stdout: NodeJS.WriteStream;
   }): Promise<HostAuthenticationResult> {
     const result = await this.validate(request);
     if (result.status === 'validated') this.validatedRequests.add(request.requestId);

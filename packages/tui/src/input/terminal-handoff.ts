@@ -2,7 +2,7 @@ const BRACKETED_PASTE_DISABLE = '\x1b[?2004l';
 const BRACKETED_PASTE_ENABLE = '\x1b[?2004h';
 
 export interface TerminalOwner {
-  stdin: NodeJS.ReadStream;
+  stdin: NodeJS.ReadStream & { drainForTerminalHandoff?: () => void };
   stdout: NodeJS.WriteStream;
 }
 
@@ -19,13 +19,17 @@ export async function withTerminalHandoff<T>(
   const wasRaw = stdin.isRaw === true;
   try {
     if (stdout.isTTY) stdout.write(BRACKETED_PASTE_DISABLE);
-    if (wasRaw) stdin.setRawMode?.(false);
     stdin.pause();
+    if (wasRaw) stdin.setRawMode?.(false);
     return await operation();
   } finally {
     try {
-      while (stdin.read?.() !== null) {
-        // Drain input entered while the child owned the terminal.
+      if (stdin.drainForTerminalHandoff) {
+        stdin.drainForTerminalHandoff();
+      } else {
+        while (stdin.read?.() !== null) {
+          // Drain input entered while the child owned the terminal.
+        }
       }
     } finally {
       try {

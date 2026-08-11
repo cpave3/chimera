@@ -3,16 +3,19 @@ import { withTerminalHandoff } from '../src/input/terminal-handoff';
 
 function terminalStreams() {
   const rawModes: boolean[] = [];
+  const lifecycle: string[] = [];
   const stdin = {
     isTTY: true,
     isRaw: true,
     setRawMode(value: boolean) {
       rawModes.push(value);
+      lifecycle.push(`raw:${value}`);
       this.isRaw = value;
     },
     pause: vi.fn(),
     resume: vi.fn(),
     read: vi.fn(() => null),
+    drainForTerminalHandoff: vi.fn(() => lifecycle.push('drain')),
   } as unknown as NodeJS.ReadStream;
   const writes: string[] = [];
   const stdout = {
@@ -22,20 +25,24 @@ function terminalStreams() {
       return true;
     },
   } as NodeJS.WriteStream;
-  return { stdin, stdout, rawModes, writes };
+  return { stdin, stdout, rawModes, writes, lifecycle };
 }
 
 describe('withTerminalHandoff', () => {
   it('releases and restores terminal input around an operation', async () => {
-    const { stdin, stdout, rawModes, writes } = terminalStreams();
+    const { stdin, stdout, rawModes, writes, lifecycle } = terminalStreams();
 
-    const result = await withTerminalHandoff({ stdin, stdout }, async () => 'done');
+    const result = await withTerminalHandoff({ stdin, stdout }, async () => {
+      lifecycle.push('operation');
+      return 'done';
+    });
 
     expect(result).toBe('done');
     expect(rawModes).toEqual([false, true]);
     expect(stdin.pause).toHaveBeenCalledOnce();
     expect(stdin.resume).toHaveBeenCalledOnce();
     expect(writes).toEqual(['\x1b[?2004l', '\x1b[?2004h']);
+    expect(lifecycle).toEqual(['raw:false', 'operation', 'drain', 'raw:true']);
   });
 
   it('restores terminal input when the operation throws', async () => {

@@ -477,7 +477,7 @@ describe('App', () => {
         });
       } as ChimeraClient['subscribe'],
     });
-    const { stdin, unmount } = render(
+    const { lastFrame, stdin, unmount } = render(
       <App
         client={client}
         sessionId="parent-sess"
@@ -511,10 +511,13 @@ describe('App', () => {
     (stdin as unknown as { write: (text: string) => void }).write('a');
     await new Promise((r) => setTimeout(r, 30));
 
+    expect(lastFrame()).toContain('Authenticating with sudo in the terminal');
     expect(authenticateSudo).toHaveBeenCalledWith({
       requestId: 'sudo-request',
       command: 'sudo true',
       signal: expect.any(AbortSignal),
+      stdin: expect.any(Object),
+      stdout: expect.any(Object),
     });
     expect(resolvePermissionAction).toHaveBeenCalledWith('parent-sess', 'sudo-request', {
       decision: 'allow',

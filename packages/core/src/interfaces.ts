@@ -109,6 +109,8 @@ export interface HostAuthenticationCapability {
     requestId: string;
     command: string;
     signal?: AbortSignal;
+    stdin: NodeJS.ReadStream;
+    stdout: NodeJS.WriteStream;
   }): Promise<HostAuthenticationResult>;
   consumeSudoAuthentication(requestId: string): boolean;
 }

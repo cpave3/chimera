@@ -126,10 +126,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     });
   }
 
-  const hostAuthentication = new OwnerLocalSudoAuthentication(({ signal }) =>
+  const hostAuthentication = new OwnerLocalSudoAuthentication(({ signal, stdin, stdout }) =>
     authenticateSudo({
-      stdin: process.stdin,
-      stdout: process.stdout,
+      stdin,
+      stdout,
       signal,
       effectiveUserId: () => process.geteuid?.(),
     }),

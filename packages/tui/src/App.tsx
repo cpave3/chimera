@@ -13,7 +13,7 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
-import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdin, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { parseAttachTokens, readForAttach } from './attach-paths';
 import { runBangCommand } from './bang';
@@ -108,6 +108,8 @@ export interface AppProps {
     requestId: string;
     command: string;
     signal?: AbortSignal;
+    stdin: NodeJS.ReadStream;
+    stdout: NodeJS.WriteStream;
   }) => Promise<{
     status: 'validated' | 'failed' | 'cancelled' | 'unavailable';
     message?: string;
@@ -165,6 +167,7 @@ export function App(props: AppProps): React.ReactElement {
   const themeCtx = useThemeContext();
   const app = useApp();
   const { stdout } = useStdout();
+  const { stdin } = useStdin();
   const scrollback = useMemo(() => new Scrollback(props.formatters), [props.formatters]);
   const { entries, committedCount } = useSyncExternalStore(
     scrollback.subscribe.bind(scrollback),
@@ -1542,10 +1545,13 @@ export function App(props: AppProps): React.ReactElement {
         const controller = new AbortController();
         sudoAuthenticationRef.current?.abort();
         sudoAuthenticationRef.current = controller;
+        scrollback.addInfo('Authenticating with sudo in the terminal…');
         const authentication = await props.authenticateSudo({
           requestId: item.requestId,
           command: item.command,
           signal: controller.signal,
+          stdin,
+          stdout,
         });
         if (sudoAuthenticationRef.current === controller) sudoAuthenticationRef.current = null;
         if (authentication.status !== 'validated') {
