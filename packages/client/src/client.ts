@@ -7,6 +7,7 @@ import type {
   EventId,
   ModelConfig,
   PermissionDecisionAction,
+  PermissionRequest,
   PermissionRule,
   RememberScope,
   SandboxMode,
@@ -20,6 +21,7 @@ import { ChimeraHttpError, PermissionAlreadyResolvedError } from './errors';
 import { parseSSE } from './sse';
 
 export interface SessionWithCompaction extends Session {
+  pendingPermissions: PermissionRequest[];
   compactionCount: number;
   lastCompactedAt: number | null;
 }

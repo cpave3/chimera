@@ -201,6 +201,7 @@ export function buildApp(opts: AppOptions): Hono {
 
     return c.json({
       ...entry.agent.session,
+      pendingPermissions: entry.agent.pendingPermissionRequests(),
       compactionActive: entry.compactionActive,
       compactionCount,
       lastCompactedAt,

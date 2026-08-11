@@ -23,7 +23,7 @@ The server SHALL expose:
 
 - `POST   /v1/sessions` → `{ sessionId }` — creates a new agent/session bound to the server instance.
 - `GET    /v1/sessions` → `Session[]` — lists sessions known to the instance.
-- `GET    /v1/sessions/:id` → `Session` — returns the full serialized session snapshot.
+- `GET    /v1/sessions/:id` → `Session & { pendingPermissions: PermissionRequest[] }` — returns the full serialized session snapshot plus authoritative unresolved requests for the live Agent.
 - `DELETE /v1/sessions/:id` → `204` — disposes the session.
 
 Each session SHALL have its own `Agent` instance, its own executor chain, and its own rule store scopes.
@@ -31,7 +31,14 @@ Each session SHALL have its own `Agent` instance, its own executor chain, and it
 #### Scenario: Create then fetch a session
 
 - **WHEN** a client POSTs to `/v1/sessions` with `{ cwd: "/tmp/x", model: {...}, sandboxMode: "off" }` and then GETs `/v1/sessions/<returned-id>`
-- **THEN** the GET response SHALL return a `Session` object whose `id` matches, whose `cwd` is `/tmp/x`, and whose `status` is `"idle"`
+- **THEN** the GET response SHALL return a `Session` object whose `id` matches, whose `cwd` is `/tmp/x`, whose `status` is `"idle"`, and whose `pendingPermissions` is an empty array
+
+#### Scenario: Fetch an unresolved permission
+
+- **WHEN** a live Agent has an unresolved structured permission request and a client GETs `/v1/sessions/<id>`
+- **THEN** `pendingPermissions` SHALL contain the complete request needed to display and resolve it, and a later GET after resolution SHALL omit that request from the array
+
+`pendingPermissions` is authoritative only for the current live Agent process. It SHALL always be present in responses from supporting servers, including as `[]`, and SHALL NOT imply that permission latches survive server restart.
 
 ### Requirement: Messaging and interruption
 

@@ -1231,6 +1231,59 @@ describe('Agent', () => {
     });
   });
 
+  it('exposes isolated snapshots of all unresolved permission requests', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('ok'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    const first = buildPermissionRequest({
+      tool: 'bash',
+      command: 'rm -rf build-cache',
+      cwd: '/tmp',
+      policyAnalysis: {
+        version: 1,
+        outcome: 'approval_required',
+        stages: [],
+        findings: [
+          {
+            kind: 'risk',
+            stageId: 'risk',
+            level: 'danger',
+            message: 'dangerous command',
+          },
+        ],
+      },
+    });
+    const second = buildPermissionRequest({
+      tool: 'bash',
+      command: 'pnpm publish',
+      cwd: '/tmp',
+    });
+    const firstResolution = agent.raisePermissionRequest(first);
+    const secondResolution = agent.raisePermissionRequest(second);
+
+    const snapshot = agent.pendingPermissionRequests();
+    expect(snapshot).toEqual([first, second]);
+    snapshot[0].command = 'mutated';
+    snapshot[0].policyAnalysis!.findings[0].message = 'mutated';
+    expect(agent.pendingPermissionRequests()[0]).toEqual(first);
+
+    await agent.resolvePermission(first.requestId, 'deny');
+    await expect(firstResolution).resolves.toMatchObject({ decision: 'deny' });
+    expect(agent.pendingPermissionRequests()).toEqual([second]);
+    expect(agent.session.status).toBe('waiting_for_permission');
+
+    await agent.resolvePermission(second.requestId, 'allow');
+    await expect(secondResolution).resolves.toMatchObject({ decision: 'allow' });
+    expect(agent.pendingPermissionRequests()).toEqual([]);
+    expect(agent.session.status).toBe('running');
+  });
+
   it('binds denial feedback to the exact pending request', async () => {
     const agent = new Agent({
       cwd: '/tmp',

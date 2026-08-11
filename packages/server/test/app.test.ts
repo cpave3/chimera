@@ -1,11 +1,17 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  Agent,
+  buildPermissionRequest,
+  loadSession,
+  type ModelConfig,
+  writeSessionMetadata,
+} from '@chimera/core';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { Agent, loadSession, type ModelConfig, writeSessionMetadata } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AgentRegistry, type AgentFactory } from '../src/agent-registry';
+import { type AgentFactory, AgentRegistry } from '../src/agent-registry';
 import { buildApp } from '../src/app';
 
 function textOnlyModel(text: string): LanguageModel {
@@ -259,6 +265,69 @@ describe('server app', () => {
     const sessionResponse = await app.request(`/v1/sessions/${sessionId}`);
     const sessionAfter = await sessionResponse.json();
     expect(sessionAfter.usage.totalTokens).toBeGreaterThan(0);
+  });
+
+  it('GET /v1/sessions/:id returns all unresolved permission requests', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+      })
+    ).json();
+    const agent = registry.get(sessionId)!.agent;
+    const first = buildPermissionRequest({
+      tool: 'bash',
+      command: 'rm -rf build-cache',
+      cwd: '/tmp',
+      policyAnalysis: {
+        version: 1,
+        outcome: 'approval_required',
+        stages: [],
+        findings: [
+          {
+            kind: 'risk',
+            stageId: 'risk',
+            level: 'danger',
+            message: 'dangerous command',
+          },
+        ],
+      },
+    });
+    const second = buildPermissionRequest({
+      tool: 'bash',
+      command: 'pnpm publish',
+      cwd: '/tmp',
+    });
+    const firstResolution = agent.raisePermissionRequest(first);
+    const secondResolution = agent.raisePermissionRequest(second);
+
+    const pendingResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(await pendingResponse.json()).toMatchObject({
+      status: 'waiting_for_permission',
+      pendingPermissions: JSON.parse(JSON.stringify([first, second])),
+    });
+
+    await agent.resolvePermission(first.requestId, 'deny');
+    await firstResolution;
+    const partiallyResolvedResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(await partiallyResolvedResponse.json()).toMatchObject({
+      status: 'waiting_for_permission',
+      pendingPermissions: JSON.parse(JSON.stringify([second])),
+    });
+
+    await agent.resolvePermission(second.requestId, 'allow');
+    await secondResolution;
+    const resolvedResponse = await app.request(`/v1/sessions/${sessionId}`);
+    expect(await resolvedResponse.json()).toMatchObject({
+      status: 'running',
+      pendingPermissions: [],
+    });
   });
 
   it('rule CRUD via /permissions/rules', async () => {

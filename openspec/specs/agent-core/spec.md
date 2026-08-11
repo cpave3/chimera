@@ -53,7 +53,9 @@ The final event emitted SHALL be `run_finished` with a `reason` in `{"stop","max
 
 When a tool call is dispatched through an `Executor` that raises a permission request, the `Agent` SHALL emit a `permission_request` event carrying a fresh `requestId`, set `session.status` to `"waiting_for_permission"`, and suspend the loop until `Agent.resolvePermission(requestId, decision, remember?)` is called.
 
-`resolvePermission` SHALL release the pause latch and cause the tool to either execute (on `"allow"`) or return `{ error: "denied by user" }` as its result (on `"deny"`) so that the model can observe the denial.
+`resolvePermission` SHALL release the matching pause latch and cause the tool to either execute (on `"allow"`) or return `{ error: "denied by user" }` as its result (on `"deny"`) so that the model can observe the denial. If other permission requests remain unresolved, the session status SHALL remain `"waiting_for_permission"`; it SHALL return to `"running"` only after the final pending request resolves.
+
+The Agent SHALL expose snapshots of all current pending `PermissionRequest` values without exposing their resolver callbacks or mutable internal records. Pending requests are live process state and SHALL NOT be added to persisted `Session` data because their pause latches cannot be restored after process restart.
 
 If `remember` is provided, the gate SHALL persist the matching rule in the requested scope before resuming the tool.
 
@@ -61,6 +63,11 @@ If `remember` is provided, the gate SHALL persist the matching rule in the reque
 
 - **WHEN** a consumer receives a `permission_request` event and calls `agent.resolvePermission(requestId, "allow")` without a `remember` argument
 - **THEN** the tool SHALL execute, a `permission_resolved` event SHALL fire with `decision: "allow"` and `remembered: false`, the session `status` SHALL return to `"running"`, and no rule SHALL be persisted
+
+#### Scenario: Concurrent requests remain visible independently
+
+- **WHEN** two permission requests are pending and the consumer resolves only the first
+- **THEN** the Agent's pending-request snapshot SHALL contain only the second request and the session status SHALL remain `"waiting_for_permission"` until the second request resolves
 
 #### Scenario: Denial is visible to the model
 

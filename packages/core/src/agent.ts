@@ -426,6 +426,10 @@ export class Agent {
     return this.pendingPermissions.get(requestId)?.request;
   }
 
+  pendingPermissionRequests(): PermissionRequest[] {
+    return [...this.pendingPermissions.values()].map(({ request }) => structuredClone(request));
+  }
+
   async resolvePermission(
     requestId: string,
     decision: 'allow' | 'deny',
@@ -459,7 +463,7 @@ export class Agent {
       ...(feedback ? { feedback } : {}),
       ...(grant ? { grant } : {}),
     });
-    this.session.status = 'running';
+    this.session.status = this.pendingPermissions.size > 0 ? 'waiting_for_permission' : 'running';
     this.currentQueue?.push({
       type: 'permission_resolved',
       requestId,
