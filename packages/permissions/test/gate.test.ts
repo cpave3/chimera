@@ -89,6 +89,58 @@ describe('DefaultPermissionGate', () => {
     });
   });
 
+  it('requires sudo authentication after approval despite matching allow rules', async () => {
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      commandPolicy: {
+        evaluator: {
+          async evaluate() {
+            return {
+              version: 1,
+              outcome: 'approval_required',
+              stages: [],
+              findings: [
+                {
+                  kind: 'elevation',
+                  stageId: 'sudo_approval',
+                  ruleId: 'sudo',
+                  message: 'sudo requires approval',
+                },
+              ],
+            };
+          },
+        },
+        context: (request) => ({
+          command: request.command,
+          target: 'host',
+          cwd: request.cwd,
+          home: '/home/user',
+          projectRoot: request.cwd,
+          roots: { read: [request.cwd], write: [request.cwd] },
+        }),
+      },
+      raiseRequest: async () => ({ decision: 'allow', remembered: false }),
+    });
+    gate.addRule(
+      {
+        tool: 'bash',
+        target: 'host',
+        pattern: 'sudo true',
+        patternKind: 'exact',
+        decision: 'allow',
+        createdAt: Date.now(),
+      },
+      'session',
+    );
+
+    await expect(gate.request(req({ command: 'sudo true' }))).resolves.toMatchObject({
+      decision: 'allow',
+      remembered: false,
+      authentication: 'sudo',
+    });
+  });
+
   it('keeps explicit deny rules effective for mandatory findings', async () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({

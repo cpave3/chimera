@@ -6,7 +6,7 @@ import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, type ModelListEntry, startServer } from '@chimera/server';
 import type { ReloadingAgentRegistry } from '@chimera/subagents';
-import { mountTui, type OverlayHandlers } from '@chimera/tui';
+import { authenticateSudo, mountTui, type OverlayHandlers } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import {
@@ -22,6 +22,7 @@ import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
+import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
 
 export interface InteractiveOptions {
   cwd: string;
@@ -125,6 +126,14 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     });
   }
 
+  const hostAuthentication = new OwnerLocalSudoAuthentication(({ signal }) =>
+    authenticateSudo({
+      stdin: process.stdin,
+      stdout: process.stdout,
+      signal,
+      effectiveUserId: () => process.geteuid?.(),
+    }),
+  );
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
@@ -147,6 +156,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     diagnostics: config.diagnostics,
     webSearch: config.webSearch,
     recall: config.recall,
+    hostAuthentication,
   });
 
   const commands = loadReloadingCommandsFromConfig({
@@ -251,6 +261,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     modes,
     formatters: factory.getFormatters(),
     initialPrompt: opts.initialPrompt,
+    authenticateSudo: (request) => hostAuthentication.authenticateSudo(request),
     // Default cycle = every discovered mode (alphabetical). If a user wants
     // a smaller cycle they set `cycleModes: ["build", "plan"]` explicitly.
     cycleModes: config.cycleModes ?? modes.all().map((mode) => mode.name),

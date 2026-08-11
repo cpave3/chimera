@@ -5,6 +5,7 @@ import { Compactor } from '@chimera/compaction';
 import type {
   CompactionConfig,
   Executor,
+  HostAuthenticationCapability,
   ModelConfig,
   ProviderOptions,
   SessionId,
@@ -33,6 +34,7 @@ import {
   type AutoApproveLevel,
   BalancedPolicyEvaluator,
   CommandPolicyPipeline,
+  commandRequiresSudo,
   DefaultPermissionGate,
   GatedExecutor,
   PathAuthorizationStage,
@@ -41,6 +43,7 @@ import {
   RiskStage,
   ScaryCommandStage,
   ShellEffectsStage,
+  SudoApprovalStage,
 } from '@chimera/permissions';
 import {
   buildKeyResolver,
@@ -159,6 +162,8 @@ export interface CliAgentFactoryOptions {
    * surfaces (as an actionable error) when images actually appear.
    */
   defaultVisionModel?: string;
+  /** Present only for the owner-local interactive TUI. */
+  hostAuthentication?: HostAuthenticationCapability;
 }
 
 export class CliAgentFactory implements AgentFactory {
@@ -189,6 +194,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
   private readonly defaultVisionModel: string | undefined;
+  private readonly hostAuthentication: HostAuthenticationCapability | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
    * The TUI consumes this via `getFormatters()` so its scrollback can render
@@ -222,6 +228,7 @@ export class CliAgentFactory implements AgentFactory {
     this.compactor = opts.compactor;
     this.responseTimeoutMs = opts.responseTimeoutMs;
     this.defaultVisionModel = opts.defaultVisionModel;
+    this.hostAuthentication = opts.hostAuthentication;
     this.diagnosticsConfig = opts.diagnostics;
     this.recallConfig = opts.recall;
     this.webSearchProvider = opts.webSearch
@@ -391,6 +398,7 @@ export class CliAgentFactory implements AgentFactory {
       ? (() => {
           const shellAdapter = new PiSafeShellAdapter();
           const strictPolicy = new CommandPolicyPipeline([
+            new SudoApprovalStage(),
             new ScaryCommandStage(),
             new RiskStage(shellAdapter, this.hostBashPolicy.autoAllowThrough),
             new ShellEffectsStage(shellAdapter),
@@ -400,10 +408,10 @@ export class CliAgentFactory implements AgentFactory {
             ? new BalancedPolicyEvaluator(strictPolicy)
             : strictPolicy;
         })()
-      : undefined;
+      : new CommandPolicyPipeline([new SudoApprovalStage()]);
     if (!this.hostBashPolicy.enabled) {
       this.warn(
-        'chimera: host bash command policy is explicitly disabled; using legacy permissions',
+        'chimera: host bash advisory policy is disabled; mandatory sudo approval remains enabled',
       );
     }
     const decisionAudit = new PermissionDecisionAudit({
@@ -511,6 +519,8 @@ export class CliAgentFactory implements AgentFactory {
       hostExecutor,
       bashHostExecutor: local,
       permissionGate: gate,
+      hostAuthentication: this.hostAuthentication,
+      commandRequiresSudo,
       sandboxMode: init.sandboxMode,
       toolCallShape: init.model.toolCallShape,
       backgroundProcesses,

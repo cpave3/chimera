@@ -465,6 +465,63 @@ describe('App', () => {
     childResolveSpy.mockRestore();
     unmount();
   });
+  it('authenticates sudo before resolving an owner-local allow action', async () => {
+    let pushEvent: ((event: unknown) => void) | null = null;
+    const resolvePermissionAction = vi.fn(async () => {});
+    const authenticateSudo = vi.fn(async () => ({ status: 'validated' as const }));
+    const client = stubClient({
+      resolvePermissionAction,
+      subscribe: async function* () {
+        yield await new Promise<never>((resolve) => {
+          pushEvent = resolve as (event: unknown) => void;
+        });
+      } as ChimeraClient['subscribe'],
+    });
+    const { stdin, unmount } = render(
+      <App
+        client={client}
+        sessionId="parent-sess"
+        modelRef="m/m"
+        cwd="/tmp"
+        authenticateSudo={authenticateSudo}
+      />,
+    );
+    pushEvent!({
+      type: 'permission_request',
+      requestId: 'sudo-request',
+      tool: 'bash',
+      target: 'host',
+      command: 'sudo true',
+      policyAnalysis: {
+        version: 1,
+        outcome: 'approval_required',
+        stages: [],
+        findings: [
+          {
+            kind: 'elevation',
+            stageId: 'sudo_approval',
+            ruleId: 'sudo',
+            message: 'sudo requires approval',
+          },
+        ],
+      },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    (stdin as unknown as { write: (text: string) => void }).write('a');
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(authenticateSudo).toHaveBeenCalledWith({
+      requestId: 'sudo-request',
+      command: 'sudo true',
+      signal: expect.any(AbortSignal),
+    });
+    expect(resolvePermissionAction).toHaveBeenCalledWith('parent-sess', 'sudo-request', {
+      decision: 'allow',
+    });
+    unmount();
+  });
+
   it('queues concurrent permission requests and reveals the next after resolution', async () => {
     const actions: string[] = [];
     let pushEvent: ((event: unknown) => void) | null = null;
@@ -1335,6 +1392,33 @@ describe('PermissionModal', () => {
     expect(frame).toContain('Allow once');
     expect(frame).toContain('Allow & remember');
     expect(frame).toContain('Deny once');
+    unmount();
+  });
+
+  it('shows sudo elevation and does not offer remembered approval', () => {
+    const { lastFrame, unmount } = render(
+      <PermissionModal
+        command="sudo true"
+        target="host"
+        policyAnalysis={{
+          version: 1,
+          outcome: 'approval_required',
+          stages: [],
+          findings: [
+            {
+              kind: 'elevation',
+              stageId: 'sudo_approval',
+              ruleId: 'sudo',
+              message: 'sudo requires one-time approval and local authentication.',
+            },
+          ],
+        }}
+        onResolve={() => {}}
+      />,
+    );
+
+    expect(lastFrame()).toContain('Elevation (sudo)');
+    expect(lastFrame()).not.toContain('Allow & remember');
     unmount();
   });
 

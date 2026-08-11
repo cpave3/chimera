@@ -121,7 +121,10 @@ export class DefaultPermissionGate implements PermissionGate {
             'rule',
           );
         }
-        return this.prompt(evaluatedRequest);
+        const resolution = await this.prompt(evaluatedRequest);
+        return resolution.decision === 'allow' && requiresSudoAuthentication(policyAnalysis)
+          ? { ...resolution, authentication: 'sudo' }
+          : resolution;
       }
     }
     const matchingRule = matchRule(req, this.store.all());
@@ -232,4 +235,12 @@ export class DefaultPermissionGate implements PermissionGate {
       'project',
     );
   }
+}
+
+function requiresSudoAuthentication(
+  analysis: Awaited<ReturnType<CommandPolicyEvaluator['evaluate']>>,
+): boolean {
+  return analysis.findings.some(
+    (finding) => finding.kind === 'elevation' && finding.ruleId === 'sudo',
+  );
 }

@@ -1,4 +1,9 @@
-import type { Executor, PermissionGate, SandboxMode } from '@chimera/core';
+import type {
+  Executor,
+  HostAuthenticationCapability,
+  PermissionGate,
+  SandboxMode,
+} from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
 import type { DiagnosticsRunner } from './diagnostics';
 import type { RecallStoreApi } from './recall';
@@ -12,6 +17,8 @@ export interface ToolContext {
   /** Raw host executor used only after the bash tool's explicit policy gate. */
   bashHostExecutor?: Executor;
   permissionGate?: PermissionGate;
+  hostAuthentication?: HostAuthenticationCapability;
+  commandRequiresSudo?: (command: string) => Promise<boolean>;
   sandboxMode: SandboxMode;
   /**
    * Tool-call compatibility surface exposed to the model. Undefined uses

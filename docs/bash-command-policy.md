@@ -25,9 +25,20 @@ Balanced mode intervenes for:
 - force pushes;
 - recursive forced deletion;
 - production-targeted mutating `kubectl` and Terraform commands;
-- fork bombs and other deterministic scary-command rules.
+- fork bombs and other deterministic scary-command rules;
+- every executable `sudo` invocation, including wrapped and compound commands.
 
-Deterministic scary rules are hard blocks and do not show an approval prompt. Other concrete danger/path findings use the normal approval flow. When Chimera is about to prompt, it fires the existing synchronous `PermissionRequest` lifecycle hook before entering `waiting_for_permission`.
+Deterministic scary rules are hard blocks and do not show an approval prompt. Sudo is a deterministic but promptable elevation finding: it always uses the normal approval flow, even with `autoApprove: "host"`/`"all"` or a remembered allow rule. Other concrete danger/path findings also use the normal approval flow. When Chimera is about to prompt, it fires the existing synchronous `PermissionRequest` lifecycle hook before entering `waiting_for_permission`.
+
+## Sudo authentication
+
+After you allow a foreground sudo command in the owner-local interactive TUI, Chimera temporarily releases the terminal and runs `sudo -v` with inherited terminal input and output. Enter the password in sudo's native hidden prompt. Chimera never reads, transmits, logs, persists, or includes the password in permission actions or tool results.
+
+If validation succeeds, Chimera restores the TUI and executes the exact approved command through the normal captured executor. Failed authentication, Ctrl+C, a missing `sudo` executable, or terminal handoff failure restores the TUI and prevents command execution. When Chimera already runs as root, validation is already satisfied, but the sudo command still requires explicit approval. Running Chimera as root is strongly discouraged because every host command—not only sudo—would already be privileged.
+
+This initial capability is intentionally limited to the foreground owner-local interactive TUI. Background sudo is rejected before launch. `chimera run`, `chimera serve`, attached/API/SSE/GUI clients, and headless subagents can approve a request but cannot safely provide owner-local authentication, so the command fails closed with guidance rather than reading from closed stdin. Configure non-interactive privilege outside Chimera or use the owner-local interactive TUI for those workflows.
+
+Sudo timestamp caching remains controlled by the host's sudoers policy, but it never bypasses Chimera's per-command approval. Commands containing sudo credential invalidation (`-k`, `-K`, or their long forms) are hard-blocked because they can invalidate the authentication precondition before a later command segment runs.
 
 ## Strict mode
 
@@ -43,7 +54,7 @@ Strict mode retains allow-by-proof behavior and also prompts when shell effects 
 }
 ```
 
-`autoAllowThrough` accepts `none`, `safe`, `caution`, or `danger`; critical is never automatically allowed. `enabled: false` explicitly restores legacy host permission behavior and prints a warning.
+`autoAllowThrough` accepts `none`, `safe`, `caution`, or `danger`; critical is never automatically allowed. `enabled: false` restores legacy host permission behavior only for non-sudo commands and prints a warning. Mandatory sudo approval, authentication, and credential-invalidation blocks remain active.
 
 ## Decision audit
 

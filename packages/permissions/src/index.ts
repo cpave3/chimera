@@ -11,4 +11,5 @@ export * from './risk-stage';
 export * from './rule-store';
 export * from './scary-command-stage';
 export * from './shell-effects-stage';
+export * from './sudo-approval-stage';
 export * from './types';

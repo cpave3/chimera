@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { withTerminalHandoff } from './terminal-handoff';
 
 export interface OpenInEditorArgs {
   initialText: string;
@@ -41,31 +42,23 @@ export async function openInEditor(args: OpenInEditorArgs): Promise<OpenInEditor
     if (mouseActive) {
       stdout.write(SGR_MOUSE_DISABLE);
     }
-    const wasRaw = stdin.isTTY === true;
-    if (wasRaw) {
-      stdin.setRawMode?.(false);
-    }
-    stdin.pause();
-
     const { command, args: editorArgs } = resolveEditorCommand();
-    const exitCode: number | null = (await new Promise((resolve, reject) => {
-      const child = spawn(command, [...editorArgs, tempFile], { stdio: 'inherit' });
-      child.once('error', reject);
-      child.once('exit', (code) => resolve(code));
-    }).catch((err) => {
-      throw err;
-    })) as number | null;
-
-    // Drain any pending stdin bytes before re-arming raw mode.
-    while (stdin.read?.() !== null) {
-      // discard
-    }
-    if (wasRaw) {
-      stdin.setRawMode?.(true);
-    }
-    stdin.resume();
-    if (mouseActive) {
-      stdout.write(SGR_MOUSE_ENABLE);
+    let exitCode: number | null;
+    try {
+      exitCode = await withTerminalHandoff(
+        { stdin, stdout },
+        () =>
+          new Promise<number | null>((resolve, reject) => {
+            const child = spawn(command, [...editorArgs, tempFile], { stdio: 'inherit' });
+            child.once('error', reject);
+            child.once('exit', (code) => resolve(code));
+          }),
+        { requireTty: false },
+      );
+    } finally {
+      if (mouseActive) {
+        stdout.write(SGR_MOUSE_ENABLE);
+      }
     }
 
     if (exitCode !== 0) {

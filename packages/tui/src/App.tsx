@@ -103,6 +103,15 @@ export interface AppProps {
    * Goes through the same handling as if the user typed it and pressed Enter.
    */
   initialPrompt?: string;
+  /** Owner-local authentication performed before resolving a sudo allow action. */
+  authenticateSudo?: (request: {
+    requestId: string;
+    command: string;
+    signal?: AbortSignal;
+  }) => Promise<{
+    status: 'validated' | 'failed' | 'cancelled' | 'unavailable';
+    message?: string;
+  }>;
   /** Pending large text pastes captured by the terminal input filter. */
   pasteRegistry?: PasteRegistry;
 }
@@ -122,6 +131,14 @@ interface PendingPermission {
     sessionId: string;
     url: string;
   };
+}
+
+function requiresSudoAuthentication(policyAnalysis: PendingPermission['policyAnalysis']): boolean {
+  return (
+    policyAnalysis?.findings.some(
+      (finding) => finding.kind === 'elevation' && finding.ruleId === 'sudo',
+    ) ?? false
+  );
 }
 
 interface ActiveSubagent {
@@ -156,6 +173,8 @@ export function App(props: AppProps): React.ReactElement {
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [permissionQueue, setPermissionQueue] = useState<PendingPermission[]>([]);
   const pending = permissionQueue[0] ?? null;
+  const sudoAuthenticationRef = useRef<AbortController | null>(null);
+  useEffect(() => () => sudoAuthenticationRef.current?.abort(), []);
   // Active subagents indexed by subagentId. Updated from the parent's stream.
   const subagentsRef = useRef<Map<string, ActiveSubagent>>(new Map());
   // Active session/client. Swapped by `/attach <id>` so the TUI can drill
@@ -1508,16 +1527,35 @@ export function App(props: AppProps): React.ReactElement {
       ? new ChimeraClient({ baseUrl: item.subagent.url })
       : activeSession.client;
     const targetSessionId = item.subagent ? item.subagent.sessionId : activeSession.sessionId;
-    void targetClient
-      .resolvePermissionAction(targetSessionId, item.requestId, action)
-      .then(() => {
-        setPermissionQueue((queue) =>
-          queue.filter((queued) => queued.requestId !== item.requestId),
-        );
-      })
-      .catch((err) => {
-        scrollback.addError(`resolvePermission: ${(err as Error).message}`);
-      });
+    void resolvePermission();
+
+    async function resolvePermission(): Promise<void> {
+      if (
+        action.decision !== 'deny' &&
+        !item.subagent &&
+        requiresSudoAuthentication(item.policyAnalysis)
+      ) {
+        if (!props.authenticateSudo) {
+          scrollback.addError('sudo authentication is unavailable in this client.');
+          return;
+        }
+        const controller = new AbortController();
+        sudoAuthenticationRef.current?.abort();
+        sudoAuthenticationRef.current = controller;
+        const authentication = await props.authenticateSudo({
+          requestId: item.requestId,
+          command: item.command,
+          signal: controller.signal,
+        });
+        if (sudoAuthenticationRef.current === controller) sudoAuthenticationRef.current = null;
+        if (authentication.status !== 'validated') {
+          scrollback.addError(authentication.message ?? 'sudo authentication failed.');
+          return;
+        }
+      }
+      await targetClient.resolvePermissionAction(targetSessionId, item.requestId, action);
+      setPermissionQueue((queue) => queue.filter((queued) => queued.requestId !== item.requestId));
+    }
   }
 
   // Split entries on the store's commit cursor. `<Static>` renders

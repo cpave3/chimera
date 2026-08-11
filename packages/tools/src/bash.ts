@@ -67,8 +67,9 @@ export function buildBashTool(ctx: ToolContext) {
         };
       }
       if (target === 'host' && ctx.permissionGate) {
+        const requestId = newRequestId();
         const resolution = await ctx.permissionGate.request({
-          requestId: newRequestId(),
+          requestId,
           tool: 'bash',
           target: 'host',
           command,
@@ -82,6 +83,26 @@ export function buildBashTool(ctx: ToolContext) {
             exit_code: -1,
             timed_out: false,
           };
+        }
+        if (resolution.authentication === 'sudo') {
+          if (!ctx.hostAuthentication) {
+            return {
+              stdout: '',
+              stderr:
+                'sudo authentication is unavailable in this session; use an owner-local interactive foreground session.',
+              exit_code: -1,
+              timed_out: false,
+            };
+          }
+          if (!ctx.hostAuthentication.consumeSudoAuthentication(requestId)) {
+            return {
+              stdout: '',
+              stderr:
+                'sudo authentication was not completed by the owner-local TUI; the command was not executed.',
+              exit_code: -1,
+              timed_out: false,
+            };
+          }
         }
       }
 
@@ -115,6 +136,9 @@ async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashR
   });
   if (args.target === 'sandbox') {
     return refuse('refused by chimera: background commands only run on the host.');
+  }
+  if (ctx.commandRequiresSudo && (await ctx.commandRequiresSudo(args.command))) {
+    return refuse('refused by chimera: sudo commands must run in the foreground.');
   }
   const manager = ctx.backgroundProcesses;
   if (!manager) {

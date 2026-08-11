@@ -84,6 +84,8 @@ export interface PermissionResolution {
   remembered: boolean;
   feedback?: string;
   grant?: CommandPolicyGrantProposal;
+  /** Post-approval OS authentication required before executing this request. */
+  authentication?: 'sudo';
   /**
    * Origin of the decision, used by the executor to render the right
    * "denied by ..." message and by consumers that need to distinguish
@@ -96,6 +98,19 @@ export interface PermissionResolution {
    * - `user`     — interactively rejected at the prompt.
    */
   denialSource?: Exclude<PermissionDecisionSource, 'automatic'>;
+}
+
+export type HostAuthenticationResult =
+  | { status: 'validated' }
+  | { status: 'failed' | 'cancelled' | 'unavailable'; message: string };
+
+export interface HostAuthenticationCapability {
+  authenticateSudo(request: {
+    requestId: string;
+    command: string;
+    signal?: AbortSignal;
+  }): Promise<HostAuthenticationResult>;
+  consumeSudoAuthentication(requestId: string): boolean;
 }
 
 export interface PermissionGate {

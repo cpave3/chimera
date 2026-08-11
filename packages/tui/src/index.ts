@@ -1,10 +1,11 @@
-export * from './theme';
-export * from './scrollback';
-export * from './slash-commands';
 export * from './App';
 export * from './Header';
+export * from './input/sudo-authentication';
+export * from './mount';
+export { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 export * from './PermissionModal';
 export * from './SlashMenu';
 export * from './StatusBar';
-export * from './mount';
-export { OverlayPicker, type OverlayDiffEntry } from './OverlayPicker';
+export * from './scrollback';
+export * from './slash-commands';
+export * from './theme';

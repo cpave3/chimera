@@ -154,6 +154,9 @@ function formatFinding(finding: NonNullable<PolicyAnalysis>['findings'][number])
     return `${finding.operation.toUpperCase()} path: ${finding.resolvedPath ?? finding.path} — ${finding.message}`;
   }
   if (finding.kind === 'unresolved') return `Unresolved: ${finding.message}`;
+  if (finding.kind === 'elevation') {
+    return `Elevation (${finding.ruleId}): ${finding.message}`;
+  }
   if (finding.kind === 'blocked') return `Blocked (${finding.ruleId}): ${finding.message}`;
   return `Analyzer error (${finding.stageId}): ${finding.message}`;
 }

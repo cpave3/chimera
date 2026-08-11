@@ -152,6 +152,111 @@ describe('buildTools', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it('authenticates approved sudo before executing the exact command', async () => {
+    const exec = vi.spyOn(executor, 'exec').mockResolvedValue({
+      stdout: 'approved',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
+    const consumeSudoAuthentication = vi.fn(() => true);
+    const permissionGate: PermissionGate = {
+      request: async () => ({
+        decision: 'allow',
+        remembered: false,
+        authentication: 'sudo',
+      }),
+      check: () => null,
+      addRule: () => {},
+      listRules: () => [],
+      removeRule: () => {},
+    };
+    const toolset = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      permissionGate,
+      hostAuthentication: {
+        authenticateSudo: async () => ({ status: 'validated' }),
+        consumeSudoAuthentication,
+      },
+    }).tools as unknown as Record<string, AnyTool>;
+
+    const result = await toolset.bash!.execute({ command: 'sudo printf approved' }, {});
+
+    expect(consumeSudoAuthentication).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledWith('sudo printf approved', expect.any(Object));
+    expect(result.exit_code).toBe(0);
+  });
+
+  it('does not execute sudo when authentication fails or is unavailable', async () => {
+    for (const hostAuthentication of [
+      {
+        authenticateSudo: async () => ({ status: 'validated' as const }),
+        consumeSudoAuthentication: () => false,
+      },
+      undefined,
+    ]) {
+      const exec = vi.spyOn(executor, 'exec');
+      exec.mockClear();
+      const permissionGate: PermissionGate = {
+        request: async () => ({
+          decision: 'allow',
+          remembered: false,
+          authentication: 'sudo',
+        }),
+        check: () => null,
+        addRule: () => {},
+        listRules: () => [],
+        removeRule: () => {},
+      };
+      const toolset = buildTools({
+        sandboxExecutor: executor,
+        hostExecutor: executor,
+        sandboxMode: 'off',
+        permissionGate,
+        hostAuthentication,
+      }).tools as unknown as Record<string, AnyTool>;
+
+      const result = await toolset.bash!.execute({ command: 'sudo true' }, {});
+
+      expect(result).toMatchObject({ exit_code: -1 });
+      expect(result.stderr).toMatch(/sudo authentication/);
+      expect(exec).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects background sudo before permission or launch', async () => {
+    const permissionGate: PermissionGate = {
+      request: vi.fn(async () => ({ decision: 'allow', remembered: false })),
+      check: () => null,
+      addRule: () => {},
+      listRules: () => [],
+      removeRule: () => {},
+    };
+    const manager = { launch: vi.fn() };
+    const toolset = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      permissionGate,
+      backgroundProcesses: manager as never,
+      commandRequiresSudo: async () => true,
+    }).tools as unknown as Record<string, AnyTool>;
+
+    const result = await toolset.bash!.execute(
+      { command: 'sudo true', run_in_background: true },
+      {},
+    );
+
+    expect(result).toMatchObject({ exit_code: -1 });
+    expect(result.stderr).toMatch(/foreground/);
+    expect(permissionGate.request).not.toHaveBeenCalled();
+    expect(manager.launch).not.toHaveBeenCalled();
+  });
+
   it('read returns line-number-prefixed content and total_lines', async () => {
     await writeFile(join(root, 'f.txt'), 'alpha\nbeta\ngamma\n');
     const toolset = tools();

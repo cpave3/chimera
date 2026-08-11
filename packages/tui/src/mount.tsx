@@ -1,6 +1,6 @@
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
-import type { ModelConfig, SandboxMode, SessionId } from '@chimera/core';
+import type { HostAuthenticationResult, ModelConfig, SandboxMode, SessionId } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
@@ -47,6 +47,11 @@ export interface MountOptions {
    * so slash commands are respected.
    */
   initialPrompt?: string;
+  authenticateSudo?: (request: {
+    requestId: string;
+    command: string;
+    signal?: AbortSignal;
+  }) => Promise<HostAuthenticationResult>;
 }
 
 export interface TuiHandle {
@@ -154,6 +159,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         reloadSystemPrompt={opts.reloadSystemPrompt}
         formatters={opts.formatters}
         initialPrompt={opts.initialPrompt}
+        authenticateSudo={opts.authenticateSudo}
         pasteRegistry={pasteRegistry}
       />
     </ThemeProvider>,
