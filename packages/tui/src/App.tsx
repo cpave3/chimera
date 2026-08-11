@@ -1545,7 +1545,6 @@ export function App(props: AppProps): React.ReactElement {
         const controller = new AbortController();
         sudoAuthenticationRef.current?.abort();
         sudoAuthenticationRef.current = controller;
-        scrollback.addInfo('Authenticating with sudo in the terminal…');
         const authentication = await props.authenticateSudo({
           requestId: item.requestId,
           command: item.command,

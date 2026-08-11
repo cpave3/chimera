@@ -4,6 +4,13 @@ import { type TerminalOwner, withTerminalHandoff } from './terminal-handoff';
 
 type Spawn = typeof nodeSpawn;
 
+const SUDO_PROMPT = 'Sudo password (input hidden — type it, then press Enter once): ';
+const AUTHENTICATION_BANNER =
+  '\r\n--- Sudo authentication ---\r\n' +
+  'Chimera has paused its input while sudo owns the terminal.\r\n' +
+  'Input is hidden; no dots or characters will appear. Type your password, then press Enter once.\r\n' +
+  'Press Ctrl+C to cancel.\r\n\r\n';
+
 export interface AuthenticateSudoOptions extends TerminalOwner {
   signal?: AbortSignal;
   spawn?: Spawn;
@@ -17,16 +24,24 @@ export async function authenticateSudo(
 
   try {
     return await withTerminalHandoff(options, async () => {
-      const child = (options.spawn ?? nodeSpawn)('sudo', ['-v'], { stdio: 'inherit' });
+      options.stdout.write(AUTHENTICATION_BANNER);
+      const child = (options.spawn ?? nodeSpawn)('sudo', ['-v', '-p', SUDO_PROMPT], {
+        stdio: 'inherit',
+      });
       const result = await waitForValidation(child, options.signal);
       if (result.error) throw result.error;
       if (result.cancelled) {
+        options.stdout.write('\r\nSudo authentication cancelled. Returning to Chimera.\r\n');
         return {
           status: 'cancelled',
           message: 'sudo authentication was cancelled; the command was not executed.',
         };
       }
-      if (result.code === 0) return { status: 'validated' };
+      if (result.code === 0) {
+        options.stdout.write('\r\nSudo authentication complete. Returning to Chimera.\r\n');
+        return { status: 'validated' };
+      }
+      options.stdout.write('\r\nSudo authentication failed. Returning to Chimera.\r\n');
       return {
         status: 'failed',
         message: `sudo authentication failed with status ${result.code ?? 'unknown'}; the command was not executed.`,

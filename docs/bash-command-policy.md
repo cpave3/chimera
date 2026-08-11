@@ -32,7 +32,7 @@ Deterministic scary rules are hard blocks and do not show an approval prompt. Su
 
 ## Sudo authentication
 
-After you allow a foreground sudo command in the owner-local interactive TUI, Chimera temporarily releases the terminal and runs `sudo -v` with inherited terminal input and output. Enter the password in sudo's native hidden prompt. Chimera never reads, transmits, logs, persists, or includes the password in permission actions or tool results.
+After you allow a foreground sudo command in the owner-local interactive TUI, Chimera temporarily releases the terminal and runs `sudo -v` with inherited terminal input and output. Chimera displays an authentication banner and an explicit native prompt explaining that input is hidden and one press of Enter submits it. No dots or characters appear while typing because sudo—not Chimera—owns the password input. Chimera never reads, transmits, logs, persists, or includes the password in permission actions or tool results.
 
 If validation succeeds, Chimera restores the TUI and executes the exact approved command through the normal captured executor. Failed authentication, Ctrl+C, a missing `sudo` executable, or terminal handoff failure restores the TUI and prevents command execution. When Chimera already runs as root, validation is already satisfied, but the sudo command still requires explicit approval. Running Chimera as root is strongly discouraged because every host command—not only sudo—would already be privileged.
 
