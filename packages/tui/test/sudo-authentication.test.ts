@@ -1,33 +1,11 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import { authenticateSudo } from '../src/input/sudo-authentication';
-
-function terminal() {
-  const writes: string[] = [];
-  return {
-    stdin: {
-      isTTY: true,
-      isRaw: true,
-      setRawMode(value: boolean) {
-        this.isRaw = value;
-      },
-      pause() {},
-      resume() {},
-      read() {
-        return null;
-      },
-    } as unknown as NodeJS.ReadStream,
-    stdout: {
-      isTTY: true,
-      write(value: string) {
-        writes.push(value);
-        return true;
-      },
-    } as unknown as NodeJS.WriteStream,
-    writes,
-  };
-}
+import {
+  authenticateSudoPassword,
+  checkSudoAuthentication,
+} from '../src/input/sudo-authentication';
 
 function childThatExits(code: number | null): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
@@ -36,37 +14,61 @@ function childThatExits(code: number | null): ChildProcess {
   return child;
 }
 
-describe('authenticateSudo', () => {
-  it('shows an explicit hidden-input prompt and success before restoring the TUI', async () => {
-    const spawn = vi.fn(() => childThatExits(0));
-    const owner = terminal();
+function childWithStdin(code: number | null): ChildProcess {
+  const child = childThatExits(code);
+  child.stdin = new PassThrough();
+  return child;
+}
 
-    await expect(
-      authenticateSudo({ ...owner, spawn, effectiveUserId: () => 1000 }),
-    ).resolves.toEqual({ status: 'validated' });
-    expect(spawn).toHaveBeenCalledWith(
-      'sudo',
-      ['-v', '-p', 'Sudo password (input hidden — type it, then press Enter once): '],
-      { stdio: 'inherit' },
-    );
-    expect(owner.writes.join('')).toContain(
-      'Chimera has paused its input while sudo owns the terminal.',
-    );
-    expect(owner.writes.join('')).toContain('Input is hidden; no dots or characters will appear.');
-    expect(owner.writes.join('')).toContain('Sudo authentication complete. Returning to Chimera.');
+describe('sudo authentication', () => {
+  it('accepts cached credentials without requesting a password', async () => {
+    const spawn = vi.fn(() => childThatExits(0));
+
+    await expect(checkSudoAuthentication({ spawn, effectiveUserId: () => 1000 })).resolves.toEqual({
+      status: 'validated',
+    });
+    expect(spawn).toHaveBeenCalledWith('sudo', ['-n', '-v'], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
   });
 
-  it('reports failure without exposing prompt contents', async () => {
+  it('requests masked input when cached credentials are unavailable', async () => {
     const spawn = vi.fn(() => childThatExits(1));
-    const owner = terminal();
+
+    await expect(checkSudoAuthentication({ spawn, effectiveUserId: () => 1000 })).resolves.toEqual({
+      status: 'password_required',
+    });
+  });
+
+  it('pipes password bytes to sudo without putting them in process metadata', async () => {
+    const child = childWithStdin(0);
+    const written: Buffer[] = [];
+    child.stdin!.on('data', (chunk) => written.push(Buffer.from(chunk)));
+    const spawn = vi.fn(() => child);
+    const password = new TextEncoder().encode('hunter2');
+
+    await expect(authenticateSudoPassword({ password, spawn })).resolves.toEqual({
+      status: 'validated',
+    });
+
+    expect(spawn).toHaveBeenCalledWith('sudo', ['-S', '-p', '', '-v'], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    expect(JSON.stringify(spawn.mock.calls[0])).not.toContain('hunter2');
+    expect(Buffer.concat(written).toString()).toBe('hunter2\n');
+    expect(password).toEqual(new Uint8Array(password.length));
+  });
+
+  it('reports a wrong password and clears its bytes', async () => {
+    const password = new TextEncoder().encode('wrong');
 
     await expect(
-      authenticateSudo({ ...owner, spawn, effectiveUserId: () => 1000 }),
+      authenticateSudoPassword({ password, spawn: () => childWithStdin(1) }),
     ).resolves.toEqual({
       status: 'failed',
-      message: 'sudo authentication failed with status 1; the command was not executed.',
+      message: 'sudo authentication failed; check the password and try again.',
     });
-    expect(owner.writes.join('')).toContain('Sudo authentication failed. Returning to Chimera.');
+    expect(password).toEqual(new Uint8Array(password.length));
   });
 
   it('reports a missing sudo executable as unavailable', async () => {
@@ -77,9 +79,7 @@ describe('authenticateSudo', () => {
       return child;
     });
 
-    await expect(
-      authenticateSudo({ ...terminal(), spawn, effectiveUserId: () => 1000 }),
-    ).resolves.toEqual({
+    await expect(checkSudoAuthentication({ spawn, effectiveUserId: () => 1000 })).resolves.toEqual({
       status: 'unavailable',
       message: 'sudo authentication is unavailable: spawn sudo ENOENT',
     });
@@ -88,21 +88,21 @@ describe('authenticateSudo', () => {
   it('skips OS authentication when Chimera already runs as root', async () => {
     const spawn = vi.fn();
 
-    await expect(
-      authenticateSudo({ ...terminal(), spawn, effectiveUserId: () => 0 }),
-    ).resolves.toEqual({ status: 'validated' });
+    await expect(checkSudoAuthentication({ spawn, effectiveUserId: () => 0 })).resolves.toEqual({
+      status: 'validated',
+    });
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it('cancels sudo validation when the request aborts', async () => {
+  it('cancels password validation when the request aborts', async () => {
     const child = new EventEmitter() as ChildProcess;
+    child.stdin = new PassThrough();
     child.kill = vi.fn(() => true);
     const controller = new AbortController();
-    const owner = terminal();
-    const authentication = authenticateSudo({
-      ...owner,
+    const password = new TextEncoder().encode('secret');
+    const authentication = authenticateSudoPassword({
+      password,
       spawn: () => child,
-      effectiveUserId: () => 1000,
       signal: controller.signal,
     });
 
@@ -111,6 +111,6 @@ describe('authenticateSudo', () => {
 
     await expect(authentication).resolves.toMatchObject({ status: 'cancelled' });
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
-    expect(owner.writes.join('')).toContain('Sudo authentication cancelled. Returning to Chimera.');
+    expect(password).toEqual(new Uint8Array(password.length));
   });
 });

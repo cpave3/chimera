@@ -13,7 +13,7 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
-import { Box, Static, Text, useApp, useInput, useStdin, useStdout } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { parseAttachTokens, readForAttach } from './attach-paths';
 import { runBangCommand } from './bang';
@@ -45,6 +45,7 @@ import { RewindPicker } from './RewindPicker';
 import { buildSessionTreeRows, formatRelativeTime, SessionPicker } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
 import { type StatusBarWidget } from './StatusBar';
+import { SudoPasswordModal } from './SudoPasswordModal';
 import { type Formatter, Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import {
   BUILTIN_COMMANDS,
@@ -104,12 +105,15 @@ export interface AppProps {
    */
   initialPrompt?: string;
   /** Owner-local authentication performed before resolving a sudo allow action. */
+  checkSudo?: (request: { requestId: string; command: string; signal?: AbortSignal }) => Promise<{
+    status: 'validated' | 'password_required' | 'unavailable';
+    message?: string;
+  }>;
   authenticateSudo?: (request: {
     requestId: string;
     command: string;
+    password: Uint8Array;
     signal?: AbortSignal;
-    stdin: NodeJS.ReadStream;
-    stdout: NodeJS.WriteStream;
   }) => Promise<{
     status: 'validated' | 'failed' | 'cancelled' | 'unavailable';
     message?: string;
@@ -143,6 +147,13 @@ function requiresSudoAuthentication(policyAnalysis: PendingPermission['policyAna
   );
 }
 
+interface SudoAuthenticationState {
+  item: PendingPermission;
+  action: PermissionDecisionAction;
+  status: 'checking' | 'password' | 'validating';
+  error?: string;
+}
+
 interface ActiveSubagent {
   subagentId: string;
   childSessionId: string;
@@ -167,7 +178,6 @@ export function App(props: AppProps): React.ReactElement {
   const themeCtx = useThemeContext();
   const app = useApp();
   const { stdout } = useStdout();
-  const { stdin } = useStdin();
   const scrollback = useMemo(() => new Scrollback(props.formatters), [props.formatters]);
   const { entries, committedCount } = useSyncExternalStore(
     scrollback.subscribe.bind(scrollback),
@@ -175,6 +185,9 @@ export function App(props: AppProps): React.ReactElement {
   );
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [permissionQueue, setPermissionQueue] = useState<PendingPermission[]>([]);
+  const [sudoAuthentication, setSudoAuthentication] = useState<SudoAuthenticationState | null>(
+    null,
+  );
   const pending = permissionQueue[0] ?? null;
   const sudoAuthenticationRef = useRef<AbortController | null>(null);
   useEffect(() => () => sudoAuthenticationRef.current?.abort(), []);
@@ -1526,41 +1539,95 @@ export function App(props: AppProps): React.ReactElement {
   function onResolve(action: PermissionDecisionAction): void {
     if (!pending) return;
     const item = pending;
+    if (
+      action.decision !== 'deny' &&
+      !item.subagent &&
+      requiresSudoAuthentication(item.policyAnalysis)
+    ) {
+      void beginSudoAuthentication(item, action);
+      return;
+    }
+    void resolvePermission(item, action);
+  }
+
+  async function beginSudoAuthentication(
+    item: PendingPermission,
+    action: PermissionDecisionAction,
+  ): Promise<void> {
+    if (!props.checkSudo || !props.authenticateSudo) {
+      scrollback.addError('sudo authentication is unavailable in this client.');
+      return;
+    }
+    const controller = new AbortController();
+    sudoAuthenticationRef.current?.abort();
+    sudoAuthenticationRef.current = controller;
+    setSudoAuthentication({ item, action, status: 'checking' });
+    const result = await props.checkSudo({
+      requestId: item.requestId,
+      command: item.command,
+      signal: controller.signal,
+    });
+    if (sudoAuthenticationRef.current !== controller) return;
+    if (result.status === 'validated') {
+      sudoAuthenticationRef.current = null;
+      setSudoAuthentication(null);
+      await resolvePermission(item, action);
+    } else if (result.status === 'password_required') {
+      setSudoAuthentication({ item, action, status: 'password' });
+    } else {
+      sudoAuthenticationRef.current = null;
+      setSudoAuthentication(null);
+      scrollback.addError(result.message ?? 'sudo authentication is unavailable.');
+    }
+  }
+
+  async function submitSudoPassword(password: Uint8Array): Promise<void> {
+    const authentication = sudoAuthentication;
+    if (!authentication || !props.authenticateSudo) {
+      password.fill(0);
+      return;
+    }
+    setSudoAuthentication({ ...authentication, status: 'validating', error: undefined });
+    const result = await props.authenticateSudo({
+      requestId: authentication.item.requestId,
+      command: authentication.item.command,
+      password,
+      signal: sudoAuthenticationRef.current?.signal,
+    });
+    password.fill(0);
+    if (result.status === 'validated') {
+      sudoAuthenticationRef.current = null;
+      setSudoAuthentication(null);
+      await resolvePermission(authentication.item, authentication.action);
+    } else if (result.status === 'failed') {
+      setSudoAuthentication({
+        ...authentication,
+        status: 'password',
+        error: result.message,
+      });
+    } else {
+      sudoAuthenticationRef.current = null;
+      setSudoAuthentication(null);
+      scrollback.addError(result.message ?? 'sudo authentication was cancelled.');
+    }
+  }
+
+  function cancelSudoAuthentication(): void {
+    sudoAuthenticationRef.current?.abort();
+    sudoAuthenticationRef.current = null;
+    setSudoAuthentication(null);
+  }
+
+  async function resolvePermission(
+    item: PendingPermission,
+    action: PermissionDecisionAction,
+  ): Promise<void> {
     const targetClient = item.subagent
       ? new ChimeraClient({ baseUrl: item.subagent.url })
       : activeSession.client;
     const targetSessionId = item.subagent ? item.subagent.sessionId : activeSession.sessionId;
-    void resolvePermission();
-
-    async function resolvePermission(): Promise<void> {
-      if (
-        action.decision !== 'deny' &&
-        !item.subagent &&
-        requiresSudoAuthentication(item.policyAnalysis)
-      ) {
-        if (!props.authenticateSudo) {
-          scrollback.addError('sudo authentication is unavailable in this client.');
-          return;
-        }
-        const controller = new AbortController();
-        sudoAuthenticationRef.current?.abort();
-        sudoAuthenticationRef.current = controller;
-        const authentication = await props.authenticateSudo({
-          requestId: item.requestId,
-          command: item.command,
-          signal: controller.signal,
-          stdin,
-          stdout,
-        });
-        if (sudoAuthenticationRef.current === controller) sudoAuthenticationRef.current = null;
-        if (authentication.status !== 'validated') {
-          scrollback.addError(authentication.message ?? 'sudo authentication failed.');
-          return;
-        }
-      }
-      await targetClient.resolvePermissionAction(targetSessionId, item.requestId, action);
-      setPermissionQueue((queue) => queue.filter((queued) => queued.requestId !== item.requestId));
-    }
+    await targetClient.resolvePermissionAction(targetSessionId, item.requestId, action);
+    setPermissionQueue((queue) => queue.filter((queued) => queued.requestId !== item.requestId));
   }
 
   // Split entries on the store's commit cursor. `<Static>` renders
@@ -1775,7 +1842,14 @@ export function App(props: AppProps): React.ReactElement {
             </Text>
           </Box>
         )}
-        {pending && (
+        {sudoAuthentication ? (
+          <SudoPasswordModal
+            status={sudoAuthentication.status}
+            error={sudoAuthentication.error}
+            onSubmit={(password) => void submitSudoPassword(password)}
+            onCancel={cancelSudoAuthentication}
+          />
+        ) : pending ? (
           <PermissionModal
             command={pending.command}
             reason={pending.reason}
@@ -1788,7 +1862,7 @@ export function App(props: AppProps): React.ReactElement {
             }
             onResolve={onResolve}
           />
-        )}
+        ) : null}
         {overlayPicker && (
           <OverlayPicker
             entries={overlayPicker}

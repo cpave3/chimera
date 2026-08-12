@@ -465,10 +465,15 @@ describe('App', () => {
     childResolveSpy.mockRestore();
     unmount();
   });
-  it('authenticates sudo before resolving an owner-local allow action', async () => {
+  it('collects sudo password locally before resolving an owner-local allow action', async () => {
     let pushEvent: ((event: unknown) => void) | null = null;
     const resolvePermissionAction = vi.fn(async () => {});
-    const authenticateSudo = vi.fn(async () => ({ status: 'validated' as const }));
+    const checkSudo = vi.fn(async () => ({ status: 'password_required' as const }));
+    const authenticateSudo = vi.fn(async (request: { password: Uint8Array }) => {
+      capturedPassword = Buffer.from(request.password);
+      return { status: 'validated' as const };
+    });
+    let capturedPassword: Buffer = Buffer.alloc(0);
     const client = stubClient({
       resolvePermissionAction,
       subscribe: async function* () {
@@ -483,6 +488,7 @@ describe('App', () => {
         sessionId="parent-sess"
         modelRef="m/m"
         cwd="/tmp"
+        checkSudo={checkSudo}
         authenticateSudo={authenticateSudo}
       />,
     );
@@ -511,13 +517,21 @@ describe('App', () => {
     (stdin as unknown as { write: (text: string) => void }).write('a');
     await new Promise((r) => setTimeout(r, 30));
 
+    for (const character of 'hunter2') {
+      (stdin as unknown as { write: (text: string) => void }).write(character);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await new Promise((r) => setTimeout(r, 20));
+    (stdin as unknown as { write: (text: string) => void }).write('\r');
+    await new Promise((r) => setTimeout(r, 30));
+
     expect(authenticateSudo).toHaveBeenCalledWith({
       requestId: 'sudo-request',
       command: 'sudo true',
+      password: expect.any(Uint8Array),
       signal: expect.any(AbortSignal),
-      stdin: expect.any(Object),
-      stdout: expect.any(Object),
     });
+    expect(capturedPassword.toString()).toBe('hunter2');
     expect(resolvePermissionAction).toHaveBeenCalledWith('parent-sess', 'sudo-request', {
       decision: 'allow',
     });

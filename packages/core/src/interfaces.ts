@@ -104,13 +104,21 @@ export type HostAuthenticationResult =
   | { status: 'validated' }
   | { status: 'failed' | 'cancelled' | 'unavailable'; message: string };
 
+export type HostAuthenticationCheckResult =
+  | { status: 'validated' | 'password_required' }
+  | { status: 'unavailable'; message: string };
+
 export interface HostAuthenticationCapability {
-  authenticateSudo(request: {
+  checkSudo(request: {
     requestId: string;
     command: string;
     signal?: AbortSignal;
-    stdin: NodeJS.ReadStream;
-    stdout: NodeJS.WriteStream;
+  }): Promise<HostAuthenticationCheckResult>;
+  authenticateSudo(request: {
+    requestId: string;
+    command: string;
+    password: Uint8Array;
+    signal?: AbortSignal;
   }): Promise<HostAuthenticationResult>;
   consumeSudoAuthentication(requestId: string): boolean;
 }

@@ -6,7 +6,12 @@ import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, type ModelListEntry, startServer } from '@chimera/server';
 import type { ReloadingAgentRegistry } from '@chimera/subagents';
-import { authenticateSudo, mountTui, type OverlayHandlers } from '@chimera/tui';
+import {
+  authenticateSudoPassword,
+  checkSudoAuthentication,
+  mountTui,
+  type OverlayHandlers,
+} from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import {
@@ -126,13 +131,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     });
   }
 
-  const hostAuthentication = new OwnerLocalSudoAuthentication(({ signal, stdin, stdout }) =>
-    authenticateSudo({
-      stdin,
-      stdout,
-      signal,
-      effectiveUserId: () => process.geteuid?.(),
-    }),
+  const hostAuthentication = new OwnerLocalSudoAuthentication(
+    ({ signal }) => checkSudoAuthentication({ signal, effectiveUserId: () => process.geteuid?.() }),
+    ({ password, signal }) => authenticateSudoPassword({ password, signal }),
   );
   const factory = new CliAgentFactory({
     providersConfig,
@@ -261,6 +262,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     modes,
     formatters: factory.getFormatters(),
     initialPrompt: opts.initialPrompt,
+    checkSudo: (request) => hostAuthentication.checkSudo(request),
     authenticateSudo: (request) => hostAuthentication.authenticateSudo(request),
     // Default cycle = every discovered mode (alphabetical). If a user wants
     // a smaller cycle they set `cycleModes: ["build", "plan"]` explicitly.
