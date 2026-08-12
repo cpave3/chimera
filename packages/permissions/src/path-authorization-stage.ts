@@ -1,4 +1,5 @@
 import { access, realpath, stat } from 'node:fs/promises';
+import { devNull } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type {
   CommandPolicyFact,
@@ -19,6 +20,7 @@ export class PathAuthorizationStage implements CommandPolicyStage {
       const resolvedPath = await resolveEffectPath(effect.path, context.cwd, context.home);
       const roots = effect.operation === 'read' ? context.roots.read : context.roots.write;
       if (roots.some((root) => contains(root, resolvedPath))) continue;
+      if (effect.operation === 'write' && resolvedPath === devNull) continue;
       const requiredGrant = effect.operation === 'read' ? 'read' : 'write';
       findings.push({
         kind: 'path',

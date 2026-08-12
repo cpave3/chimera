@@ -1,5 +1,5 @@
 import { mkdtemp, rm, symlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PathAuthorizationStage } from '../src/path-authorization-stage';
@@ -61,6 +61,71 @@ describe('PathAuthorizationStage', () => {
       status: 'findings',
       findings: [{ kind: 'path', resolvedPath: join(outside, 'new.txt') }],
       grantProposal: { kind: 'write', path: outside },
+    });
+  });
+
+  describe('platform null device', () => {
+    it('authorizes a write to the null device without a finding', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
+      cleanup.push(cwd);
+      const stage = new PathAuthorizationStage();
+
+      const result = await stage.evaluate({
+        command: `echo quiet > ${devNull}`,
+        target: 'host',
+        cwd,
+        home: '/home/user',
+        projectRoot: cwd,
+        roots: { read: [cwd], write: [cwd] },
+        facts: [{ kind: 'shell_effect', operation: 'write', path: devNull }],
+      });
+
+      expect(result).toEqual({ status: 'pass' });
+    });
+
+    it('still requires approval for a delete targeting the null device', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
+      cleanup.push(cwd);
+      const stage = new PathAuthorizationStage();
+
+      const result = await stage.evaluate({
+        command: `rm ${devNull}`,
+        target: 'host',
+        cwd,
+        home: '/home/user',
+        projectRoot: cwd,
+        roots: { read: [cwd], write: [cwd] },
+        facts: [{ kind: 'shell_effect', operation: 'delete', path: devNull }],
+      });
+
+      expect(result).toMatchObject({
+        status: 'findings',
+        findings: [{ kind: 'path', operation: 'delete', requiredGrant: 'write' }],
+      });
+    });
+
+    it('still requires approval for a write to an unrelated out-of-root file', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
+      const outside = await mkdtemp(join(tmpdir(), 'chimera-policy-outside-'));
+      cleanup.push(cwd, outside);
+      const target = join(outside, 'sink.txt');
+      const stage = new PathAuthorizationStage();
+
+      const result = await stage.evaluate({
+        command: `echo x > ${target}`,
+        target: 'host',
+        cwd,
+        home: '/home/user',
+        projectRoot: cwd,
+        roots: { read: [cwd], write: [cwd] },
+        facts: [{ kind: 'shell_effect', operation: 'write', path: target }],
+      });
+
+      expect(result).toMatchObject({
+        status: 'findings',
+        findings: [{ kind: 'path', operation: 'write', requiredGrant: 'write' }],
+        grantProposal: { kind: 'write', path: outside },
+      });
     });
   });
 });
