@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
@@ -61,6 +61,47 @@ describe('CliAgentFactory host bash policy', () => {
     expect(records).toEqual([
       expect.objectContaining({ command: 'echo safe', decision: 'allow', source: 'automatic' }),
       expect.objectContaining({ command: 'rm -rf build', decision: 'deny', source: 'policy' }),
+    ]);
+  });
+
+  it('auto-runs a command redirecting to the platform null device without a policy prompt', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { headlessAutoDeny: true },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const bash = (agent as unknown as { opts: { tools: { bash: ExecutableTool } } }).opts.tools
+      .bash;
+
+    await expect(bash.execute({ command: `echo quiet > ${devNull}` }, {})).resolves.toMatchObject({
+      exit_code: 0,
+    });
+    const records = (
+      await readFile(join(cwd, '.chimera', 'logs', 'permission-decisions.jsonl'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    expect(records).toEqual([
+      expect.objectContaining({
+        command: `echo quiet > ${devNull}`,
+        decision: 'allow',
+        source: 'automatic',
+      }),
     ]);
   });
 });
