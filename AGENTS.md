@@ -210,11 +210,12 @@ Inherited from user rules:
 
 Format: `<type>(<scope>): <short description>`. Types seen: `feat`, `fix`,
 `docs`, `chore`. Scope is a package name or area (`tui`, `cli`, `commands`,
-`openspec`, etc.). Body wrapped to ~72 cols. Trailer:
+`openspec`, etc.). Body wrapped to ~72 cols.
 
-```
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-```
+**Do not add `Co-Authored-By` trailers.** Claude did much of the early work
+on this repo, so historical commits carry that trailer; other agents
+pattern-match on it and start attributing their own commits to Claude.
+Leave trailers off entirely unless the user explicitly asks for one.
 
 Split large changes into logically coherent commits rather than one mega-
 commit. Don't push or open PRs unless explicitly asked.
