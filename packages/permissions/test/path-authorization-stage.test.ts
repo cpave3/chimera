@@ -83,6 +83,24 @@ describe('PathAuthorizationStage', () => {
       expect(result).toEqual({ status: 'pass' });
     });
 
+    it('authorizes a read from the null device without a finding', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
+      cleanup.push(cwd);
+      const stage = new PathAuthorizationStage();
+
+      const result = await stage.evaluate({
+        command: `cat ${devNull}`,
+        target: 'host',
+        cwd,
+        home: '/home/user',
+        projectRoot: cwd,
+        roots: { read: [cwd], write: [cwd] },
+        facts: [{ kind: 'shell_effect', operation: 'read', path: devNull }],
+      });
+
+      expect(result).toEqual({ status: 'pass' });
+    });
+
     it('still requires approval for a delete targeting the null device', async () => {
       const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
       cleanup.push(cwd);

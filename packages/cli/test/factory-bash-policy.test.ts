@@ -104,4 +104,45 @@ describe('CliAgentFactory host bash policy', () => {
       }),
     ]);
   });
+
+  it('auto-runs a command reading from the platform null device without a policy prompt', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { headlessAutoDeny: true },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const bash = (agent as unknown as { opts: { tools: { bash: ExecutableTool } } }).opts.tools
+      .bash;
+
+    await expect(bash.execute({ command: `cat ${devNull}` }, {})).resolves.toMatchObject({
+      exit_code: 0,
+    });
+    const records = (
+      await readFile(join(cwd, '.chimera', 'logs', 'permission-decisions.jsonl'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    expect(records).toEqual([
+      expect.objectContaining({
+        command: `cat ${devNull}`,
+        decision: 'allow',
+        source: 'automatic',
+      }),
+    ]);
+  });
 });
