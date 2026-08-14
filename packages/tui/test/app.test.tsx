@@ -222,6 +222,380 @@ describe('App', () => {
     unmount();
   });
 
+  it('restores a pending permission and keeps follow-ups on the active run until it finishes', async () => {
+    const sends: string[] = [];
+    const appendCalls: string[] = [];
+    const resolvePermissionAction = vi.fn(async () => {});
+    let pushEvent: ((event: unknown) => void) | null = null;
+    const client = stubClient({
+      getSession: async () => ({
+        parentId: null,
+        mode: 'build',
+        model: { providerId: 'mock', modelId: 'mock' },
+        messages: [],
+        status: 'waiting_for_permission',
+        pendingPermissions: [
+          {
+            requestId: 'recovered-request',
+            tool: 'bash',
+            target: 'host',
+            command: 'rm /tmp/recovered',
+            reason: 'clean up',
+            cwd: '/tmp',
+          },
+          {
+            requestId: 'next-request',
+            tool: 'bash',
+            target: 'host',
+            command: 'echo next',
+            cwd: '/tmp',
+          },
+        ],
+      }),
+      resolvePermissionAction,
+      appendMessage: async (_id: string, text: string) => {
+        appendCalls.push(text);
+      },
+      send: async function* (_id: string, text: string) {
+        sends.push(text);
+        yield* [];
+      } as unknown as ChimeraClient['send'],
+      subscribe: async function* () {
+        const events: unknown[] = [];
+        const waiters: Array<(event: unknown) => void> = [];
+        pushEvent = (event: unknown) => {
+          const waiter = waiters.shift();
+          if (waiter) waiter(event);
+          else events.push(event);
+        };
+        while (true) {
+          if (events.length > 0) yield events.shift() as never;
+          else {
+            yield await new Promise<never>((resolve) => {
+              waiters.push(resolve as (event: unknown) => void);
+            });
+          }
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="attached-session" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(lastFrame()).toContain('rm /tmp/recovered');
+    pushEvent?.({
+      type: 'permission_request',
+      requestId: 'recovered-request',
+      tool: 'bash',
+      target: 'host',
+      command: 'rm /tmp/recovered',
+      reason: 'clean up',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    stdin.write('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(resolvePermissionAction).toHaveBeenCalledWith('attached-session', 'recovered-request', {
+      decision: 'allow',
+    });
+    expect(lastFrame()).toContain('echo next');
+    stdin.write('d');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(resolvePermissionAction).toHaveBeenCalledTimes(2);
+    expect(resolvePermissionAction).toHaveBeenLastCalledWith('attached-session', 'next-request', {
+      decision: 'deny',
+    });
+    expect(lastFrame()).not.toContain('rm /tmp/recovered');
+
+    for (const character of 'follow up\r') {
+      stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(appendCalls).toEqual(['follow up']);
+    expect(sends).toEqual([]);
+
+    pushEvent?.({ type: 'run_finished', reason: 'stop' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (const character of 'next turn\r') {
+      stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sends).toEqual(['next turn']);
+    unmount();
+  });
+
+  it('does not resurrect resolved permission state from a late session snapshot', async () => {
+    const sends: string[] = [];
+    const appendCalls: string[] = [];
+    let releaseSnapshot: (() => void) | null = null;
+    let pushEvent: ((event: unknown) => void) | null = null;
+    const client = stubClient({
+      getSession: async () => {
+        await new Promise<void>((resolve) => {
+          releaseSnapshot = resolve;
+        });
+        return {
+          parentId: null,
+          mode: 'build',
+          model: { providerId: 'mock', modelId: 'mock' },
+          messages: [],
+          status: 'waiting_for_permission',
+          pendingPermissions: [
+            {
+              requestId: 'stale-request',
+              tool: 'bash',
+              target: 'host',
+              command: 'stale command',
+              cwd: '/tmp',
+            },
+          ],
+        };
+      },
+      appendMessage: async (_id: string, text: string) => {
+        appendCalls.push(text);
+      },
+      send: async function* (_id: string, text: string) {
+        sends.push(text);
+        yield* [];
+      } as unknown as ChimeraClient['send'],
+      subscribe: async function* () {
+        const events: unknown[] = [];
+        const waiters: Array<(event: unknown) => void> = [];
+        pushEvent = (event: unknown) => {
+          const waiter = waiters.shift();
+          if (waiter) waiter(event);
+          else events.push(event);
+        };
+        while (true) {
+          if (events.length > 0) yield events.shift() as never;
+          else {
+            yield await new Promise<never>((resolve) => {
+              waiters.push(resolve as (event: unknown) => void);
+            });
+          }
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="attached-session" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    pushEvent?.({
+      type: 'permission_request',
+      requestId: 'stale-request',
+      tool: 'bash',
+      target: 'host',
+      command: 'stale command',
+    });
+    pushEvent?.({ type: 'permission_resolved', requestId: 'stale-request', decision: 'allow' });
+    pushEvent?.({ type: 'run_finished', reason: 'stop' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseSnapshot?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(lastFrame()).not.toContain('stale command');
+    for (const character of 'new turn\r') {
+      stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sends).toEqual(['new turn']);
+    expect(appendCalls).toEqual([]);
+    unmount();
+  });
+
+  it('keeps a run active when a tool event precedes a late idle snapshot', async () => {
+    const sends: string[] = [];
+    const appendCalls: string[] = [];
+    let releaseSnapshot: (() => void) | null = null;
+    let pushEvent: ((event: unknown) => void) | null = null;
+    const client = stubClient({
+      getSession: async () => {
+        await new Promise<void>((resolve) => {
+          releaseSnapshot = resolve;
+        });
+        return {
+          parentId: null,
+          mode: 'build',
+          model: { providerId: 'mock', modelId: 'mock' },
+          messages: [],
+          status: 'idle',
+          pendingPermissions: [],
+        };
+      },
+      appendMessage: async (_id: string, text: string) => {
+        appendCalls.push(text);
+      },
+      send: async function* (_id: string, text: string) {
+        sends.push(text);
+        yield* [];
+      } as unknown as ChimeraClient['send'],
+      subscribe: async function* () {
+        yield await new Promise<never>((resolve) => {
+          pushEvent = resolve as (event: unknown) => void;
+        });
+      } as ChimeraClient['subscribe'],
+    });
+    const { stdin, unmount } = render(
+      <App client={client} sessionId="attached-session" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    pushEvent?.({
+      type: 'tool_call_start',
+      callId: 'active-tool',
+      name: 'bash',
+      args: { command: 'sleep 1' },
+      target: 'host',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseSnapshot?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    for (const character of 'follow up\r') {
+      stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(appendCalls).toEqual(['follow up']);
+    expect(sends).toEqual([]);
+    unmount();
+  });
+
+  it('clears old permission state when switching sessions', async () => {
+    let finishCreateSession: (() => void) | null = null;
+    let finishOldSnapshot: (() => void) | null = null;
+    let oldSessionPushEvent: ((event: unknown) => void) | null = null;
+    let sudoSignal: AbortSignal | undefined;
+    const checkSudo = vi.fn(
+      async (request: { signal?: AbortSignal }) =>
+        await new Promise<{ status: 'validated' }>(() => {
+          sudoSignal = request.signal;
+        }),
+    );
+    const client = stubClient({
+      createSession: async () => {
+        await new Promise<void>((resolve) => {
+          finishCreateSession = resolve;
+        });
+        return { sessionId: 'new-session' };
+      },
+      getSession: async (sessionId) => {
+        if (sessionId === 'attached-session') {
+          await new Promise<void>((resolve) => {
+            finishOldSnapshot = resolve;
+          });
+          return {
+            parentId: null,
+            mode: 'build',
+            model: { providerId: 'mock', modelId: 'mock' },
+            messages: [],
+            status: 'waiting_for_permission',
+            pendingPermissions: [
+              {
+                requestId: 'old-request',
+                tool: 'bash',
+                target: 'host',
+                command: 'old snapshot command',
+                cwd: '/tmp',
+              },
+            ],
+          };
+        }
+        return {
+          parentId: null,
+          mode: 'build',
+          model: { providerId: 'mock', modelId: 'mock' },
+          messages: [],
+          status: 'idle',
+          pendingPermissions: [],
+        };
+      },
+      subscribe: async function* (sessionId: string) {
+        const events: unknown[] = [];
+        const waiters: Array<(event: unknown) => void> = [];
+        const pushEvent = (event: unknown) => {
+          const waiter = waiters.shift();
+          if (waiter) waiter(event);
+          else events.push(event);
+        };
+        if (sessionId === 'attached-session') oldSessionPushEvent = pushEvent;
+        while (true) {
+          if (events.length > 0) yield events.shift() as never;
+          else {
+            yield await new Promise<never>((resolve) => {
+              waiters.push(resolve as (event: unknown) => void);
+            });
+          }
+        }
+      } as unknown as ChimeraClient['subscribe'],
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        client={client}
+        sessionId="attached-session"
+        modelRef="m/m"
+        cwd="/tmp"
+        checkSudo={checkSudo}
+        authenticateSudo={async () => ({ status: 'validated' })}
+      />,
+    );
+
+    for (const character of '/new\r') {
+      stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    oldSessionPushEvent?.({
+      type: 'permission_request',
+      requestId: 'old-request',
+      tool: 'bash',
+      target: 'host',
+      command: 'sudo old live command',
+      policyAnalysis: {
+        version: 1,
+        outcome: 'approval_required',
+        stages: [],
+        findings: [
+          {
+            kind: 'elevation',
+            stageId: 'sudo_approval',
+            ruleId: 'sudo',
+            message: 'sudo requires approval',
+          },
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lastFrame()).toContain('sudo old live command');
+    stdin.write('a');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(checkSudo).toHaveBeenCalledTimes(1);
+    expect(sudoSignal?.aborted).toBe(false);
+
+    finishCreateSession?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    oldSessionPushEvent?.({
+      type: 'permission_request',
+      requestId: 'late-old-request',
+      tool: 'bash',
+      target: 'host',
+      command: 'late old command',
+    });
+    finishOldSnapshot?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(lastFrame()).toContain('new session -session');
+    expect(lastFrame()).not.toContain('old live command');
+    expect(sudoSignal?.aborted).toBe(true);
+    expect(lastFrame()).not.toContain('old snapshot command');
+    expect(lastFrame()).not.toContain('late old command');
+    unmount();
+  });
+
   it('retries the exact message once through append on an active-run conflict', async () => {
     const sends: string[] = [];
     const appendCalls: Array<{ text: string; images?: string[] }> = [];

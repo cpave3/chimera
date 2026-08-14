@@ -85,6 +85,29 @@ After a selection, the TUI SHALL call `client.resolvePermission` (and, for `A`/`
 - **WHEN** a user presses `A` in the modal and then `s` in the scope prompt for a `bash` call `pnpm run test`
 - **THEN** the TUI SHALL first POST a new session-scope exact rule `{ tool: "bash", pattern: "pnpm run test", patternKind: "exact", decision: "allow" }` and then POST the permission resolution with `decision: "allow"`, `remember: { scope: "session" }`
 
+### Requirement: Active-session recovery
+
+When the TUI mounts or switches sessions, it SHALL hydrate active-run state and pending permission requests from `client.getSession()`. It SHALL treat `running` and `waiting_for_permission` as active runs, route follow-up input through `client.appendMessage()`, and keep the run active until `run_finished` is observed.
+
+Snapshot permission requests and matching SSE events SHALL be reconciled by `requestId` so each request is presented once. Live lifecycle events SHALL take precedence over an older in-flight snapshot. Switching sessions SHALL clear the previous session's permission and authentication state, and late snapshot, event-stream, or permission-resolution completions from the previous session SHALL NOT mutate the replacement session.
+
+#### Scenario: Attach while waiting for permission
+
+- **WHEN** the TUI attaches to a session whose snapshot reports `waiting_for_permission` with a pending permission request
+- **THEN** the permission modal SHALL be shown without requiring a new `permission_request` event
+- **AND** after resolving it, follow-up input before `run_finished` SHALL be appended to the active run rather than starting a conflicting run
+
+#### Scenario: Snapshot races with live completion
+
+- **WHEN** a permission is resolved and the run finishes before an older session snapshot completes
+- **THEN** the older snapshot SHALL NOT restore the resolved modal or mark the finished run active
+
+#### Scenario: Session switch clears transient permission state
+
+- **WHEN** the TUI switches sessions while a permission or owner-local authentication flow is pending
+- **THEN** the old prompt SHALL be removed and authentication SHALL be aborted
+- **AND** late results from the old session SHALL NOT appear in or alter the new session
+
 ### Requirement: User-input handoff presentation
 The TUI SHALL display the actionable request, stop its busy state on `waiting_for_input`, and keep the normal input composer available without presenting the handoff as an error or interruption.
 

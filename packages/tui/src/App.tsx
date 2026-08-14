@@ -6,6 +6,7 @@ import type {
   Checkpoint,
   ModelConfig,
   PermissionDecisionAction,
+  PermissionRequest,
   SandboxMode,
   SessionId,
   SessionInfo,
@@ -163,6 +164,36 @@ function requiresSudoAuthentication(policyAnalysis: PendingPermission['policyAna
   );
 }
 
+function mergePermissionQueue(
+  queue: PendingPermission[],
+  requests: Array<PermissionRequest | PendingPermission>,
+): PendingPermission[] {
+  const merged = [...queue];
+  for (const request of requests) {
+    const existingIndex = merged.findIndex((item) => item.requestId === request.requestId);
+    if (existingIndex >= 0) {
+      const existing = merged[existingIndex]!;
+      if (!existing.subagent && 'subagent' in request && request.subagent) {
+        merged[existingIndex] = { ...existing, subagent: request.subagent };
+      }
+      continue;
+    }
+    merged.push({
+      requestId: request.requestId,
+      command: request.command,
+      reason: request.reason,
+      policyAnalysis: request.policyAnalysis,
+      ...('subagent' in request ? { subagent: request.subagent } : {}),
+    });
+  }
+  return merged;
+}
+
+interface SessionHydrationState {
+  lifecycleEventObserved: boolean;
+  resolvedPermissionIds: Set<string>;
+}
+
 interface SudoAuthenticationState {
   item: PendingPermission;
   action: PermissionDecisionAction;
@@ -201,6 +232,10 @@ export function App(props: AppProps): React.ReactElement {
   );
   const [buffer, setBufferState] = useState<MultilineBuffer>({ text: '', cursor: 0 });
   const [permissionQueue, setPermissionQueue] = useState<PendingPermission[]>([]);
+  const sessionHydrationRef = useRef<SessionHydrationState>({
+    lifecycleEventObserved: false,
+    resolvedPermissionIds: new Set(),
+  });
   const [sudoAuthentication, setSudoAuthentication] = useState<SudoAuthenticationState | null>(
     null,
   );
@@ -391,12 +426,32 @@ export function App(props: AppProps): React.ReactElement {
   // resumed/forked/switched session shows its prior conversation.
   useEffect(() => {
     let cancelled = false;
+    const hydrationState: SessionHydrationState = {
+      lifecycleEventObserved: false,
+      resolvedPermissionIds: new Set(),
+    };
+    sessionHydrationRef.current = hydrationState;
+    setRunning(false);
+    setPermissionQueue([]);
+    sudoAuthenticationRef.current?.abort();
+    sudoAuthenticationRef.current = null;
+    setSudoAuthentication(null);
     void (async () => {
       try {
         const s = await activeSession.client.getSession(activeSession.sessionId);
         if (cancelled) return;
         setActiveParentId(s.parentId ?? null);
-        setRunning(sessionHasActiveRun(s.status));
+        if (!hydrationState.lifecycleEventObserved) {
+          setRunning(sessionHasActiveRun(s.status));
+        }
+        setPermissionQueue((queue) =>
+          mergePermissionQueue(
+            queue,
+            (s.pendingPermissions ?? []).filter(
+              (request) => !hydrationState.resolvedPermissionIds.has(request.requestId),
+            ),
+          ),
+        );
         // Sync the TUI's UI state with the actual session mode and model.
         setActiveModeName(s.mode);
         setCurrentModelRef(`${s.model.providerId}/${s.model.modelId}`);
@@ -454,7 +509,7 @@ export function App(props: AppProps): React.ReactElement {
         for await (const ev of activeSession.client.subscribe(activeSession.sessionId, {
           signal: controller.signal,
         })) {
-          apply(ev);
+          if (!controller.signal.aborted) apply(ev);
         }
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -498,6 +553,20 @@ export function App(props: AppProps): React.ReactElement {
       ev.type === 'tool_call_start' ||
       ev.type === 'tool_call_result' ||
       ev.type === 'permission_request' ||
+      ev.type === 'permission_resolved' ||
+      ev.type === 'run_finished'
+    ) {
+      sessionHydrationRef.current.lifecycleEventObserved = true;
+    }
+    if (ev.type === 'permission_resolved' || ev.type === 'permission_timeout') {
+      sessionHydrationRef.current.resolvedPermissionIds.add(ev.requestId);
+    }
+    if (
+      ev.type === 'assistant_text_delta' ||
+      ev.type === 'reasoning_text_delta' ||
+      ev.type === 'tool_call_start' ||
+      ev.type === 'tool_call_result' ||
+      ev.type === 'permission_request' ||
       ev.type === 'permission_resolved'
     ) {
       setRunning(true);
@@ -514,15 +583,7 @@ export function App(props: AppProps): React.ReactElement {
     if (ev.type === 'assistant_text_delta' || ev.type === 'reasoning_text_delta') {
       setStreaming(true);
     } else if (ev.type === 'permission_request') {
-      setPermissionQueue((queue) => [
-        ...queue,
-        {
-          requestId: ev.requestId,
-          command: ev.command,
-          reason: ev.reason,
-          policyAnalysis: ev.policyAnalysis,
-        },
-      ]);
+      setPermissionQueue((queue) => mergePermissionQueue(queue, [ev]));
     } else if (ev.type === 'permission_resolved' || ev.type === 'permission_timeout') {
       setPermissionQueue((queue) => queue.filter((item) => item.requestId !== ev.requestId));
     } else if (ev.type === 'subagent_spawned') {
@@ -538,21 +599,22 @@ export function App(props: AppProps): React.ReactElement {
       const inner = ev.event;
       const sa = subagentsRef.current.get(ev.subagentId);
       if (inner.type === 'permission_request' && sa && sa.url) {
-        setPermissionQueue((queue) => [
-          ...queue,
-          {
-            requestId: inner.requestId,
-            command: inner.command,
-            reason: inner.reason,
-            policyAnalysis: inner.policyAnalysis,
-            subagent: {
-              id: ev.subagentId,
-              purpose: sa.purpose,
-              sessionId: sa.childSessionId,
-              url: sa.url,
+        setPermissionQueue((queue) =>
+          mergePermissionQueue(queue, [
+            {
+              requestId: inner.requestId,
+              command: inner.command,
+              reason: inner.reason,
+              policyAnalysis: inner.policyAnalysis,
+              subagent: {
+                id: ev.subagentId,
+                purpose: sa.purpose,
+                sessionId: sa.childSessionId,
+                url: sa.url,
+              },
             },
-          },
-        ]);
+          ]),
+        );
       } else if (inner.type === 'permission_resolved' || inner.type === 'permission_timeout') {
         setPermissionQueue((queue) => queue.filter((item) => item.requestId !== inner.requestId));
       }
@@ -934,6 +996,8 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   async function sendUserMessage(text: string): Promise<void> {
+    const session = activeSession;
+    const hydrationState = sessionHydrationRef.current;
     const tokens = parseAttachTokens(text, props.cwd);
     const imagePaths: string[] = [...pendingImages];
 
@@ -943,7 +1007,7 @@ export function App(props: AppProps): React.ReactElement {
         continue;
       }
       try {
-        await activeSession.client.addPath(activeSession.sessionId, token.kind, token.absolute);
+        await session.client.addPath(session.sessionId, token.kind, token.absolute);
       } catch (err) {
         const error = err as Error;
         if (error instanceof ChimeraHttpError && error.status === 400) {
@@ -962,8 +1026,8 @@ export function App(props: AppProps): React.ReactElement {
 
       const prefix = token.kind === 'read' ? '@' : '#';
       try {
-        await activeSession.client.appendMessage(
-          activeSession.sessionId,
+        await session.client.appendMessage(
+          session.sessionId,
           `[auto-attached ${prefix}${token.raw}]\n${info.body}`,
         );
       } catch (err) {
@@ -976,7 +1040,7 @@ export function App(props: AppProps): React.ReactElement {
     setRunning(true);
     setStreaming(false);
     try {
-      for await (const _ev of activeSession.client.send(activeSession.sessionId, cleanText, {
+      for await (const _ev of session.client.send(session.sessionId, cleanText, {
         images: imagePaths.length > 0 ? imagePaths : undefined,
       })) {
         // events flow through subscribe(); send() drives the POST side.
@@ -984,13 +1048,15 @@ export function App(props: AppProps): React.ReactElement {
     } catch (err) {
       if (isActiveRunConflict(err)) {
         try {
-          await activeSession.client.appendMessage(
-            activeSession.sessionId,
+          await session.client.appendMessage(
+            session.sessionId,
             cleanText,
             imagePaths.length > 0 ? imagePaths : undefined,
           );
-          const session = await activeSession.client.getSession(activeSession.sessionId);
-          setRunning(sessionHasActiveRun(session.status));
+          const snapshot = await session.client.getSession(session.sessionId);
+          if (sessionHydrationRef.current === hydrationState) {
+            setRunning(sessionHasActiveRun(snapshot.status));
+          }
           scrollback.addInfo(`injected: ${previewLine(cleanText)}`);
           return;
         } catch (appendError) {
@@ -1605,11 +1671,20 @@ export function App(props: AppProps): React.ReactElement {
     sudoAuthenticationRef.current?.abort();
     sudoAuthenticationRef.current = controller;
     setSudoAuthentication({ item, action, status: 'checking' });
-    const result = await props.checkSudo({
-      requestId: item.requestId,
-      command: item.command,
-      signal: controller.signal,
-    });
+    let result: Awaited<ReturnType<NonNullable<AppProps['checkSudo']>>>;
+    try {
+      result = await props.checkSudo({
+        requestId: item.requestId,
+        command: item.command,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (sudoAuthenticationRef.current !== controller || controller.signal.aborted) return;
+      sudoAuthenticationRef.current = null;
+      setSudoAuthentication(null);
+      scrollback.addError(`sudo authentication failed: ${(err as Error).message}`);
+      return;
+    }
     if (sudoAuthenticationRef.current !== controller) return;
     if (result.status === 'validated') {
       sudoAuthenticationRef.current = null;
@@ -1631,13 +1706,27 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
     setSudoAuthentication({ ...authentication, status: 'validating', error: undefined });
-    const result = await props.authenticateSudo({
-      requestId: authentication.item.requestId,
-      command: authentication.item.command,
-      password,
-      signal: sudoAuthenticationRef.current?.signal,
-    });
+    const controller = sudoAuthenticationRef.current;
+    let result: Awaited<ReturnType<NonNullable<AppProps['authenticateSudo']>>>;
+    try {
+      result = await props.authenticateSudo({
+        requestId: authentication.item.requestId,
+        command: authentication.item.command,
+        password,
+        signal: controller?.signal,
+      });
+    } catch (err) {
+      password.fill(0);
+      if (sudoAuthenticationRef.current !== controller || controller?.signal.aborted) return;
+      setSudoAuthentication({
+        ...authentication,
+        status: 'password',
+        error: (err as Error).message,
+      });
+      return;
+    }
     password.fill(0);
+    if (sudoAuthenticationRef.current !== controller) return;
     if (result.status === 'validated') {
       sudoAuthenticationRef.current = null;
       setSudoAuthentication(null);
@@ -1665,11 +1754,14 @@ export function App(props: AppProps): React.ReactElement {
     item: PendingPermission,
     action: PermissionDecisionAction,
   ): Promise<void> {
+    const hydrationState = sessionHydrationRef.current;
     const targetClient = item.subagent
       ? new ChimeraClient({ baseUrl: item.subagent.url })
       : activeSession.client;
     const targetSessionId = item.subagent ? item.subagent.sessionId : activeSession.sessionId;
     await targetClient.resolvePermissionAction(targetSessionId, item.requestId, action);
+    if (sessionHydrationRef.current !== hydrationState) return;
+    hydrationState.resolvedPermissionIds.add(item.requestId);
     setPermissionQueue((queue) => queue.filter((queued) => queued.requestId !== item.requestId));
   }
 
