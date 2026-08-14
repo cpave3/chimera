@@ -352,6 +352,24 @@ export class CliAgentFactory implements AgentFactory {
         await hookRunner.fire({ event: 'UserInputRequired', ...request });
       },
     };
+    const permissionResolvedHook = {
+      async fire(resolution: {
+        requestId: string;
+        decision: 'allow' | 'deny';
+        remembered: boolean;
+        sessionStatus: 'running' | 'waiting_for_permission';
+        remainingPending: number;
+      }) {
+        await hookRunner.fire({
+          event: 'PermissionResolved',
+          request_id: resolution.requestId,
+          decision: resolution.decision,
+          remembered: resolution.remembered,
+          session_status: resolution.sessionStatus,
+          remaining_pending: resolution.remainingPending,
+        });
+      },
+    };
 
     const agent = new Agent({
       cwd: init.cwd,
@@ -374,6 +392,7 @@ export class CliAgentFactory implements AgentFactory {
       timeoutHook,
       interruptHook,
       userInputRequiredHook,
+      permissionResolvedHook,
       responseTimeoutMs: this.responseTimeoutMs,
       providerOptions: buildProviderOptions(providerShape, init.model.parallelToolCalls),
     });

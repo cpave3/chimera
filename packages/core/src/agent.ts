@@ -68,6 +68,16 @@ export interface UserInputRequiredHook {
   fire(request: UserInputRequest): Promise<void>;
 }
 
+export interface PermissionResolvedHook {
+  fire(resolution: {
+    requestId: string;
+    decision: 'allow' | 'deny';
+    remembered: boolean;
+    sessionStatus: 'running' | 'waiting_for_permission';
+    remainingPending: number;
+  }): Promise<void>;
+}
+
 export interface AgentOptions {
   cwd: string;
   model: ModelConfig;
@@ -140,6 +150,8 @@ export interface AgentOptions {
   interruptHook?: InterruptHook;
   /** Awaited before a user-input handoff emits its terminal run event. */
   userInputRequiredHook?: UserInputRequiredHook;
+  /** Awaited after permission state changes and before the suspended tool resumes. */
+  permissionResolvedHook?: PermissionResolvedHook;
   /**
    * Per-step wall-clock timeout for LLM `streamText` calls (ms).
    * A value of `0` disables the timeout. Defaults to 120000.
@@ -421,6 +433,7 @@ export class Agent {
     scope: RememberScope,
     req: PermissionRequest,
   ) => void;
+  private permissionResolutionChain: Promise<void> = Promise.resolve();
 
   pendingPermissionRequest(requestId: string): PermissionRequest | undefined {
     return this.pendingPermissions.get(requestId)?.request;
@@ -431,6 +444,20 @@ export class Agent {
   }
 
   async resolvePermission(
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remember?: RememberScope,
+    feedback?: string,
+    grant?: PermissionResolution['grant'],
+  ): Promise<void> {
+    const resolution = this.permissionResolutionChain.then(() =>
+      this.resolvePermissionSerial(requestId, decision, remember, feedback, grant),
+    );
+    this.permissionResolutionChain = resolution.catch(() => {});
+    return resolution;
+  }
+
+  private async resolvePermissionSerial(
     requestId: string,
     decision: 'allow' | 'deny',
     remember?: RememberScope,
@@ -456,6 +483,19 @@ export class Agent {
       }
     }
     this.pendingPermissions.delete(requestId);
+    const remainingPending = this.pendingPermissions.size;
+    this.session.status = remainingPending > 0 ? 'waiting_for_permission' : 'running';
+    try {
+      await this.opts.permissionResolvedHook?.fire({
+        requestId,
+        decision,
+        remembered: !!remember,
+        sessionStatus: this.session.status,
+        remainingPending,
+      });
+    } catch {
+      // observational hook failures must not strand the suspended tool call
+    }
 
     pending.resolve({
       decision,
@@ -463,7 +503,6 @@ export class Agent {
       ...(feedback ? { feedback } : {}),
       ...(grant ? { grant } : {}),
     });
-    this.session.status = this.pendingPermissions.size > 0 ? 'waiting_for_permission' : 'running';
     this.currentQueue?.push({
       type: 'permission_resolved',
       requestId,

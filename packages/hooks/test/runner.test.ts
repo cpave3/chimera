@@ -92,6 +92,42 @@ exit 0
     expect(envBody).toContain(`PWD=${cwd}`);
   });
 
+  it('passes permission resolution state to observational hooks', async () => {
+    const captured = join(root, 'permission-resolved.json');
+    const envOut = join(root, 'permission-resolved-env.txt');
+    await dropScript(
+      'PermissionResolved',
+      'capture.sh',
+      `#!/bin/sh
+cat > ${JSON.stringify(captured)}
+echo "$CHIMERA_EVENT" > ${JSON.stringify(envOut)}
+exit 1
+`,
+    );
+
+    const result = await newRunner().fire({
+      event: 'PermissionResolved',
+      request_id: 'req-1',
+      decision: 'deny',
+      remembered: false,
+      session_status: 'waiting_for_permission',
+      remaining_pending: 1,
+    });
+
+    expect(result.blocked).toBe(false);
+    expect(JSON.parse(await readFile(captured, 'utf8'))).toEqual({
+      event: 'PermissionResolved',
+      session_id: sessionId,
+      cwd,
+      request_id: 'req-1',
+      decision: 'deny',
+      remembered: false,
+      session_status: 'waiting_for_permission',
+      remaining_pending: 1,
+    });
+    expect((await readFile(envOut, 'utf8')).trim()).toBe('PermissionResolved');
+  });
+
   it('passes terminal error details to observational OnError hooks', async () => {
     const captured = join(root, 'on-error.json');
     const envOut = join(root, 'on-error-env.txt');

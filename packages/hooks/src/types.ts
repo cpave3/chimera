@@ -5,6 +5,7 @@ export type HookEvent =
   | 'UserPromptSubmit'
   | 'PostToolUse'
   | 'PermissionRequest'
+  | 'PermissionResolved'
   | 'Stop'
   | 'SessionEnd'
   | 'CompactionStart'
@@ -21,6 +22,7 @@ export const ALL_HOOK_EVENTS: readonly HookEvent[] = [
   'UserPromptSubmit',
   'PostToolUse',
   'PermissionRequest',
+  'PermissionResolved',
   'Stop',
   'SessionEnd',
   'CompactionStart',
@@ -62,6 +64,15 @@ export interface PermissionRequestPayload extends HookPayloadBase {
   target: string;
   command?: string;
   policy_analysis?: CommandPolicyAnalysis;
+}
+
+export interface PermissionResolvedPayload extends HookPayloadBase {
+  event: 'PermissionResolved';
+  request_id: string;
+  decision: 'allow' | 'deny';
+  remembered: boolean;
+  session_status: 'running' | 'waiting_for_permission';
+  remaining_pending: number;
 }
 
 export interface StopPayload extends HookPayloadBase {
@@ -108,6 +119,7 @@ export type HookPayload =
   | UserPromptSubmitPayload
   | PostToolUsePayload
   | PermissionRequestPayload
+  | PermissionResolvedPayload
   | StopPayload
   | SessionEndPayload
   | TimeoutPayload
@@ -134,6 +146,14 @@ export type FirePayload =
       target: string;
       command?: string;
       policy_analysis?: CommandPolicyAnalysis;
+    }
+  | {
+      event: 'PermissionResolved';
+      request_id: string;
+      decision: 'allow' | 'deny';
+      remembered: boolean;
+      session_status: 'running' | 'waiting_for_permission';
+      remaining_pending: number;
     }
   | { event: 'Stop'; reason: string }
   | { event: 'SessionEnd' }

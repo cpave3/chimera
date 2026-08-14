@@ -1,4 +1,4 @@
-import { ChimeraClient } from '@chimera/client';
+import { ChimeraClient, ChimeraHttpError } from '@chimera/client';
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
@@ -181,6 +181,106 @@ describe('App', () => {
     expect(lastFrame()).not.toContain('queued (');
 
     firstSendResolve?.();
+    unmount();
+  });
+
+  it.each([
+    'running',
+    'waiting_for_permission',
+  ] as const)('routes input through append when the hydrated session is %s', async (status) => {
+    const sends: string[] = [];
+    const appendCalls: string[] = [];
+    const client = stubClient({
+      getSession: async () => ({
+        parentId: null,
+        mode: 'build',
+        model: { providerId: 'mock', modelId: 'mock' },
+        messages: [],
+        status,
+      }),
+      send: async function* (_id: string, text: string) {
+        sends.push(text);
+        if (text.length === 0) yield { type: 'run_finished', reason: 'stop' };
+      } as unknown as ChimeraClient['send'],
+      appendMessage: async (_id: string, text: string) => {
+        appendCalls.push(text);
+      },
+    });
+    const { stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    for (const char of 'continue\r') {
+      stdin.write(char);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sends).toEqual([]);
+    expect(appendCalls).toEqual(['continue']);
+    unmount();
+  });
+
+  it('retries the exact message once through append on an active-run conflict', async () => {
+    const sends: string[] = [];
+    const appendCalls: Array<{ text: string; images?: string[] }> = [];
+    const client = stubClient({
+      send: async function* (_id: string, text: string) {
+        sends.push(text);
+        if (text.length === 0) yield { type: 'run_finished', reason: 'stop' };
+        throw new ChimeraHttpError(409, { error: 'run already in progress' });
+      } as unknown as ChimeraClient['send'],
+      appendMessage: async (_id: string, text: string, images?: string[]) => {
+        appendCalls.push({ text, images });
+      },
+      getSession: async () => ({
+        parentId: null,
+        mode: 'build',
+        model: { providerId: 'mock', modelId: 'mock' },
+        messages: [],
+        status: 'idle',
+      }),
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    for (const char of 'keep this\r') {
+      stdin.write(char);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(sends).toEqual(['keep this']);
+    expect(appendCalls).toEqual([{ text: 'keep this', images: undefined }]);
+    expect(lastFrame()).toContain('injected: keep this');
+    expect(lastFrame()).not.toContain('send failed:');
+    expect(lastFrame()).not.toContain('running');
+    unmount();
+  });
+
+  it('does not retry unrelated send failures', async () => {
+    const appendMessage = vi.fn(async () => {});
+    const client = stubClient({
+      send: async function* (_id: string, text: string) {
+        if (text.length === 0) yield { type: 'run_finished', reason: 'stop' };
+        throw new ChimeraHttpError(409, { error: 'different conflict' });
+      } as unknown as ChimeraClient['send'],
+      appendMessage,
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+
+    for (const char of 'fail\r') {
+      stdin.write(char);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(appendMessage).not.toHaveBeenCalled();
+    expect(lastFrame()).toContain('send failed:');
     unmount();
   });
 

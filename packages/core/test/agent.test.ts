@@ -1231,6 +1231,122 @@ describe('Agent', () => {
     });
   });
 
+  it('reports the resulting permission state before the suspended caller resumes', async () => {
+    const order: string[] = [];
+    const resolutions: Array<{
+      requestId: string;
+      decision: 'allow' | 'deny';
+      remembered: boolean;
+      sessionStatus: 'running' | 'waiting_for_permission';
+      remainingPending: number;
+    }> = [];
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('ok'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      permissionResolvedHook: {
+        async fire(resolution) {
+          resolutions.push(resolution);
+          order.push('hook');
+        },
+      },
+    });
+    const first = buildPermissionRequest({ tool: 'bash', command: 'rm first', cwd: '/tmp' });
+    const second = buildPermissionRequest({ tool: 'bash', command: 'rm second', cwd: '/tmp' });
+    const firstResolution = agent.raisePermissionRequest(first).then(() => order.push('resumed'));
+    const secondResolution = agent.raisePermissionRequest(second);
+
+    await agent.resolvePermission(first.requestId, 'deny');
+    await firstResolution;
+
+    expect(resolutions).toEqual([
+      {
+        requestId: first.requestId,
+        decision: 'deny',
+        remembered: false,
+        sessionStatus: 'waiting_for_permission',
+        remainingPending: 1,
+      },
+    ]);
+    expect(order).toEqual(['hook', 'resumed']);
+
+    await agent.resolvePermission(second.requestId, 'allow');
+    await secondResolution;
+    expect(resolutions[1]).toEqual({
+      requestId: second.requestId,
+      decision: 'allow',
+      remembered: false,
+      sessionStatus: 'running',
+      remainingPending: 0,
+    });
+  });
+
+  it('serializes concurrent resolution hooks in resulting-state order', async () => {
+    const hookStates: string[] = [];
+    let releaseFirstHook: (() => void) | undefined;
+    const firstHookBlocked = new Promise<void>((resolve) => {
+      releaseFirstHook = resolve;
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('ok'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      permissionResolvedHook: {
+        async fire(resolution) {
+          hookStates.push(`${resolution.sessionStatus}:${resolution.remainingPending}`);
+          if (hookStates.length === 1) await firstHookBlocked;
+        },
+      },
+    });
+    const first = buildPermissionRequest({ tool: 'bash', command: 'rm first', cwd: '/tmp' });
+    const second = buildPermissionRequest({ tool: 'bash', command: 'rm second', cwd: '/tmp' });
+    const firstPending = agent.raisePermissionRequest(first);
+    const secondPending = agent.raisePermissionRequest(second);
+
+    const firstResolution = agent.resolvePermission(first.requestId, 'allow');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const secondResolution = agent.resolvePermission(second.requestId, 'allow');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(hookStates).toEqual(['waiting_for_permission:1']);
+    releaseFirstHook?.();
+    await Promise.all([firstResolution, secondResolution, firstPending, secondPending]);
+    expect(hookStates).toEqual(['waiting_for_permission:1', 'running:0']);
+  });
+
+  it('resumes a permission when the resolution hook fails', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('ok'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      permissionResolvedHook: {
+        async fire() {
+          throw new Error('observer unavailable');
+        },
+      },
+    });
+    const request = buildPermissionRequest({ tool: 'bash', command: 'rm file', cwd: '/tmp' });
+    const resolution = agent.raisePermissionRequest(request);
+
+    await agent.resolvePermission(request.requestId, 'allow');
+
+    await expect(resolution).resolves.toMatchObject({ decision: 'allow' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(agent.session.status).toBe('running');
+  });
+
   it('exposes isolated snapshots of all unresolved permission requests', async () => {
     const agent = new Agent({
       cwd: '/tmp',

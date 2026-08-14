@@ -25,6 +25,7 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 | `UserPromptSubmit` | A user message is accepted, before the model is invoked.                       | post  |
 | `PostToolUse`      | A tool call completes (success or error).                                      | post  |
 | `PermissionRequest`| The permission gate would otherwise prompt the user.                           | pre   |
+| `PermissionResolved`| An interactive permission is resolved, before the suspended tool resumes.      | post  |
 | `Stop`             | A run reaches a clean stop, before any stop-hook retry.                         | post  |
 | `OnError`          | A run terminates with `run_finished.reason: "error"`.                          | post  |
 | `UserInputRequired`| The agent requests human assistance and ends its current run.                    | post  |
@@ -75,6 +76,11 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
       "score": 80, "message": "destructive command" }]
   } }
 
+// PermissionResolved (interactive requests only)
+{ "event": "PermissionResolved", "session_id": "...", "cwd": "...",
+  "request_id": "...", "decision": "allow", "remembered": false,
+  "session_status": "running", "remaining_pending": 0 }
+
 // Stop
 { "event": "Stop", "session_id": "...", "cwd": "...", "reason": "stop" }
 
@@ -120,7 +126,11 @@ Events are classified as **pre** or **post**. Today only `PermissionRequest` is 
 
 Pre-hooks **fail open** — a crashing or timing-out hook never blocks the agent. If you want strict denial on internal error, exit 2 explicitly inside your script.
 
-`OnError` and `UserInputRequired` are observational, so their outcomes cannot change the terminal run. Chimera waits for these hooks to complete (or reach the per-script timeout) before publishing `run_finished` to clients. Timeout and interrupt completions use their dedicated events instead.
+`OnError`, `UserInputRequired`, and `PermissionResolved` are observational. A failed resolution hook cannot prevent the permission decision from taking effect. Chimera waits for `PermissionResolved` after recomputing permission state but before releasing the suspended tool, so external state changes are ordered before resumed work. With multiple requests, `session_status` remains `waiting_for_permission` and `remaining_pending` stays nonzero until the final request resolves; the final resolution reports `running` and zero. Permission resolution never reports `idle` because allow and deny both continue the turn. A later terminal hook reports its actual outcome.
+
+`PermissionResolved` only fires for interactive requests that entered `waiting_for_permission`. Pre-hook blocks and headless automatic denials never suspend the run and therefore do not fire this lifecycle hook.
+
+Chimera waits for `OnError` and `UserInputRequired` to complete (or reach the per-script timeout) before publishing `run_finished` to clients. Timeout and interrupt completions use their dedicated events instead.
 
 When multiple `PermissionRequest` hooks are installed, the first one to exit 2 supplies the denial reason; remaining hooks still run to completion (their outputs are recorded but no longer change the outcome).
 
@@ -148,8 +158,7 @@ Other event scripts can update orchestrator state directly:
 ```sh
 #!/bin/sh
 [ -z "$LEGATO_TASK_ID" ] && exit 0
-legato agent state "$LEGATO_TASK_ID" --activity working
-exit 0
+exec legato agent state "$LEGATO_TASK_ID" --activity working
 ```
 
 The activity value differs per event:
@@ -158,9 +167,11 @@ The activity value differs per event:
 |-------------------------------------------------------------------|------------|
 | `~/.chimera/hooks/SessionCreated/legato-session-created.sh` | (capture)  |
 | `~/.chimera/hooks/UserPromptSubmit/legato-prompt-submit.sh`| `working`  |
-| `~/.chimera/hooks/PostToolUse/legato-post-tool-use.sh`     | `working`  |
 | `~/.chimera/hooks/PermissionRequest/legato-permission.sh`  | `waiting`  |
+| `~/.chimera/hooks/PermissionResolved/legato-permission-resolved.sh` | payload-dependent |
 | `~/.chimera/hooks/Stop/legato-stop.sh`                     | (clear)    |
 | `~/.chimera/hooks/SessionEnd/legato-session-end.sh`        | (clear)    |
 
-`LEGATO_TASK_ID` is set by Legato when it spawns Chimera in a tracked tmux pane; outside that environment the scripts are no-ops.
+The resolution script maps `waiting_for_permission` with pending requests to `waiting`, and `running` with zero pending requests to `working`. `PostToolUse` is deliberately not an activity transition: parallel tool results can arrive while another permission is still outstanding and must not overwrite `waiting`. Terminal hooks such as `Stop`, `Interrupt`, `Timeout`, and `SessionEnd` clear the activity after the resumed turn actually ends.
+
+`LEGATO_TASK_ID` is set by Legato when it spawns Chimera in a tracked tmux pane; outside that environment the scripts are no-ops. Re-run `legato hooks install --tool chimera` after upgrading Legato to install the resolution hook and remove its obsolete managed `PostToolUse` script.

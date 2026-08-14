@@ -9,6 +9,7 @@ import type {
   SandboxMode,
   SessionId,
   SessionInfo,
+  SessionStatus,
   Usage,
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
@@ -58,6 +59,21 @@ import { applyThemeByName, listThemes } from './theme/loader';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
 import { UsageWidget } from './UsageWidget';
+
+function sessionHasActiveRun(status: SessionStatus): boolean {
+  return status === 'running' || status === 'waiting_for_permission';
+}
+
+function isActiveRunConflict(error: unknown): error is ChimeraHttpError {
+  return (
+    error instanceof ChimeraHttpError &&
+    error.status === 409 &&
+    typeof error.body === 'object' &&
+    error.body !== null &&
+    'error' in error.body &&
+    error.body.error === 'run already in progress'
+  );
+}
 
 export interface OverlayHandlers {
   diff(): Promise<{ modified: string[]; added: string[]; deleted: string[] }>;
@@ -380,6 +396,7 @@ export function App(props: AppProps): React.ReactElement {
         const s = await activeSession.client.getSession(activeSession.sessionId);
         if (cancelled) return;
         setActiveParentId(s.parentId ?? null);
+        setRunning(sessionHasActiveRun(s.status));
         // Sync the TUI's UI state with the actual session mode and model.
         setActiveModeName(s.mode);
         setCurrentModelRef(`${s.model.providerId}/${s.model.modelId}`);
@@ -475,6 +492,16 @@ export function App(props: AppProps): React.ReactElement {
       process.stderr.write(`[chimera-tui-apply] ${JSON.stringify(compact)}\n`);
     }
     scrollback.apply(ev as AgentEvent);
+    if (
+      ev.type === 'assistant_text_delta' ||
+      ev.type === 'reasoning_text_delta' ||
+      ev.type === 'tool_call_start' ||
+      ev.type === 'tool_call_result' ||
+      ev.type === 'permission_request' ||
+      ev.type === 'permission_resolved'
+    ) {
+      setRunning(true);
+    }
     const all = scrollback.all();
     if (process.env.CHIMERA_DEBUG_SUBAGENTS && ev.type === 'tool_call_result') {
       const childCount = all.filter(
@@ -955,6 +982,22 @@ export function App(props: AppProps): React.ReactElement {
         // events flow through subscribe(); send() drives the POST side.
       }
     } catch (err) {
+      if (isActiveRunConflict(err)) {
+        try {
+          await activeSession.client.appendMessage(
+            activeSession.sessionId,
+            cleanText,
+            imagePaths.length > 0 ? imagePaths : undefined,
+          );
+          const session = await activeSession.client.getSession(activeSession.sessionId);
+          setRunning(sessionHasActiveRun(session.status));
+          scrollback.addInfo(`injected: ${previewLine(cleanText)}`);
+          return;
+        } catch (appendError) {
+          scrollback.addError(`inject failed: ${(appendError as Error).message}`);
+          return;
+        }
+      }
       scrollback.addError(`send failed: ${(err as Error).message}`);
     }
   }
