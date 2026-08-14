@@ -15,8 +15,10 @@ export class PathAuthorizationStage implements CommandPolicyStage {
   async evaluate(context: CommandPolicyStageContext): Promise<CommandPolicyStageResult> {
     const effects = context.facts.filter(isShellEffect);
     const findings: CommandPolicyFinding[] = [];
+    let hasDelete = false;
 
     for (const effect of effects) {
+      if (effect.operation === 'delete') hasDelete = true;
       const resolvedPath = await resolveEffectPath(effect.path, context.cwd, context.home);
       const roots = effect.operation === 'read' ? context.roots.read : context.roots.write;
       if (roots.some((root) => contains(root, resolvedPath))) continue;
@@ -33,7 +35,12 @@ export class PathAuthorizationStage implements CommandPolicyStage {
       });
     }
 
-    if (findings.length === 0) return { status: 'pass' };
+    if (findings.length === 0) {
+      return {
+        status: 'pass',
+        ...(hasDelete ? { facts: [{ kind: 'authorized_delete' as const }] } : {}),
+      };
+    }
     const proposal = await proposeGrant(findings, context.home);
     return {
       status: 'findings',

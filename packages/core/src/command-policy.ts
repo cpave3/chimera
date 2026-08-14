@@ -63,6 +63,9 @@ export type CommandPolicyFact =
       path: string;
     }
   | {
+      kind: 'authorized_delete';
+    }
+  | {
       kind: string;
       [key: string]: unknown;
     };

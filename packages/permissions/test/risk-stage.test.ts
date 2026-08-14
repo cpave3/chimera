@@ -29,4 +29,39 @@ describe('RiskStage', () => {
       ],
     });
   });
+
+  it('waives only generic delete risk after path authorization', async () => {
+    const stage = new RiskStage(new PiSafeShellAdapter(), 'caution');
+
+    await expect(
+      stage.evaluate({
+        ...context,
+        command: 'rm build.log',
+        facts: [{ kind: 'authorized_delete' }],
+      }),
+    ).resolves.toEqual({ status: 'pass' });
+  });
+
+  it('retains independent risk factors after path authorization', async () => {
+    const stage = new RiskStage(
+      {
+        async classify() {
+          return {
+            level: 'critical' as const,
+            score: 100,
+            reasons: ['dangerous command', 'system destruction'],
+            riskFactors: ['dangerous_command', 'system_destruction'],
+          };
+        },
+      },
+      'caution',
+    );
+
+    await expect(
+      stage.evaluate({ ...context, facts: [{ kind: 'authorized_delete' }] }),
+    ).resolves.toMatchObject({
+      status: 'findings',
+      findings: [{ kind: 'risk', factors: ['dangerous_command', 'system_destruction'] }],
+    });
+  });
 });

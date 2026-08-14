@@ -1,2 +1,5 @@
 packages:
-  - "packages/*"
+  - packages/*
+
+patchedDependencies:
+  '@aslamplr/pi-safe-shell@0.7.1': patches/@aslamplr__pi-safe-shell@0.7.1.patch

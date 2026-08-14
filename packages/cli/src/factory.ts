@@ -400,9 +400,9 @@ export class CliAgentFactory implements AgentFactory {
           const strictPolicy = new CommandPolicyPipeline([
             new SudoApprovalStage(),
             new ScaryCommandStage(),
-            new RiskStage(shellAdapter, this.hostBashPolicy.autoAllowThrough),
             new ShellEffectsStage(shellAdapter),
             new PathAuthorizationStage(),
+            new RiskStage(shellAdapter, this.hostBashPolicy.autoAllowThrough),
           ]);
           return this.hostBashPolicy.mode === 'balanced'
             ? new BalancedPolicyEvaluator(strictPolicy)

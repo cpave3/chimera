@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@aslamplr/pi-safe-shell@0.7.1':
+    hash: 120976ad1411029533e277750b9b958719f13e543e1eb5e566b5ce3cd3ff07e6
+    path: patches/@aslamplr__pi-safe-shell@0.7.1.patch
+
 importers:
 
   .:
@@ -224,7 +229,7 @@ importers:
     dependencies:
       '@aslamplr/pi-safe-shell':
         specifier: 0.7.1
-        version: 0.7.1
+        version: 0.7.1(patch_hash=120976ad1411029533e277750b9b958719f13e543e1eb5e566b5ce3cd3ff07e6)
       '@chimera/core':
         specifier: workspace:*
         version: link:../core
@@ -1793,7 +1798,7 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@aslamplr/pi-safe-shell@0.7.1':
+  '@aslamplr/pi-safe-shell@0.7.1(patch_hash=120976ad1411029533e277750b9b958719f13e543e1eb5e566b5ce3cd3ff07e6)':
     dependencies:
       tree-sitter-bash: 0.25.1
       web-tree-sitter: 0.26.8

@@ -8,6 +8,7 @@ declare module '@aslamplr/pi-safe-shell/src/ast-analyzer.ts' {
     hasRedirect: boolean;
     paths: string[];
     intent: string[];
+    substitutionExecutables: string[];
   }
 
   export function initParser(): Promise<void>;

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -61,6 +61,46 @@ describe('CliAgentFactory host bash policy', () => {
     expect(records).toEqual([
       expect.objectContaining({ command: 'echo safe', decision: 'allow', source: 'automatic' }),
       expect.objectContaining({ command: 'rm -rf build', decision: 'deny', source: 'policy' }),
+    ]);
+  });
+
+  it('auto-runs a literal delete inside the writable project root', async () => {
+    const target = join(cwd, 'build.log');
+    await writeFile(target, 'temporary');
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { headlessAutoDeny: true },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const bash = (agent as unknown as { opts: { tools: { bash: ExecutableTool } } }).opts.tools
+      .bash;
+
+    await expect(bash.execute({ command: 'rm build.log' }, {})).resolves.toMatchObject({
+      exit_code: 0,
+    });
+    await expect(access(target)).rejects.toThrow();
+    const records = (
+      await readFile(join(cwd, '.chimera', 'logs', 'permission-decisions.jsonl'), 'utf8')
+    )
+      .trim()
+      .split('\n')
+      .map(JSON.parse);
+    expect(records).toEqual([
+      expect.objectContaining({ command: 'rm build.log', decision: 'allow', source: 'automatic' }),
     ]);
   });
 

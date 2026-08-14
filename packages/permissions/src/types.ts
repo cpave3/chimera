@@ -24,6 +24,7 @@ export interface ParsedShellCommand {
   hasRedirect: boolean;
   paths: string[];
   intent: string[];
+  substitutionExecutables: string[];
 }
 
 export interface ShellCommandParser {

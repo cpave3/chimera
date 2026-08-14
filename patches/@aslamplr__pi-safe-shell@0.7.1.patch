@@ -1,0 +1,103 @@
+diff --git a/src/ast-analyzer-v2.ts b/src/ast-analyzer-v2.ts
+index 863c53b5adf7982e289402e5dfcf2d6471eedb4f..980f5ca136a7c3dbda886222119b44d45d7efca2 100644
+--- a/src/ast-analyzer-v2.ts
++++ b/src/ast-analyzer-v2.ts
+@@ -260,19 +260,6 @@ const ALWAYS_DANGEROUS_PATTERNS: { pattern: RegExp; reason: string; risk: string
+     risk: 'data_exfiltration',
+     bonus: 30,
+   },
+-  // Command substitution with destructive command
+-  {
+-    pattern: /\$\([^)]*rm[^)]*\)/,
+-    reason: 'command substitution with rm',
+-    risk: 'obfuscated_destruction',
+-    bonus: 30,
+-  },
+-  {
+-    pattern: /`[^`]*rm[^`]*`/,
+-    reason: 'backtick substitution with rm',
+-    risk: 'obfuscated_destruction',
+-    bonus: 30,
+-  },
+   // Fork bomb
+   {
+     pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
+@@ -399,6 +386,12 @@ export function scoreCommandV2(analysis: CommandAnalysis): RiskResult {
+       riskFactors.push(pat.risk);
+     }
+   }
++
++  if (analysis.substitutionExecutables.some(executable => executable.replace(/^.*\//, '') === 'rm')) {
++    score += 30;
++    reasons.push('command substitution with rm');
++    riskFactors.push('obfuscated_destruction');
++  }
+   
+   // 0a. System file overwrite via redirect (echo "x" > /etc/passwd)
+   //     This is critical — even a "safe" command like echo is dangerous if
+diff --git a/src/ast-analyzer.ts b/src/ast-analyzer.ts
+index affbe196622dc02cfb5f97c9f2f79a615f0b6a2b..81d4c007770cd13fb45ddea2c3a73c01dbbe8a05 100644
+--- a/src/ast-analyzer.ts
++++ b/src/ast-analyzer.ts
+@@ -41,6 +41,7 @@ export interface CommandAnalysis {
+   hasRedirect: boolean;
+   paths: string[];
+   intent: Intent[];
++  substitutionExecutables: string[];
+   inlineCode?: string; // Code extracted from -c/-e flags
+ }
+ 
+@@ -174,8 +175,44 @@ export function analyzeCommand(command: string): CommandAnalysis {
+     hasPipe: false,
+     hasRedirect: false,
+     paths: [],
+-    intent: []
++    intent: [],
++    substitutionExecutables: []
+   };
++
++  function collectSubstitutionExecutables(node: TreeSitter.Node): void {
++    if (node.type === 'command') {
++      const words = node.namedChildren
++        .filter(child => child.type === 'command_name' || child.type === 'word')
++        .map(child => child.text);
++      const executable = unwrapExecutable(words);
++      if (executable && !result.substitutionExecutables.includes(executable)) {
++        result.substitutionExecutables.push(executable);
++      }
++    }
++    for (const child of node.namedChildren) {
++      collectSubstitutionExecutables(child);
++    }
++  }
++
++  function unwrapExecutable(words: string[]): string {
++    let index = 0;
++    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || '')) index++;
++    while (['command', 'env', 'exec'].includes(normalizeStaticWord(words[index] || ''))) {
++      const wrapper = normalizeStaticWord(words[index++] || '');
++      while (words[index]?.startsWith('-')) {
++        const option = words[index++];
++        if (option === '--') break;
++        if (wrapper === 'env' && ['-u', '--unset', '-C', '--chdir'].includes(option)) index++;
++        if (wrapper === 'exec' && ['-a'].includes(option)) index++;
++      }
++      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || '')) index++;
++    }
++    return normalizeStaticWord(words[index] || '');
++  }
++
++  function normalizeStaticWord(word: string): string {
++    return word.replace(/(['"])(.*?)\1/g, '$2').replace(/\\(.)/g, '$1');
++  }
+   
+   function walk(node: TreeSitter.Node): void {
+     // Extract command name
+@@ -222,6 +259,7 @@ export function analyzeCommand(command: string): CommandAnalysis {
+       if (!result.flags.includes('has_substitution')) {
+         result.flags.push('has_substitution');
+       }
++      collectSubstitutionExecutables(node);
+       // The content of command substitution is the text inside $()
+       // We store it for recursive analysis in scoring
+       const innerText = node.text;

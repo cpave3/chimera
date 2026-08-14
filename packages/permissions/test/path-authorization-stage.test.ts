@@ -39,6 +39,30 @@ describe('PathAuthorizationStage', () => {
     });
   });
 
+  it('records when every delete target is inside a write root', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
+    cleanup.push(cwd);
+    const stage = new PathAuthorizationStage();
+
+    await expect(
+      stage.evaluate({
+        command: 'rm first.txt second.txt',
+        target: 'host',
+        cwd,
+        home: '/home/user',
+        projectRoot: cwd,
+        roots: { read: [cwd], write: [cwd] },
+        facts: [
+          { kind: 'shell_effect', operation: 'delete', path: 'first.txt' },
+          { kind: 'shell_effect', operation: 'delete', path: 'second.txt' },
+        ],
+      }),
+    ).resolves.toEqual({
+      status: 'pass',
+      facts: [{ kind: 'authorized_delete' }],
+    });
+  });
+
   it('canonicalizes a symlinked parent for a new write target', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
     const outside = await mkdtemp(join(tmpdir(), 'chimera-policy-outside-'));
@@ -62,6 +86,30 @@ describe('PathAuthorizationStage', () => {
       findings: [{ kind: 'path', resolvedPath: join(outside, 'new.txt') }],
       grantProposal: { kind: 'write', path: outside },
     });
+  });
+
+  it('does not authorize a delete through a symlink outside the write root', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-policy-cwd-'));
+    const outside = await mkdtemp(join(tmpdir(), 'chimera-policy-outside-'));
+    cleanup.push(cwd, outside);
+    await symlink(outside, join(cwd, 'linked'));
+    const stage = new PathAuthorizationStage();
+
+    const result = await stage.evaluate({
+      command: 'rm linked/file.txt',
+      target: 'host',
+      cwd,
+      home: '/home/user',
+      projectRoot: cwd,
+      roots: { read: [cwd], write: [cwd] },
+      facts: [{ kind: 'shell_effect', operation: 'delete', path: 'linked/file.txt' }],
+    });
+
+    expect(result).toMatchObject({
+      status: 'findings',
+      findings: [{ kind: 'path', resolvedPath: join(outside, 'file.txt') }],
+    });
+    expect(result).not.toHaveProperty('facts');
   });
 
   describe('platform null device', () => {

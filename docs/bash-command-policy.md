@@ -20,7 +20,7 @@ Balanced mode is the default. It preserves agent freedom by automatically runnin
 
 Balanced mode intervenes for:
 
-- danger or critical classifier results;
+- danger or critical classifier results, except a literal `rm` or `rmdir` whose complete target set resolves inside authorized write directories and has no independent risk factor;
 - explicit unauthorized filesystem paths that Chimera can confidently identify;
 - force pushes;
 - recursive forced deletion;
@@ -28,7 +28,9 @@ Balanced mode intervenes for:
 - fork bombs and other deterministic scary-command rules;
 - every executable `sudo` invocation, including wrapped and compound commands.
 
-Deterministic scary rules are hard blocks and do not show an approval prompt. Sudo is a deterministic but promptable elevation finding: it always uses the normal approval flow, even with `autoApprove: "host"`/`"all"` or a remembered allow rule. Other concrete danger/path findings also use the normal approval flow. When Chimera is about to prompt, it fires the existing synchronous `PermissionRequest` lifecycle hook before entering `waiting_for_permission`.
+Literal `rm` and `rmdir` targets are canonicalized before authorization, so symlink escapes and any mixed in-root/out-of-root target list still require approval. Variable-derived paths, command substitutions, and compound deletes remain unresolved and promptable. An actual `rm` executable inside backticks or `$()` remains a danger finding; text such as `normal` or `echo rm` does not count as an executable delete.
+
+Deterministic scary rules are hard blocks and do not show an approval prompt. Recursive forced deletion remains blocked even when its target is inside an authorized write directory. Sudo is a deterministic but promptable elevation finding: it always uses the normal approval flow, even with `autoApprove: "host"`/`"all"` or a remembered allow rule. Other concrete danger/path findings also use the normal approval flow. When Chimera is about to prompt, it fires the existing synchronous `PermissionRequest` lifecycle hook before entering `waiting_for_permission`.
 
 ## Sudo authentication
 

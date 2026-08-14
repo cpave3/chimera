@@ -24,6 +24,13 @@ export class RiskStage implements CommandPolicyStage {
 
   async evaluate(context: CommandPolicyStageContext): Promise<CommandPolicyStageResult> {
     const risk = await this.classifier.classify(context.command);
+    if (
+      context.facts.some((fact) => fact.kind === 'authorized_delete') &&
+      risk.riskFactors.length === 1 &&
+      risk.riskFactors[0] === 'dangerous_command'
+    ) {
+      return { status: 'pass' };
+    }
     if (RISK_RANK[risk.level] <= RISK_RANK[this.autoAllowThrough]) {
       return { status: 'pass' };
     }
