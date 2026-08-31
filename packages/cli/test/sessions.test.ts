@@ -9,6 +9,7 @@ import {
   pickSessionInteractive,
   resolveSessionId,
   runSessionsList,
+  runSessionsRm,
 } from '../src/commands/sessions';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -95,6 +96,24 @@ describe('session displays', () => {
     expect(output.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(
       'Investigate auth timeout',
     );
+  });
+});
+
+describe('runSessionsRm', () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'chimera-remove-'));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('reports an absent exact session without failing when ifExists is set', async () => {
+    await expect(
+      runSessionsRm('01AAAAAAAAAAAAAAAAAAAAAAAA', { home, ifExists: true }),
+    ).resolves.toEqual({ removed: false });
   });
 });
 

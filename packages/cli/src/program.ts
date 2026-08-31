@@ -328,17 +328,38 @@ export function buildProgram(): Command {
     .description('Delete a persisted session.')
     .option('--cwd <path>', 'Scope suffix matching to this directory', process.cwd())
     .option('-a, --all', 'Resolve suffix across every directory', false)
-    .action(async (id: string, options: { cwd?: string; all?: boolean }) => {
-      try {
-        const resolved = await resolveSessionId(id, {
-          cwd: options.all ? undefined : options.cwd,
-        });
-        await runSessionsRm(resolved);
-      } catch (err) {
-        process.stderr.write(`${(err as Error).message}\n`);
-        process.exit(1);
-      }
-    });
+    .option('--exact', 'Require the complete session ID', false)
+    .option('--if-exists', 'Succeed when the exact session is absent', false)
+    .option('--json', 'Emit structured JSON', false)
+    .action(
+      async (
+        id: string,
+        options: {
+          cwd?: string;
+          all?: boolean;
+          exact?: boolean;
+          ifExists?: boolean;
+          json?: boolean;
+        },
+      ) => {
+        try {
+          const resolved = options.exact
+            ? id
+            : await resolveSessionId(id, { cwd: options.all ? undefined : options.cwd });
+          const result = await runSessionsRm(resolved, { ifExists: options.ifExists });
+          process.stdout.write(
+            options.json
+              ? `${JSON.stringify(result)}\n`
+              : result.removed
+                ? `Deleted ${resolved}\n`
+                : `No such session: ${resolved}\n`,
+          );
+        } catch (err) {
+          process.stderr.write(`${(err as Error).message}\n`);
+          process.exitCode = 1;
+        }
+      },
+    );
 
   applyModeOptions(
     applySubagentOptions(

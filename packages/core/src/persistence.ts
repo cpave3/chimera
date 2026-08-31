@@ -827,4 +827,7 @@ export async function deleteSession(sessionId: SessionId, home = homedir()): Pro
   // Sibling per-session state stores. Core owns the ~/.chimera layout, so
   // it removes them by path rather than importing the owning packages.
   await rm(join(home, '.chimera', 'recall', sessionId), { recursive: true, force: true });
+  await rm(join(home, '.chimera', 'sessions', `${sessionId}.compactions.jsonl`), {
+    force: true,
+  });
 }

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   deleteSession,
+  isValidSessionId,
   listSessionsOnDisk,
   readSessionMetadata,
   type SessionInfo,
@@ -46,27 +47,36 @@ export async function runSessionsList(opts: RunSessionsListOpts = {}): Promise<v
   }
 }
 
-export async function runSessionsRm(sessionId: string, home = homedir()): Promise<void> {
+export interface RunSessionsRmOptions {
+  home?: string;
+  ifExists?: boolean;
+}
+
+export async function runSessionsRm(
+  sessionId: string,
+  options: RunSessionsRmOptions = {},
+): Promise<{ removed: boolean }> {
+  if (!isValidSessionId(sessionId)) throw new Error(`Invalid session ID: ${sessionId}`);
+  const home = options.home ?? homedir();
   const dir = sessionDir(sessionId, home);
   if (!existsSync(dir)) {
-    process.stderr.write(`No such session: ${sessionId}\n`);
-    process.exit(1);
+    if (options.ifExists) return { removed: false };
+    throw new Error(`No such session: ${sessionId}`);
   }
   let target: Awaited<ReturnType<typeof readSessionMetadata>>;
   try {
     target = await readSessionMetadata(sessionId, home);
   } catch {
-    process.stderr.write(`No such session: ${sessionId}\n`);
-    process.exit(1);
+    if (options.ifExists) return { removed: false };
+    throw new Error(`No such session: ${sessionId}`);
   }
   if (target.children.length > 0) {
-    process.stderr.write(
-      `Cannot delete ${sessionId}: has ${target.children.length} child session(s). Delete children first.\n`,
+    throw new Error(
+      `Cannot delete ${sessionId}: has ${target.children.length} child session(s). Delete children first.`,
     );
-    process.exit(1);
   }
   await deleteSession(sessionId, home);
-  process.stdout.write(`Deleted ${sessionId}\n`);
+  return { removed: true };
 }
 
 /**

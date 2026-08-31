@@ -28,6 +28,17 @@ describe('chimera CLI smoke', () => {
     expect(r.stdout).toMatch(/--no-subagents/);
   });
 
+  it('removes an exact missing session idempotently with structured output', () => {
+    const home = `/tmp/chimera-rm-empty-${Date.now()}`;
+    const result = spawnSync(
+      'node',
+      [BIN, 'sessions', 'rm', '01AAAAAAAAAAAAAAAAAAAAAAAA', '--exact', '--if-exists', '--json'],
+      { encoding: 'utf8', env: { ...process.env, HOME: home } },
+    );
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ removed: false });
+  });
+
   it('ls prints a header or "No running" when no instances exist', () => {
     const r = spawnSync('node', [BIN, 'ls'], {
       encoding: 'utf8',

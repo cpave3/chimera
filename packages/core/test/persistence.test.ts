@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -6,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newSessionId } from '../src/ids';
 import {
   appendSessionEvent,
+  deleteSession,
   forkSession,
   listSessionsOnDisk,
   loadSession,
@@ -50,6 +52,22 @@ describe('persistence', () => {
       ...overrides,
     };
   }
+
+  it('deletes the session directory and all sibling per-session data', async () => {
+    const session = makeSession();
+    await writeSessionMetadata(session, home);
+    const recallDir = join(home, '.chimera', 'recall', session.id);
+    const compactionPath = join(home, '.chimera', 'sessions', `${session.id}.compactions.jsonl`);
+    await mkdir(recallDir, { recursive: true });
+    await writeFile(join(recallDir, 'entry.json'), '{}');
+    await writeFile(compactionPath, '{}\n');
+
+    await deleteSession(session.id, home);
+
+    expect(existsSync(join(home, '.chimera', 'sessions', session.id))).toBe(false);
+    expect(existsSync(recallDir)).toBe(false);
+    expect(existsSync(compactionPath)).toBe(false);
+  });
 
   it('round-trips a session name through metadata, loading, and listings', async () => {
     const session = makeSession({ name: 'Release investigation' });
