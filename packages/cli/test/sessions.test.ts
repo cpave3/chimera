@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as core from '@chimera/core';
@@ -108,6 +109,22 @@ describe('runSessionsRm', () => {
 
   afterEach(async () => {
     await rm(home, { recursive: true, force: true });
+  });
+
+  it('cleans orphaned auxiliary data when the main session is absent', async () => {
+    const id = '01AAAAAAAAAAAAAAAAAAAAAAAB';
+    const recallDir = join(home, '.chimera', 'recall', id);
+    const overlayDir = join(home, '.chimera', 'overlays', id);
+    const compactionPath = join(home, '.chimera', 'sessions', `${id}.compactions.jsonl`);
+    await mkdir(recallDir, { recursive: true });
+    await mkdir(overlayDir, { recursive: true });
+    await mkdir(join(home, '.chimera', 'sessions'), { recursive: true });
+    await writeFile(compactionPath, '{}\n');
+
+    await expect(runSessionsRm(id, { home, ifExists: true })).resolves.toEqual({ removed: false });
+    expect(existsSync(recallDir)).toBe(false);
+    expect(existsSync(overlayDir)).toBe(false);
+    expect(existsSync(compactionPath)).toBe(false);
   });
 
   it('reports an absent exact session without failing when ifExists is set', async () => {

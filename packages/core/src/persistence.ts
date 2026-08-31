@@ -823,11 +823,24 @@ async function countLatestMessageCount(sessionId: SessionId, home: string): Prom
 }
 
 export async function deleteSession(sessionId: SessionId, home = homedir()): Promise<void> {
-  await rm(sessionDir(sessionId, home), { recursive: true, force: true });
-  // Sibling per-session state stores. Core owns the ~/.chimera layout, so
-  // it removes them by path rather than importing the owning packages.
+  let parentId: SessionId | null = null;
+  try {
+    parentId = (await readSessionMetadata(sessionId, home)).parentId;
+  } catch {
+    // Auxiliary cleanup remains valid when the main session is already absent.
+  }
+  if (parentId) {
+    try {
+      const parent = await loadSession(parentId, home);
+      parent.children = parent.children.filter((childId) => childId !== sessionId);
+      await writeSessionMetadata(parent, home);
+    } catch {
+      // A missing parent does not prevent deletion of an otherwise valid child.
+    }
+  }
+  // Remove auxiliary data first so an interrupted operation remains retryable.
   await rm(join(home, '.chimera', 'recall', sessionId), { recursive: true, force: true });
-  await rm(join(home, '.chimera', 'sessions', `${sessionId}.compactions.jsonl`), {
-    force: true,
-  });
+  await rm(join(home, '.chimera', 'sessions', `${sessionId}.compactions.jsonl`), { force: true });
+  await rm(join(home, '.chimera', 'overlays', sessionId), { recursive: true, force: true });
+  await rm(sessionDir(sessionId, home), { recursive: true, force: true });
 }

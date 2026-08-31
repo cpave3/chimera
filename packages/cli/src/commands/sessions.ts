@@ -60,15 +60,17 @@ export async function runSessionsRm(
   const home = options.home ?? homedir();
   const dir = sessionDir(sessionId, home);
   if (!existsSync(dir)) {
-    if (options.ifExists) return { removed: false };
+    if (options.ifExists) {
+      await deleteSession(sessionId, home);
+      return { removed: false };
+    }
     throw new Error(`No such session: ${sessionId}`);
   }
   let target: Awaited<ReturnType<typeof readSessionMetadata>>;
   try {
     target = await readSessionMetadata(sessionId, home);
-  } catch {
-    if (options.ifExists) return { removed: false };
-    throw new Error(`No such session: ${sessionId}`);
+  } catch (err) {
+    throw new Error(`Cannot read session ${sessionId}: ${(err as Error).message}`);
   }
   if (target.children.length > 0) {
     throw new Error(

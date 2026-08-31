@@ -58,15 +58,31 @@ describe('persistence', () => {
     await writeSessionMetadata(session, home);
     const recallDir = join(home, '.chimera', 'recall', session.id);
     const compactionPath = join(home, '.chimera', 'sessions', `${session.id}.compactions.jsonl`);
+    const overlayDir = join(home, '.chimera', 'overlays', session.id);
     await mkdir(recallDir, { recursive: true });
     await writeFile(join(recallDir, 'entry.json'), '{}');
     await writeFile(compactionPath, '{}\n');
+    await mkdir(overlayDir, { recursive: true });
+    await writeFile(join(overlayDir, 'data'), 'large workspace data');
 
     await deleteSession(session.id, home);
 
     expect(existsSync(join(home, '.chimera', 'sessions', session.id))).toBe(false);
     expect(existsSync(recallDir)).toBe(false);
     expect(existsSync(compactionPath)).toBe(false);
+    expect(existsSync(overlayDir)).toBe(false);
+  });
+
+  it('removes a deleted child from its parent metadata', async () => {
+    const parent = makeSession();
+    const child = makeSession({ parentId: parent.id });
+    parent.children = [child.id];
+    await writeSessionMetadata(parent, home);
+    await writeSessionMetadata(child, home);
+
+    await deleteSession(child.id, home);
+
+    await expect(readSessionMetadata(parent.id, home)).resolves.toMatchObject({ children: [] });
   });
 
   it('round-trips a session name through metadata, loading, and listings', async () => {
