@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "state": {
+    "model": "manticore/sol",
+    "overrides": {
+      "reasoningEffort": "max",
+      "parallelToolCalls": false
+    },
+    "defaults": {
+      "reasoningEffort": "medium"
+    },
+    "effective": {
+      "reasoningEffort": "max",
+      "parallelToolCalls": false
+    },
+    "capabilities": {
+      "schemaVersion": 1,
+      "modelId": "gpt-5.6-sol",
+      "profile": "codex",
+      "source": "contract-fixture",
+      "fingerprint": "contract-v1",
+      "settings": {
+        "reasoningEffort": {
+          "status": "supported",
+          "type": "enum",
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "default": "medium"
+        },
+        "parallelToolCalls": {
+          "status": "supported",
+          "type": "boolean",
+          "default": true
+        },
+        "temperature": {
+          "status": "unsupported",
+          "type": "number",
+          "reason": "Codex does not accept sampling settings."
+        }
+      }
+    }
+  },
+  "patch": {
+    "parallelToolCalls": false,
+    "reasoningEffort": null
+  },
+  "unknown": {
+    "schemaVersion": 1,
+    "modelId": "custom",
+    "profile": "unknown",
+    "source": "unavailable",
+    "fingerprint": "unknown-v1",
+    "settings": {
+      "thinking": {
+        "status": "unknown",
+        "type": "enum"
+      }
+    }
+  }
+}

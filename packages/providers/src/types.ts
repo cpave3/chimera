@@ -1,8 +1,12 @@
+import type { ModelCapabilities } from '@chimera/core';
 import type { LanguageModel } from 'ai';
 
 export type ProviderShape = 'openai' | 'anthropic';
 
 export interface ProviderSpec {
+  adapter?: 'native' | 'compatible';
+  capabilitySource?: 'manticore';
+  requestProfile?: 'openai-chat' | 'thinking' | 'template' | 'anthropic' | 'codex';
   shape: ProviderShape;
   baseUrl: string;
   apiKey: string;
@@ -25,6 +29,7 @@ export interface Provider {
   id: string;
   shape: ProviderShape;
   getModel(modelId: string, sessionId?: string): LanguageModel;
+  getCapabilities(modelId: string, refresh?: boolean): Promise<ModelCapabilities>;
 }
 
 export interface ProviderRegistry {

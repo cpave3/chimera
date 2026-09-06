@@ -74,6 +74,7 @@ export type AgentEvent =
       from: string;
       to: string;
     }
+  | { type: 'model_settings_changed'; settingsState: import('./model-settings').ModelSettingsState }
   /**
    * A turn carrying images was routed to the configured vision model because
    * the active model is not vision-capable. Run-scoped: `vision_route_ended`

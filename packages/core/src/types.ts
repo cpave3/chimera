@@ -1,11 +1,16 @@
 import type { ModelMessage } from 'ai';
 import type { CallId, SessionId } from './ids';
+import type { ModelCapabilities, ModelSettings } from './model-settings';
 
 export type SandboxMode = 'off' | 'bind' | 'overlay' | 'ephemeral';
 
 export type ExecutionTarget = 'sandbox' | 'host';
 
 export interface ModelConfig {
+  settings?: ModelSettings;
+  settingsDefaults?: ModelSettings;
+  capabilities?: ModelCapabilities;
+  topP?: number;
   providerId: string;
   modelId: string;
   maxSteps: number;
@@ -106,6 +111,10 @@ export interface TaskItem {
 }
 
 export interface Session {
+  initialModelRef?: string;
+  modelSettingsOverrides?: Record<string, ModelSettings>;
+  /** SDK creation defaults, separate from mutable effective settings and overrides. */
+  modelCreationDefaults?: Record<string, ModelSettings>;
   id: SessionId;
   name?: string;
   parentId: SessionId | null;

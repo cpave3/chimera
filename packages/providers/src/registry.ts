@@ -1,13 +1,18 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import type { ModelCapabilities } from '@chimera/core';
 import type { LanguageModel } from 'ai';
+import { wrapLanguageModel } from 'ai';
+import { codexContinuationMiddleware, codexMetadataExtractor } from './codex-continuation';
 import { buildKeyResolver } from './key';
+import { assertModelCapabilities, localCapabilities } from './model-settings';
 import type {
   Provider,
   ProviderRegistry,
-  ProvidersConfig,
   ProviderShape,
   ProviderSpec,
+  ProvidersConfig,
 } from './types';
 
 export interface LoadProvidersOptions {
@@ -27,14 +32,86 @@ function interpolateHeaders(
 }
 
 function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOptions): Provider {
+  if (spec.adapter !== undefined && !['native', 'compatible'].includes(spec.adapter))
+    throw new Error(`${id}: invalid adapter`);
+  if (spec.capabilitySource !== undefined && spec.capabilitySource !== 'manticore')
+    throw new Error(`${id}: invalid capabilitySource`);
+  if (
+    spec.requestProfile !== undefined &&
+    !['anthropic', 'openai-chat', 'thinking', 'template', 'codex'].includes(spec.requestProfile)
+  )
+    throw new Error(`${id}: invalid requestProfile`);
+  if (
+    spec.shape === 'anthropic' &&
+    (spec.adapter === 'compatible' || spec.capabilitySource === 'manticore')
+  )
+    throw new Error(`${id}: Anthropic requires its native adapter`);
   const keyResolver = buildKeyResolver(spec.apiKey, { warn: opts.warn, providerId: id });
 
   const getModel = (modelId: string, sessionId?: string): LanguageModel => {
     const apiKey = keyResolver();
     const headers = interpolateHeaders(spec.headers, sessionId);
     if (spec.shape === 'anthropic') {
-      const factory = createAnthropic({ baseURL: spec.baseUrl, apiKey, headers });
-      return factory(modelId);
+      const factory = (off = false) =>
+        createAnthropic({
+          baseURL: spec.baseUrl,
+          apiKey,
+          headers,
+          ...(off
+            ? {
+                fetch: async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+                  const body = JSON.parse(String(init?.body));
+                  return fetch(input, {
+                    ...init,
+                    body: JSON.stringify({ ...body, thinking: { type: 'disabled' } }),
+                  });
+                },
+              }
+            : {}),
+        })(modelId);
+      return wrapLanguageModel({
+        model: factory(),
+        middleware: {
+          specificationVersion: 'v3',
+          async transformParams({ params }) {
+            const thinking = params.providerOptions?.anthropic?.thinking as
+              | { type?: string; budgetTokens?: number }
+              | undefined;
+            // The native SDK adds the budget. Our output limit includes thinking.
+            return thinking?.type === 'enabled' &&
+              typeof thinking.budgetTokens === 'number' &&
+              params.maxOutputTokens !== undefined
+              ? { ...params, maxOutputTokens: params.maxOutputTokens - thinking.budgetTokens }
+              : params;
+          },
+          async wrapGenerate({ params, doGenerate }) {
+            const thinking = params.providerOptions?.anthropic?.thinking as
+              | { type?: string }
+              | undefined;
+            return thinking?.type === 'disabled' ? factory(true).doGenerate(params) : doGenerate();
+          },
+          async wrapStream({ params, doStream }) {
+            const thinking = params.providerOptions?.anthropic?.thinking as
+              | { type?: string }
+              | undefined;
+            return thinking?.type === 'disabled' ? factory(true).doStream(params) : doStream();
+          },
+        },
+      });
+    }
+    if (spec.adapter === 'compatible' || spec.capabilitySource === 'manticore') {
+      const model = createOpenAICompatible({
+        name: 'chimera',
+        baseURL: spec.baseUrl,
+        apiKey,
+        headers,
+        ...(spec.capabilitySource === 'manticore'
+          ? { metadataExtractor: codexMetadataExtractor }
+          : {}),
+      }).chatModel(modelId);
+      return spec.capabilitySource === 'manticore'
+        ? wrapLanguageModel({ model, middleware: codexContinuationMiddleware })
+        : model;
     }
     // @ai-sdk/openai v3 removed the top-level `compatibility` option; the
     // provider spec still carries it for forward compatibility but it is not
@@ -52,7 +129,42 @@ function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOption
     return factory.chat(modelId);
   };
 
-  return { id, shape: spec.shape, getModel };
+  const cache = new Map<string, { expires: number; capabilities: ModelCapabilities }>();
+  const getCapabilities = async (modelId: string, refresh = false): Promise<ModelCapabilities> => {
+    const cached = cache.get(modelId);
+    if (!refresh && cached && cached.expires > Date.now()) return cached.capabilities;
+    if (spec.capabilitySource !== 'manticore') return localCapabilities(modelId, spec);
+    try {
+      const url = new URL(`${spec.baseUrl.replace(/\/$/, '')}/model-capabilities`);
+      url.searchParams.set('model', modelId);
+      const response = await fetch(url, {
+        headers: {
+          ...interpolateHeaders(spec.headers, undefined),
+          Authorization: `Bearer ${keyResolver()}`,
+        },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) throw new Error(`Capability discovery returned ${response.status}`);
+      const capabilities = (await response.json()) as ModelCapabilities;
+      assertModelCapabilities(capabilities);
+      if (
+        capabilities.schemaVersion !== 1 ||
+        !capabilities.settings ||
+        typeof capabilities.profile !== 'string'
+      )
+        throw new Error('Invalid capability response');
+      cache.set(modelId, { expires: Date.now() + 30_000, capabilities });
+      return capabilities;
+    } catch {
+      const fallback = localCapabilities(modelId, {
+        ...spec,
+        requestProfile: undefined,
+        baseUrl: '',
+      });
+      return { ...fallback, source: 'unavailable' };
+    }
+  };
+  return { id, shape: spec.shape, getModel, getCapabilities };
 }
 
 export function loadProviders(

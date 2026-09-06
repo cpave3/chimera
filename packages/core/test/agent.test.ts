@@ -2603,6 +2603,26 @@ describe('vision routing', () => {
     expect(types).toContain('vision_route_started');
   });
 
+  it('does not leak primary provider settings into a vision model that uses defaults', async () => {
+    const vision = textMock('vision');
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textMock('primary') as unknown as LanguageModel,
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      providerOptions: { openai: { reasoningEffort: 'high', parallelToolCalls: false } },
+    });
+    agent.setVisionModelResolver(() => okResolution(vision));
+    const imagePath = await writeTestImage();
+    for await (const _event of agent.run('look', [imagePath])) {
+      /* drain */
+    }
+    expect(vision.doStreamCalls[0].providerOptions?.openai).toBeUndefined();
+  });
+
   it('reports the vision model context window on usage_updated during a routed turn', async () => {
     const primary = textMock('primary');
     const vision = textMock('vision');

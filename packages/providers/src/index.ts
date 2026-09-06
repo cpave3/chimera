@@ -1,10 +1,11 @@
-export * from './types';
-export * from './registry';
-export { buildKeyResolver } from './key';
 export {
   CONTEXT_WINDOW_FALLBACK,
-  resolveContextWindow,
   type ContextWindowSource,
   type ResolveContextWindowOptions,
   type ResolvedContextWindow,
+  resolveContextWindow,
 } from './context-window';
+export { buildKeyResolver } from './key';
+export * from './model-settings';
+export * from './registry';
+export * from './types';

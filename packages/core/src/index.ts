@@ -10,6 +10,7 @@ export * from './image-header';
 export * from './interfaces';
 export * from './logging';
 export * from './message-parts';
+export * from './model-settings';
 export * from './permission';
 export * from './persistence';
 export * from './prompts/compose';

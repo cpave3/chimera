@@ -10,6 +10,21 @@ import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } fr
 import { readImageDimensions } from './image-header';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
 import { elideImageToolResults } from './message-parts';
+import {
+  type ModelSettings,
+  type ModelSettingsPatch,
+  type ModelSettingsState,
+  patchModelSettings,
+} from './model-settings';
+
+type ModelResolution = {
+  model: ModelConfig;
+  languageModel: LanguageModel;
+  contextWindow: number;
+  contextWindowIsApproximate: boolean;
+  systemPrompt: string;
+  providerOptions?: ProviderOptions;
+};
 
 export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
 
@@ -200,6 +215,12 @@ export class Agent {
   private currentQueue: EventQueue<AgentEvent> | null = null;
   private pendingUserInputRequest: UserInputRequest | null = null;
   private running = false;
+  private updatingModelSettings = false;
+  private modelSettingsResolver?: (
+    ref: string,
+    settings: ModelSettings,
+  ) => Promise<ModelResolution>;
+  private defaultModelRef?: string | (() => string);
   private static readonly MAX_STOP_RETRIES = 5;
   private toolFormatters: Record<string, ToolFormatter> = {};
   /**
@@ -631,6 +652,81 @@ export class Agent {
     this.modelChangeResolver = resolver;
   }
 
+  setModelSettingsResolver(
+    resolver: (ref: string, settings: ModelSettings) => Promise<ModelResolution>,
+    defaultModelRef?: string | (() => string),
+  ): void {
+    this.modelSettingsResolver = resolver;
+    this.defaultModelRef = defaultModelRef;
+  }
+
+  get modelSettingsState(): ModelSettingsState | undefined {
+    const model = this.session.model;
+    if (!model.capabilities) return undefined;
+    const ref = `${model.providerId}/${model.modelId}`;
+    return {
+      model: ref,
+      overrides: this.session.modelSettingsOverrides?.[ref] ?? {},
+      defaults: model.settingsDefaults ?? {},
+      effective: model.settings ?? {},
+      capabilities: model.capabilities,
+    };
+  }
+
+  async updateModelSettings(request: {
+    model?: string | null;
+    settings?: ModelSettingsPatch;
+    resetSettings?: boolean;
+    expectedModel?: string;
+  }): Promise<
+    | { status: 'applied'; from: string; to: string; settingsState?: ModelSettingsState }
+    | { status: 'running' }
+    | { status: 'invalid'; error: string }
+  > {
+    if (this.running || this.updatingModelSettings) return { status: 'running' };
+    const from = `${this.session.model.providerId}/${this.session.model.modelId}`;
+    if (request.expectedModel !== undefined && request.expectedModel !== from)
+      return { status: 'invalid', error: 'The selected model changed. Reload its settings.' };
+    if (!this.modelSettingsResolver) {
+      if (!request.settings && !request.resetSettings && request.model !== undefined)
+        return this.setUserModelOverride(request.model);
+      return { status: 'invalid', error: 'Model settings are unavailable in this agent' };
+    }
+    this.updatingModelSettings = true;
+    try {
+      const defaultRef =
+        typeof this.defaultModelRef === 'function' ? this.defaultModelRef() : this.defaultModelRef;
+      const to = request.model === null ? (defaultRef ?? from) : (request.model ?? from);
+      const overrides = patchModelSettings(
+        request.resetSettings ? {} : (this.session.modelSettingsOverrides?.[to] ?? {}),
+        request.settings ?? {},
+      );
+      let resolved: ModelResolution;
+      try {
+        resolved = await this.modelSettingsResolver(to, overrides);
+      } catch (error) {
+        return { status: 'invalid', error: (error as Error).message };
+      }
+      const modelSettingsOverrides = { ...this.session.modelSettingsOverrides, [to]: overrides };
+      const userModelOverride =
+        request.model === undefined ? this.session.userModelOverride : request.model;
+      const candidate = {
+        ...this.session,
+        model: resolved.model,
+        modelSettingsOverrides,
+        userModelOverride,
+      };
+      await writeSessionMetadata(candidate, this.opts.home);
+      this.opts = { ...this.opts, ...resolved };
+      this.session.model = candidate.model;
+      this.session.modelSettingsOverrides = modelSettingsOverrides;
+      this.session.userModelOverride = userModelOverride;
+      return { status: 'applied', from, to, settingsState: this.modelSettingsState };
+    } finally {
+      this.updatingModelSettings = false;
+    }
+  }
+
   /**
    * Register the callback used to resolve the configured vision fallback
    * model when a turn carries images the active model cannot see. Called by
@@ -652,11 +748,13 @@ export class Agent {
     | { status: 'applied'; from: string; to: string }
     | { status: 'running' }
     | { status: 'invalid'; error: string } {
-    if (this.running) {
+    if (this.running || this.updatingModelSettings) {
       return { status: 'running' };
     }
     const currentRef = `${this.session.model.providerId}/${this.session.model.modelId}`;
-    const targetRef = ref ?? currentRef;
+    const defaultRef =
+      typeof this.defaultModelRef === 'function' ? this.defaultModelRef() : this.defaultModelRef;
+    const targetRef = ref ?? defaultRef ?? currentRef;
     if (targetRef === currentRef) {
       this.session.userModelOverride = ref;
       void writeSessionMetadata(this.session, this.opts.home).catch(() => {});
@@ -709,6 +807,8 @@ export class Agent {
         effectiveModelChanged: boolean;
       }
     | { status: 'invalid'; error: string } {
+    if (this.updatingModelSettings)
+      return { status: 'invalid', error: 'A model settings update is in progress' };
     if (name === this.session.mode) {
       // Noop check runs *before* the running guard so rapid Shift+Tab
       // presses can't queue a switch to the current mode (which would
@@ -737,6 +837,11 @@ export class Agent {
     let resolved: ReturnType<NonNullable<typeof this.modeResolver>>;
     try {
       resolved = this.modeResolver(name);
+      if (resolved.effectiveModelChanged && this.modelChangeResolver) {
+        const model = this.modelChangeResolver(resolved.effectiveModel);
+        this.opts = { ...this.opts, ...model };
+        this.session.model = model.model;
+      }
     } catch (err) {
       this.queuedMode = null;
       return { status: 'invalid', error: (err as Error).message };
@@ -930,7 +1035,7 @@ export class Agent {
   }
 
   run(userMessage: string, imagePaths?: string[]): AsyncIterable<AgentEvent> {
-    if (this.running) {
+    if (this.running || this.updatingModelSettings) {
       throw new Error('Agent is already running');
     }
     this.running = true;
@@ -979,7 +1084,7 @@ export class Agent {
   }
 
   private activeProviderOptions(): ProviderOptions | undefined {
-    return this.visionOverride?.providerOptions ?? this.opts.providerOptions;
+    return this.visionOverride ? this.visionOverride.providerOptions : this.opts.providerOptions;
   }
 
   private composeSystemPrompt(planHandoff: boolean): string | undefined {
@@ -1120,6 +1225,11 @@ export class Agent {
       try {
         if (this.modeResolver) {
           const resolved = this.modeResolver(queuedMode);
+          if (resolved.effectiveModelChanged && this.modelChangeResolver) {
+            const model = this.modelChangeResolver(resolved.effectiveModel);
+            this.opts = { ...this.opts, ...model };
+            this.session.model = model.model;
+          }
           const previousMode = this.session.mode;
           if (previousMode === 'plan') this.planHandoffPending = true;
           this.opts = {
@@ -1159,6 +1269,29 @@ export class Agent {
         process.stderr.write(
           `[chimera] mode resolver rejected switch to "${queuedMode}": ${(err as Error).message}\n`,
         );
+      }
+    }
+
+    if (this.modelSettingsResolver) {
+      const ref = `${this.session.model.providerId}/${this.session.model.modelId}`;
+      try {
+        const resolved = await this.modelSettingsResolver(
+          ref,
+          this.session.modelSettingsOverrides?.[ref] ?? {},
+        );
+        await writeSessionMetadata({ ...this.session, model: resolved.model }, this.opts.home);
+        this.opts = { ...this.opts, ...resolved };
+        this.session.model = resolved.model;
+        const settingsState = this.modelSettingsState;
+        if (settingsState) queue.push({ type: 'model_settings_changed', settingsState });
+      } catch (error) {
+        this.session.status = 'error';
+        queue.push({
+          type: 'run_finished',
+          reason: 'error',
+          error: `Model settings: ${(error as Error).message}`,
+        });
+        return;
       }
     }
 
@@ -1356,6 +1489,7 @@ export class Agent {
             stopWhen: stepCountIs(1),
             abortSignal: this.abortController.signal,
             temperature: this.activeModel().temperature,
+            topP: this.activeModel().topP,
             maxOutputTokens: this.activeModel().maxOutputTokens,
             providerOptions: this.activeProviderOptions() as Parameters<
               typeof streamText

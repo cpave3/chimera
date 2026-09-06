@@ -47,6 +47,9 @@ export function sessionImagesDir(sessionId: SessionId, home = homedir()): string
 }
 
 interface SessionMetadata {
+  initialModelRef?: string;
+  modelSettingsOverrides?: Session['modelSettingsOverrides'];
+  modelCreationDefaults?: Session['modelCreationDefaults'];
   id: SessionId;
   name?: string;
   parentId: SessionId | null;
@@ -73,6 +76,9 @@ interface SessionMetadata {
 
 function toMetadata(session: Session): SessionMetadata {
   return {
+    modelSettingsOverrides: session.modelSettingsOverrides,
+    modelCreationDefaults: session.modelCreationDefaults,
+    initialModelRef: session.initialModelRef,
     id: session.id,
     name: session.name,
     parentId: session.parentId,
@@ -163,6 +169,9 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
     messages: [],
     toolCalls: [],
     status: 'idle',
+    modelSettingsOverrides: parsed.modelSettingsOverrides ?? {},
+    modelCreationDefaults: parsed.modelCreationDefaults,
+    initialModelRef: parsed.initialModelRef,
     model: (parsed.model as ModelConfig) ?? {
       providerId: 'unknown',
       modelId: 'unknown',
@@ -695,6 +704,11 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     toolCalls: snapshot ? snapshot.toolCalls : parent.toolCalls,
     status: 'idle',
     model: parent.model,
+    modelSettingsOverrides: structuredClone(parent.modelSettingsOverrides ?? {}),
+    modelCreationDefaults: parent.modelCreationDefaults
+      ? structuredClone(parent.modelCreationDefaults)
+      : undefined,
+    initialModelRef: parent.initialModelRef,
     sandboxMode: parent.sandboxMode,
     usage: snapshot ? snapshot.usage : emptyUsage(),
     // Don't inherit parent's mode — per add-modes design D10, children
