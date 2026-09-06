@@ -1,8 +1,11 @@
+import { PassThrough } from 'node:stream';
 import { ChimeraClient, ChimeraHttpError } from '@chimera/client';
+import { render as inkRender } from 'ink';
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App';
 import { PasteRegistry } from '../src/input/paste';
+import { createFilteredStdin } from '../src/input/stdin-filter';
 import { PermissionModal } from '../src/PermissionModal';
 
 function stubClient(overrides: Partial<ChimeraClient> = {}): ChimeraClient {
@@ -821,6 +824,57 @@ describe('App', () => {
 
     sendResolve?.();
     unmount();
+  });
+
+  it('delivers one Escape through the production input filter to the interrupt handler', async () => {
+    const upstream = Object.assign(new PassThrough(), {
+      isTTY: true,
+      setRawMode() {},
+      ref() {},
+      unref() {},
+    });
+    const stdout = Object.assign(new PassThrough(), { columns: 100 });
+    let output = '';
+    stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    let finishRun = () => {};
+    const runStarted = vi.fn();
+    const interrupt = vi.fn(async () => {});
+    const client = stubClient({
+      send: async function* () {
+        await new Promise<void>((resolve) => {
+          finishRun = resolve;
+          runStarted();
+        });
+      },
+      interrupt,
+    });
+    const instance = inkRender(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+      {
+        stdin: createFilteredStdin(upstream as unknown as NodeJS.ReadStream),
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    );
+    try {
+      for (const char of 'hello\r') {
+        upstream.write(char);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      await vi.waitFor(() => expect(runStarted).toHaveBeenCalledOnce());
+      upstream.write('\x1b');
+      await vi.waitFor(() => expect(interrupt).toHaveBeenCalledExactlyOnceWith('01ABCDEFGH'));
+      await vi.waitFor(() => expect(output).toContain('interrupt sent'));
+    } finally {
+      finishRun();
+      instance.unmount();
+      upstream.destroy();
+      stdout.destroy();
+    }
   });
 
   it('Ctrl+C during a run calls interrupt(sessionId) instead of exiting', async () => {

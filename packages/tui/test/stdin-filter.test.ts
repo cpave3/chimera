@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PasteRegistry } from '../src/input/paste';
 import { createFilteredStdin, translateModifiedKeys } from '../src/input/stdin-filter';
+import { withTerminalHandoff } from '../src/input/terminal-handoff';
 
 describe('translateModifiedKeys', () => {
   it('rewrites Shift+Enter (CSI 27;2;13~) to a linefeed', () => {
@@ -192,5 +193,132 @@ describe('createFilteredStdin', () => {
       'ref',
       'unref',
     ]);
+  });
+});
+
+describe('lone Escape delivery', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function createInput() {
+    const queue: string[] = [];
+    const upstream = Object.assign(new EventEmitter(), {
+      isTTY: true,
+      pause() {},
+      resume() {},
+      setRawMode() {},
+      setEncoding() {},
+      ref() {},
+      unref() {},
+      read: () => queue.shift() ?? null,
+    }) as unknown as NodeJS.ReadStream;
+    const filtered = createFilteredStdin(upstream);
+    const reads: string[] = [];
+    filtered.on('readable', () => {
+      let chunk: unknown = filtered.read();
+      while (chunk !== null) {
+        reads.push(String(chunk));
+        chunk = filtered.read();
+      }
+    });
+    return {
+      filtered,
+      upstream,
+      reads,
+      send(chunk: string) {
+        queue.push(chunk);
+        upstream.emit('readable');
+      },
+    };
+  }
+
+  it('suspends Escape delivery while paused and resumes without another key', () => {
+    const input = createInput();
+    input.send('\x1b');
+    input.filtered.pause();
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual([]);
+    input.filtered.resume();
+    vi.advanceTimersByTime(50);
+    expect(input.reads).toEqual(['\x1b']);
+  });
+
+  it('discards pending Escape and handoff input before returning terminal ownership', async () => {
+    const input = createInput();
+    input.send('\x1b');
+    await withTerminalHandoff(
+      { stdin: input.filtered, stdout: { isTTY: false } as NodeJS.WriteStream },
+      async () => {
+        input.send('password\r');
+        vi.advanceTimersByTime(100);
+        expect(input.reads).toEqual([]);
+      },
+      { requireTty: false },
+    );
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual([]);
+    input.send('next');
+    expect(input.reads).toEqual(['next']);
+  });
+
+  it.each(['end', 'close', 'raw-mode-off'])('cancels pending Escape delivery on %s', (shutdown) => {
+    const input = createInput();
+    input.send('\x1b');
+    if (shutdown === 'raw-mode-off') input.filtered.setRawMode(false);
+    else input.upstream.emit(shutdown);
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual([]);
+  });
+
+  it.each([
+    ['[A', '\x1b[A'],
+    ['[27;2;13~', '\n'],
+    ['\r', '\n'],
+  ])('preserves a key sequence split after Escape: %j', (suffix, expected) => {
+    const input = createInput();
+    input.send('\x1b');
+    vi.advanceTimersByTime(25);
+    input.send(suffix);
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual([expected]);
+  });
+
+  it('preserves split paste markers and Escape inside an active paste', () => {
+    const input = createInput();
+    input.send('\x1b');
+    vi.advanceTimersByTime(25);
+    input.send('[20');
+    vi.advanceTimersByTime(100);
+    input.send('0~hello\x1b');
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual([]);
+    input.send('world\x1b[201');
+    vi.advanceTimersByTime(100);
+    input.send('~');
+    expect(input.reads).toEqual(['hello\x1bworld']);
+  });
+
+  it('delivers repeated Escape presses once each', () => {
+    const input = createInput();
+    input.send('\x1b');
+    vi.advanceTimersByTime(25);
+    input.send('\x1b');
+    expect(input.reads).toEqual(['\x1b']);
+    vi.advanceTimersByTime(50);
+    expect(input.reads).toEqual(['\x1b', '\x1b']);
+    input.send('next');
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual(['\x1b', '\x1b', 'next']);
+  });
+
+  it('delivers a lone Escape without waiting for another keystroke', () => {
+    const input = createInput();
+    input.send('\x1b');
+    vi.advanceTimersByTime(49);
+    expect(input.reads).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(input.reads).toEqual(['\x1b']);
+    vi.advanceTimersByTime(100);
+    expect(input.reads).toEqual(['\x1b']);
   });
 });

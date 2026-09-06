@@ -31,6 +31,7 @@ import { PasteRegistry, shouldCompactPaste } from './paste';
  */
 const MODIFIED_ENTER = new RegExp(`${String.fromCharCode(27)}\\[27;[2-8];13~`, 'g');
 const LEGACY_ALT_ENTER = `${String.fromCharCode(27)}\r`;
+const ESCAPE_DELAY_MS = 50;
 
 export function translateModifiedKeys(chunk: string): string {
   return chunk.replace(MODIFIED_ENTER, '\n').replaceAll(LEGACY_ALT_ENTER, '\n');
@@ -69,6 +70,25 @@ export function createFilteredStdin(
   let upstreamSubscribed = false;
   let upstreamListening = false;
   let paused = false;
+  let escapeTimer: NodeJS.Timeout | undefined;
+
+  function cancelEscapeTimer(): void {
+    clearTimeout(escapeTimer);
+    escapeTimer = undefined;
+  }
+
+  function scheduleEscape(): void {
+    cancelEscapeTimer();
+    if (pendingInput !== '\x1b' || pasteContent !== null || paused) return;
+    // Escape is also the first byte of a paste marker or terminal key sequence.
+    escapeTimer = setTimeout(() => {
+      escapeTimer = undefined;
+      queue.push(pendingInput);
+      pendingInput = '';
+      wrapper.emit('readable');
+    }, ESCAPE_DELAY_MS);
+    escapeTimer.unref();
+  }
 
   function markerPrefixLength(input: string, marker: string): number {
     for (let length = Math.min(marker.length - 1, input.length); length > 0; length -= 1) {
@@ -123,14 +143,21 @@ export function createFilteredStdin(
       processInput(text);
       chunk = upstream.read();
     }
+    scheduleEscape();
     if (queue.length > 0) wrapper.emit('readable');
   }
   function ensureSubscribed(): void {
     if (upstreamSubscribed) return;
     upstreamSubscribed = true;
     resumeUpstream();
-    upstream.on('end', () => wrapper.emit('end'));
-    upstream.on('close', () => wrapper.emit('close'));
+    upstream.on('end', () => {
+      cancelEscapeTimer();
+      wrapper.emit('end');
+    });
+    upstream.on('close', () => {
+      cancelEscapeTimer();
+      wrapper.emit('close');
+    });
   }
   function suspendUpstream(): void {
     if (!upstreamListening) return;
@@ -155,6 +182,7 @@ export function createFilteredStdin(
       return baseAddListener(event, listener);
     },
     setRawMode(mode: boolean): NodeJS.ReadStream {
+      if (!mode) cancelEscapeTimer();
       upstream.setRawMode?.(mode);
       return wrapper as NodeJS.ReadStream;
     },
@@ -164,6 +192,7 @@ export function createFilteredStdin(
     },
     pause(): NodeJS.ReadStream {
       paused = true;
+      cancelEscapeTimer();
       suspendUpstream();
       upstream.pause();
       return wrapper as NodeJS.ReadStream;
@@ -172,6 +201,7 @@ export function createFilteredStdin(
       paused = false;
       resumeUpstream();
       upstream.resume();
+      scheduleEscape();
       return wrapper as NodeJS.ReadStream;
     },
     read(_size?: number): unknown {
@@ -187,6 +217,9 @@ export function createFilteredStdin(
       return wrapper as NodeJS.ReadStream;
     },
     drainForTerminalHandoff(): void {
+      cancelEscapeTimer();
+      pendingInput = '';
+      pasteContent = null;
       queue.length = 0;
       while (upstream.read() !== null) {
         // Discard bytes entered while the child owned the terminal.
