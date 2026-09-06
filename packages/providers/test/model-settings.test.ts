@@ -1,11 +1,49 @@
 import { generateText, jsonSchema, streamText } from 'ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { localCapabilities, resolveModelSettings } from '../src/model-settings';
+import {
+  assertModelCapabilities,
+  localCapabilities,
+  resolveModelSettings,
+} from '../src/model-settings';
 import { loadProviders } from '../src/registry';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('model settings requests', () => {
+  it('describes verified image models and validates optional discovered modalities', () => {
+    const anthropic = localCapabilities('claude-opus-4-6', {
+      shape: 'anthropic',
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'key',
+    });
+    expect(anthropic.inputModalities).toEqual(['text', 'image']);
+    expect(
+      localCapabilities('gpt-4.1', {
+        shape: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'key',
+      }).inputModalities,
+    ).toEqual(['text', 'image']);
+    expect(
+      localCapabilities('gpt-4.1', {
+        shape: 'openai',
+        baseUrl: 'http://localhost:1234/v1',
+        apiKey: 'key',
+      }).inputModalities,
+    ).toBeUndefined();
+    expect(() => assertModelCapabilities({ ...anthropic, inputModalities: ['imaginary'] })).toThrow(
+      'modalities',
+    );
+    expect(() => assertModelCapabilities({ ...anthropic, inputModalities: 'image' })).toThrow(
+      'modalities',
+    );
+    expect(() => assertModelCapabilities({ ...anthropic, inputModalities: [] })).toThrow(
+      'modalities',
+    );
+    expect(() =>
+      assertModelCapabilities({ ...anthropic, inputModalities: undefined }),
+    ).not.toThrow();
+  });
   it('serializes native Anthropic parallel-tool Off', async () => {
     const spec = {
       shape: 'anthropic' as const,

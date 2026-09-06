@@ -137,10 +137,15 @@ it('preserves per-model overrides when a session is forked', async () => {
     'test/one': { reasoningEffort: 'max', parallelToolCalls: false },
   };
   agent.session.modelCreationDefaults = { 'test/one': { temperature: 0, maxOutputTokens: 4096 } };
+  agent.session.modelInputOverrides = { 'test/one': { vision: true, imageLongEdge: 2048 } };
   await writeSessionMetadata(agent.session, home);
   const { session } = await forkSession({ parentId: agent.session.id, home });
   expect(session.modelSettingsOverrides).toEqual(agent.session.modelSettingsOverrides);
   expect(session.modelCreationDefaults).toEqual(agent.session.modelCreationDefaults);
+  expect(session.modelInputOverrides).toEqual(agent.session.modelInputOverrides);
+  expect((await loadSession(session.id, home)).modelInputOverrides).toEqual(
+    agent.session.modelInputOverrides,
+  );
   expect((await loadSession(session.id, home)).modelCreationDefaults).toEqual(
     agent.session.modelCreationDefaults,
   );

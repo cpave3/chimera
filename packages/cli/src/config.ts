@@ -25,9 +25,9 @@ export interface ModelOptions {
    */
   toolCallShape?: 'chimera' | 'codex';
   /**
-   * Marks the model vision-capable. Only models with `vision: true` ever
-   * receive image parts; image turns on other models route to
-   * `defaultVisionModel`.
+   * Overrides discovered image support, including explicit false. When
+   * omitted, verified provider metadata or an SDK declaration can enable
+   * vision. Other models route image turns to `defaultVisionModel`.
    */
   vision?: boolean;
   /**
@@ -63,7 +63,7 @@ export interface ChimeraConfig {
    * Model (`<providerId>/<modelId>`) that turns carrying images run on when
    * the active model is not vision-capable. The whole turn (tools included)
    * runs on this model, then the session reverts to the selected model.
-   * Must itself be marked `vision: true` under `models`.
+   * Must have verified image support or an explicit `vision: true` declaration.
    */
   defaultVisionModel?: string;
   providers?: Record<string, ProviderSpec>;

@@ -16,6 +16,7 @@
     "capabilities": {
       "schemaVersion": 1,
       "modelId": "gpt-5.6-sol",
+      "inputModalities": ["text", "image"],
       "profile": "codex",
       "source": "contract-fixture",
       "fingerprint": "contract-v1",

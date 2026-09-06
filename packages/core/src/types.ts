@@ -24,10 +24,9 @@ export interface ModelConfig {
   maxOutputTokens?: number;
   temperature?: number;
   /**
-   * True when the model accepts image content parts. Config-declared
-   * (`models[ref].vision` in `~/.chimera/config.json`); absent means the
-   * model is treated as text-only and image turns route to the configured
-   * `defaultVisionModel`.
+   * True when the model accepts image content parts. The factory resolves
+   * per-model config, explicit SDK declarations, then verified discovery.
+   * False or absent uses the configured `defaultVisionModel` for image turns.
    */
   vision?: boolean;
   /**
@@ -115,6 +114,8 @@ export interface Session {
   modelSettingsOverrides?: Record<string, ModelSettings>;
   /** SDK creation defaults, separate from mutable effective settings and overrides. */
   modelCreationDefaults?: Record<string, ModelSettings>;
+  /** Explicit SDK input declarations; never populated from discovered capabilities. */
+  modelInputOverrides?: Record<string, Pick<ModelConfig, 'vision' | 'imageLongEdge'>>;
   id: SessionId;
   name?: string;
   parentId: SessionId | null;

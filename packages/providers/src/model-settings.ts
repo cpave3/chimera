@@ -29,6 +29,13 @@ export function assertModelCapabilities(value: unknown): asserts value is ModelC
     Array.isArray(capability.settings)
   )
     throw new Error('Invalid model capability descriptor');
+  if (
+    capability.inputModalities !== undefined &&
+    (!Array.isArray(capability.inputModalities) ||
+      !capability.inputModalities.length ||
+      capability.inputModalities.some((modality) => modality !== 'text' && modality !== 'image'))
+  )
+    throw new Error('Invalid model input modalities');
   for (const [key, setting] of Object.entries(capability.settings)) {
     if (
       !setting ||
@@ -174,13 +181,25 @@ export function localCapabilities(modelId: string, spec: ProviderSpec): ModelCap
       };
     }
   }
+  let inputModalities: ModelCapabilities['inputModalities'];
+  if (
+    (profile === 'anthropic' &&
+      /^claude-(?:3-(?:opus|sonnet|haiku)|3-[57]-sonnet|3-5-haiku|opus-4(?:-[1567])?|sonnet-4(?:-[56])?|haiku-4-5)(?:-\d{8}|-latest)?$/.test(
+        modelId,
+      )) ||
+    (profile === 'openai-chat' &&
+      /^gpt-(?:4o(?:-mini)?|4\.1(?:-mini|-nano)?)(?:-\d{4}-\d{2}-\d{2})?$/.test(modelId)) ||
+    (profile === 'thinking' && /(?:^|\/)kimi-k2\.[56]$/i.test(modelId))
+  )
+    inputModalities = ['text', 'image'];
   return {
     schemaVersion: 1,
     modelId,
     profile,
     source: spec.requestProfile ? 'configuration' : 'built-in',
-    fingerprint: JSON.stringify({ modelId, profile, settings }),
+    fingerprint: JSON.stringify({ modelId, profile, settings, inputModalities }),
     settings,
+    ...(inputModalities ? { inputModalities } : {}),
   };
 }
 

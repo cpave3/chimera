@@ -23,6 +23,16 @@ This selects the OpenAI-compatible adapter and enables authenticated `/model-cap
 
 Deploy Manticore support first, then Chimera, then Legato. These source changes do not restart services or edit the user's global configuration.
 
+## Image input and vision routing
+
+Image turns stay on the selected model when its effective `vision` capability is true. Otherwise, Chimera uses `defaultVisionModel` for that run and then returns to the selected model. This applies to pasted attachments, appended messages, and tool-produced images. A vision-capable follow-up retains image history.
+
+Vision support resolves in this order: explicit `models[reference].vision` configuration (including `false`), the SDK creation declaration for that reference, then verified `inputModalities` metadata. An absent metadata field means unknown; `['text']` means text-only. Unknown routes retain conservative fallback behavior. Custom endpoints can use an explicit `vision: true` declaration.
+
+Settings updates, resets, model switches, modes, resume, and fork retain explicit SDK vision and `imageLongEdge` declarations. Discovered support is not saved as a permanent override. Manticore aliases refresh through the existing capability cache, so target changes can change vision support. Discovery failure retains explicit declarations but does not invent image support. The fallback itself can use discovered support without a duplicate configuration flag.
+
+Verified Codex profiles such as Sol and Luna advertise image input; Spark is text-only. Manticore converts image parts to structured Codex `input_image` items, with generation settings and tool-continuation metadata intact. Deploy the updated Manticore serializer before using this discovery in Chimera. No database migration or global configuration edit is required.
+
 ## Configure model defaults
 
 ```json

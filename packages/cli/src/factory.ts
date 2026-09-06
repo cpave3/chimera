@@ -263,6 +263,12 @@ export class CliAgentFactory implements AgentFactory {
     if (session) init = { ...init, model: session.model };
     const sessionModelRef =
       session?.initialModelRef ?? `${init.model.providerId}/${init.model.modelId}`;
+    const modelInputOverrides = session?.modelInputOverrides ?? {
+      [`${init.model.providerId}/${init.model.modelId}`]: {
+        vision: init.model.vision,
+        imageLongEdge: init.model.imageLongEdge,
+      },
+    };
     const modelSettingsOverrides = session?.modelSettingsOverrides ?? {
       [`${init.model.providerId}/${init.model.modelId}`]: init.model.settings ?? {},
     };
@@ -308,7 +314,14 @@ export class CliAgentFactory implements AgentFactory {
       initialOverrides,
       modelCreationDefaults[ref],
     );
-    init = { ...init, model: { ...init.model, ...initialGeneration.modelFields } };
+    init = {
+      ...init,
+      model: {
+        ...init.model,
+        ...initialGeneration.modelFields,
+        ...this.resolveModelInput(ref, modelInputOverrides[ref]),
+      },
+    };
     if (session) session.model = init.model;
     const sessionId = session?.id ?? init.requestedSessionId ?? newSessionId();
     const languageModel = provider.getModel(modelId, sessionId);
@@ -450,6 +463,7 @@ export class CliAgentFactory implements AgentFactory {
     });
     agent.session.modelSettingsOverrides = modelSettingsOverrides;
     agent.session.modelCreationDefaults = modelCreationDefaults;
+    agent.session.modelInputOverrides = modelInputOverrides;
     agent.session.initialModelRef ??= sessionModelRef;
 
     // Propagate CLI-supplied additional paths onto the session so they are
@@ -746,7 +760,6 @@ export class CliAgentFactory implements AgentFactory {
         override: this.modelsConfig[ref]?.contextWindow,
         warn: this.warn,
       });
-      const modelOpts = this.modelsConfig[ref];
       const generation = this.resolveGeneration(
         ref,
         overrides,
@@ -756,8 +769,7 @@ export class CliAgentFactory implements AgentFactory {
         providerId: newProvider.id,
         modelId: newModelId,
         maxSteps: agent.session.model.maxSteps,
-        vision: modelOpts?.vision,
-        imageLongEdge: modelOpts?.imageLongEdge,
+        ...this.resolveModelInput(ref, agent.session.modelInputOverrides?.[ref]),
         // Runtime /model changes swap the language model, not the registered
         // tool set. Preserve the session's existing tool surface.
         toolCallShape: agent.session.model.toolCallShape,
@@ -809,10 +821,13 @@ export class CliAgentFactory implements AgentFactory {
           reason: '"defaultVisionModel" is not set in ~/.chimera/config.json',
         };
       }
-      if (this.modelsConfig[visionRef]?.vision !== true) {
+      if (
+        this.resolveModelInput(visionRef, agent.session.modelInputOverrides?.[visionRef]).vision !==
+        true
+      ) {
         return {
           status: 'unavailable',
-          reason: `defaultVisionModel "${visionRef}" is not marked "vision": true under "models" in ~/.chimera/config.json`,
+          reason: `defaultVisionModel "${visionRef}" has no verified image support. Set "vision": true under "models" only if this endpoint accepts images.`,
         };
       }
       try {
@@ -836,8 +851,7 @@ export class CliAgentFactory implements AgentFactory {
             providerId: visionProvider.id,
             modelId: visionModelId,
             maxSteps: agent.session.model.maxSteps,
-            vision: true,
-            imageLongEdge: visionModelOpts?.imageLongEdge,
+            ...this.resolveModelInput(visionRef, agent.session.modelInputOverrides?.[visionRef]),
             toolCallShape: visionModelOpts?.toolCallShape,
             ...generation.modelFields,
           },
@@ -855,6 +869,17 @@ export class CliAgentFactory implements AgentFactory {
   }
 
   private modelCapabilities = new Map<string, ModelCapabilities>();
+
+  private resolveModelInput(ref: string, explicit?: Pick<ModelConfig, 'vision' | 'imageLongEdge'>) {
+    const options = this.modelsConfig[ref];
+    return {
+      vision:
+        options?.vision ??
+        explicit?.vision ??
+        this.modelCapabilities.get(ref)?.inputModalities?.includes('image'),
+      imageLongEdge: options?.imageLongEdge ?? explicit?.imageLongEdge,
+    };
+  }
 
   async getModelCapabilities(ref: string, refresh = false): Promise<ModelCapabilities> {
     const { provider, modelId } = this.registry.resolve(ref);
@@ -877,15 +902,18 @@ export class CliAgentFactory implements AgentFactory {
   async listModels() {
     return (
       await Promise.all(
-        Object.entries(this.modelsConfig).map(async ([ref, options]) => ({
-          ref,
-          contextWindow: options.contextWindow,
-          maxOutputTokens: options.maxOutputTokens,
-          vision: options.vision,
-          isDefault: ref === this.providersConfig.defaultModel,
-          capabilities: await this.getModelCapabilities(ref),
-          defaults: this.resolveGeneration(ref).modelFields.settingsDefaults,
-        })),
+        Object.entries(this.modelsConfig).map(async ([ref, options]) => {
+          const capabilities = await this.getModelCapabilities(ref);
+          return {
+            ref,
+            contextWindow: options.contextWindow,
+            maxOutputTokens: options.maxOutputTokens,
+            vision: this.resolveModelInput(ref).vision,
+            isDefault: ref === this.providersConfig.defaultModel,
+            capabilities,
+            defaults: this.resolveGeneration(ref).modelFields.settingsDefaults,
+          };
+        }),
       )
     ).sort((a, b) =>
       a.isDefault !== b.isDefault ? (a.isDefault ? -1 : 1) : a.ref.localeCompare(b.ref),

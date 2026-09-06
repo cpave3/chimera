@@ -50,6 +50,7 @@ interface SessionMetadata {
   initialModelRef?: string;
   modelSettingsOverrides?: Session['modelSettingsOverrides'];
   modelCreationDefaults?: Session['modelCreationDefaults'];
+  modelInputOverrides?: Session['modelInputOverrides'];
   id: SessionId;
   name?: string;
   parentId: SessionId | null;
@@ -78,6 +79,7 @@ function toMetadata(session: Session): SessionMetadata {
   return {
     modelSettingsOverrides: session.modelSettingsOverrides,
     modelCreationDefaults: session.modelCreationDefaults,
+    modelInputOverrides: session.modelInputOverrides,
     initialModelRef: session.initialModelRef,
     id: session.id,
     name: session.name,
@@ -171,6 +173,7 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
     status: 'idle',
     modelSettingsOverrides: parsed.modelSettingsOverrides ?? {},
     modelCreationDefaults: parsed.modelCreationDefaults,
+    modelInputOverrides: parsed.modelInputOverrides,
     initialModelRef: parsed.initialModelRef,
     model: (parsed.model as ModelConfig) ?? {
       providerId: 'unknown',
@@ -707,6 +710,9 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     modelSettingsOverrides: structuredClone(parent.modelSettingsOverrides ?? {}),
     modelCreationDefaults: parent.modelCreationDefaults
       ? structuredClone(parent.modelCreationDefaults)
+      : undefined,
+    modelInputOverrides: parent.modelInputOverrides
+      ? structuredClone(parent.modelInputOverrides)
       : undefined,
     initialModelRef: parent.initialModelRef,
     sandboxMode: parent.sandboxMode,

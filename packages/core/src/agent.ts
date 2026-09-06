@@ -1332,7 +1332,7 @@ export class Agent {
         const error =
           `Cannot send images: model ${currentRef} is not vision-capable and no usable ` +
           `vision fallback is configured (${resolution.reason}). Set "defaultVisionModel" ` +
-          `in ~/.chimera/config.json (and mark it "vision": true under "models"), or use ` +
+          `in ~/.chimera/config.json to a model with verified image support, or use ` +
           `/model to switch to a vision-capable model.`;
         queue.push({ type: 'session_started', sessionId: this.session.id });
         queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });

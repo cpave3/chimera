@@ -2776,6 +2776,38 @@ describe('vision routing', () => {
     expect(types.indexOf('vision_route_ended')).toBeLessThan(types.indexOf('run_finished'));
   });
 
+  it('keeps tool-produced images on an active vision-capable model', async () => {
+    const reader = readToolCallMock();
+    const answer = textMock('I see the image');
+    let calls = 0;
+    const primary = new MockLanguageModelV3({
+      doStream: async (options) =>
+        calls++ === 0 ? reader.doStream(options) : answer.doStream(options),
+    });
+    const fallback = textMock('fallback');
+    const agent = new Agent({
+      cwd: '/tmp',
+      home,
+      model: { ...makeModel(), vision: true, maxSteps: 2 },
+      languageModel: primary as unknown as LanguageModel,
+      tools: { read: imageReadTool } as unknown as ToolSet,
+      sandboxMode: 'off',
+      contextWindow: 200_000,
+    });
+    agent.setVisionModelResolver(() => okResolution(fallback));
+    const events: AgentEvent[] = [];
+    for await (const event of agent.run('Read the screenshot')) events.push(event);
+    expect(primary.doStreamCalls).toHaveLength(2);
+    expect(fallback.doStreamCalls).toHaveLength(0);
+    expect(events.some((event) => event.type === 'vision_route_started')).toBe(false);
+    const imageParts = primary.doStreamCalls[1].prompt.flatMap((message) =>
+      message.role === 'user' ? message.content.filter((part) => part.type === 'file') : [],
+    );
+    expect(imageParts).toEqual([
+      expect.objectContaining({ mediaType: 'image/png', data: MINI_PNG.toString('base64') }),
+    ]);
+  });
+
   it('records the read path on injected image parts so later turns can re-read the file', async () => {
     const primary = readToolCallMock();
     const vision = textMock('vision sees it');

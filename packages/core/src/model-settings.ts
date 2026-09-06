@@ -25,6 +25,8 @@ export interface SettingCapability {
 }
 
 export interface ModelCapabilities {
+  /** Absent means unknown; a text-only array explicitly excludes image input. */
+  inputModalities?: Array<'text' | 'image'>;
   schemaVersion: 1;
   modelId: string;
   profile: string;

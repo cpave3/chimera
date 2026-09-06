@@ -6,6 +6,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
 
 describe('CliAgentFactory', () => {
+  it('retains SDK vision declarations through updates, model switches, resume, and reset', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          direct: {
+            shape: 'openai',
+            adapter: 'compatible',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'key',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: {
+        providerId: 'direct',
+        modelId: 'custom',
+        maxSteps: 1,
+        vision: true,
+        imageLongEdge: 2048,
+      },
+      sandboxMode: 'off',
+    });
+    await agent.updateModelSettings({ settings: {} });
+    expect(agent.session.model.vision).toBe(true);
+    expect(agent.session.model.imageLongEdge).toBe(2048);
+    await agent.updateModelSettings({ model: 'direct/other' });
+    expect(agent.session.model.vision).not.toBe(true);
+    await agent.updateModelSettings({ model: 'direct/custom', resetSettings: true });
+    expect(agent.session.model.vision).toBe(true);
+    const { agent: resumed } = await factory.build({
+      cwd,
+      model: agent.session.model,
+      sessionId: agent.session.id,
+      sandboxMode: 'off',
+    });
+    await resumed.updateModelSettings({ settings: {} });
+    expect(resumed.session.model.vision).toBe(true);
+    expect(resumed.session.model.imageLongEdge).toBe(2048);
+  });
   let cwd: string;
 
   beforeEach(async () => {
@@ -159,13 +203,16 @@ describe('CliAgentFactory', () => {
         modelId: 'gpt-5.6-sol',
         maxSteps: 1,
         settings: { reasoningEffort: 'high' },
+        vision: true,
       },
       sandboxMode: 'off',
     });
     expect(agent.modelSettingsState?.effective.reasoningEffort).toBe('low');
     expect(agent.session.model.modelId).toBe('gpt-5.6-luna');
+    expect(agent.session.model.vision).not.toBe(true);
     expect(agent.queueModeSwitch('build').status).toBe('applied');
     expect(agent.modelSettingsState?.effective.reasoningEffort).toBe('high');
+    expect(agent.session.model.vision).toBe(true);
     await agent.updateModelSettings({ model: 'direct/gpt-5.6-luna' });
     await agent.updateModelSettings({ model: null });
     expect(agent.session.model.modelId).toBe('gpt-5.6-sol');
@@ -567,9 +614,10 @@ describe('CliAgentFactory', () => {
       }
     });
 
-    it('is unavailable when the fallback is not marked vision-capable', async () => {
+    it('is unavailable when vision is explicitly disabled for the fallback', async () => {
       const agent = await buildAgent({
         defaultVisionModel: 'anthropic/claude-sonnet-4-5',
+        models: { 'anthropic/claude-sonnet-4-5': { vision: false } },
       });
       const result = agent.visionModelResolver?.();
       expect(result).toMatchObject({ status: 'unavailable' });
