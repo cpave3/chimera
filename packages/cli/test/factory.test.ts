@@ -19,6 +19,158 @@ describe('CliAgentFactory', () => {
     vi.unstubAllGlobals();
   });
 
+  it('retains SDK creation defaults through settings updates, model switches, and resets', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          direct: {
+            shape: 'openai',
+            adapter: 'compatible',
+            requestProfile: 'openai-chat',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'key',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: {
+        providerId: 'direct',
+        modelId: 'gpt-4.1',
+        maxSteps: 1,
+        maxOutputTokens: 4096,
+        temperature: 0,
+      },
+      sandboxMode: 'off',
+    });
+    await agent.updateModelSettings({ settings: { parallelToolCalls: false } });
+    expect(agent.session.model.temperature).toBe(0);
+    expect(agent.session.model.maxOutputTokens).toBe(4096);
+    await agent.updateModelSettings({ settings: { temperature: 0.7 } });
+    const { agent: resumed } = await factory.build({
+      cwd,
+      model: agent.session.model,
+      sessionId: agent.session.id,
+      sandboxMode: 'off',
+    });
+    expect(resumed.session.model.temperature).toBe(0.7);
+    await resumed.updateModelSettings({ resetSettings: true });
+    expect(resumed.session.model.temperature).toBe(0);
+    expect(resumed.session.model.maxOutputTokens).toBe(4096);
+    await agent.updateModelSettings({ model: 'direct/gpt-4.1-mini' });
+    await agent.updateModelSettings({ model: 'direct/gpt-4.1', resetSettings: true });
+    expect(agent.session.model.temperature).toBe(0);
+    expect(agent.session.model.maxOutputTokens).toBe(4096);
+  });
+
+  it('resolves configured and session settings on creation, switch, and resume', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          direct: {
+            shape: 'openai',
+            adapter: 'compatible',
+            requestProfile: 'openai-chat',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'key',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+      models: {
+        'direct/gpt-5.6-sol': { settings: { reasoningEffort: 'low' } },
+        'direct/gpt-5.6-luna': { settings: { reasoningEffort: 'medium' } },
+      },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'direct', modelId: 'gpt-5.6-sol', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    expect(agent.modelSettingsState?.effective.reasoningEffort).toBe('low');
+    expect(
+      (
+        await agent.updateModelSettings({
+          settings: { reasoningEffort: 'max', parallelToolCalls: false },
+        })
+      ).status,
+    ).toBe('applied');
+    await agent.updateModelSettings({ model: 'direct/gpt-5.6-luna' });
+    expect(agent.modelSettingsState?.effective.reasoningEffort).toBe('medium');
+    await agent.updateModelSettings({ model: 'direct/gpt-5.6-sol' });
+    const resumed = await factory.build({
+      cwd,
+      model: agent.session.model,
+      sessionId: agent.session.id,
+      sandboxMode: 'off',
+    });
+    expect(resumed.agent.modelSettingsState?.effective).toMatchObject({
+      reasoningEffort: 'max',
+      parallelToolCalls: false,
+    });
+  });
+
+  it('uses mode model defaults on creation and restores the original model after leaving the mode', async () => {
+    const modes = new InMemoryModeRegistry(
+      ['build', 'plan'].map((name) => ({
+        name,
+        description: name,
+        body: name,
+        colorHex: '#000000',
+        path: `/builtin/${name}.md`,
+        source: 'builtin' as const,
+        cycle: true,
+        ...(name === 'plan' ? { model: 'direct/gpt-5.6-luna' } : {}),
+      })),
+      [],
+    );
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          direct: {
+            shape: 'openai',
+            adapter: 'compatible',
+            requestProfile: 'openai-chat',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'key',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+      modes,
+      initialMode: 'plan',
+      models: {
+        'direct/gpt-5.6-sol': { settings: { reasoningEffort: 'max' } },
+        'direct/gpt-5.6-luna': { settings: { reasoningEffort: 'low' } },
+      },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: {
+        providerId: 'direct',
+        modelId: 'gpt-5.6-sol',
+        maxSteps: 1,
+        settings: { reasoningEffort: 'high' },
+      },
+      sandboxMode: 'off',
+    });
+    expect(agent.modelSettingsState?.effective.reasoningEffort).toBe('low');
+    expect(agent.session.model.modelId).toBe('gpt-5.6-luna');
+    expect(agent.queueModeSwitch('build').status).toBe('applied');
+    expect(agent.modelSettingsState?.effective.reasoningEffort).toBe('high');
+    await agent.updateModelSettings({ model: 'direct/gpt-5.6-luna' });
+    await agent.updateModelSettings({ model: null });
+    expect(agent.session.model.modelId).toBe('gpt-5.6-sol');
+  });
+
   it('threads the model identity into the composed system prompt', async () => {
     const factory = new CliAgentFactory({
       providersConfig: {

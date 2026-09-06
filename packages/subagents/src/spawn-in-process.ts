@@ -14,6 +14,7 @@ export async function spawnInProcessChild(args: {
   cwd: string;
   modelRef: string;
   parsedModel: {
+    settings?: import('@chimera/core').ModelSettings;
     providerId: string;
     modelId: string;
     maxSteps: number;

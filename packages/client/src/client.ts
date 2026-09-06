@@ -5,7 +5,9 @@ import type {
   Checkpoint,
   ContextBreakdown,
   EventId,
+  ModelCapabilities,
   ModelConfig,
+  ModelSettings,
   PermissionDecisionAction,
   PermissionRequest,
   PermissionRule,
@@ -56,6 +58,8 @@ export interface SubagentInfo {
 
 export interface ModelListEntry {
   ref: string;
+  capabilities?: ModelCapabilities;
+  defaults?: ModelSettings;
   contextWindow?: number;
   maxOutputTokens?: number;
   vision?: boolean;
@@ -288,6 +292,32 @@ export class ChimeraClient {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: modelRef }),
+    });
+  }
+
+  async getModelSettings(
+    sessionId: SessionId,
+  ): Promise<import('@chimera/core').ModelSettingsState | null> {
+    return this.json(`/v1/sessions/${sessionId}/model`);
+  }
+
+  async updateModelSettings(
+    sessionId: SessionId,
+    update: {
+      model?: string | null;
+      settings?: import('@chimera/core').ModelSettingsPatch;
+      resetSettings?: boolean;
+      expectedModel?: string;
+    },
+  ): Promise<{
+    from: string;
+    to: string;
+    settingsState: import('@chimera/core').ModelSettingsState;
+  }> {
+    return this.json(`/v1/sessions/${sessionId}/model`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(update),
     });
   }
 

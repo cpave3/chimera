@@ -1,11 +1,11 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { generateText } from 'ai';
 import type { FileOps, Session } from '@chimera/core';
 import type { LanguageModel, ModelMessage } from 'ai';
-import { type EstimateOptions, estimateTokens } from './token-estimate';
+import { generateText } from 'ai';
 import { buildCompactionPrompt, formatArchivedBlock, formatFilesBlock } from './prompt';
+import { type EstimateOptions, estimateTokens } from './token-estimate';
 import type {
   ArchivedRef,
   CompactionConfig,
@@ -31,6 +31,15 @@ export interface CompactorOptions {
    * (e.g. `x-session-id`) can be interpolated.
    */
   resolveModel(modelRef: string, sessionId?: string): Promise<LanguageModel>;
+  resolveCallOptions?(
+    modelRef: string,
+    session: Session,
+  ): Promise<
+    Pick<
+      Parameters<typeof generateText>[0],
+      'providerOptions' | 'temperature' | 'topP' | 'maxOutputTokens'
+    >
+  >;
   /** Home directory for log writes. Defaults to `homedir()`. */
   home?: string;
   /**
@@ -164,6 +173,7 @@ export class Compactor {
         fileOps: session.fileOps,
       });
       const result = await generateText({
+        ...(await this.opts.resolveCallOptions?.(modelRef, session)),
         model,
         messages: [{ role: 'user', content: prompt }],
       });

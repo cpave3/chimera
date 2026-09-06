@@ -4,7 +4,7 @@ import { Compactor } from '@chimera/compaction';
 import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
-import { AgentRegistry, buildApp, type ModelListEntry, startServer } from '@chimera/server';
+import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import type { ReloadingAgentRegistry } from '@chimera/subagents';
 import {
   authenticateSudoPassword,
@@ -16,6 +16,7 @@ import { loadReloadingAgentsFromConfig } from '../agents-loader';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import {
   checkCompactionInvariant,
+  compactionCallOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
@@ -32,6 +33,7 @@ import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
 export interface InteractiveOptions {
   cwd: string;
   model?: string;
+  modelSettings?: string;
   maxSteps?: number;
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
   session?: string;
@@ -71,6 +73,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const config = loadConfig(opts.home);
   const { model, ref, providersConfig } = resolveModel({
     cliModel: opts.model,
+    cliSettings: opts.modelSettings,
     maxSteps: opts.maxSteps,
     config,
   });
@@ -119,13 +122,15 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   let compactor: Compactor | undefined;
   if (compactionConfig.enabled) {
     const registry = loadProviders(providersConfig);
-    const compactionRef = compactionConfig.model ?? ref;
-    const { provider, modelId } = registry.resolve(compactionRef);
     compactor = new Compactor({
       config: compactionConfig,
       contextWindow: resolvedWindow.value,
       imageLongEdge: config.models?.[ref]?.imageLongEdge,
-      resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
+      resolveModel: async (ref, sessionId) => {
+        const target = registry.resolve(ref);
+        return target.provider.getModel(target.modelId, sessionId);
+      },
+      resolveCallOptions: compactionCallOptions(config, registry),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),
     });
@@ -167,19 +172,6 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     claudeCompatOverride: opts.claudeCompat,
   });
 
-  const modelsList: ModelListEntry[] = Object.entries(config.models ?? {})
-    .map(([ref, opts]) => ({
-      ref,
-      contextWindow: opts.contextWindow,
-      maxOutputTokens: opts.maxOutputTokens,
-      vision: opts.vision,
-      isDefault: ref === config.defaultModel,
-    }))
-    .sort((a, b) => {
-      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-      return a.ref.localeCompare(b.ref);
-    });
-
   const registry = new AgentRegistry({
     factory,
     instance: {
@@ -191,7 +183,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
-    loadModels: () => modelsList,
+    loadModels: () => factory.listModels(),
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });

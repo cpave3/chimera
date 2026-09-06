@@ -2,6 +2,8 @@
 
 Chimera is a terminal-native AI coding agent:
 
+See [model generation settings](docs/model-settings.md) for provider capabilities, thinking, effort, session controls, and Manticore setup.
+
 - **TUI-first** for interactive use (Ink-based).
 - **SDK-first**: every consumer — the TUI, future Slack harnesses, future subagents — talks to the same `ChimeraClient` over HTTP + SSE, so there is no "side channel" behavior.
 - **Permission-aware**: every shell call that would leave the agent's controlled scope is gated. Rules can be remembered session- or project-wide.

@@ -1,11 +1,49 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Session } from '@chimera/core';
+import { loadProviders } from '@chimera/providers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { checkCompactionInvariant, resolveCompactionConfig } from '../src/compaction';
+import {
+  checkCompactionInvariant,
+  compactionCallOptions,
+  resolveCompactionConfig,
+} from '../src/compaction';
 import { resolveModel } from '../src/config';
 
 describe('resolveCompactionConfig', () => {
+  it('uses active session settings or the explicit compaction model defaults', async () => {
+    const providers = {
+      direct: {
+        shape: 'openai' as const,
+        adapter: 'compatible' as const,
+        requestProfile: 'openai-chat' as const,
+        baseUrl: 'https://example.invalid/v1',
+        apiKey: 'key',
+      },
+    };
+    const resolve = compactionCallOptions(
+      { providers, models: { 'direct/gpt-5.6-luna': { settings: { reasoningEffort: 'low' } } } },
+      loadProviders({ providers }),
+    );
+    const session = {
+      model: {
+        providerId: 'direct',
+        modelId: 'gpt-5.6-sol',
+        settings: { reasoningEffort: 'max', parallelToolCalls: false },
+      },
+      modelSettingsOverrides: {
+        'direct/gpt-5.6-sol': { reasoningEffort: 'max', parallelToolCalls: false },
+      },
+    } as Session;
+    expect((await resolve('direct/gpt-5.6-sol', session)).providerOptions?.chimera).toMatchObject({
+      reasoningEffort: 'max',
+      parallel_tool_calls: false,
+    });
+    expect((await resolve('direct/gpt-5.6-luna', session)).providerOptions?.chimera).toEqual({
+      reasoningEffort: 'low',
+    });
+  });
   it('defaults to enabled with Chimera defaults', () => {
     const config = resolveCompactionConfig({ config: {} });
     expect(config.enabled).toBe(true);

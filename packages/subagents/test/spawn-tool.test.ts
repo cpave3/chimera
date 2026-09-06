@@ -1,7 +1,7 @@
 import type { AgentEvent, ModelConfig, SandboxMode, SessionId } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSpawnAgentTool } from '../src/spawn-tool';
 import * as spawnChildMod from '../src/spawn-child';
+import { buildSpawnAgentTool } from '../src/spawn-tool';
 import type { SpawnAgentToolContext } from '../src/types';
 
 const mockSpawnChimeraChild = vi.fn();
@@ -69,6 +69,41 @@ afterEach(() => {
 });
 
 describe('buildSpawnAgentTool — model index in description', () => {
+  it.each([
+    undefined,
+    'openai/child',
+  ])('inherits live parent settings only without an explicit child model (%s)', async (model) => {
+    let received: ModelConfig | undefined;
+    const ctx = baseCtx({
+      getParentModel: () => ({
+        ref: 'openai/parent',
+        settings: { reasoningEffort: 'max', parallelToolCalls: false },
+      }),
+      inProcess: async (init) => {
+        received = init.model;
+        return {
+          sessionId: 'child',
+          send: () =>
+            (async function* (): AsyncGenerator<AgentEvent> {
+              yield { type: 'run_finished', reason: 'stop' };
+            })(),
+          interrupt: () => {},
+          dispose: async () => {},
+        };
+      },
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (args: unknown, context: unknown) => Promise<unknown>;
+    };
+    await tool.execute(
+      { prompt: 'test', purpose: 'test', in_process: true, ...(model ? { model } : {}) },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    expect(received?.modelId).toBe(model ? 'child' : 'parent');
+    expect(received?.settings).toEqual(
+      model ? undefined : { reasoningEffort: 'max', parallelToolCalls: false },
+    );
+  });
   it('lists availableModels in the tool description with the first marked as default', () => {
     const ctx = baseCtx({
       availableModels: ['anthropic/claude-opus-4-7', 'anthropic/claude-haiku-4-5', 'openai/gpt-5'],

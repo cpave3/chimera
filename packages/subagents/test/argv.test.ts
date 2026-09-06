@@ -2,6 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { buildChildArgv } from '../src/spawn-child';
 
 describe('buildChildArgv', () => {
+  it('passes inherited generation settings as one JSON argument', () => {
+    const argv = buildChildArgv({
+      chimeraBin: 'chimera',
+      cwd: '/tmp',
+      parentSessionId: 'p',
+      autoApprove: 'none',
+      sandbox: false,
+      parentHasTty: true,
+      modelSettings: { reasoningEffort: 'max', parallelToolCalls: false },
+    });
+    expect(JSON.parse(argv[argv.indexOf('--model-settings') + 1])).toEqual({
+      reasoningEffort: 'max',
+      parallelToolCalls: false,
+    });
+  });
   it('emits the required flags for a top-level child', () => {
     const argv = buildChildArgv({
       chimeraBin: 'chimera',

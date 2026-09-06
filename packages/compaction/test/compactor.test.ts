@@ -1,12 +1,13 @@
-import { mkdir, readFile, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ModelMessage } from 'ai';
 import type { Session } from '@chimera/core';
-import { Compactor, computeBoundary, estimateTokens } from '../src';
 import { newSessionId } from '@chimera/core';
+import type { ModelMessage } from 'ai';
+import { MockLanguageModelV3 } from 'ai/test';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Compactor, computeBoundary, estimateTokens } from '../src';
 
 describe('estimateTokens', () => {
   it('estimates user messages as ceil(len/4) + overhead', () => {
@@ -165,6 +166,37 @@ describe('Compactor', () => {
       home,
     });
   }
+
+  it('passes resolved generation options to the summary request', async () => {
+    const session = makeSession([
+      { role: 'user', content: 'x'.repeat(500) },
+      { role: 'assistant', content: 'done' },
+    ]);
+    const compactor = new Compactor({
+      home,
+      contextWindow: 100,
+      config: { enabled: true, reserveTokens: 10, keepRecentTokens: 30 },
+      resolveCallOptions: async (ref, current) => {
+        expect(ref).toBe('p/m');
+        expect(current.id).toBe(session.id);
+        return { providerOptions: { test: { reasoningEffort: 'high' } }, temperature: 0 };
+      },
+      resolveModel: async () =>
+        new MockLanguageModelV3({
+          doGenerate: async (options) => {
+            expect(options.providerOptions).toEqual({ test: { reasoningEffort: 'high' } });
+            expect(options.temperature).toBe(0);
+            return {
+              content: [{ type: 'text', text: 'summary' }],
+              finishReason: { unified: 'stop', raw: 'stop' },
+              usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+              warnings: [],
+            };
+          },
+        }),
+    });
+    await compactor.compact(session, 'manual');
+  });
 
   it('maybeCompact is a no-op when disabled', async () => {
     const session = makeSession([{ role: 'user', content: 'x'.repeat(200) }]);

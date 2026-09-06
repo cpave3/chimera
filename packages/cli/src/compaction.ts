@@ -4,9 +4,50 @@ import {
   DEFAULT_THRESHOLD_PERCENT,
   type MessagePruner,
 } from '@chimera/compaction';
-import type { CompactionConfig } from '@chimera/core';
+import type { CompactionConfig, Session } from '@chimera/core';
+import { validateModelSettings } from '@chimera/core';
+import { localCapabilities, type ProviderRegistry, resolveModelSettings } from '@chimera/providers';
 import { createRecallPruner, RecallStore } from '@chimera/recall';
 import type { ChimeraConfig } from './config';
+
+export function compactionCallOptions(config: ChimeraConfig, registry: ProviderRegistry) {
+  return async (ref: string, session: Session) => {
+    const { provider, modelId } = registry.resolve(ref);
+    const spec = config.providers![provider.id];
+    const options = config.models?.[ref];
+    const base = options?.requestProfile
+      ? localCapabilities(modelId, { ...spec, requestProfile: options.requestProfile })
+      : await provider.getCapabilities(modelId);
+    const capabilities = { ...base, settings: { ...base.settings, ...options?.capabilities } };
+    validateModelSettings(options?.settings ?? {}, capabilities);
+    const active = ref === `${session.model.providerId}/${session.model.modelId}`;
+    const defaults = active
+      ? (session.model.settings ?? {
+          maxOutputTokens: session.model.maxOutputTokens,
+          temperature: session.model.temperature,
+        })
+      : {
+          maxOutputTokens: options?.maxOutputTokens,
+          parallelToolCalls: options?.parallelToolCalls,
+          ...options?.settings,
+        };
+    const resolved = resolveModelSettings(
+      spec,
+      capabilities,
+      defaults,
+      active ? (session.modelSettingsOverrides?.[ref] ?? {}) : {},
+      options?.providerExtensions,
+    );
+    return {
+      temperature: resolved.settings.temperature,
+      topP: resolved.settings.topP,
+      maxOutputTokens: resolved.settings.maxOutputTokens,
+      providerOptions: resolved.providerOptions as Parameters<
+        typeof import('ai').generateText
+      >[0]['providerOptions'],
+    };
+  };
+}
 
 /**
  * Per-session prune-phase factory for the Compactor, backed by the recall

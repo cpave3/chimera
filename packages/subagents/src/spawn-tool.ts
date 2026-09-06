@@ -139,7 +139,9 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       const effectiveSystemPrompt = validated.system_prompt ?? agentSystemPrompt;
       const effectiveTools =
         validated.tools ?? (agentTools && agentTools.length > 0 ? agentTools : undefined);
-      const modelRef = validated.model ?? agentModelRef ?? ctx.defaultModelRef;
+      const parentModel = ctx.getParentModel?.();
+      const modelRef = validated.model ?? agentModelRef ?? parentModel?.ref ?? ctx.defaultModelRef;
+      const modelSettings = validated.model || agentModelRef ? undefined : parentModel?.settings;
       const inProcess = validated.in_process === true;
       const timeoutMs = validated.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -163,6 +165,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           });
         }
         const parsedModel = parseModelRef(modelRef, ctx.modelOptions);
+        if (modelSettings) parsedModel.settings = modelSettings;
         const desiredSandboxMode = inheritSandboxMode(ctx.sandboxMode, validated);
         try {
           const handle = await spawnInProcessChild({
@@ -235,6 +238,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           parentSessionId: ctx.parentSessionId,
           modelRef,
           autoApprove: ctx.autoApprove,
+          modelSettings,
           sandbox: validated.sandbox === undefined ? ctx.sandboxMode !== 'off' : validated.sandbox,
           sandboxMode: validated.sandbox_mode,
           parentHasTty: ctx.parentHasTty,
@@ -327,6 +331,7 @@ function parseModelRef(
   ref: string,
   modelOptions?: Record<string, { maxOutputTokens?: number; parallelToolCalls?: boolean }>,
 ): {
+  settings?: import('@chimera/core').ModelSettings;
   providerId: string;
   modelId: string;
   maxSteps: number;

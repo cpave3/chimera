@@ -6,8 +6,9 @@ import type {
   CompactionConfig,
   Executor,
   HostAuthenticationCapability,
+  ModelCapabilities,
   ModelConfig,
-  ProviderOptions,
+  ModelSettings,
   SessionId,
   VisionModelResolution,
 } from '@chimera/core';
@@ -20,6 +21,7 @@ import {
   type StopHook,
   type TimeoutHook,
   type UserInputRequiredHook,
+  validateModelSettings,
   writeSessionMetadata,
 } from '@chimera/core';
 import { DefaultHookRunner, type HookRunner } from '@chimera/hooks';
@@ -48,8 +50,10 @@ import {
 import {
   buildKeyResolver,
   loadProviders,
+  localCapabilities,
   type ProvidersConfig,
   resolveContextWindow,
+  resolveModelSettings,
 } from '@chimera/providers';
 import { RecallStore } from '@chimera/recall';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
@@ -255,9 +259,57 @@ export class CliAgentFactory implements AgentFactory {
   }
 
   async build(init: SessionInit): Promise<BuildResult> {
+    const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
+    if (session) init = { ...init, model: session.model };
+    const sessionModelRef =
+      session?.initialModelRef ?? `${init.model.providerId}/${init.model.modelId}`;
+    const modelSettingsOverrides = session?.modelSettingsOverrides ?? {
+      [`${init.model.providerId}/${init.model.modelId}`]: init.model.settings ?? {},
+    };
+    const creationSource = init.model.settingsDefaults ?? init.model;
+    const modelCreationDefaults = session?.modelCreationDefaults ?? {
+      [`${init.model.providerId}/${init.model.modelId}`]: Object.fromEntries(
+        Object.entries({
+          maxOutputTokens: creationSource.maxOutputTokens,
+          parallelToolCalls: creationSource.parallelToolCalls,
+          temperature: creationSource.temperature,
+          topP: creationSource.topP,
+        }).filter(([, value]) => value !== undefined),
+      ),
+    };
+    const startupMode = this.modes?.find(session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME);
+    if (!session && startupMode?.model && startupMode.model !== sessionModelRef) {
+      const target = this.registry.resolve(startupMode.model);
+      init = {
+        ...init,
+        model: {
+          providerId: target.provider.id,
+          modelId: target.modelId,
+          maxSteps: init.model.maxSteps,
+          vision: this.modelsConfig[startupMode.model]?.vision,
+          imageLongEdge: this.modelsConfig[startupMode.model]?.imageLongEdge,
+          toolCallShape:
+            this.modelsConfig[startupMode.model]?.toolCallShape ?? init.model.toolCallShape,
+        },
+      };
+    }
     const ref = `${init.model.providerId}/${init.model.modelId}`;
     const { provider, modelId } = this.registry.resolve(ref);
-    const session = init.sessionId ? await tryLoadSession(init.sessionId, this.home) : undefined;
+    await this.getModelCapabilities(ref);
+    for (const target of [
+      this.defaultVisionModel,
+      ...(this.modes?.all().map((mode) => mode.model) ?? []),
+    ]) {
+      if (target) await this.getModelCapabilities(target).catch(() => undefined);
+    }
+    const initialOverrides = modelSettingsOverrides[ref] ?? {};
+    const initialGeneration = this.resolveGeneration(
+      ref,
+      initialOverrides,
+      modelCreationDefaults[ref],
+    );
+    init = { ...init, model: { ...init.model, ...initialGeneration.modelFields } };
+    if (session) session.model = init.model;
     const sessionId = session?.id ?? init.requestedSessionId ?? newSessionId();
     const languageModel = provider.getModel(modelId, sessionId);
 
@@ -394,8 +446,11 @@ export class CliAgentFactory implements AgentFactory {
       userInputRequiredHook,
       permissionResolvedHook,
       responseTimeoutMs: this.responseTimeoutMs,
-      providerOptions: buildProviderOptions(providerShape, init.model.parallelToolCalls),
+      providerOptions: initialGeneration.providerOptions,
     });
+    agent.session.modelSettingsOverrides = modelSettingsOverrides;
+    agent.session.modelCreationDefaults = modelCreationDefaults;
+    agent.session.initialModelRef ??= sessionModelRef;
 
     // Propagate CLI-supplied additional paths onto the session so they are
     // persisted (and inherited on fork). When loading from disk the values
@@ -570,6 +625,13 @@ export class CliAgentFactory implements AgentFactory {
         parentSessionId: agent.session.id,
         cwd: init.cwd,
         defaultModelRef,
+        getParentModel: () =>
+          this.subagents.defaultModelRef
+            ? { ref: this.subagents.defaultModelRef }
+            : {
+                ref: `${agent.session.model.providerId}/${agent.session.model.modelId}`,
+                settings: agent.session.model.settings,
+              },
         sandboxMode: init.sandboxMode,
         autoApprove: this.autoApprove,
         currentDepth: this.subagents.currentDepth ?? 0,
@@ -641,7 +703,6 @@ export class CliAgentFactory implements AgentFactory {
         const nextAllowlist = computeAllowlist(next);
         const nextTools = applyAllowlist(tools, nextAllowlist) as ToolSet;
         nextTools.request_user_input = tools.request_user_input;
-        const sessionModelRef = `${init.model.providerId}/${init.model.modelId}`;
         // Resolve previous mode dynamically from `agent.session.mode` —
         // the static `activeMode` captured at session construction is only
         // accurate for the very first switch; later switches (build → plan
@@ -671,7 +732,10 @@ export class CliAgentFactory implements AgentFactory {
 
     // Model-change resolver: allows the user to switch models at runtime via
     // `/model <ref>` (or clear the override with `/model default`).
-    agent.setModelChangeResolver((ref: string) => {
+    const resolveChange = (
+      ref: string,
+      overrides = agent.session.modelSettingsOverrides?.[ref] ?? {},
+    ) => {
       const { provider: newProvider, modelId: newModelId } = this.registry.resolve(ref);
       const newProviderSpec = this.providersConfig.providers[newProvider.id];
       const newProviderShape = newProviderSpec?.shape ?? newProvider.shape;
@@ -683,18 +747,21 @@ export class CliAgentFactory implements AgentFactory {
         warn: this.warn,
       });
       const modelOpts = this.modelsConfig[ref];
+      const generation = this.resolveGeneration(
+        ref,
+        overrides,
+        agent.session.modelCreationDefaults?.[ref],
+      );
       const newModel: ModelConfig = {
         providerId: newProvider.id,
         modelId: newModelId,
         maxSteps: agent.session.model.maxSteps,
-        maxOutputTokens: modelOpts?.maxOutputTokens,
-        temperature: agent.session.model.temperature,
         vision: modelOpts?.vision,
         imageLongEdge: modelOpts?.imageLongEdge,
         // Runtime /model changes swap the language model, not the registered
         // tool set. Preserve the session's existing tool surface.
         toolCallShape: agent.session.model.toolCallShape,
-        parallelToolCalls: modelOpts?.parallelToolCalls,
+        ...generation.modelFields,
       };
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
       const currentTools = currentMode
@@ -718,9 +785,19 @@ export class CliAgentFactory implements AgentFactory {
         ),
         contextWindow: newWindow.value,
         contextWindowIsApproximate: newWindow.source === 'fallback',
-        providerOptions: buildProviderOptions(newProviderShape, newModel.parallelToolCalls),
+        providerOptions: generation.providerOptions,
       };
-    });
+    };
+    agent.setModelChangeResolver(resolveChange);
+    agent.setModelSettingsResolver(
+      async (target, overrides) => {
+        await this.getModelCapabilities(target, true);
+        if (this.defaultVisionModel && this.defaultVisionModel !== target)
+          await this.getModelCapabilities(this.defaultVisionModel, true).catch(() => undefined);
+        return resolveChange(target, overrides);
+      },
+      () => this.modes?.find(agent.session.mode)?.model ?? sessionModelRef,
+    );
 
     // Vision fallback resolver: turns carrying images run on
     // `defaultVisionModel` when the active model is text-only.
@@ -751,6 +828,7 @@ export class CliAgentFactory implements AgentFactory {
           warn: this.warn,
         });
         const visionModelOpts = this.modelsConfig[visionRef];
+        const generation = this.resolveGeneration(visionRef);
         return {
           status: 'ok',
           ref: visionRef,
@@ -758,19 +836,15 @@ export class CliAgentFactory implements AgentFactory {
             providerId: visionProvider.id,
             modelId: visionModelId,
             maxSteps: agent.session.model.maxSteps,
-            maxOutputTokens: visionModelOpts?.maxOutputTokens,
             vision: true,
             imageLongEdge: visionModelOpts?.imageLongEdge,
             toolCallShape: visionModelOpts?.toolCallShape,
-            parallelToolCalls: visionModelOpts?.parallelToolCalls,
+            ...generation.modelFields,
           },
           languageModel: visionProvider.getModel(visionModelId, agent.session.id),
           contextWindow: visionWindow.value,
           contextWindowIsApproximate: visionWindow.source === 'fallback',
-          providerOptions: buildProviderOptions(
-            visionProviderShape,
-            visionModelOpts?.parallelToolCalls,
-          ),
+          providerOptions: generation.providerOptions,
         };
       } catch (err) {
         return { status: 'unavailable', reason: (err as Error).message };
@@ -778,6 +852,87 @@ export class CliAgentFactory implements AgentFactory {
     });
 
     return { agent, gate, hookRunner };
+  }
+
+  private modelCapabilities = new Map<string, ModelCapabilities>();
+
+  async getModelCapabilities(ref: string, refresh = false): Promise<ModelCapabilities> {
+    const { provider, modelId } = this.registry.resolve(ref);
+    const modelOptions = this.modelsConfig[ref];
+    const spec = this.providersConfig.providers[provider.id];
+    const base = modelOptions?.requestProfile
+      ? localCapabilities(modelId, { ...spec, requestProfile: modelOptions.requestProfile })
+      : await provider.getCapabilities(modelId, refresh);
+    const capabilities = modelOptions?.capabilities
+      ? ({
+          ...base,
+          source: 'configuration',
+          settings: { ...base.settings, ...modelOptions.capabilities },
+        } as ModelCapabilities)
+      : base;
+    this.modelCapabilities.set(ref, capabilities);
+    return capabilities;
+  }
+
+  async listModels() {
+    return (
+      await Promise.all(
+        Object.entries(this.modelsConfig).map(async ([ref, options]) => ({
+          ref,
+          contextWindow: options.contextWindow,
+          maxOutputTokens: options.maxOutputTokens,
+          vision: options.vision,
+          isDefault: ref === this.providersConfig.defaultModel,
+          capabilities: await this.getModelCapabilities(ref),
+          defaults: this.resolveGeneration(ref).modelFields.settingsDefaults,
+        })),
+      )
+    ).sort((a, b) =>
+      a.isDefault !== b.isDefault ? (a.isDefault ? -1 : 1) : a.ref.localeCompare(b.ref),
+    );
+  }
+
+  private resolveGeneration(ref: string, overrides: ModelSettings = {}, legacy?: ModelSettings) {
+    const { provider, modelId } = this.registry.resolve(ref);
+    const options = this.modelsConfig[ref];
+    const spec = this.providersConfig.providers[provider.id];
+    const capabilities =
+      this.modelCapabilities.get(ref) ??
+      localCapabilities(modelId, {
+        ...spec,
+        requestProfile: options?.requestProfile ?? spec.requestProfile,
+      });
+    validateModelSettings(options?.settings ?? {}, capabilities);
+    const defaults: ModelSettings = {
+      ...Object.fromEntries(
+        Object.entries({
+          maxOutputTokens: options?.maxOutputTokens ?? legacy?.maxOutputTokens,
+          parallelToolCalls: options?.parallelToolCalls ?? legacy?.parallelToolCalls,
+          temperature: legacy?.temperature,
+          topP: legacy?.topP,
+        }).filter(([, value]) => value !== undefined),
+      ),
+      ...options?.settings,
+    };
+    const resolved = resolveModelSettings(
+      spec,
+      capabilities,
+      defaults,
+      overrides,
+      options?.providerExtensions,
+    );
+    return {
+      providerOptions: resolved.providerOptions,
+      modelFields: {
+        settings: resolved.settings,
+        settingsDefaults: defaults,
+        capabilities,
+        maxOutputTokens: resolved.settings.maxOutputTokens,
+        temperature: resolved.settings.temperature,
+        topP: resolved.settings.topP,
+        parallelToolCalls: resolved.settings.parallelToolCalls,
+      },
+    };
   }
 
   /** Live DockerExecutor for a session, if sandbox is on. */
@@ -948,20 +1103,4 @@ export function resolveChimeraInvocation(): { bin: string; preArgs: string[] } {
 
 function _resolveChimeraBin(): string {
   return resolveChimeraInvocation().bin;
-}
-
-/**
- * Build the AI SDK `providerOptions` for a model from its provider shape and
- * config. Currently only forwards `parallelToolCalls` for OpenAI-shaped
- * providers (Anthropic always allows parallel tool calls — its API has no
- * `parallel_tool_calls` parameter). Returns `undefined` when there's nothing
- * to forward, so `streamText` uses the provider's defaults.
- */
-function buildProviderOptions(
-  providerShape: 'openai' | 'anthropic',
-  parallelToolCalls: boolean | undefined,
-): ProviderOptions | undefined {
-  if (parallelToolCalls === undefined) return undefined;
-  if (providerShape !== 'openai') return undefined;
-  return { openai: { parallelToolCalls } };
 }

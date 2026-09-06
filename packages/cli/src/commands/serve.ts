@@ -4,10 +4,11 @@ import { Compactor } from '@chimera/compaction';
 import type { SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
-import { AgentRegistry, buildApp, type ModelListEntry, startServer } from '@chimera/server';
+import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
 import {
   checkCompactionInvariant,
+  compactionCallOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
@@ -27,6 +28,7 @@ export interface ServeOptions {
   parent?: string;
   cwd: string;
   model?: string;
+  modelSettings?: string;
   sessionName?: string;
   sessionId?: string;
   sessionExists?: SessionExistsPolicy;
@@ -77,6 +79,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const config = loadConfig(opts.home);
   const { model, providersConfig } = resolveModel({
     cliModel: opts.model,
+    cliSettings: opts.modelSettings,
     maxSteps: opts.maxSteps,
     config,
   });
@@ -136,13 +139,15 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   let compactor: Compactor | undefined;
   if (compactionConfig.enabled) {
     const registry = loadProviders(providersConfig);
-    const compactionRef = compactionConfig.model ?? `${model.providerId}/${model.modelId}`;
-    const { provider, modelId } = registry.resolve(compactionRef);
     compactor = new Compactor({
       config: compactionConfig,
       contextWindow: resolvedWindow.value,
       imageLongEdge: config.models?.[`${model.providerId}/${model.modelId}`]?.imageLongEdge,
-      resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
+      resolveModel: async (ref, sessionId) => {
+        const target = registry.resolve(ref);
+        return target.provider.getModel(target.modelId, sessionId);
+      },
+      resolveCallOptions: compactionCallOptions(config, registry),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),
     });
@@ -176,19 +181,6 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     recall: config.recall,
   });
 
-  const modelsList: ModelListEntry[] = Object.entries(config.models ?? {})
-    .map(([ref, opts]) => ({
-      ref,
-      contextWindow: opts.contextWindow,
-      maxOutputTokens: opts.maxOutputTokens,
-      vision: opts.vision,
-      isDefault: ref === config.defaultModel,
-    }))
-    .sort((a, b) => {
-      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-      return a.ref.localeCompare(b.ref);
-    });
-
   const registry = new AgentRegistry({
     factory,
     instance: {
@@ -200,7 +192,10 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     },
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
-    loadModels: () => modelsList,
+    loadModels: async () =>
+      (await factory.listModels()).sort(
+        (a, b) => Number(b.isDefault) - Number(a.isDefault) || a.ref.localeCompare(b.ref),
+      ),
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });

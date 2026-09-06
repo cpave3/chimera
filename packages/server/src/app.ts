@@ -32,6 +32,29 @@ export interface AppOptions {
   onFork?: (parentInfo: SessionInfo, childId: SessionId) => Promise<void> | void;
 }
 
+const settingsSchema = z
+  .object({
+    thinking: z.enum(['on', 'off', 'adaptive']).optional(),
+    reasoningEffort: z.string().optional(),
+    thinkingBudgetTokens: z.number().int().positive().optional(),
+    reasoningSummary: z.string().optional(),
+    verbosity: z.string().optional(),
+    serviceTier: z.string().optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    temperature: z.number().optional(),
+    topP: z.number().optional(),
+    parallelToolCalls: z.boolean().optional(),
+  })
+  .strict();
+
+const settingsPatchSchema = z
+  .object(
+    Object.fromEntries(
+      Object.entries(settingsSchema.shape).map(([key, schema]) => [key, schema.nullable()]),
+    ),
+  )
+  .strict();
+
 const createSessionSchema = z.object({
   cwd: z.string(),
   model: z.object({
@@ -40,6 +63,12 @@ const createSessionSchema = z.object({
     maxSteps: z.number(),
     maxOutputTokens: z.number().optional(),
     temperature: z.number().optional(),
+    topP: z.number().optional(),
+    settings: settingsSchema.optional(),
+    parallelToolCalls: z.boolean().optional(),
+    vision: z.boolean().optional(),
+    imageLongEdge: z.number().optional(),
+    toolCallShape: z.enum(['chimera', 'codex']).optional(),
   }),
   sandboxMode: z.enum(['off', 'bind', 'overlay', 'ephemeral']).optional(),
   name: z.string().optional(),
@@ -70,9 +99,19 @@ const modeSchema = z.object({
   mode: z.string(),
 });
 
-const modelSchema = z.object({
-  model: z.string().nullable(),
-});
+const modelSchema = z
+  .object({
+    model: z.string().nullable().optional(),
+    settings: settingsPatchSchema.optional(),
+    resetSettings: z.boolean().optional(),
+    expectedModel: z.string().optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.model !== undefined || value.settings !== undefined || value.resetSettings === true,
+    'A model or settings change is required',
+  );
 
 const pathsAddSchema = z.object({
   kind: z.enum(['read', 'write']),
@@ -404,10 +443,10 @@ export function buildApp(opts: AppOptions): Hono {
     return c.json(entry.modes);
   });
 
-  app.get('/v1/sessions/:id/models', (c) => {
+  app.get('/v1/sessions/:id/models', async (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);
-    return c.json(registry.listModels());
+    return c.json(await registry.listModels());
   });
 
   app.get('/v1/sessions/:id/subagents', (c) => {
@@ -538,6 +577,7 @@ export function buildApp(opts: AppOptions): Hono {
     if (!parseResult.success) {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
+    const previousModel = `${entry.agent.session.model.providerId}/${entry.agent.session.model.modelId}`;
     const result = entry.agent.queueModeSwitch(parseResult.data.mode);
     if (result.status === 'invalid') {
       return c.json({ error: result.error }, 400);
@@ -554,6 +594,18 @@ export function buildApp(opts: AppOptions): Hono {
         effectiveModel: result.effectiveModel,
         effectiveModelChanged: result.effectiveModelChanged,
       });
+      if (result.effectiveModelChanged) {
+        entry.bus.publish({
+          type: 'model_changed',
+          from: previousModel,
+          to: result.effectiveModel,
+        });
+        if (entry.agent.modelSettingsState)
+          entry.bus.publish({
+            type: 'model_settings_changed',
+            settingsState: entry.agent.modelSettingsState,
+          });
+      }
     }
     return c.body(null, 204);
   });
@@ -565,6 +617,11 @@ export function buildApp(opts: AppOptions): Hono {
   });
 
   // --- Model --------------------------------------------------------------
+  app.get('/v1/sessions/:id/model', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    return c.json(entry.agent.modelSettingsState ?? null);
+  });
   app.post('/v1/sessions/:id/model', async (c) => {
     const id = c.req.param('id');
     if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
@@ -580,7 +637,14 @@ export function buildApp(opts: AppOptions): Hono {
     if (!parseResult.success) {
       return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
     }
-    const result = entry.agent.setUserModelOverride(parseResult.data.model);
+    let result: Awaited<ReturnType<typeof entry.agent.updateModelSettings>>;
+    try {
+      result = await entry.agent.updateModelSettings(
+        parseResult.data as Parameters<typeof entry.agent.updateModelSettings>[0],
+      );
+    } catch (error) {
+      return c.json({ error: `Could not save model settings: ${(error as Error).message}` }, 500);
+    }
     if (result.status === 'invalid') {
       return c.json({ error: result.error }, 400);
     }
@@ -588,7 +652,9 @@ export function buildApp(opts: AppOptions): Hono {
       return c.json({ error: 'agent is running; model change not allowed mid-run' }, 409);
     }
     entry.bus.publish({ type: 'model_changed', from: result.from, to: result.to });
-    return c.json({ from: result.from, to: result.to });
+    if (result.settingsState)
+      entry.bus.publish({ type: 'model_settings_changed', settingsState: result.settingsState });
+    return c.json({ from: result.from, to: result.to, settingsState: result.settingsState });
   });
 
   // --- Permissions -------------------------------------------------------

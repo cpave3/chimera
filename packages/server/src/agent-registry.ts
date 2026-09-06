@@ -119,6 +119,8 @@ export type SkillsLoader = (ctx: { cwd: string }) => Skill[];
 export type ModesLoader = (ctx: { cwd: string }) => Mode[];
 
 export interface ModelListEntry {
+  capabilities?: import('@chimera/core').ModelCapabilities;
+  defaults?: import('@chimera/core').ModelSettings;
   ref: string;
   contextWindow?: number;
   maxOutputTokens?: number;
@@ -126,7 +128,7 @@ export interface ModelListEntry {
   isDefault: boolean;
 }
 
-export type ModelsLoader = () => ModelListEntry[];
+export type ModelsLoader = () => ModelListEntry[] | Promise<ModelListEntry[]>;
 
 export interface AgentRegistryOptions {
   factory: AgentFactory;
@@ -227,7 +229,7 @@ export class AgentRegistry {
     return this.instance;
   }
 
-  listModels(): ModelListEntry[] {
+  listModels(): ModelListEntry[] | Promise<ModelListEntry[]> {
     return this.loadModels ? this.loadModels() : [];
   }
 

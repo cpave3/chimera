@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ const INTERRUPT_GRACE_MS = 5_000;
 const STDERR_BUF_MAX = 4096;
 
 export interface SpawnChildArgs {
+  modelSettings?: import('@chimera/core').ModelSettings;
   /** The executable to spawn (e.g. `/usr/local/bin/chimera` or `node`). */
   chimeraBin: string;
   /** Args to prepend before the chimera subcommand (e.g. `[bin.js]` when chimeraBin is `node`). */
@@ -68,6 +69,7 @@ export function buildChildArgv(
   if (args.modelRef) {
     argv.push('--model', args.modelRef);
   }
+  if (args.modelSettings) argv.push('--model-settings', JSON.stringify(args.modelSettings));
   if (args.sandbox) {
     argv.push('--sandbox');
     if (args.sandboxMode) {
@@ -133,7 +135,7 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
   };
   proc.once('exit', exitHandler);
 
-  let handshake;
+  let handshake: Awaited<ReturnType<typeof readHandshakeLine>>;
   try {
     handshake = await readHandshakeLine(proc.stdout, HANDSHAKE_TIMEOUT_MS);
   } catch (err) {
@@ -205,7 +207,7 @@ async function waitForHealth(client: ChimeraClient, timeoutMs: number): Promise<
 }
 
 import type { AgentEvent } from '@chimera/core';
-import { driveSubagent, type DriveResult, type SubagentTransport } from './subagent-driver';
+import { type DriveResult, driveSubagent, type SubagentTransport } from './subagent-driver';
 
 export type DriveChildResult = DriveResult;
 

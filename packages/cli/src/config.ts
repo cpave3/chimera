@@ -1,13 +1,22 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { CompactionConfig, ModelConfig } from '@chimera/core';
+import type {
+  CompactionConfig,
+  ModelConfig,
+  ModelSettings,
+  SettingCapability,
+} from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { ProviderSpec, ProvidersConfig } from '@chimera/providers';
 import type { DiagnosticsConfig } from '@chimera/tools';
 import { z } from 'zod';
 
 export interface ModelOptions {
+  settings?: ModelSettings;
+  capabilities?: Partial<Record<keyof ModelSettings, SettingCapability>>;
+  requestProfile?: ProviderSpec['requestProfile'];
+  providerExtensions?: Record<string, unknown>;
   contextWindow?: number;
   maxOutputTokens?: number;
   /**
@@ -187,6 +196,7 @@ export interface ResolvedModel {
 }
 
 export interface ResolveModelOpts {
+  cliSettings?: string;
   cliModel?: string;
   maxSteps?: number;
   config: ChimeraConfig;
@@ -215,6 +225,7 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
   return {
     ref,
     model: {
+      settings: opts.cliSettings === undefined ? undefined : parseModelSettings(opts.cliSettings),
       providerId,
       modelId,
       maxSteps: opts.maxSteps ?? 100,
@@ -226,4 +237,11 @@ export function resolveModel(opts: ResolveModelOpts): ResolvedModel {
     },
     providersConfig: { providers, defaultModel: opts.config.defaultModel },
   };
+}
+
+export function parseModelSettings(value: string): ModelSettings {
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new Error('--model-settings must contain a JSON object');
+  return parsed;
 }

@@ -83,6 +83,47 @@ describe('server app', () => {
     expect(await healthResponse.text()).toBe('ok');
   });
 
+  it('accepts a settings-only patch and returns authoritative state', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const created = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/tmp', model }),
+    });
+    const { sessionId } = await created.json();
+    registry.get(sessionId)!.agent.setModelSettingsResolver(async (_ref, settings) => ({
+      model: {
+        ...model,
+        settings,
+        capabilities: {
+          schemaVersion: 1,
+          modelId: 'm',
+          profile: 'test',
+          source: 'test',
+          fingerprint: 'one',
+          settings: {},
+        },
+      },
+      languageModel: textOnlyModel('ok'),
+      systemPrompt: '',
+      contextWindow: 200_000,
+      contextWindowIsApproximate: false,
+    }));
+    const response = await app.request(`/v1/sessions/${sessionId}/model`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ settings: { parallelToolCalls: false } }),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).settingsState.effective.parallelToolCalls).toBe(false);
+    const state = await app.request(`/v1/sessions/${sessionId}/model`);
+    expect((await state.json()).overrides.parallelToolCalls).toBe(false);
+  });
+
   it('instance endpoint returns metadata', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),

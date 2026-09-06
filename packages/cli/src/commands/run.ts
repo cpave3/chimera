@@ -14,6 +14,7 @@ import { loadAgentsFromConfig } from '../agents-loader';
 import { loadCommandsFromConfig } from '../commands-loader';
 import {
   checkCompactionInvariant,
+  compactionCallOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
@@ -29,6 +30,7 @@ export interface RunOptions {
   prompt: string;
   json?: boolean;
   model?: string;
+  modelSettings?: string;
   maxSteps?: number;
   cwd: string;
   autoApprove?: 'none' | 'sandbox' | 'host' | 'all';
@@ -113,6 +115,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   } else {
     const resolved = resolveModel({
       cliModel: opts.model,
+      cliSettings: opts.modelSettings,
       maxSteps: opts.maxSteps,
       config,
     });
@@ -134,13 +137,15 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     let compactor: Compactor | undefined;
     if (compactionConfig.enabled) {
       const registry = loadProviders(resolved.providersConfig);
-      const compactionRef = compactionConfig.model ?? `${model.providerId}/${model.modelId}`;
-      const { provider, modelId } = registry.resolve(compactionRef);
       compactor = new Compactor({
         config: compactionConfig,
         contextWindow: resolvedWindow.value,
         imageLongEdge: config.models?.[`${model.providerId}/${model.modelId}`]?.imageLongEdge,
-        resolveModel: async (_ref, sessionId) => provider.getModel(modelId, sessionId),
+        resolveModel: async (ref, sessionId) => {
+          const target = registry.resolve(ref);
+          return target.provider.getModel(target.modelId, sessionId);
+        },
+        resolveCallOptions: compactionCallOptions(config, registry),
         home: opts.home,
         createPruner: recallPrunerFactory(config, opts.home),
       });
@@ -213,7 +218,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),
-    loadModels: () => modelsList,
+    loadModels: () => (cliFactory ? cliFactory.listModels() : modelsList),
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });

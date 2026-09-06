@@ -93,6 +93,7 @@ export function buildProgram(): Command {
               .command('run [prompt...]', { isDefault: false })
               .description('Run a one-shot prompt non-interactively.')
               .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+              .option('--model-settings <json>', 'Session generation settings as JSON')
               .option('--cwd <path>', 'Working directory', process.cwd())
               .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
               .option('--auto-approve <level>', 'none|sandbox|host|all')
@@ -138,6 +139,7 @@ export function buildProgram(): Command {
       prompt,
       json: opts.json,
       model: opts.model,
+      modelSettings: opts.modelSettings,
       maxSteps: opts.maxSteps,
       cwd: opts.cwd,
       autoApprove: opts.autoApprove,
@@ -222,6 +224,7 @@ export function buildProgram(): Command {
               .command('serve')
               .description('Start only the HTTP/SSE server.')
               .option('-m, --model <modelRef>', 'Default model')
+              .option('--model-settings <json>', 'Session generation settings as JSON')
               .option('--cwd <path>', 'Working directory', process.cwd())
               .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
               .option('--host <addr>', 'Bind address', '127.0.0.1')
@@ -268,6 +271,7 @@ export function buildProgram(): Command {
       parent: opts.parent,
       cwd: opts.cwd,
       model: opts.model,
+      modelSettings: opts.modelSettings,
       sessionName: opts.sessionName,
       sessionId: opts.sessionId,
       sessionExists: opts.sessionExists,
@@ -451,6 +455,7 @@ export function buildProgram(): Command {
     await runInteractive({
       cwd,
       model: opts.model,
+      modelSettings: opts.modelSettings,
       maxSteps: opts.maxSteps,
       autoApprove: opts.autoApprove,
       session: latest.id,
@@ -491,6 +496,7 @@ export function buildProgram(): Command {
           applyPathOptions(
             program
               .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+              .option('--model-settings <json>', 'Session model settings as a JSON object')
               .option('--cwd <path>', 'Working directory', process.cwd())
               .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
               .option('--auto-approve <level>', 'none|sandbox|host|all')

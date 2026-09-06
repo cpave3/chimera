@@ -62,6 +62,7 @@ export type InProcessAgentBuilder = (init: {
 }>;
 
 export interface SpawnAgentToolContext {
+  getParentModel?: () => { ref: string; settings?: import('@chimera/core').ModelSettings };
   /** Emit an event into the parent's event stream. */
   emit: (event: AgentEvent) => void;
   /** Parent's abort signal. When fired, the tool cascades the interrupt. */
