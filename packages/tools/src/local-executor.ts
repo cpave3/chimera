@@ -39,6 +39,7 @@ function canonicalizeDir(path: string): string {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const SIGKILL_DELAY_MS = 2_000;
+const PIPE_DRAIN_MS = 250;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface LocalExecutorOptions {
@@ -244,103 +245,120 @@ export class LocalExecutor implements Executor {
     const cwd = opts.cwd ? await this.resolveSafe(opts.cwd) : this.rootCwd;
     const maxOutputBytes = this.maxOutputBytes;
 
-    return new Promise<ExecResult>((resolvePromise, rejectPromise) => {
+    if (opts.signal?.aborted) {
+      return {
+        stdout: '',
+        stderr: 'The operation was aborted',
+        exitCode: -1,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    }
+
+    return new Promise<ExecResult>((resolvePromise) => {
       const child = spawn('sh', ['-c', cmd], {
         cwd,
         env: { ...process.env, ...(opts.env ?? {}) },
         stdio: ['pipe', 'pipe', 'pipe'],
-        signal: opts.signal,
+        // Own the command's group without sharing Chimera's signal lifetime.
+        detached: true,
       });
 
       const stdoutBuffer = new BoundedBuffer(maxOutputBytes);
       const stderrBuffer = new BoundedBuffer(maxOutputBytes);
+      const diagnostics: string[] = [];
       let timedOut = false;
-      let killTimer: NodeJS.Timeout | null = null;
+      let stopping = false;
       let settled = false;
-      const settle = (result: ExecResult) => {
+      let closed = false;
+      let killTimer: NodeJS.Timeout | undefined;
+      let drainTimer: NodeJS.Timeout | undefined;
+
+      const settle = (exitCode: number) => {
         if (settled) return;
         settled = true;
-        resolvePromise(result);
-      };
-      const fail = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        rejectPromise(err);
-      };
-
-      const timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        try {
-          child.kill('SIGTERM');
-        } catch (err) {
-          const error = err as NodeJS.ErrnoException;
-          if (error.code === 'EPERM') {
-            console.debug(`[local-executor] SIGTERM failed (EPERM):`, error.message);
-          }
-          // ESRCH → process already gone, benign; ignore silently.
-        }
-        killTimer = setTimeout(() => {
-          try {
-            child.kill('SIGKILL');
-          } catch (err) {
-            const error = err as NodeJS.ErrnoException;
-            if (error.code === 'EPERM') {
-              console.debug(`[local-executor] SIGKILL failed (EPERM):`, error.message);
-            }
-            // ESRCH → process already gone, benign; ignore silently.
-          }
-        }, SIGKILL_DELAY_MS);
-      }, timeoutMs);
-
-      child.stdout.on('data', (d: Buffer) => {
-        try {
-          stdoutBuffer.push(d);
-        } catch (err) {
-          fail(err);
-        }
-      });
-      child.stderr.on('data', (d: Buffer) => {
-        try {
-          stderrBuffer.push(d);
-        } catch (err) {
-          fail(err);
-        }
-      });
-
-      if (opts.stdin !== undefined) {
-        child.stdin.write(opts.stdin);
-      }
-      child.stdin.end();
-
-      child.on('error', (err) => {
         clearTimeout(timeoutTimer);
-        if (killTimer) clearTimeout(killTimer);
-        const stdout = stdoutBuffer.toString();
-        const stderrBase = stderrBuffer.toString();
-        settle({
-          stdout,
-          stderr: stderrBase + String(err?.message ?? err),
-          exitCode: -1,
-          timedOut,
-          stdoutTruncated: stdoutBuffer.truncated,
-          stderrTruncated: stderrBuffer.truncated,
-        });
-      });
-
-      child.on('close', (code, signal) => {
-        clearTimeout(timeoutTimer);
-        if (killTimer) clearTimeout(killTimer);
-        const exitCode =
-          code === null ? (signal === 'SIGTERM' || signal === 'SIGKILL' ? -1 : 0) : code;
-        settle({
+        clearTimeout(killTimer);
+        clearTimeout(drainTimer);
+        opts.signal?.removeEventListener('abort', onAbort);
+        resolvePromise({
           stdout: stdoutBuffer.toString(),
-          stderr: stderrBuffer.toString(),
-          exitCode,
+          stderr: stderrBuffer.toString() + diagnostics.join(''),
+          exitCode: stopping ? -1 : exitCode,
           timedOut,
           stdoutTruncated: stdoutBuffer.truncated,
           stderrTruncated: stderrBuffer.truncated,
         });
+      };
+
+      const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
+        if (child.pid === undefined) return false;
+        try {
+          process.kill(-child.pid, signal);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+          diagnostics.push(`\n[local-executor] signal ${signal} failed: ${String(error)}\n`);
+          return true;
+        }
+      };
+
+      const stop = (reason: 'timeout' | 'abort' | 'error') => {
+        if (settled || stopping) return;
+        stopping = true;
+        timedOut = reason === 'timeout';
+        clearTimeout(timeoutTimer);
+        if (reason === 'abort') diagnostics.push('\nThe operation was aborted\n');
+        signalGroup('SIGTERM');
+        killTimer = setTimeout(() => {
+          signalGroup('SIGKILL');
+          drainTimer = setTimeout(() => {
+            if (!closed) {
+              diagnostics.push(
+                '\n[local-executor] cleanup incomplete: process or output pipes did not close ' +
+                  'after SIGKILL; a detached or elevated process may still be running.\n',
+              );
+            } else if (signalGroup(0)) {
+              diagnostics.push(
+                '\n[local-executor] process group still exists after SIGKILL; ' +
+                  'members may still be running or awaiting reaping.\n',
+              );
+            }
+            child.stdin.destroy();
+            child.stdout.destroy();
+            child.stderr.destroy();
+            child.unref();
+            settle(-1);
+          }, PIPE_DRAIN_MS);
+        }, SIGKILL_DELAY_MS);
+      };
+      const onAbort = () => stop('abort');
+      const timeoutTimer = setTimeout(() => stop('timeout'), timeoutMs);
+      opts.signal?.addEventListener('abort', onAbort, { once: true });
+
+      child.stdout.on('data', (chunk: Buffer) => stdoutBuffer.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderrBuffer.push(chunk));
+
+      child.on('error', (error) => {
+        diagnostics.push(String(error.message));
+        settle(-1);
       });
+      child.on('close', (code, signal) => {
+        closed = true;
+        if (settled) return;
+        // Children with redirected output can survive both the shell and its pipes.
+        if (!stopping || !signalGroup(0)) settle(code ?? (signal ? -1 : 0));
+      });
+
+      child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+        // A command may deliberately exit without reading all its input.
+        if (error.code === 'EPIPE') return;
+        diagnostics.push(`\n[local-executor] stdin failed: ${error.message}\n`);
+        stop('error');
+      });
+      if (opts.stdin !== undefined) child.stdin.write(opts.stdin);
+      child.stdin.end();
     });
   }
 }
