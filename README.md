@@ -226,6 +226,24 @@ chimera sessions rm <id>   # delete a session (rejected if the session has child
 | max_steps      | 2    |
 | interrupted    | 130  |
 
+## Bash timeouts and interruption
+
+Foreground host commands have a 120-second default timeout. On timeout or
+interruption, Chimera sends SIGTERM to the command's process group. If cleanup
+remains incomplete after two seconds, Chimera sends SIGKILL and allows up to
+250 ms for output pipes to close. It then returns the collected output rather
+than waiting indefinitely for a child process. Scheduling delays can extend
+this cleanup period.
+
+Timeouts return `timed_out: true` and a nonzero exit code. Interruption ends the
+agent run; it does not undo command effects. The TUI's `interrupt sent` message
+confirms a request, not completed termination.
+
+Detached or elevated children can escape termination. Signal failures and
+incomplete pipe cleanup appear in stderr; these commands may still be running.
+This bounded cleanup applies to host execution, not Docker sandbox commands.
+Use the explicit background tools below for persistent servers and watchers.
+
 ## Background processes
 
 The bash tool accepts `run_in_background: true`, which starts the command as a
