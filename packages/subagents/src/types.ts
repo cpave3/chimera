@@ -89,7 +89,7 @@ export interface SpawnAgentToolContext {
   inProcess?: InProcessAgentBuilder;
   /** Whether the parent has a TTY (controls headless permission auto-deny). */
   parentHasTty: boolean;
-  /** Default per-call timeout in ms when the model does not specify one. */
+  /** Optional embedding policy used when the model does not specify a per-call timeout. */
   defaultTimeoutMs?: number;
   /**
    * Resolves the AI SDK's per-call `toolCallId` to the parent agent's

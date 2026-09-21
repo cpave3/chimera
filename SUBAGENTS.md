@@ -66,6 +66,15 @@ For high-fanout research loops where the spawn time is prohibitive, pass
 - Are NOT visible to `chimera ls`, NOT attachable, and don't write a
   lockfile — they're ephemeral.
 
+## Timeouts
+
+Subagents have no total-run deadline by default. Pass `timeout_ms` to
+`spawn_agent` when a delegated task needs an explicit wall-clock limit.
+
+This limit is separate from `responseTimeoutMs`. That setting detects a
+stalled model response during one agent step and applies to parent agents and
+subagents alike.
+
 ## Interrupt cascade
 
 `Ctrl+C` (or `Esc`) in the parent's TUI interrupts the parent's run. If

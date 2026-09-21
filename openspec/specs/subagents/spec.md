@@ -25,7 +25,7 @@ TUI can render their work and resolve their permission prompts.
   system_prompt?: string,
   sandbox?: boolean,                // default: inherit parent
   sandbox_mode?: "bind"|"overlay"|"ephemeral",
-  timeout_ms?: number,              // default: 600000
+  timeout_ms?: number,              // default: no total-run deadline
   in_process?: boolean              // default: false
 }
 ```
@@ -55,6 +55,16 @@ The tool MUST be registered only when `--no-subagents` is not set.
 
 - **WHEN** the parent model invokes `spawn_agent` without a `tools` field
 - **THEN** the child Agent SHALL be constructed with exactly the built-ins `bash`, `read`, `write`, `edit` and SHALL NOT include `spawn_agent` unless `currentDepth + 1 < maxDepth`
+
+#### Scenario: Omitted total-run deadline
+
+- **WHEN** the parent model invokes `spawn_agent` without `timeout_ms` and the embedding context has no default timeout
+- **THEN** the tool SHALL NOT interrupt the child because of its total runtime
+
+#### Scenario: Explicit total-run deadline
+
+- **WHEN** the parent model invokes `spawn_agent` with a positive `timeout_ms`
+- **THEN** the tool SHALL interrupt a child that remains active past that deadline and return `reason: "timeout"`
 
 ### Requirement: Child-process lifecycle
 

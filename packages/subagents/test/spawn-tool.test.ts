@@ -321,6 +321,60 @@ describe('buildSpawnAgentTool — in-process happy path', () => {
     );
     expect(result.reason).toBe('timeout');
   });
+
+  it('does not time out when timeout_ms and the embedding default are omitted', async () => {
+    vi.useFakeTimers();
+    const parentController = new AbortController();
+    let disposed = false;
+    const builder: InProcessAgentBuilder = async () => {
+      const send = async function* (
+        _prompt: string,
+        opts?: { signal?: AbortSignal },
+      ): AsyncGenerator<AgentEvent> {
+        yield { type: 'assistant_text_delta', delta: 'working' };
+        await new Promise<void>((resolve) => {
+          if (opts?.signal?.aborted) return resolve();
+          opts?.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        yield { type: 'run_finished', reason: 'interrupted' };
+      };
+      return {
+        sessionId: 'child-no-timeout',
+        send: (prompt, options) => send(prompt, options),
+        interrupt: () => {},
+        dispose: async () => {
+          disposed = true;
+        },
+      };
+    };
+    const tool = buildSpawnAgentTool(
+      baseCtx({ inProcess: builder, parentAbortSignal: parentController.signal }),
+    ).tool as unknown as {
+      execute: (args: unknown, context: unknown) => Promise<{ reason: string }>;
+    };
+
+    try {
+      let settled = false;
+      const resultPromise = tool.execute(
+        { prompt: 'go', purpose: 'p', in_process: true },
+        { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+      );
+      void resultPromise.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(600_001);
+      const settledAfterFormerDeadline = settled;
+      parentController.abort();
+      const result = await resultPromise;
+
+      expect(settledAfterFormerDeadline).toBe(false);
+      expect(result.reason).toBe('interrupted');
+      expect(disposed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('buildSpawnAgentTool — interrupt cascade', () => {

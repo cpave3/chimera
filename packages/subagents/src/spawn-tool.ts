@@ -8,7 +8,6 @@ import { driveInProcess, spawnInProcessChild } from './spawn-in-process';
 import type { SpawnAgentToolContext, SubagentResult } from './types';
 
 const DEFAULT_TOOLS = ['bash', 'read', 'write', 'edit', 'glob', 'grep'];
-const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes per spec.
 
 const ARGS_SCHEMA = z.object({
   prompt: z.string().min(1).describe('The instructions for the subagent.'),
@@ -44,7 +43,7 @@ const ARGS_SCHEMA = z.object({
     .int()
     .positive()
     .optional()
-    .describe('Per-call wall-clock cap. Default 600000 (10 minutes).'),
+    .describe('Optional per-call wall-clock cap. No total-run deadline applies by default.'),
   in_process: z
     .boolean()
     .optional()
@@ -143,7 +142,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       const modelRef = validated.model ?? agentModelRef ?? parentModel?.ref ?? ctx.defaultModelRef;
       const modelSettings = validated.model || agentModelRef ? undefined : parentModel?.settings;
       const inProcess = validated.in_process === true;
-      const timeoutMs = validated.timeout_ms ?? ctx.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeoutMs = validated.timeout_ms ?? ctx.defaultTimeoutMs;
 
       // Effective signal: combine the AI SDK's per-call abortSignal with the
       // parent agent's own signal so either can interrupt the child.
