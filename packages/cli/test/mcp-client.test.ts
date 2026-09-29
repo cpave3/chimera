@@ -62,13 +62,15 @@ it('discovers and calls a tool over POST-only streamable HTTP', async () => {
 });
 
 it('completes PKCE login through loopback callback and stores confidential credentials securely', async () => {
-  const { mkdtemp, readdir, stat } = await import('node:fs/promises');
+  const { mkdtemp, readFile, readdir, stat, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { McpAuth } = await import('../src/mcp/auth');
   const directory = await mkdtemp(join(tmpdir(), 'chimera-mcp-'));
   let base = '';
   let tokenRequests = 0;
+  let registrations = 0;
+  const registeredRedirects = new Map<string, string>();
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? '/', base);
     const json = (data: unknown) =>
@@ -91,13 +93,16 @@ it('completes PKCE login through loopback callback and stores confidential crede
     } else if (path.pathname === '/register') {
       const chunks: Buffer[] = [];
       request.on('data', (chunk: Buffer) => chunks.push(chunk));
-      request.on('end', () =>
+      request.on('end', () => {
+        registrations++;
+        const redirectUris = JSON.parse(Buffer.concat(chunks).toString()).redirect_uris;
+        registeredRedirects.set(`fixture-id-${registrations}`, redirectUris[0]);
         json({
-          client_id: 'fixture-id',
+          client_id: `fixture-id-${registrations}`,
           client_secret: 'private-value',
-          redirect_uris: JSON.parse(Buffer.concat(chunks).toString()).redirect_uris,
-        }),
-      );
+          redirect_uris: redirectUris,
+        });
+      });
     } else if (path.pathname === '/token') {
       tokenRequests++;
       const chunks: Buffer[] = [];
@@ -119,11 +124,25 @@ it('completes PKCE login through loopback callback and stores confidential crede
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('missing port');
   base = `http://127.0.0.1:${address.port}`;
-  const authorization = new McpAuth('fixture', `${base}/mcp`, { directory });
+  const reserved = createServer();
+  await new Promise<void>((resolve) => reserved.listen(0, '127.0.0.1', resolve));
+  const callbackAddress = reserved.address();
+  if (!callbackAddress || typeof callbackAddress === 'string')
+    throw new Error('missing callback port');
+  const callbackPort = callbackAddress.port;
+  await new Promise<void>((resolve) => reserved.close(() => resolve()));
+  const authorization = new McpAuth('fixture', `${base}/mcp`, { directory, callbackPort });
+  let callbackCount = 0;
   await authorization.login({
+    onCallback: () => {
+      callbackCount++;
+    },
     onUrl: (url) => {
       const parsed = new URL(url);
       expect(parsed.searchParams.get('code_challenge_method')).toBe('S256');
+      expect(parsed.searchParams.get('redirect_uri')).toBe(
+        `http://localhost:${callbackPort}/callback`,
+      );
       const redirect = parsed.searchParams.get('redirect_uri');
       if (!redirect) throw new Error('redirect missing');
       const callback = new URL(redirect);
@@ -133,13 +152,33 @@ it('completes PKCE login through loopback callback and stores confidential crede
     },
   });
   expect(tokenRequests).toBe(1);
+  expect(callbackCount).toBe(1);
   expect((await authorization.tokens())?.access_token).toBe('access-secret');
   const files = await readdir(directory);
   expect(files).toHaveLength(1);
   expect((await stat(join(directory, files[0]))).mode & 0o777).toBe(0o600);
+  const storedPath = join(directory, files[0]);
+  const stored = JSON.parse(await readFile(storedPath, 'utf8'));
+  delete stored.tokens;
+  await writeFile(storedPath, JSON.stringify(stored));
+  const again = new McpAuth('fixture', `${base}/mcp`, { directory, callbackPort });
+  await again.login({
+    onUrl: (url) => {
+      const parsed = new URL(url);
+      const callback = new URL(parsed.searchParams.get('redirect_uri') ?? '');
+      expect(registeredRedirects.get(parsed.searchParams.get('client_id') ?? '')).toBe(
+        callback.toString(),
+      );
+      callback.searchParams.set('code', 'grant-code');
+      callback.searchParams.set('state', parsed.searchParams.get('state') ?? '');
+      void fetch(callback);
+    },
+  });
+  expect(registrations).toBe(1);
+  expect(tokenRequests).toBe(2);
   await authorization.logout();
   expect(await authorization.tokens()).toBeUndefined();
-  const retry = new McpAuth('fixture', `${base}/mcp`, { directory });
+  const retry = new McpAuth('fixture', `${base}/mcp`, { directory, callbackPort });
   await expect(
     retry.login({
       onUrl: (url) => {

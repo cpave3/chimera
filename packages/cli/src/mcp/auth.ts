@@ -14,6 +14,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 const refreshLocks = new Map<string, Promise<void>>();
+const CALLBACK_PORT = 3119;
 type Credentials = { client?: OAuthClientInformationMixed; tokens?: OAuthTokens };
 
 export class McpAuth implements OAuthClientProvider {
@@ -27,7 +28,7 @@ export class McpAuth implements OAuthClientProvider {
   constructor(
     readonly name: string,
     readonly resourceUrl: string,
-    private readonly options: { directory?: string; clientId?: string } = {},
+    private readonly options: { directory?: string; clientId?: string; callbackPort?: number } = {},
   ) {
     const parsed = new URL(resourceUrl);
     if (
@@ -83,12 +84,20 @@ export class McpAuth implements OAuthClientProvider {
     }
   }
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    return this.options.clientId
-      ? { client_id: this.options.clientId }
-      : (await this.load()).client;
+    if (this.options.clientId) return { client_id: this.options.clientId };
+    const client = (await this.load()).client;
+    if (
+      this.callbackUrl &&
+      client?.redirect_uris &&
+      !client.redirect_uris.includes(String(this.callbackUrl))
+    ) {
+      return undefined;
+    }
+    return client;
   }
   async saveClientInformation(client: OAuthClientInformationMixed): Promise<void> {
     const credentials = await this.load();
+    if (credentials.client?.client_id !== client.client_id) delete credentials.tokens;
     credentials.client = client;
     await this.save(credentials);
   }
@@ -136,16 +145,36 @@ export class McpAuth implements OAuthClientProvider {
 
   async login(options: {
     onUrl: (url: string) => void;
+    onCallback?: () => void;
     signal?: AbortSignal;
     timeoutMs?: number;
   }): Promise<void> {
     const callback = createServer();
-    await new Promise<void>((resolve) => callback.listen(0, '127.0.0.1', resolve));
-    const address = callback.address();
-    if (!address || typeof address === 'string') throw new Error('MCP callback port unavailable');
-    this.callbackUrl = new URL(`http://127.0.0.1:${address.port}/callback`);
+    const callbackPort = this.options.callbackPort ?? CALLBACK_PORT;
     try {
-      const info = await discoverOAuthServerInfo(this.resourceUrl);
+      await new Promise<void>((resolve, reject) => {
+        callback.once('error', reject);
+        callback.listen(callbackPort, '127.0.0.1', resolve);
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+        throw new Error(
+          `MCP login callback port ${callbackPort} is in use; close the other login and retry`,
+        );
+      }
+      throw error;
+    }
+    this.callbackUrl = new URL(`http://localhost:${callbackPort}/callback`);
+    const fetchWithTimeout: typeof fetch = (input, init) =>
+      fetch(input, {
+        ...init,
+        signal: AbortSignal.any([
+          AbortSignal.timeout(30_000),
+          ...(options.signal ? [options.signal] : []),
+        ]),
+      });
+    try {
+      const info = await discoverOAuthServerInfo(this.resourceUrl, { fetchFn: fetchWithTimeout });
       const metadata = info.authorizationServerMetadata;
       if (
         !metadata ||
@@ -170,7 +199,7 @@ export class McpAuth implements OAuthClientProvider {
           throw new Error('MCP authorization endpoint must use HTTPS or loopback HTTP');
         }
       }
-      const first = await auth(this, { serverUrl: this.resourceUrl });
+      const first = await auth(this, { serverUrl: this.resourceUrl, fetchFn: fetchWithTimeout });
       if (first === 'AUTHORIZED') return;
       const url = this.authorizationUrl;
       if (!url) throw new Error('MCP authorization URL unavailable');
@@ -202,9 +231,10 @@ export class McpAuth implements OAuthClientProvider {
             .writeHead(valid && !failure ? 200 : 400, { 'content-type': 'text/plain' })
             .end(
               valid && !failure
-                ? 'Login complete. You can close this window.'
+                ? 'Callback received. Check the terminal for the login result.'
                 : 'Login failed. Return to the terminal.',
             );
+          if (valid && !failure && incoming.searchParams.has('code')) options.onCallback?.();
           finish(
             !valid
               ? new Error('MCP login state mismatch')
@@ -223,8 +253,11 @@ export class McpAuth implements OAuthClientProvider {
       });
       if (!code) throw new Error('MCP authorization code missing');
       if (
-        (await auth(this, { serverUrl: this.resourceUrl, authorizationCode: code })) !==
-        'AUTHORIZED'
+        (await auth(this, {
+          serverUrl: this.resourceUrl,
+          authorizationCode: code,
+          fetchFn: fetchWithTimeout,
+        })) !== 'AUTHORIZED'
       )
         throw new Error('MCP login failed');
     } finally {

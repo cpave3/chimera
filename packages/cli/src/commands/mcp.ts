@@ -199,6 +199,7 @@ export async function runMcpLogin(name: string, home = homedir()): Promise<void>
     clientId: server.clientId,
   });
   await provider.login({
+    onCallback: () => process.stderr.write(`MCP callback received for ${name}; exchanging code.\n`),
     onUrl: (url) => {
       process.stderr.write(`Open this URL to authorize ${name}: ${url}\n`);
       if (process.stdin.isTTY && process.stderr.isTTY) {

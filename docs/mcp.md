@@ -86,8 +86,9 @@ not silently converted to text. Server-side tool errors are surfaced as errors.
 For Burnlite, run `chimera mcp login burnlite` in a terminal where you can open
 a browser and receive the loopback callback. Chimera uses OAuth authorization
 code with PKCE; it prints an authorization URL so you can open it manually if
-the browser does not launch. The callback listens on the local loopback
-interface. Login can register a client dynamically, or use a configured
+the browser does not launch. The callback uses `http://localhost:3119/callback`
+and listens only on the local loopback interface. If port 3119 is in use, close
+the other login and retry. Login can register a client dynamically, or use a configured
 `clientId` for servers that support pre-registered clients. Chimera stores
 registration and access/refresh credentials per server and exact URL under
 `~/.chimera/mcp-auth/`, with owner-only permissions, separate from
