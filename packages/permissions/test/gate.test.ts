@@ -17,6 +17,27 @@ function req(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
 }
 
 describe('DefaultPermissionGate', () => {
+  it('denies MCP prompts in a headless one-shot run without changing normal host approvals', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-one-shot-'));
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'host',
+      mcpHeadlessAutoDeny: true,
+      raiseRequest: async () => {
+        throw new Error('must not prompt');
+      },
+    });
+    expect(await gate.request(req())).toMatchObject({ decision: 'allow' });
+    expect(
+      await gate.requestMcp({
+        requestId: 'm1',
+        server: 'burnlite',
+        tool: 'list_projects',
+        cwd,
+        args: {},
+      }),
+    ).toMatchObject({ decision: 'deny', denialSource: 'headless' });
+  });
   it('prompts for MCP even with host auto-approval and never exposes argument values', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-gate-'));
     let raised: PermissionRequest | undefined;

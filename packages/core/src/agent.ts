@@ -428,6 +428,7 @@ export class Agent {
         command: req.command,
         reason: req.reason,
         policyAnalysis: req.policyAnalysis,
+        mcp: req.mcp,
       });
     });
   }

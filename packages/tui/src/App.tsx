@@ -144,6 +144,7 @@ interface PendingPermission {
   command: string;
   reason?: string;
   policyAnalysis?: Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
+  mcp?: PermissionRequest['mcp'];
   /**
    * When set, the request was raised inside a subagent and resolution must
    * be sent to the child's server (via a freshly built ChimeraClient).
@@ -183,6 +184,7 @@ function mergePermissionQueue(
       command: request.command,
       reason: request.reason,
       policyAnalysis: request.policyAnalysis,
+      mcp: request.mcp,
       ...('subagent' in request ? { subagent: request.subagent } : {}),
     });
   }
@@ -606,6 +608,7 @@ export function App(props: AppProps): React.ReactElement {
               command: inner.command,
               reason: inner.reason,
               policyAnalysis: inner.policyAnalysis,
+              mcp: inner.mcp,
               subagent: {
                 id: ev.subagentId,
                 purpose: sa.purpose,
@@ -1990,6 +1993,7 @@ export function App(props: AppProps): React.ReactElement {
             reason={pending.reason}
             target="host"
             policyAnalysis={pending.policyAnalysis}
+            mcp={pending.mcp}
             header={
               pending.subagent
                 ? `[subagent ${pending.subagent.id.slice(-8)}: ${pending.subagent.purpose}]`

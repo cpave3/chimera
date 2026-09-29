@@ -27,6 +27,8 @@ export interface GateOptions {
    * parent can't interactively resolve the prompt, so the child denies.
    */
   headlessAutoDeny?: boolean;
+  /** Deny MCP prompts when no caller can answer them, without changing other tool policy. */
+  mcpHeadlessAutoDeny?: boolean;
   /**
    * Optional lifecycle-hook runner. When set, fired with `PermissionRequest`
    * between rule check and user prompt. A blocking hook (exit 2) denies the
@@ -57,6 +59,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private readonly autoApprove: AutoApproveLevel;
   private readonly raise: RaiseRequestFn;
   private readonly headlessAutoDeny: boolean;
+  private readonly mcpHeadlessAutoDeny: boolean;
   private readonly hookRunner: HookRunner | undefined;
   private readonly emitResolved:
     | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void)
@@ -69,6 +72,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     this.autoApprove = opts.autoApprove;
     this.raise = opts.raiseRequest;
     this.headlessAutoDeny = opts.headlessAutoDeny ?? false;
+    this.mcpHeadlessAutoDeny = opts.mcpHeadlessAutoDeny ?? false;
     this.hookRunner = opts.hookRunner;
     this.emitResolved = opts.emitResolved;
     this.commandPolicy = opts.commandPolicy;
@@ -199,7 +203,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
         );
       }
     }
-    if (this.headlessAutoDeny && req.target === 'host') {
+    if ((this.headlessAutoDeny || (req.mcp && this.mcpHeadlessAutoDeny)) && req.target === 'host') {
       this.emitResolved?.(req.requestId, 'deny', false);
       return this.audited(
         req,

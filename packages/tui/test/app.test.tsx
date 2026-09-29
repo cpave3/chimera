@@ -225,6 +225,75 @@ describe('App', () => {
     unmount();
   });
 
+  it('renders a live MCP permission and resolves the selected action', async () => {
+    const resolvePermissionAction = vi.fn(async () => {});
+    const client = stubClient({
+      resolvePermissionAction,
+      subscribe: async function* () {
+        yield {
+          type: 'permission_request',
+          requestId: 'mcp-live',
+          tool: 'mcp',
+          target: 'host',
+          command: 'calendar/create_event',
+          mcp: {
+            server: 'calendar',
+            tool: 'create_event',
+            preview: [{ name: 'title', type: 'string' }],
+          },
+        };
+        await new Promise(() => undefined);
+      } as unknown as ChimeraClient['subscribe'],
+    });
+    const { lastFrame, stdin, unmount } = render(
+      <App client={client} sessionId="mcp-session" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(lastFrame()).toContain('calendar / create_event');
+    expect(lastFrame()).toContain('title: string');
+    expect(lastFrame()).not.toContain('$ calendar/create_event');
+    stdin.write('a');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(resolvePermissionAction).toHaveBeenCalledWith('mcp-session', 'mcp-live', {
+      decision: 'allow',
+    });
+    unmount();
+  });
+
+  it('restores an MCP permission from the session snapshot', async () => {
+    const client = stubClient({
+      getSession: async () => ({
+        parentId: null,
+        mode: 'build',
+        model: { providerId: 'mock', modelId: 'mock' },
+        messages: [],
+        status: 'waiting_for_permission',
+        pendingPermissions: [
+          {
+            requestId: 'mcp-hydrated',
+            tool: 'mcp',
+            target: 'host',
+            command: 'calendar/create_event',
+            cwd: '/tmp',
+            mcp: {
+              server: 'calendar',
+              tool: 'create_event',
+              preview: [{ name: 'title', type: 'string' }],
+            },
+          },
+        ],
+      }),
+    });
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="mcp-session" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(lastFrame()).toContain('calendar / create_event');
+    expect(lastFrame()).toContain('title: string');
+    expect(lastFrame()).not.toContain('$ calendar/create_event');
+    unmount();
+  });
+
   it('restores a pending permission and keeps follow-ups on the active run until it finishes', async () => {
     const sends: string[] = [];
     const appendCalls: string[] = [];
@@ -1927,6 +1996,29 @@ afterEach(() => {
 });
 
 describe('PermissionModal', () => {
+  it('shows MCP identity and argument shape without shell syntax or argument values', () => {
+    const { lastFrame, unmount } = render(
+      <PermissionModal
+        command="calendar/create_event"
+        target="host"
+        mcp={{
+          server: 'calendar',
+          tool: 'create_event',
+          preview: [
+            { name: 'title', type: 'string' },
+            { name: '[redacted]', type: 'redacted' },
+          ],
+        }}
+        onResolve={() => {}}
+      />,
+    );
+    expect(lastFrame()).toContain('calendar / create_event');
+    expect(lastFrame()).toContain('title: string');
+    expect(lastFrame()).toContain('[redacted]: redacted');
+    expect(lastFrame()).not.toContain('$ calendar/create_event');
+    unmount();
+  });
+
   it('shows the command and choices', () => {
     const { lastFrame, unmount } = render(
       <PermissionModal command="pnpm test" target="host" onResolve={() => {}} />,

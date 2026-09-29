@@ -1,4 +1,4 @@
-import type { AgentEvent, PermissionDecisionAction } from '@chimera/core';
+import type { AgentEvent, PermissionDecisionAction, PermissionRequest } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
 import { useTheme } from './theme/ThemeProvider';
@@ -9,6 +9,7 @@ export interface PermissionModalProps {
   reason?: string;
   target: 'host';
   policyAnalysis?: PolicyAnalysis;
+  mcp?: PermissionRequest['mcp'];
   header?: string;
   onResolve: (action: PermissionDecisionAction) => void;
 }
@@ -108,10 +109,28 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
         Permission required
       </Text>
       {props.header && <Text color={badge}>{props.header}</Text>}
-      <Text>
-        Run on the <Text bold>HOST</Text>:
-      </Text>
-      <Text> $ {props.command}</Text>
+      {props.mcp ? (
+        <>
+          <Text>
+            Use MCP tool on the <Text bold>HOST</Text>:
+          </Text>
+          <Text>
+            {props.mcp.server} / {props.mcp.tool}
+          </Text>
+          {props.mcp.preview.length > 0 && (
+            <Text>
+              Arguments: {props.mcp.preview.map(({ name, type }) => `${name}: ${type}`).join(', ')}
+            </Text>
+          )}
+        </>
+      ) : (
+        <>
+          <Text>
+            Run on the <Text bold>HOST</Text>:
+          </Text>
+          <Text> $ {props.command}</Text>
+        </>
+      )}
       {props.reason && <Text color={muted}>Reason: {props.reason}</Text>}
       {props.policyAnalysis?.stages.map((stage) => (
         <Text key={stage.id} color={muted}>
