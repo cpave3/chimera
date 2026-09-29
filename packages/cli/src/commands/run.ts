@@ -155,6 +155,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       hostBashPolicy: resolveHostBashPolicy(config),
+      mcpServers: config.mcpServers,
+      mcpHeadlessAutoDeny: true,
       home: opts.home,
       skills,
       agents,

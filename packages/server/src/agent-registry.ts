@@ -101,6 +101,7 @@ export interface InstanceInfo {
 
 export interface AgentFactory {
   build(init: SessionInit): Promise<BuildResult>;
+  disposeSession?(sessionId: SessionId): Promise<void>;
   /**
    * Optional: add a read or write directory for a live session.
    * Returns the absolute resolved path and whether it was newly added.
@@ -338,6 +339,7 @@ export class AgentRegistry {
         );
       }
     }
+    await this.factory.disposeSession?.(id);
     this.entries.delete(id);
     return true;
   }

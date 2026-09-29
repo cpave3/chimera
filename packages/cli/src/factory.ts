@@ -72,13 +72,23 @@ import {
   type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
-import type { HostBashPolicyConfig, ModelOptions, WebSearchConfig } from './config';
+import type {
+  HostBashPolicyConfig,
+  McpServerConfig,
+  ModelOptions,
+  WebSearchConfig,
+} from './config';
+import { McpAuth } from './mcp/auth';
+import { McpClientManager } from './mcp/client';
+import { registerMcpTools } from './mcp/tools';
 import type { CliSandboxOptions } from './sandbox-config';
 
 export interface CliAgentFactoryOptions {
   providersConfig: ProvidersConfig;
   autoApprove: AutoApproveLevel;
   hostBashPolicy?: HostBashPolicyConfig;
+  mcpServers?: Record<string, McpServerConfig>;
+  mcpHeadlessAutoDeny?: boolean;
   warn?: (msg: string) => void;
   home?: string;
   /**
@@ -189,6 +199,9 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
   private readonly liveExecutors = new Map<SessionId, LocalExecutor>();
   private readonly liveAgents = new Map<SessionId, Agent>();
+  private readonly mcpServers: Record<string, McpServerConfig>;
+  private readonly mcpHeadlessAutoDeny: boolean;
+  private readonly liveMcpClients = new Map<SessionId, McpClientManager>();
   private readonly liveBackgroundManagers = new Map<SessionId, BackgroundProcessManager>();
   private readonly compaction: CompactionConfig | undefined;
   private readonly diagnosticsConfig: DiagnosticsConfig | undefined;
@@ -227,6 +240,8 @@ export class CliAgentFactory implements AgentFactory {
     this.subagents = opts.subagents ?? {};
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
     this.providersConfig = opts.providersConfig;
+    this.mcpServers = opts.mcpServers ?? {};
+    this.mcpHeadlessAutoDeny = opts.mcpHeadlessAutoDeny ?? false;
     this.modelsConfig = opts.models ?? {};
     this.compaction = opts.compaction;
     this.compactor = opts.compactor;
@@ -529,6 +544,7 @@ export class CliAgentFactory implements AgentFactory {
         : {}),
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
+      mcpHeadlessAutoDeny: this.mcpHeadlessAutoDeny,
       hookRunner,
       emitResolved: (requestId, decision, remembered) =>
         agent.emitPermissionResolved(requestId, decision, remembered),
@@ -659,6 +675,32 @@ export class CliAgentFactory implements AgentFactory {
       });
       tools.spawn_agent = spawn.tool;
       if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
+    }
+
+    if (Object.keys(this.mcpServers).length > 0) {
+      if (init.sandboxMode !== 'off') {
+        this.warn('MCP tools run on the host, outside the Docker sandbox');
+      }
+      const manager = new McpClientManager(
+        this.mcpServers,
+        (name, url) =>
+          new McpAuth(name, url, {
+            directory: join(this.home ?? homedir(), '.chimera', 'mcp-auth'),
+            clientId:
+              this.mcpServers[name].transport === 'http'
+                ? this.mcpServers[name].clientId
+                : undefined,
+          }),
+      );
+      this.liveMcpClients.set(agent.session.id, manager);
+      await registerMcpTools({
+        manager,
+        servers: this.mcpServers,
+        tools,
+        gate,
+        cwd: init.cwd,
+        warn: this.warn,
+      });
     }
 
     this.lastFormatters = formatters;
@@ -1036,8 +1078,17 @@ export class CliAgentFactory implements AgentFactory {
     return { absolute: resolved, added: !writeAlready };
   }
 
+  async disposeSession(sessionId: SessionId): Promise<void> {
+    const manager = this.liveMcpClients.get(sessionId);
+    this.liveMcpClients.delete(sessionId);
+    await manager?.close();
+  }
+
   /** Stop all running DockerExecutors and background processes. Safe to call multiple times. */
   async dispose(): Promise<void> {
+    const mcpStops = [...this.liveMcpClients.keys()].map((sessionId) =>
+      this.disposeSession(sessionId),
+    );
     for (const manager of this.liveBackgroundManagers.values()) {
       manager.killAll();
     }
@@ -1050,7 +1101,7 @@ export class CliAgentFactory implements AgentFactory {
     this.liveSandboxes.clear();
     this.liveExecutors.clear();
     this.liveAgents.clear();
-    await Promise.all(stops);
+    await Promise.all([...stops, ...mcpStops]);
   }
 }
 

@@ -157,6 +157,8 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config),
+    mcpServers: config.mcpServers,
+    mcpHeadlessAutoDeny: opts.headlessPermissionAutoDeny || !process.stdin.isTTY,
     home: opts.home,
     skills,
     agents,

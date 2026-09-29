@@ -144,6 +144,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config),
+    mcpServers: config.mcpServers,
     home: opts.home,
     skills,
     agents,

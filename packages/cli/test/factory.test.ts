@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryModeRegistry } from '@chimera/modes';
@@ -669,5 +670,135 @@ describe('CliAgentFactory', () => {
 
     const opts = (agent as unknown as { opts: { contextWindow: number } }).opts;
     expect(opts.contextWindow).toBe(1_000_000);
+  });
+
+  it('registers discovered HTTP MCP tools and gates their invocation even with host auto-approval', async () => {
+    let calls = 0;
+    const server = createServer((request, response) => {
+      if (request.method === 'GET') {
+        response.writeHead(405).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        const message = JSON.parse(Buffer.concat(chunks).toString());
+        if (message.method === 'notifications/initialized') {
+          response.writeHead(202).end();
+          return;
+        }
+        const result =
+          message.method === 'initialize'
+            ? {
+                protocolVersion: '2025-03-26',
+                capabilities: { tools: {} },
+                serverInfo: { name: 'fixture', version: '1' },
+              }
+            : message.method === 'tools/list'
+              ? {
+                  tools: [
+                    {
+                      name: 'echo',
+                      inputSchema: {
+                        type: 'object',
+                        properties: { message: { type: 'string' } },
+                        required: ['message'],
+                      },
+                    },
+                  ],
+                }
+              : { content: [{ type: 'text', text: message.params.arguments.message }] };
+        if (message.method === 'tools/call') calls++;
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('missing address');
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          direct: {
+            shape: 'openai',
+            adapter: 'compatible',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'key',
+          },
+        },
+      },
+      autoApprove: 'host',
+      home: cwd,
+      subagents: { enabled: false, headlessAutoDeny: true },
+      mcpServers: { fixture: { transport: 'http', url: `http://127.0.0.1:${address.port}/mcp` } },
+    });
+    try {
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'direct', modelId: 'custom', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+      const tools = (
+        agent as unknown as {
+          opts: {
+            tools: Record<string, { execute: (args: object, options: object) => Promise<unknown> }>;
+          };
+        }
+      ).opts.tools;
+      expect(tools.mcp_fixture_echo).toBeDefined();
+      expect(await tools.mcp_fixture_echo.execute({ message: 'hello' }, {})).toMatchObject({
+        error: expect.stringContaining('denied'),
+      });
+      expect(calls).toBe(0);
+      const trustedFactory = new CliAgentFactory({
+        providersConfig: {
+          providers: {
+            direct: {
+              shape: 'openai',
+              adapter: 'compatible',
+              baseUrl: 'https://example.invalid',
+              apiKey: 'key',
+            },
+          },
+        },
+        autoApprove: 'none',
+        home: cwd,
+        subagents: { enabled: false, headlessAutoDeny: true },
+        mcpServers: {
+          fixture: {
+            transport: 'http',
+            url: `http://127.0.0.1:${address.port}/mcp`,
+            trustedTools: ['echo'],
+          },
+        },
+      });
+      try {
+        const trusted = await trustedFactory.build({
+          cwd,
+          model: { providerId: 'direct', modelId: 'custom', maxSteps: 1 },
+          sandboxMode: 'off',
+        });
+        const allowed = (
+          trusted.agent as unknown as {
+            opts: {
+              tools: Record<
+                string,
+                { execute: (args: object, options: object) => Promise<unknown> }
+              >;
+            };
+          }
+        ).opts.tools;
+        expect(await allowed.mcp_fixture_echo.execute({ message: 'hello' }, {})).toMatchObject({
+          content: [{ type: 'text', text: 'hello' }],
+        });
+        expect(calls).toBe(1);
+      } finally {
+        await trustedFactory.dispose();
+      }
+    } finally {
+      await factory.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
