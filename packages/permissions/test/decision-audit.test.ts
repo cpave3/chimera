@@ -4,6 +4,35 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { PermissionDecisionAudit } from '../src/decision-audit';
 
+it('records MCP decisions without argument values or feedback', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-audit-'));
+  const audit = new PermissionDecisionAudit({ home, sessionId: 'session-1', mode: 'balanced' });
+  audit.record({
+    request: {
+      requestId: 'mcp-1',
+      tool: 'mcp',
+      target: 'host',
+      cwd: '/workspace',
+      command: 'burnlite/create_project',
+      mcp: {
+        server: 'burnlite',
+        tool: 'create_project',
+        preview: [{ name: 'token', type: 'string' }],
+      },
+    },
+    resolution: { decision: 'deny', remembered: false, feedback: 'super-secret' },
+    source: 'user',
+  });
+  const text = await readFile(join(home, '.chimera', 'logs', 'permission-decisions.jsonl'), 'utf8');
+  expect(JSON.parse(text)).toMatchObject({
+    mcp: { server: 'burnlite', tool: 'create_project' },
+    decision: 'deny',
+  });
+  expect(text).not.toContain('super-secret');
+  expect(text).not.toContain('token');
+  expect(text).not.toContain('preview');
+});
+
 it('appends structured permission outcomes to a user-only JSONL audit', async () => {
   const home = await mkdtemp(join(tmpdir(), 'chimera-audit-'));
   const audit = new PermissionDecisionAudit({ home, sessionId: 'session-1', mode: 'balanced' });

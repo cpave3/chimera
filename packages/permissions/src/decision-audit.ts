@@ -55,7 +55,9 @@ export class PermissionDecisionAudit {
       sessionId: this.options.sessionId,
       requestId: entry.request.requestId,
       cwd: entry.request.cwd,
-      command: entry.request.command,
+      ...(entry.request.mcp
+        ? { mcp: { server: entry.request.mcp.server, tool: entry.request.mcp.tool } }
+        : { command: entry.request.command }),
       tool: entry.request.tool,
       target: entry.request.target,
       mode: this.options.mode,
@@ -63,8 +65,8 @@ export class PermissionDecisionAudit {
       source: entry.source,
       remembered: entry.resolution.remembered,
       findings,
-      ...(feedback ? { feedback } : {}),
-      ...(grant ? { grant } : {}),
+      ...(!entry.request.mcp && feedback ? { feedback } : {}),
+      ...(!entry.request.mcp && grant ? { grant } : {}),
     };
     appendFileSync(this.path, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
     chmodSync(this.path, 0o600);

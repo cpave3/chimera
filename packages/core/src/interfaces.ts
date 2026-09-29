@@ -52,6 +52,20 @@ export interface ModelClient {
   getModel(modelRef: string): LanguageModel;
 }
 
+export interface McpPermissionCall {
+  requestId: string;
+  server: string;
+  tool: string;
+  cwd: string;
+  args: unknown;
+}
+
+export interface McpPermissionPreview {
+  server: string;
+  tool: string;
+  preview: Array<{ name: string; type: string }>;
+}
+
 export interface PermissionRequest {
   requestId: string;
   tool: string;
@@ -61,6 +75,8 @@ export interface PermissionRequest {
   cwd: string;
   /** Set only for host bash requests that require mandatory policy approval. */
   policyAnalysis?: CommandPolicyAnalysis;
+  /** MCP identity and bounded, value-free argument shape. Never contains raw arguments. */
+  mcp?: McpPermissionPreview;
 }
 
 export type PermissionDecisionAction =
@@ -129,6 +145,14 @@ export interface PermissionGate {
   addRule(rule: PermissionRule, persist: 'session' | 'project'): void;
   listRules(): PermissionRule[];
   removeRule(index: number): void;
+}
+
+export interface McpPermissionGate extends PermissionGate {
+  /** MCP calls must pass this gate before tools/call, not the host execution gate. */
+  requestMcp(
+    call: McpPermissionCall,
+    trustedTools?: readonly string[],
+  ): Promise<PermissionResolution>;
 }
 
 export interface PermissionRule {

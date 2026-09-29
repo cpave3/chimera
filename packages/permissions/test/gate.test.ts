@@ -17,6 +17,123 @@ function req(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
 }
 
 describe('DefaultPermissionGate', () => {
+  it('prompts for MCP even with host auto-approval and never exposes argument values', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-gate-'));
+    let raised: PermissionRequest | undefined;
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      raiseRequest: async (request) => {
+        raised = request;
+        return { decision: 'allow', remembered: false };
+      },
+    });
+    const resolution = await gate.requestMcp({
+      requestId: 'm1',
+      server: 'burnlite',
+      tool: 'list_projects',
+      cwd,
+      args: { apiKey: 'super-secret', limit: 10 },
+    });
+    expect(resolution.decision).toBe('allow');
+    expect(raised?.mcp).toEqual({
+      server: 'burnlite',
+      tool: 'list_projects',
+      preview: [
+        { name: '[redacted]', type: 'redacted' },
+        { name: 'limit', type: 'number' },
+      ],
+    });
+    expect(JSON.stringify(raised)).not.toContain('super-secret');
+  });
+
+  it('denies a trusted MCP tool when an explicit rule denies it', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-rule-'));
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      headlessAutoDeny: true,
+      raiseRequest: async () => {
+        throw new Error('must not prompt');
+      },
+    });
+    gate.addRule(
+      {
+        tool: 'mcp',
+        target: 'host',
+        pattern: 'burnlite/delete_project',
+        patternKind: 'exact',
+        decision: 'deny',
+        createdAt: Date.now(),
+      },
+      'session',
+    );
+    const result = await gate.requestMcp(
+      {
+        requestId: 'm2',
+        server: 'burnlite',
+        tool: 'delete_project',
+        cwd,
+        args: {},
+      },
+      ['delete_project'],
+    );
+    expect(result).toMatchObject({ decision: 'deny', denialSource: 'rule' });
+  });
+
+  it('allows only explicitly trusted tools in headless MCP sessions', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-headless-'));
+    const decisions: string[] = [];
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      headlessAutoDeny: true,
+      raiseRequest: async () => {
+        throw new Error('must not prompt');
+      },
+      audit: ({ source }) => decisions.push(source),
+    });
+    const call = { requestId: 'm3', server: 'burnlite', tool: 'list_projects', cwd, args: {} };
+    expect(await gate.requestMcp(call)).toMatchObject({
+      decision: 'deny',
+      denialSource: 'headless',
+    });
+    expect(await gate.requestMcp(call, ['list_projects'])).toMatchObject({ decision: 'allow' });
+    expect(
+      await gate.requestMcp({ ...call, tool: 'delete_project' }, ['list_projects']),
+    ).toMatchObject({ decision: 'deny', denialSource: 'headless' });
+    expect(decisions).toEqual(['headless', 'automatic', 'headless']);
+  });
+
+  it('remembers MCP approval for one server and tool, not arguments or another server', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-remember-'));
+    let raised = 0;
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      raiseRequest: async (request) => {
+        raised++;
+        if (raised === 1) gate.applyRemember({ scope: 'session' }, request, 'allow');
+        return { decision: 'allow', remembered: false };
+      },
+    });
+    const call = {
+      requestId: 'm4',
+      server: 'burnlite',
+      tool: 'list_projects',
+      cwd,
+      args: { token: 'one' },
+    };
+    await gate.requestMcp(call);
+    expect(await gate.requestMcp({ ...call, args: { token: 'two' } })).toMatchObject({
+      decision: 'allow',
+      remembered: true,
+    });
+    await gate.requestMcp({ ...call, server: 'other' });
+    expect(raised).toBe(2);
+    expect(JSON.stringify(gate.listRules())).not.toContain('token');
+  });
+
   let cwd: string;
 
   beforeEach(async () => {

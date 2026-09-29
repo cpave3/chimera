@@ -1,8 +1,9 @@
 import type {
   CommandPolicyContext,
   CommandPolicyEvaluator,
+  McpPermissionCall,
+  McpPermissionGate,
   PermissionDecisionSource,
-  PermissionGate,
   PermissionRequest,
   PermissionResolution,
   PermissionRule,
@@ -51,7 +52,7 @@ export interface GateOptions {
   }) => void;
 }
 
-export class DefaultPermissionGate implements PermissionGate {
+export class DefaultPermissionGate implements McpPermissionGate {
   private readonly store: RuleStore;
   private readonly autoApprove: AutoApproveLevel;
   private readonly raise: RaiseRequestFn;
@@ -94,7 +95,38 @@ export class DefaultPermissionGate implements PermissionGate {
    * 4. If headlessAutoDeny and host target, deny without raising.
    * 5. Otherwise call raiseRequest to suspend the agent for user decision.
    */
+  async requestMcp(
+    call: McpPermissionCall,
+    trustedTools: readonly string[] = [],
+  ): Promise<PermissionResolution> {
+    const identity = `${call.server}/${call.tool}`;
+    const request: PermissionRequest = {
+      requestId: call.requestId,
+      tool: 'mcp',
+      target: 'host',
+      command: identity,
+      cwd: call.cwd,
+      mcp: { server: call.server, tool: call.tool, preview: mcpArgumentPreview(call.args) },
+    };
+    const matchingRule = matchRule(request, this.store.all());
+    if (matchingRule?.decision === 'deny') {
+      return this.audited(
+        request,
+        { decision: 'deny', remembered: true, denialSource: 'rule' },
+        'rule',
+      );
+    }
+    if (matchingRule?.decision === 'allow') {
+      return this.audited(request, { decision: 'allow', remembered: true }, 'rule');
+    }
+    if (trustedTools.includes(call.tool)) {
+      return this.audited(request, { decision: 'allow', remembered: false }, 'automatic');
+    }
+    return this.prompt(request);
+  }
+
   async request(req: PermissionRequest): Promise<PermissionResolution> {
+    if (req.mcp) throw new Error('Use requestMcp for MCP permissions');
     let evaluatedRequest = req;
     if (req.tool === 'bash' && this.commandPolicy) {
       const policyAnalysis = await this.commandPolicy.evaluator.evaluate(
@@ -151,7 +183,9 @@ export class DefaultPermissionGate implements PermissionGate {
       const result = await this.hookRunner.fire({
         event: 'PermissionRequest',
         tool_name: req.tool,
-        tool_input: { command: req.command, ...(req.reason ? { reason: req.reason } : {}) },
+        tool_input: req.mcp
+          ? { mcp: req.mcp }
+          : { command: req.command, ...(req.reason ? { reason: req.reason } : {}) },
         target: req.target,
         command: req.command,
         ...(req.policyAnalysis ? { policy_analysis: req.policyAnalysis } : {}),
@@ -209,6 +243,20 @@ export class DefaultPermissionGate implements PermissionGate {
 
   /** Apply a RememberScope by adding a rule based on the original request. */
   applyRemember(scope: RememberScope, req: PermissionRequest, decision: 'allow' | 'deny'): void {
+    if (req.mcp) {
+      this.store.add(
+        {
+          tool: 'mcp',
+          target: 'host',
+          pattern: `${req.mcp.server}/${req.mcp.tool}`,
+          patternKind: 'exact',
+          decision,
+          createdAt: Date.now(),
+        },
+        scope.scope,
+      );
+      return;
+    }
     if (scope.scope === 'session') {
       this.store.add(
         {
@@ -235,6 +283,26 @@ export class DefaultPermissionGate implements PermissionGate {
       'project',
     );
   }
+}
+
+function mcpArgumentPreview(args: unknown): Array<{ name: string; type: string }> {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return [];
+  return Object.entries(args)
+    .slice(0, 16)
+    .map(([name, value]) => ({
+      name: /secret|token|password|key|auth|credential/i.test(name)
+        ? '[redacted]'
+        : name.slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '_'),
+      type: /secret|token|password|key|auth|credential/i.test(name)
+        ? 'redacted'
+        : Array.isArray(value)
+          ? 'array'
+          : value === null
+            ? 'null'
+            : typeof value === 'object'
+              ? 'object'
+              : typeof value,
+    }));
 }
 
 function requiresSudoAuthentication(

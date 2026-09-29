@@ -34,6 +34,34 @@ function recordingHookRunner(result: HookFireResult): RecordingHookRunner {
 }
 
 describe('DefaultPermissionGate hook integration', () => {
+  it('passes only safe MCP metadata to permission hooks', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-hook-'));
+    const runner = recordingHookRunner({ blocked: true });
+    const gate = new DefaultPermissionGate({
+      cwd,
+      autoApprove: 'all',
+      hookRunner: runner,
+      raiseRequest: async () => {
+        throw new Error('must not prompt');
+      },
+    });
+    const resolution = await gate.requestMcp({
+      requestId: 'mcp-hook',
+      server: 'burnlite',
+      tool: 'create_project',
+      cwd,
+      args: { token: 'super-secret', name: 'private-name' },
+    });
+    expect(resolution).toMatchObject({ decision: 'deny', denialSource: 'hook' });
+    expect(runner.fired[0]).toMatchObject({
+      event: 'PermissionRequest',
+      tool_name: 'mcp',
+      tool_input: { mcp: { server: 'burnlite', tool: 'create_project' } },
+    });
+    expect(JSON.stringify(runner.fired)).not.toContain('super-secret');
+    expect(JSON.stringify(runner.fired)).not.toContain('private-name');
+  });
+
   let cwd: string;
 
   beforeEach(async () => {
