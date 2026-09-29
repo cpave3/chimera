@@ -61,6 +61,137 @@ it('discovers and calls a tool over POST-only streamable HTTP', async () => {
   expect(gets).toBe(1);
 });
 
+it('refreshes an expired HTTP token on a tool call without interactive login', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { McpAuth } = await import('../src/mcp/auth');
+  const directory = await mkdtemp(join(tmpdir(), 'chimera-mcp-refresh-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  let base = '';
+  let accessToken = 'initial-access';
+  let refreshToken = 'initial-refresh';
+  let refreshes = 0;
+  let calls = 0;
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? '/', base);
+    const json = (value: unknown, status = 200) =>
+      response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value));
+    if (
+      path.pathname === '/.well-known/oauth-protected-resource/mcp' ||
+      path.pathname === '/.well-known/oauth-protected-resource'
+    ) {
+      json({ resource: `${base}/mcp`, authorization_servers: [base] });
+    } else if (path.pathname === '/.well-known/oauth-authorization-server') {
+      json({
+        issuer: base,
+        authorization_endpoint: `${base}/authorize`,
+        token_endpoint: `${base}/token`,
+        registration_endpoint: `${base}/register`,
+        response_types_supported: ['code'],
+        code_challenge_methods_supported: ['S256'],
+        token_endpoint_auth_methods_supported: ['client_secret_post'],
+      });
+    } else if (path.pathname === '/token') {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        const body = new URLSearchParams(Buffer.concat(chunks).toString());
+        expect(body.get('grant_type')).toBe('refresh_token');
+        expect(body.get('refresh_token')).toBe(refreshToken);
+        expect(body.get('client_secret')).toBe('fixture-secret');
+        refreshes++;
+        accessToken = `rotated-access-${refreshes}`;
+        refreshToken = `rotated-refresh-${refreshes}`;
+        json({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          token_type: 'Bearer',
+          expires_in: 3600,
+        });
+      });
+    } else if (path.pathname === '/mcp' && request.method === 'GET') {
+      response.writeHead(405).end();
+    } else if (path.pathname === '/mcp') {
+      if (request.headers.authorization !== `Bearer ${accessToken}`) {
+        response.writeHead(401, { 'www-authenticate': 'Bearer' }).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        const message = JSON.parse(Buffer.concat(chunks).toString());
+        if (message.method === 'notifications/initialized') {
+          response.writeHead(202).end();
+          return;
+        }
+        const result =
+          message.method === 'initialize'
+            ? {
+                protocolVersion: '2025-03-26',
+                capabilities: { tools: {} },
+                serverInfo: { name: 'fixture', version: '1' },
+              }
+            : message.method === 'tools/list'
+              ? { tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }
+              : { content: [{ type: 'text', text: 'done' }] };
+        if (message.method === 'tools/call') calls++;
+        json({ jsonrpc: '2.0', id: message.id, result });
+      });
+    } else response.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  cleanup.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing port');
+  base = `http://127.0.0.1:${address.port}`;
+  const provider = new McpAuth('fixture', `${base}/mcp`, { directory });
+  await provider.saveClientInformation({
+    client_id: 'fixture-id',
+    client_secret: 'fixture-secret',
+    issuer: base,
+  });
+  await provider.saveTokens({
+    access_token: 'initial-access',
+    refresh_token: 'initial-refresh',
+    token_type: 'Bearer',
+    issuer: base,
+  });
+  const manager = new McpClientManager(
+    { fixture: { transport: 'http', url: `${base}/mcp` } },
+    (name, url) => new McpAuth(name, url, { directory }),
+  );
+  cleanup.push(() => manager.close());
+  expect((await manager.discover('fixture')).map((tool) => tool.name)).toEqual(['echo']);
+  accessToken = 'expired';
+  const refreshedCall = await manager.call('fixture', 'echo', {});
+  expect(refreshedCall.content).toEqual([{ type: 'text', text: 'done' }]);
+  expect(calls).toBe(1);
+  expect(refreshes).toBe(1);
+  expect((await provider.tokens())?.refresh_token).toBe('rotated-refresh-1');
+  accessToken = 'expired-again';
+  const resumed = new McpClientManager(
+    { fixture: { transport: 'http', url: `${base}/mcp` } },
+    (name, url) => new McpAuth(name, url, { directory }),
+  );
+  cleanup.push(() => resumed.close());
+  expect((await resumed.discover('fixture')).map((tool) => tool.name)).toEqual(['echo']);
+  expect((await resumed.call('fixture', 'echo', {})).content).toEqual([
+    { type: 'text', text: 'done' },
+  ]);
+  expect(refreshes).toBe(2);
+  expect((await provider.tokens())?.refresh_token).toBe('rotated-refresh-2');
+  await provider.saveTokens({
+    access_token: 'expired-no-refresh',
+    token_type: 'Bearer',
+    issuer: base,
+  });
+  accessToken = 'expired-again';
+  await expect(resumed.call('fixture', 'echo', {})).rejects.toThrow('chimera mcp login fixture');
+  expect(refreshes).toBe(2);
+  expect(calls).toBe(2);
+});
+
 it('completes PKCE login through loopback callback and stores confidential credentials securely', async () => {
   const { mkdtemp, readFile, readdir, stat, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');

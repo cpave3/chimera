@@ -29,13 +29,13 @@ describe('RuleStore', () => {
   });
 
   it('session rules do not touch disk', () => {
-    const store = new RuleStore(cwd);
+    const store = new RuleStore(cwd, join(cwd, 'home'));
     store.add(makeRule('foo *'), 'session');
     expect(() => readFileSync(join(cwd, '.chimera', 'permissions.json'))).toThrow();
   });
 
   it('project rules create .chimera/permissions.json on first add', () => {
-    const store = new RuleStore(cwd);
+    const store = new RuleStore(cwd, join(cwd, 'home'));
     const r = makeRule('pnpm test *');
     store.add(r, 'project');
     const parsed = JSON.parse(readFileSync(join(cwd, '.chimera', 'permissions.json'), 'utf8'));
@@ -45,7 +45,7 @@ describe('RuleStore', () => {
   });
 
   it('all() returns session rules then project rules', () => {
-    const store = new RuleStore(cwd);
+    const store = new RuleStore(cwd, join(cwd, 'home'));
     store.add(makeRule('a'), 'session');
     store.add(makeRule('b'), 'project');
     const all = store.all();
@@ -53,7 +53,7 @@ describe('RuleStore', () => {
   });
 
   it('removeAt rewrites project file atomically', () => {
-    const store = new RuleStore(cwd);
+    const store = new RuleStore(cwd, join(cwd, 'home'));
     store.add(makeRule('a'), 'project');
     store.add(makeRule('b'), 'project');
     store.removeAt(0); // removes 'a' from project rules
@@ -62,10 +62,10 @@ describe('RuleStore', () => {
   });
 
   it('persists across instantiation', () => {
-    const s1 = new RuleStore(cwd);
+    const s1 = new RuleStore(cwd, join(cwd, 'home'));
     s1.add(makeRule('persist-me'), 'project');
 
-    const s2 = new RuleStore(cwd);
+    const s2 = new RuleStore(cwd, join(cwd, 'home'));
     expect(s2.all().map((r) => r.pattern)).toEqual(['persist-me']);
   });
 });

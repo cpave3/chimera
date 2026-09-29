@@ -100,6 +100,7 @@ describe('DefaultPermissionGate', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-one-shot-'));
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'host',
       mcpHeadlessAutoDeny: true,
       raiseRequest: async () => {
@@ -122,6 +123,7 @@ describe('DefaultPermissionGate', () => {
     let raised: PermissionRequest | undefined;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       raiseRequest: async (request) => {
         raised = request;
@@ -151,6 +153,7 @@ describe('DefaultPermissionGate', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-rule-'));
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       headlessAutoDeny: true,
       raiseRequest: async () => {
@@ -186,6 +189,7 @@ describe('DefaultPermissionGate', () => {
     const decisions: string[] = [];
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       headlessAutoDeny: true,
       raiseRequest: async () => {
@@ -210,6 +214,7 @@ describe('DefaultPermissionGate', () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       raiseRequest: async (request) => {
         raised++;
@@ -248,6 +253,7 @@ describe('DefaultPermissionGate', () => {
     let raisedRequest: PermissionRequest | undefined;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       commandPolicy: {
         evaluator: {
@@ -309,6 +315,7 @@ describe('DefaultPermissionGate', () => {
   it('requires sudo authentication after approval despite matching allow rules', async () => {
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       commandPolicy: {
         evaluator: {
@@ -362,6 +369,7 @@ describe('DefaultPermissionGate', () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'all',
       commandPolicy: {
         evaluator: {
@@ -416,6 +424,7 @@ describe('DefaultPermissionGate', () => {
   it('applies matching deny rules before safe-command auto-approval', async () => {
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'host',
       raiseRequest: async () => ({ decision: 'allow', remembered: false }),
     });
@@ -441,6 +450,7 @@ describe('DefaultPermissionGate', () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'host',
       raiseRequest: async (): Promise<PermissionResolution> => {
         raised += 1;
@@ -456,6 +466,7 @@ describe('DefaultPermissionGate', () => {
     let receivedCommand = '';
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'none',
       raiseRequest: async (r) => {
         receivedCommand = r.command;
@@ -471,6 +482,7 @@ describe('DefaultPermissionGate', () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'none',
       raiseRequest: async () => {
         raised += 1;
@@ -497,6 +509,7 @@ describe('DefaultPermissionGate', () => {
   it('applyRemember with project scope persists a glob rule', async () => {
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'none',
       raiseRequest: async () => ({ decision: 'allow', remembered: false }),
     });
@@ -514,6 +527,7 @@ describe('DefaultPermissionGate', () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'none',
       headlessAutoDeny: true,
       raiseRequest: async () => {
@@ -531,6 +545,7 @@ describe('DefaultPermissionGate', () => {
   it('headlessAutoDeny respects existing allow rules instead of denying', async () => {
     const gate = new DefaultPermissionGate({
       cwd,
+      home: join(cwd, 'home'),
       autoApprove: 'none',
       headlessAutoDeny: true,
       raiseRequest: async () => ({ decision: 'deny', remembered: false }),

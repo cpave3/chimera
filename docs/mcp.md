@@ -96,8 +96,10 @@ registration and access/refresh credentials per server and exact URL under
 `config.json`. Do not paste authorization URLs or credentials into issue
 reports or logs.
 
-Agent runs do not open a browser. If a remote call needs login or re-login,
-run `chimera mcp login <server>` yourself and retry. `mcp logout` clears local
+Agent runs do not open a browser. If an access token expires and a refresh
+token is saved, Chimera refreshes it automatically on the next request and
+persists any rotated refresh token. If the refresh token is missing, expired,
+or revoked, run `chimera mcp login <server>` yourself and retry. `mcp logout` clears local
 credentials without removing the server; `mcp remove` clears both. No live
 Burnlite account is needed for local configuration.
 
@@ -130,8 +132,9 @@ secrets.
   executable, its arguments and referenced environment variables, or the HTTP
   URL and network access. Other healthy servers can still load. Stdio servers
   are separate child processes per session; stop the session to close them.
-- **Authorization required or expired:** Run `chimera mcp login <server>` in a
-  terminal and retry. If you changed the remote resource URL, log in again;
+- **Authorization required:** Chimera refreshes expired access tokens when a
+  valid refresh token is saved. If refresh fails or no refresh token is saved,
+  run `chimera mcp login <server>` in a terminal and retry. If you changed the remote resource URL, log in again;
   credentials are keyed to the exact URL. Check that the browser can reach
   Chimera's local callback. Login failures do not remove the server config.
 - **Call denied:** Approve interactively or, only for tools you intentionally

@@ -1,7 +1,13 @@
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import {
+  type OAuthClientProvider,
+  UnauthorizedError,
+} from '@modelcontextprotocol/sdk/client/auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { McpAuth } from './auth.js';
 
@@ -137,6 +143,15 @@ export class McpClientManager {
       return result;
     } catch (error) {
       if (error instanceof Error && error.message.includes('oversized result')) throw error;
+      if (
+        error instanceof UnauthorizedError ||
+        (error instanceof StreamableHTTPError && error.code === 401) ||
+        (error instanceof Error && error.message === 'Unauthorized')
+      ) {
+        throw new Error(
+          `MCP tool ${name}/${toolName} needs authorization; run chimera mcp login ${name}`,
+        );
+      }
       throw new Error(
         `MCP tool ${name}/${toolName} failed${error instanceof Error && error.name === 'AbortError' ? ': aborted' : '; check server connection or authorization'}`,
       );

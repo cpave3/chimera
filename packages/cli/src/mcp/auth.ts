@@ -48,13 +48,16 @@ export class McpAuth implements OAuthClientProvider {
     );
   }
 
-  get redirectUrl(): URL | undefined {
-    return this.callbackUrl;
+  get redirectUrl(): URL {
+    return (
+      this.callbackUrl ??
+      new URL(`http://localhost:${this.options.callbackPort ?? CALLBACK_PORT}/callback`)
+    );
   }
   get clientMetadata() {
     return {
       client_name: 'Chimera',
-      redirect_uris: [String(this.callbackUrl)],
+      redirect_uris: [String(this.redirectUrl)],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: 'client_secret_post',
