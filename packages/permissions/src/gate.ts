@@ -18,6 +18,7 @@ export type RaiseRequestFn = (req: PermissionRequest) => Promise<PermissionResol
 
 export interface GateOptions {
   cwd: string;
+  home?: string;
   autoApprove: AutoApproveLevel;
   raiseRequest: RaiseRequestFn;
   sandboxMode?: 'off';
@@ -68,7 +69,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private readonly audit: GateOptions['audit'];
 
   constructor(opts: GateOptions) {
-    this.store = new RuleStore(opts.cwd);
+    this.store = new RuleStore(opts.cwd, opts.home);
     this.autoApprove = opts.autoApprove;
     this.raise = opts.raiseRequest;
     this.headlessAutoDeny = opts.headlessAutoDeny ?? false;
@@ -228,7 +229,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     return resolution;
   }
 
-  addRule(rule: PermissionRule, persist: 'session' | 'project'): void {
+  addRule(rule: PermissionRule, persist: 'session' | 'project' | 'global'): void {
     this.store.add(rule, persist);
   }
 
@@ -284,7 +285,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
         decision,
         createdAt: Date.now(),
       },
-      'project',
+      scope.scope,
     );
   }
 }

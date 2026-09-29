@@ -111,8 +111,11 @@ network restrictions do not confine these calls, including with
 Every MCP call passes a separate MCP permission gate before the server receives
 it. Host `autoApprove` does not grant MCP calls. An interactive request shows
 the server, tool, target, and a bounded, redacted argument preview; you can
-allow one call or remember a per-server/per-tool rule. Headless runs and
-subagents without an interactive approver deny by default. An explicit
+allow one call or remember a per-server/per-tool rule for this session, this
+project, or all projects. Global rules live in `~/.chimera/permissions.json`;
+project rules live in `<cwd>/.chimera/permissions.json`. New sessions load these
+rules at creation. Headless runs and subagents without an interactive approver
+deny by default when no rule allows the call. An explicit
 `trustedTools` list on a server authorizes the named tools in **all** modes
 where those tools are available, including headless runs and subagents;
 explicit deny rules still take priority. Treat a trusted entry as ongoing

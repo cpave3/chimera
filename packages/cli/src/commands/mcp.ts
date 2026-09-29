@@ -144,6 +144,7 @@ export async function runMcpCall(
   }
   const gate = new DefaultPermissionGate({
     cwd: process.cwd(),
+    home,
     autoApprove: 'none',
     headlessAutoDeny: !process.stdin.isTTY || !process.stderr.isTTY,
     raiseRequest: async (request) => {

@@ -525,6 +525,7 @@ export class CliAgentFactory implements AgentFactory {
     });
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
+      home: this.home,
       audit: (entry) => decisionAudit.record(entry),
       autoApprove: this.autoApprove,
       ...(commandPolicy

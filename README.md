@@ -6,7 +6,7 @@ See [model generation settings](docs/model-settings.md) for provider capabilitie
 
 - **TUI-first** for interactive use (Ink-based).
 - **SDK-first**: every consumer — the TUI, future Slack harnesses, future subagents — talks to the same `ChimeraClient` over HTTP + SSE, so there is no "side channel" behavior.
-- **Permission-aware**: every shell call that would leave the agent's controlled scope is gated. Rules can be remembered session- or project-wide.
+- **Permission-aware**: every shell call that would leave the agent's controlled scope is gated. Rules can be remembered for a session, project, or globally.
 - **Human handoffs**: agents can call `request_user_input` to end a run with an actionable request and notify integrations through a lifecycle hook.
 - **Shape-based providers**: any OpenAI-compatible or Anthropic-compatible endpoint works via `baseUrl` + `apiKey`.
 

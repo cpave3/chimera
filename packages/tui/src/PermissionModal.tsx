@@ -49,11 +49,11 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
     if (mode.kind === 'scope') {
       if (input === 's') {
         props.onResolve({ decision: 'allow', remember: { scope: 'session' } });
-      } else if (input === 'p') {
+      } else if (input === 'p' || input === 'g') {
         props.onResolve({
           decision: 'allow',
           remember: {
-            scope: 'project',
+            scope: input === 'g' ? 'global' : 'project',
             pattern: mode.pattern,
             patternKind: mode.pattern === props.command ? 'exact' : 'glob',
           },
@@ -98,7 +98,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   if (mode.kind === 'scope') {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor={badge} padding={1}>
-        <Text color={badge}>Remember for [s]ession or [p]roject?</Text>
+        <Text color={badge}>Remember for [s]ession, [p]roject, or [g]lobal?</Text>
       </Box>
     );
   }

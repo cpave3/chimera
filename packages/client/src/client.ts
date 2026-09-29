@@ -244,7 +244,7 @@ export class ChimeraClient {
   async addRule(
     sessionId: SessionId,
     rule: PermissionRule,
-    scope: 'session' | 'project',
+    scope: 'session' | 'project' | 'global',
   ): Promise<void> {
     await this.json<void>(`/v1/sessions/${sessionId}/permissions/rules`, {
       method: 'POST',

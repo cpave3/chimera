@@ -387,6 +387,7 @@ describe('server app', () => {
         });
         const gate = new DefaultPermissionGate({
           cwd: init.cwd,
+          home,
           autoApprove: 'none',
           raiseRequest: (req) => agent.raisePermissionRequest(req),
         });
@@ -425,9 +426,38 @@ describe('server app', () => {
     });
     expect(addRuleResponse.status).toBe(201);
 
+    const globalRuleResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rule: {
+          tool: 'mcp',
+          target: 'host',
+          pattern: 'burnlite/list_projects',
+          patternKind: 'exact',
+          decision: 'allow',
+          createdAt: Date.now(),
+        },
+        scope: 'global',
+      }),
+    });
+    expect(globalRuleResponse.status).toBe(201);
+    expect(
+      JSON.parse(await readFile(join(home, '.chimera', 'permissions.json'), 'utf8')).rules,
+    ).toHaveLength(1);
     const listRulesResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules`);
     const rules = await listRulesResponse.json();
-    expect(rules).toHaveLength(1);
+    expect(rules).toHaveLength(2);
+    const removeGlobalResponse = await app.request(
+      `/v1/sessions/${sessionId}/permissions/rules/1`,
+      {
+        method: 'DELETE',
+      },
+    );
+    expect(removeGlobalResponse.status).toBe(204);
+    expect(
+      JSON.parse(await readFile(join(home, '.chimera', 'permissions.json'), 'utf8')).rules,
+    ).toHaveLength(0);
 
     const removeRuleResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules/0`, {
       method: 'DELETE',

@@ -142,7 +142,7 @@ export interface HostAuthenticationCapability {
 export interface PermissionGate {
   check(req: PermissionRequest): PermissionResolution | null;
   request(req: PermissionRequest): Promise<PermissionResolution>;
-  addRule(rule: PermissionRule, persist: 'session' | 'project'): void;
+  addRule(rule: PermissionRule, persist: 'session' | 'project' | 'global'): void;
   listRules(): PermissionRule[];
   removeRule(index: number): void;
 }

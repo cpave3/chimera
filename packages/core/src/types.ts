@@ -201,4 +201,4 @@ export interface CompactorApi {
 
 export type RememberScope =
   | { scope: 'session' }
-  | { scope: 'project'; pattern: string; patternKind: 'exact' | 'glob' };
+  | { scope: 'project' | 'global'; pattern: string; patternKind: 'exact' | 'glob' };

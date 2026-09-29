@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionRequest, PermissionResolution } from '@chimera/core';
@@ -17,6 +17,85 @@ function req(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
 }
 
 describe('DefaultPermissionGate', () => {
+  it('remembers an MCP approval globally across projects and new sessions', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-global-home-'));
+    const projectA = await mkdtemp(join(tmpdir(), 'chimera-global-a-'));
+    const projectB = await mkdtemp(join(tmpdir(), 'chimera-global-b-'));
+    try {
+      const first = new DefaultPermissionGate({
+        cwd: projectA,
+        home,
+        autoApprove: 'none',
+        raiseRequest: async () => ({ decision: 'allow', remembered: false }),
+      });
+      first.applyRemember(
+        { scope: 'global', pattern: 'burnlite/list_projects', patternKind: 'exact' },
+        {
+          requestId: 'global-1',
+          cwd: projectA,
+          tool: 'mcp',
+          command: 'burnlite/list_projects',
+          target: 'host',
+          mcp: { server: 'burnlite', tool: 'list_projects', preview: [] },
+        },
+        'allow',
+      );
+      const second = new DefaultPermissionGate({
+        cwd: projectB,
+        home,
+        autoApprove: 'none',
+        mcpHeadlessAutoDeny: true,
+        raiseRequest: async () => {
+          throw new Error('unexpected prompt');
+        },
+      });
+      expect(
+        await second.requestMcp({
+          requestId: 'global-2',
+          cwd: projectB,
+          server: 'burnlite',
+          tool: 'list_projects',
+          args: {},
+        }),
+      ).toMatchObject({ decision: 'allow', remembered: true });
+      expect(
+        await second.requestMcp({
+          requestId: 'global-3',
+          cwd: projectB,
+          server: 'other',
+          tool: 'list_projects',
+          args: {},
+        }),
+      ).toMatchObject({ decision: 'deny', denialSource: 'headless' });
+      const globalFile = join(home, '.chimera', 'permissions.json');
+      expect(JSON.parse(await readFile(globalFile, 'utf8')).rules).toHaveLength(1);
+      expect((await stat(globalFile)).mode & 0o777).toBe(0o600);
+      second.addRule(
+        {
+          tool: 'mcp',
+          target: 'host',
+          pattern: 'burnlite/list_projects',
+          patternKind: 'exact',
+          decision: 'deny',
+          createdAt: Date.now(),
+        },
+        'project',
+      );
+      expect(
+        await second.requestMcp({
+          requestId: 'global-4',
+          cwd: projectB,
+          server: 'burnlite',
+          tool: 'list_projects',
+          args: {},
+        }),
+      ).toMatchObject({ decision: 'deny', denialSource: 'rule' });
+    } finally {
+      await Promise.all(
+        [home, projectA, projectB].map((path) => rm(path, { recursive: true, force: true })),
+      );
+    }
+  });
   it('denies MCP prompts in a headless one-shot run without changing normal host approvals', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-one-shot-'));
     const gate = new DefaultPermissionGate({

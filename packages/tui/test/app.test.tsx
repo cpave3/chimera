@@ -2092,6 +2092,29 @@ describe('PermissionModal', () => {
     unmount();
   });
 
+  it('choose → scope: allow + global remembers with exact pattern', async () => {
+    const actions: unknown[] = [];
+    const { stdin, lastFrame, unmount } = render(
+      <PermissionModal
+        command="mcp/burnlite/list_projects"
+        target="host"
+        onResolve={(action) => actions.push(action)}
+      />,
+    );
+    (stdin as unknown as { write: (text: string) => void }).write('A');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(lastFrame()).toContain('[g]lobal');
+    (stdin as unknown as { write: (text: string) => void }).write('g');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(actions).toEqual([
+      {
+        decision: 'allow',
+        remember: { scope: 'global', pattern: 'mcp/burnlite/list_projects', patternKind: 'exact' },
+      },
+    ]);
+    unmount();
+  });
+
   it('choose → scope: allow + project remembers with exact pattern', async () => {
     const calls: unknown[] = [];
     const { stdin, lastFrame, unmount } = render(

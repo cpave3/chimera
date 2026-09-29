@@ -127,13 +127,13 @@ const permissionRuleSchema = z.object({
     decision: z.enum(['allow', 'deny']),
     createdAt: z.number(),
   }),
-  scope: z.enum(['session', 'project']),
+  scope: z.enum(['session', 'project', 'global']),
 });
 
 const rememberSchema = z.union([
   z.object({ scope: z.literal('session') }),
   z.object({
-    scope: z.literal('project'),
+    scope: z.enum(['project', 'global']),
     pattern: z.string(),
     patternKind: z.enum(['exact', 'glob']),
   }),
