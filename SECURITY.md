@@ -47,6 +47,21 @@ not yet supported.
 `--sandbox-memory <size>` (default `2g`) and `--sandbox-cpus <n>` (default
 `2`) translate directly to `docker run --memory` / `--cpus`.
 
+## MCP host execution
+
+MCP tools are not Docker-sandboxed. A stdio server runs as a host child process
+with your user privileges; a remote HTTP server receives calls from the host
+and may modify external data. `--sandbox-network none` and overlay/ephemeral
+filesystem isolation do not restrict MCP. Configuring a server enables
+connection and discovery but does not grant permission to execute tools.
+
+Each MCP tool call uses a separate permission gate; host `autoApprove` does not
+approve it. Headless sessions and subagents without an approver deny calls by
+default. Per-server `trustedTools` entries authorize the named tools wherever
+they are available, including headless sessions; explicit deny rules take
+priority. Keep these lists narrow and review a server before running its local
+executable or trusting remote operations. See [MCP tools](docs/mcp.md).
+
 ## Manual verification: overlay fallback on Docker Desktop
 
 Docker Desktop on macOS / Windows / WSL2 frequently rejects `mount -t

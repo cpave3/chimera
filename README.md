@@ -10,7 +10,7 @@ See [model generation settings](docs/model-settings.md) for provider capabilitie
 - **Human handoffs**: agents can call `request_user_input` to end a run with an actionable request and notify integrations through a lifecycle hook.
 - **Shape-based providers**: any OpenAI-compatible or Anthropic-compatible endpoint works via `baseUrl` + `apiKey`.
 
-MCP is intentionally **not** in this release; it's a self-contained follow-on change. Docker sandbox, skills, user-defined slash commands, and subagents (`spawn_agent`) are in.
+MCP tools (local stdio and remote Streamable HTTP with OAuth), Docker sandbox, skills, user-defined slash commands, and subagents (`spawn_agent`) are supported. See [MCP tools](docs/mcp.md) for setup and host-execution risks.
 
 ## Install
 
@@ -77,6 +77,27 @@ Create `~/.chimera/config.json`:
 ```
 
 See `PROVIDERS.md` for known-good combinations including OpenRouter, local vLLM/Ollama, and Bedrock/Vertex proxies. Host bash risk and filesystem approval policy is documented in [`docs/bash-command-policy.md`](docs/bash-command-policy.md).
+
+## MCP tools
+
+Add local and remote tool servers to `~/.chimera/config.json` with the CLI:
+
+```bash
+chimera mcp add local --transport stdio -- node /path/to/server.js
+chimera mcp add burnlite --transport http https://burnlite.dev/api/llm/mcp
+chimera mcp login burnlite
+chimera mcp list
+chimera mcp tools burnlite
+chimera mcp call burnlite list_projects --args '{}'
+```
+
+The HTTP add offers login and a connection test in a terminal; headless add
+prints the login command instead. `mcp logout <server>` clears local OAuth
+credentials; `mcp remove <server>` also removes its configuration. MCP calls
+run on the **host**, even with `--sandbox`, and need separate approval.
+Headless use requires an explicit per-server `trustedTools` entry or allow
+rule; host auto-approval does not apply. For config examples, OAuth details,
+permissions, supported content, and troubleshooting, see [MCP tools](docs/mcp.md).
 
 ## Run
 
@@ -154,7 +175,8 @@ apparmor=unconfined` on `docker run`. See `SECURITY.md`.
 
 Chimera writes to:
 
-- `~/.chimera/config.json` — read on startup.
+- `~/.chimera/config.json` — read on startup; also holds MCP server definitions under `mcpServers` (not tokens).
+- `~/.chimera/mcp-auth/` — owner-only MCP OAuth registration and credentials, keyed by server and exact resource URL.
 - `~/.chimera/sessions/<sessionId>/session.json` — per-session metadata (id, parentId, children, cwd, model, sandbox mode, usage). Atomic tmp+rename on every update.
 - `~/.chimera/sessions/<sessionId>/events.jsonl` — append-only event log. One JSON object per line. Only `step_finished`, `permission_resolved`, `run_finished`, and `forked_from` events are persisted; transient events (text deltas, tool starts, etc.) are not.
 - `~/.chimera/logs/<date>.log` — structured JSON-line activity log. API keys are never written.
@@ -442,7 +464,7 @@ to the size to flag the value as approximate.
 
 ## What's not here (yet)
 
-- No MCP.
+- No MCP resources, prompts, or legacy SSE transport (MCP tools only).
 - No bearer-token auth on the HTTP server. Bind is `127.0.0.1` only by default.
 
 ## Theme Customization
