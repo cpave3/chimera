@@ -57,7 +57,18 @@ export interface HostBashPolicyConfig {
   autoAllowThrough: 'none' | 'safe' | 'caution' | 'danger';
 }
 
+export type McpServerConfig =
+  | {
+      transport: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      trustedTools?: string[];
+    }
+  | { transport: 'http'; url: string; clientId?: string; trustedTools?: string[] };
+
 export interface ChimeraConfig {
+  mcpServers?: Record<string, McpServerConfig>;
   defaultModel?: string;
   /**
    * Model (`<providerId>/<modelId>`) that turns carrying images run on when
@@ -159,6 +170,63 @@ const hostBashPolicySchema = z
   })
   .strict();
 
+const serverNameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
+const trustedToolsSchema = z.array(z.string().min(1)).optional();
+const mcpServerSchema = z.discriminatedUnion('transport', [
+  z
+    .object({
+      transport: z.literal('stdio'),
+      command: z.string().min(1),
+      args: z.array(z.string()).optional(),
+      env: z
+        .record(
+          z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+          z.string().regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/),
+        )
+        .optional(),
+      trustedTools: trustedToolsSchema,
+    })
+    .strict(),
+  z
+    .object({
+      transport: z.literal('http'),
+      url: z.url().refine((value) => {
+        const url = new URL(value);
+        return (
+          url.username === '' &&
+          url.password === '' &&
+          url.hash === '' &&
+          (url.protocol === 'https:' ||
+            (url.protocol === 'http:' &&
+              ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+        );
+      }, 'Must use HTTPS (HTTP is allowed only on loopback), without credentials or fragment'),
+      clientId: z.string().min(1).optional(),
+      trustedTools: trustedToolsSchema,
+    })
+    .strict(),
+]);
+
+export function validateMcpServers(value: unknown, path: string): Record<string, McpServerConfig> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Invalid mcpServers in ${path}: expected an object`);
+  }
+  for (const [name, server] of Object.entries(value)) {
+    const nameResult = serverNameSchema.safeParse(name);
+    if (!nameResult.success || ['__proto__', 'constructor', 'prototype'].includes(name)) {
+      throw new Error(`Invalid ${path}: mcpServers.${name}: invalid server name`);
+    }
+    const result = mcpServerSchema.safeParse(server);
+    if (!result.success) {
+      throw new Error(
+        `Invalid ${path}: mcpServers.${name}: ${result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+      );
+    }
+  }
+  return value as Record<string, McpServerConfig>;
+}
+
 export function loadConfig(home = homedir()): ChimeraConfig {
   const path = configPath(home);
   let raw: string;
@@ -174,6 +242,10 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   } catch (error) {
     throw new Error(`Invalid JSON in ${path}: ${(error as Error).message}`);
   }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error(`Invalid ${path}: expected an object`);
+  }
+  validateMcpServers(config.mcpServers, path);
   const result = hostBashPolicySchema.safeParse(config.commandPolicy?.hostBash ?? {});
   if (!result.success) {
     throw new Error(`Invalid commandPolicy.hostBash in ${path}: ${result.error.message}`);

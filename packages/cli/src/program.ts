@@ -7,6 +7,15 @@ import { runCommandsList } from './commands/commands';
 import { runHooksList } from './commands/hooks';
 import { runInteractive } from './commands/interactive';
 import { runLs } from './commands/ls';
+import {
+  runMcpAdd,
+  runMcpCall,
+  runMcpList,
+  runMcpLogin,
+  runMcpLogout,
+  runMcpRemove,
+  runMcpTools,
+} from './commands/mcp';
 import { runBashPolicyReview } from './commands/policy-review';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
@@ -176,6 +185,79 @@ export function buildProgram(): Command {
         claudeCompat: opts.claudeCompat,
       });
     });
+
+  const mcp = program.command('mcp').description('Manage MCP servers and tools.');
+  mcp
+    .command('add <name> [connection...]')
+    .description('Add a global MCP server.')
+    .requiredOption('--transport <transport>', 'stdio|http')
+    .action(async (name: string, connection: string[], options: { transport: string }) => {
+      try {
+        if (options.transport === 'http') {
+          if (connection.length !== 1) throw new Error('HTTP requires exactly one URL');
+          await runMcpAdd(name, { transport: 'http', url: connection[0] });
+        } else if (options.transport === 'stdio') {
+          if (connection.length === 0) throw new Error('stdio requires -- <executable> [args...]');
+          const [command, ...args] = connection;
+          await runMcpAdd(name, { transport: 'stdio', command, ...(args.length ? { args } : {}) });
+        } else {
+          throw new Error('Transport must be stdio or http');
+        }
+      } catch (error) {
+        process.stderr.write(`${(error as Error).message}\n`);
+        process.exitCode = 1;
+      }
+    });
+  mcp
+    .command('list')
+    .description('List configured MCP servers.')
+    .action(async () => {
+      try {
+        await runMcpList();
+      } catch (error) {
+        process.stderr.write(`${(error as Error).message}\n`);
+        process.exitCode = 1;
+      }
+    });
+  mcp
+    .command('remove <name>')
+    .description('Remove a configured MCP server.')
+    .action(async (name: string) => {
+      try {
+        await runMcpRemove(name);
+      } catch (error) {
+        process.stderr.write(`${(error as Error).message}\n`);
+        process.exitCode = 1;
+      }
+    });
+
+  const mcpAction = async (run: () => Promise<void>) => {
+    try {
+      await run();
+    } catch (error) {
+      process.stderr.write(`${(error as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  };
+  mcp
+    .command('tools <server>')
+    .description('Discover tools on an MCP server.')
+    .action((name: string) => mcpAction(() => runMcpTools(name)));
+  mcp
+    .command('call <server> <tool>')
+    .description('Call an MCP tool (requires approval or trustedTools).')
+    .requiredOption('--args <json>', 'Tool arguments as a JSON object')
+    .action((server: string, tool: string, options: { args: string }) =>
+      mcpAction(() => runMcpCall(server, tool, options.args)),
+    );
+  mcp
+    .command('login <server>')
+    .description('Authorize an HTTP MCP server.')
+    .action((name: string) => mcpAction(() => runMcpLogin(name)));
+  mcp
+    .command('logout <server>')
+    .description('Delete local MCP credentials.')
+    .action((name: string) => mcpAction(() => runMcpLogout(name)));
 
   const hooks = program.command('hooks').description('Inspect lifecycle hooks.');
   hooks

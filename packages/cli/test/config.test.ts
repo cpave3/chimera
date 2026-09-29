@@ -4,6 +4,71 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, resolveHostBashPolicy, resolveModel } from '../src/config';
 
+it('rejects invalid MCP server configuration with config path and server name', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-invalid-'));
+  await mkdir(join(home, '.chimera'), { recursive: true });
+  await writeFile(
+    join(home, '.chimera', 'config.json'),
+    JSON.stringify({
+      mcpServers: { remote: { transport: 'http', url: 'http://example.com/mcp' } },
+    }),
+  );
+  expect(() => loadConfig(home)).toThrow(/config\.json.*mcpServers.*remote.*url/i);
+});
+
+it.each([
+  ['unsafe name', { 'bad.name': { transport: 'stdio', command: 'node' } }],
+  [
+    'unexpected stdio URL',
+    { local: { transport: 'stdio', command: 'node', url: 'https://example.com' } },
+  ],
+  ['missing command', { local: { transport: 'stdio', args: ['server.js'] } }],
+  [
+    'invalid env reference',
+    { local: { transport: 'stdio', command: 'node', env: { KEY: 'secret' } } },
+  ],
+  ['nonloopback HTTP', { local: { transport: 'http', url: 'http://example.com/mcp' } }],
+  [
+    'HTTP URL with credentials',
+    { local: { transport: 'http', url: 'https://alice:secret@example.com/mcp' } },
+  ],
+])('rejects %s in mcpServers', async (_label, mcpServers) => {
+  const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-invalid-'));
+  await mkdir(join(home, '.chimera'), { recursive: true });
+  await writeFile(join(home, '.chimera', 'config.json'), JSON.stringify({ mcpServers }));
+  expect(() => loadConfig(home)).toThrow(/config\.json.*mcpServers/);
+});
+
+it('loads typed stdio and HTTP MCP servers without changing other config', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-config-'));
+  await mkdir(join(home, '.chimera'), { recursive: true });
+  await writeFile(
+    join(home, '.chimera', 'config.json'),
+    JSON.stringify({
+      defaultModel: 'example/model',
+      mcpServers: {
+        local: {
+          transport: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          env: { KEY: 'env:LOCAL_KEY' },
+        },
+        remote: { transport: 'http', url: 'https://example.com/mcp', trustedTools: ['read'] },
+      },
+    }),
+  );
+  expect(loadConfig(home).mcpServers).toEqual({
+    local: {
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js'],
+      env: { KEY: 'env:LOCAL_KEY' },
+    },
+    remote: { transport: 'http', url: 'https://example.com/mcp', trustedTools: ['read'] },
+  });
+  expect(loadConfig(home).defaultModel).toBe('example/model');
+});
+
 it('surfaces malformed and invalid host bash policy config', async () => {
   const malformedHome = await mkdtemp(join(tmpdir(), 'chimera-config-'));
   await mkdir(join(malformedHome, '.chimera'), { recursive: true });
