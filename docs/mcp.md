@@ -73,8 +73,9 @@ stored auth status; `login required` means credentials are absent, while an
 unavailable connection may have other causes. Configuration alone allows
 connection and discovery, **not** tool execution.
 
-The agent sees registered tools as `mcp_<server>_<encoded-tool-name>`; use the
-**original** server tool name, such as `list_projects`, for `mcp call` and
+The agent sees registered tools as `mcp_<server>_<encoded-tool-name>`; the TUI
+shows readable labels such as `burnlite / add_task_to_project` instead of encoded
+IDs. Use the **original** server tool name, such as `list_projects`, for `mcp call` and
 `trustedTools`. Tool availability is filtered by the active mode and any
 subagent tool allowlist. Subagents use their own connections and do not inherit
 an interactive approval from their parent. Calls return bounded text and

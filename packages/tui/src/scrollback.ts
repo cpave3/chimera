@@ -43,6 +43,7 @@ export interface ThinkingEntry extends BaseEntry {
 export interface ToolEntry extends BaseEntry {
   kind: 'tool';
   toolName: string;
+  displayName?: string;
   toolTarget: 'sandbox' | 'host';
   /** Raw `tool_call_start` args; consumed by `ToolBody` renderers. */
   toolArgs?: unknown;
@@ -654,6 +655,7 @@ export class Scrollback {
           kind: 'tool',
           text: ev.display?.summary ?? formatArgs(ev.args),
           toolName: ev.name,
+          displayName: ev.display?.label,
           toolTarget: ev.target,
           toolArgs: ev.args,
           detail: ev.display?.detail,
@@ -669,6 +671,7 @@ export class Scrollback {
           entry.toolResult = ev.result;
           if (ev.display) {
             entry.text = ev.display.summary;
+            entry.displayName = ev.display.label ?? entry.displayName;
             entry.detail = ev.display.detail;
           }
           dirty = true;
@@ -779,9 +782,10 @@ export class Scrollback {
         }
         if (inner.type === 'tool_call_start') {
           const childTarget = inner.target === 'host' ? ' [host]' : '';
+          const displayName = inner.display?.label ?? inner.name;
           const text = inner.display?.summary
-            ? `${inner.name}: ${inner.display.summary}${childTarget}`
-            : `${inner.name}${childTarget}`;
+            ? `${displayName}: ${inner.display.summary}${childTarget}`
+            : `${displayName}${childTarget}`;
           const entry: ScrollbackEntry = {
             id: this.newId(),
             kind: 'subagent',
@@ -807,7 +811,7 @@ export class Scrollback {
           const entry = map?.get(inner.callId);
           if (entry && inner.display) {
             const targetTag = entry.text.endsWith('[host]') ? ' [host]' : '';
-            entry.text = `${entry.toolName}: ${inner.display.summary}${targetTag}`;
+            entry.text = `${inner.display.label ?? entry.toolName}: ${inner.display.summary}${targetTag}`;
             entry.detail = inner.display.detail;
             dirty = true;
           }

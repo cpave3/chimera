@@ -12,6 +12,7 @@ import type { ExecutionTarget, TaskItem, ToolCallRecord, Usage } from './types';
  */
 export type ToolDisplay = {
   summary: string;
+  label?: string;
   detail?: string;
 };
 

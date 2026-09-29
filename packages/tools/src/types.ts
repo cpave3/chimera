@@ -7,6 +7,7 @@ import type { Tool as AiTool } from 'ai';
  */
 export type ToolDisplay = {
   summary: string;
+  label?: string;
   detail?: string;
 };
 

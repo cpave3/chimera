@@ -747,6 +747,10 @@ describe('CliAgentFactory', () => {
         }
       ).opts.tools;
       expect(tools.mcp_fixture_echo).toBeDefined();
+      expect(factory.getFormatters().mcp_fixture_echo({ message: 'secret-value' })).toEqual({
+        label: 'fixture / echo',
+        summary: 'message',
+      });
       expect(await tools.mcp_fixture_echo.execute({ message: 'hello' }, {})).toMatchObject({
         error: expect.stringContaining('denied'),
       });

@@ -855,6 +855,28 @@ describe('Scrollback.rehydrateFromSession', () => {
     expect(toolEntry!.toolTarget).toBe('sandbox');
   });
 
+  it('uses the display label from a tool call and updates it on completion', () => {
+    const scrollback = new Scrollback();
+    scrollback.apply({
+      type: 'tool_call_start',
+      callId: 'mcp-1',
+      name: 'mcp_burnlite_add_x00005f_task',
+      args: { project: 'private' },
+      target: 'host',
+      display: { label: 'burnlite / add_task', summary: 'project' },
+    });
+    scrollback.apply({
+      type: 'tool_call_result',
+      callId: 'mcp-1',
+      result: { content: [{ type: 'text', text: 'ok' }] },
+      display: { label: 'burnlite / add_task', summary: 'done' },
+    });
+    expect(scrollback.all().find((entry) => entry.kind === 'tool')).toMatchObject({
+      displayName: 'burnlite / add_task',
+      text: 'done',
+    });
+  });
+
   it('runs injected formatters during rehydrate so resumed sessions show summaries', () => {
     const scrollback = new Scrollback({
       read: (args, result) => {

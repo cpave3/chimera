@@ -61,6 +61,30 @@ describe('App', () => {
     unmount();
   });
 
+  it('renders the original MCP tool name instead of the encoded SDK ID', async () => {
+    const client = stubClient({
+      subscribe: async function* () {
+        yield {
+          type: 'tool_call_start',
+          callId: 'mcp-1',
+          name: 'mcp_burnlite_add_x00005f_task_x00005f_to_x00005f_project',
+          args: { project_id: 'private-value' },
+          target: 'host',
+          display: { label: 'burnlite / add_task_to_project', summary: 'project_id' },
+        };
+        await new Promise(() => undefined);
+      } as unknown as ChimeraClient['subscribe'],
+    });
+    const { lastFrame, unmount } = render(
+      <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(lastFrame()).toContain('burnlite / add_task_to_project: project_id');
+    expect(lastFrame()).not.toContain('mcp_burnlite_add_x00005f_task');
+    expect(lastFrame()).not.toContain('private-value');
+    unmount();
+  });
+
   it.each([
     ['sandbox', '[sandbox]'],
     ['host', '[host]'],

@@ -2329,9 +2329,10 @@ function renderEntryLines(
   }
   if (entry.kind === 'tool') {
     const badge = entry.toolTarget === 'host' ? '[host]' : '[sandbox]';
-    const namePrefix = entry.toolName ? `${entry.toolName}: ` : '';
+    const namePrefix = entry.displayName ?? entry.toolName;
+    const title = namePrefix ? `${namePrefix}: ` : '';
     const prefixLen = badge.length + 1;
-    const textLines = wrapToLines(`${namePrefix}${entry.text}`, width, prefixLen);
+    const textLines = wrapToLines(`${title}${entry.text}`, width, prefixLen);
     const out: React.ReactElement[] = [
       <Box key={`${entry.id}:t`} flexDirection="column">
         <Text>

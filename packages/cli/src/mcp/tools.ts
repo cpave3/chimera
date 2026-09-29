@@ -1,4 +1,4 @@
-import { type McpPermissionGate, newRequestId } from '@chimera/core';
+import { type McpPermissionGate, newRequestId, type ToolDisplay } from '@chimera/core';
 import { jsonSchema, type ToolSet, tool } from 'ai';
 import type { McpServerConfig } from '../config';
 import { McpClientManager, type McpTool } from './client';
@@ -18,11 +18,12 @@ export async function registerMcpTools(options: {
   manager: McpClientManager;
   servers: Record<string, McpServerConfig>;
   tools: ToolSet;
+  formatters: Record<string, (args: unknown, result?: unknown) => ToolDisplay>;
   gate: McpPermissionGate;
   cwd: string;
   warn: (message: string) => void;
 }): Promise<void> {
-  const { manager, servers, tools, gate, cwd, warn } = options;
+  const { manager, servers, tools, formatters, gate, cwd, warn } = options;
   for (const [server, config] of Object.entries(servers)) {
     let discovered: McpTool[];
     try {
@@ -37,6 +38,17 @@ export async function registerMcpTools(options: {
         warn(`MCP tool ${server}/${definition.name} conflicts with registered tool ${id}`);
         continue;
       }
+      formatters[id] = (args, result) => {
+        const fields =
+          args && typeof args === 'object' && !Array.isArray(args)
+            ? Object.keys(args).slice(0, 5).join(', ')
+            : '';
+        const failed = result && typeof result === 'object' && 'error' in result;
+        return {
+          label: `${server} / ${definition.name}`,
+          summary: `${fields || 'no arguments'}${failed ? ' (failed)' : ''}`,
+        };
+      };
       tools[id] = tool({
         description: `[MCP ${server}] ${definition.description ?? definition.name}`,
         inputSchema: jsonSchema<Record<string, unknown>>(definition.inputSchema),

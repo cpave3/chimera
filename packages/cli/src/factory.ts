@@ -698,6 +698,7 @@ export class CliAgentFactory implements AgentFactory {
         manager,
         servers: this.mcpServers,
         tools,
+        formatters,
         gate,
         cwd: init.cwd,
         warn: this.warn,
