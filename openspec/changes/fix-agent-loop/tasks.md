@@ -12,10 +12,10 @@
 
 ## 3. Prompt cache markers
 
-- [ ] 3.1 Test: Anthropic-shape request body carries `cache_control` on system and last message
-- [ ] 3.2 Add the markers in the Anthropic provider middleware
-- [ ] 3.3 Test and implement `promptCaching: false`; confirm the OpenAI shape sends no marker
-- [ ] 3.4 Show `cache N%` in the TUI usage widget
+- [x] 3.1 Test: Anthropic-shape request body carries `cache_control` on system and last message
+- [x] 3.2 Add the markers in the Anthropic provider middleware
+- [x] 3.3 Test and implement `promptCaching: false`; confirm the OpenAI shape sends no marker
+- [x] 3.4 Show `cache N%` in the TUI usage widget
 
 ## 4. Provider error recovery
 

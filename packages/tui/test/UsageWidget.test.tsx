@@ -180,3 +180,33 @@ describe('sameUsage', () => {
     expect(sameUsage(a, b)).toBe(false);
   });
 });
+
+describe('UsageWidget cache share', () => {
+  const step = (inputTokens: number, cachedInputTokens: number) =>
+    usageWith({
+      lastStep: {
+        inputTokens,
+        outputTokens: 100,
+        cachedInputTokens,
+        totalTokens: inputTokens + 100,
+      },
+    });
+
+  it('shows the share of the last prompt that came from the provider cache', () => {
+    const out = frame(
+      <UsageWidget
+        usage={step(10_000, 8_000)}
+        contextWindow={200_000}
+        usedContextTokens={10_000}
+      />,
+    );
+    expect(out).toContain('cache 80%');
+  });
+
+  it('shows no cache figure when the last step had no cached tokens', () => {
+    const out = frame(
+      <UsageWidget usage={step(10_000, 0)} contextWindow={200_000} usedContextTokens={10_000} />,
+    );
+    expect(out).not.toContain('cache');
+  });
+});

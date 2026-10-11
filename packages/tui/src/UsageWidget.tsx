@@ -55,10 +55,11 @@ export const UsageWidget = memo(function UsageWidget(props: UsageWidgetProps): R
   const delta = usage.lastStep ? `+${formatTokens(usage.lastStep.totalTokens)}` : '';
   const pctStr = pct === null ? '' : ` (${pct}%)`;
   const winStr = unknownWindow ? `${window}?` : window;
+  const cacheStr = formatCacheShare(usage.lastStep);
   const text =
     pct === null
-      ? `${used} / —${delta ? ` ${delta}` : ''}`
-      : `${used} / ${winStr}${pctStr}${delta ? ` ${delta}` : ''}`;
+      ? `${used} / —${delta ? ` ${delta}` : ''}${cacheStr}`
+      : `${used} / ${winStr}${pctStr}${delta ? ` ${delta}` : ''}${cacheStr}`;
   return <Text color={color}>{text}</Text>;
 }, arePropsEqual);
 
@@ -69,6 +70,16 @@ function arePropsEqual(prev: UsageWidgetProps, next: UsageWidgetProps): boolean 
     prev.unknownWindow === next.unknownWindow &&
     sameUsage(prev.usage, next.usage)
   );
+}
+
+/** Share of the last prompt the provider served from its prompt cache. */
+function formatCacheShare(lastStep: Usage['lastStep']): string {
+  if (!lastStep || lastStep.inputTokens <= 0 || lastStep.cachedInputTokens <= 0) return '';
+  const share = Math.min(
+    100,
+    Math.round((lastStep.cachedInputTokens / lastStep.inputTokens) * 100),
+  );
+  return ` · cache ${share}%`;
 }
 
 export function formatTokens(n: number): string {
