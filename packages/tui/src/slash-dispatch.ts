@@ -1,7 +1,6 @@
 import { resolve as resolvePath } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
 import type { Checkpoint, SessionId, SessionInfo } from '@chimera/core';
-import type { useStdout } from 'ink';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AppProps } from './App';
 import type { OverlayDiffEntry } from './OverlayPicker';
@@ -21,7 +20,6 @@ export interface ActiveSession {
 export interface SlashContext {
   props: AppProps;
   scrollback: Scrollback;
-  stdout: ReturnType<typeof useStdout>['stdout'];
   themeCtx: ReturnType<typeof useThemeContext>;
   activeSession: ActiveSession;
   setActiveSession: Dispatch<SetStateAction<ActiveSession>>;
@@ -40,8 +38,8 @@ export interface SlashContext {
   setOverlayPicker: Dispatch<SetStateAction<OverlayDiffEntry[] | null>>;
   setSessionPicker: Dispatch<SetStateAction<SessionInfo[] | null>>;
   setRewindPicker: Dispatch<SetStateAction<Checkpoint[] | null>>;
-  setStaticEpoch: Dispatch<SetStateAction<number>>;
-  setShowHeader: Dispatch<SetStateAction<boolean>>;
+  /** Throw the transcript away, on screen and in the store. */
+  resetTranscript: () => void;
   sendUserMessage: (text: string) => Promise<void>;
   injectMidRun: (text: string) => Promise<void>;
   cleanupAndExit: () => Promise<void>;
@@ -58,7 +56,6 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
   const {
     props,
     scrollback,
-    stdout,
     themeCtx,
     activeSession,
     setActiveSession,
@@ -76,8 +73,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     setOverlayPicker,
     setSessionPicker,
     setRewindPicker,
-    setStaticEpoch,
-    setShowHeader,
+    resetTranscript,
     sendUserMessage,
     injectMidRun,
     cleanupAndExit,
@@ -96,13 +92,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
       return;
     }
     case '/clear':
-      // \x1b[2J clears the visible screen, \x1b[3J clears the scrollback
-      // buffer (xterm extension honored by most modern terminals), \x1b[H
-      // parks the cursor at home so Ink's next frame draws from the top.
-      stdout?.write('\x1b[2J\x1b[3J\x1b[H');
-      scrollback.clear();
-      setShowHeader(false);
-      setStaticEpoch((n) => n + 1);
+      resetTranscript();
       return;
     case '/exit':
       void cleanupAndExit();
@@ -174,10 +164,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
             model: props.model,
             sandboxMode: props.sandboxMode ?? 'off',
           });
-          stdout?.write('\x1b[2J\x1b[3J\x1b[H');
-          scrollback.clear();
-          setStaticEpoch((n) => n + 1);
-          setShowHeader(false);
+          resetTranscript();
           setPendingModeName(null); // Reset pending mode on new session
           setActiveSession({
             client: props.client,
@@ -275,10 +262,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
             activeSession.sessionId,
             purpose.length > 0 ? purpose : undefined,
           );
-          stdout?.write('\x1b[2J\x1b[3J\x1b[H');
-          scrollback.clear();
-          setStaticEpoch((n) => n + 1);
-          setShowHeader(false);
+          resetTranscript();
           setActiveSession({
             client: props.client,
             sessionId: childId,

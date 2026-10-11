@@ -21,6 +21,7 @@ import type { PendingPermission } from './permission-queue';
 import type { SlashMenuItem } from './SlashMenu';
 import type { Scrollback } from './scrollback';
 import { BUILTIN_COMMANDS } from './slash-commands';
+import type { TranscriptScroller } from './view';
 
 /** What a key press may read and change in the App. */
 export interface KeyContext {
@@ -67,6 +68,10 @@ export interface KeyContext {
   setFileMenuHighlight: Dispatch<SetStateAction<number>>;
   /** Records the word the menu was closed on, so it stays closed for that word. */
   setFileMenuDismissedAt: Dispatch<SetStateAction<number | null>>;
+  /** The layout owns the screen: the transcript scrolls and the panel toggles. */
+  fullscreen: boolean;
+  scrollerRef: MutableRefObject<TranscriptScroller | null>;
+  setPanelOpen: Dispatch<SetStateAction<boolean>>;
 }
 
 /** Handle one key press at the prompt. */

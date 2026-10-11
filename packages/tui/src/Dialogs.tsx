@@ -1,0 +1,57 @@
+import React from 'react';
+import { OverlayPicker } from './OverlayPicker';
+import { PermissionModal } from './PermissionModal';
+import { RewindPicker } from './RewindPicker';
+import { SessionPicker } from './SessionPicker';
+import { SudoPasswordModal } from './SudoPasswordModal';
+import type { AppView } from './view';
+
+/** The prompts and pickers that take the keyboard from the prompt box. */
+export function Dialogs({ view }: { view: AppView }): React.ReactElement {
+  const { pending, sudoAuthentication, overlayPicker, sessionPicker, rewindPicker } = view;
+  return (
+    <>
+      {sudoAuthentication ? (
+        <SudoPasswordModal
+          status={sudoAuthentication.status}
+          error={sudoAuthentication.error}
+          onSubmit={(password) => void view.submitSudoPassword(password)}
+          onCancel={view.cancelSudoAuthentication}
+        />
+      ) : pending ? (
+        <PermissionModal
+          command={pending.command}
+          reason={pending.reason}
+          target="host"
+          policyAnalysis={pending.policyAnalysis}
+          mcp={pending.mcp}
+          header={
+            pending.subagent
+              ? `[subagent ${pending.subagent.id.slice(-8)}: ${pending.subagent.purpose}]`
+              : undefined
+          }
+          onResolve={view.onResolve}
+        />
+      ) : null}
+      {overlayPicker && (
+        <OverlayPicker entries={overlayPicker} onResolve={view.applyOverlaySelection} />
+      )}
+      {sessionPicker && (
+        <SessionPicker
+          sessions={sessionPicker}
+          currentSessionId={view.activeSession.sessionId}
+          onCancel={view.cancelSessionPicker}
+          onSelect={view.selectSession}
+        />
+      )}
+      {rewindPicker && (
+        <RewindPicker
+          checkpoints={rewindPicker}
+          onCancel={view.cancelRewind}
+          onRewind={view.rewindTo}
+          onFork={view.forkFrom}
+        />
+      )}
+    </>
+  );
+}

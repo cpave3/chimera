@@ -13,37 +13,26 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
-import { Box, Static, useApp, useInput, useStdout } from 'ink';
+import { useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { ActivityLine } from './ActivityLine';
-import { describeActivity } from './activity';
 import { parseAttachTokens, readForAttach } from './attach-paths';
-import { BottomChrome } from './BottomChrome';
 import { runBangCommand } from './bang';
 import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
-import { FileMenu } from './FileMenu';
 import { completionContext, listProjectFiles, rankFiles } from './file-completion';
-import { Header } from './Header';
-import { HelpPanel } from './HelpPanel';
+import { InlineView } from './InlineView';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
 import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import { PasteRegistry } from './input/paste';
 import { handleKey } from './key-handler';
-import { planLiveRegion } from './live-region';
-import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
-import { PermissionModal } from './PermissionModal';
+import type { OverlayDiffEntry } from './OverlayPicker';
 import {
   mergePermissionQueue,
   type PendingPermission,
   requiresSudoAuthentication,
 } from './permission-queue';
-import { previewLine, renderPromptLines } from './prompt-view';
-import { QueueList } from './QueueList';
-import { RewindPicker } from './RewindPicker';
-import { SessionPicker } from './SessionPicker';
-import { SlashMenu, type SlashMenuItem } from './SlashMenu';
-import { SudoPasswordModal } from './SudoPasswordModal';
+import { previewLine } from './prompt-view';
+import type { SlashMenuItem } from './SlashMenu';
 import { type Formatter, Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import {
   type ActiveSubagent,
@@ -52,10 +41,9 @@ import {
 } from './session-events';
 import { BUILTIN_COMMANDS, isBuiltin, OVERLAY_COMMANDS } from './slash-commands';
 import { dispatchSlash } from './slash-dispatch';
-import { TaskPanel } from './TaskPanel';
-import { useTheme, useThemeContext } from './theme/ThemeProvider';
-import { clampInFlightChildren, renderEntryLines } from './transcript';
+import { useThemeContext } from './theme/ThemeProvider';
 import { formatTranscript } from './transcript-text';
+import type { AppView, SudoAuthenticationState, TranscriptScroller } from './view';
 
 function sessionHasActiveRun(status: SessionStatus): boolean {
   return status === 'running' || status === 'waiting_for_permission';
@@ -143,32 +131,20 @@ export interface AppProps {
   }>;
   /** Pending large text pastes captured by the terminal input filter. */
   pasteRegistry?: PasteRegistry;
-}
-
-interface SudoAuthenticationState {
-  item: PendingPermission;
-  action: PermissionDecisionAction;
-  status: 'checking' | 'password' | 'validating';
-  error?: string;
+  /**
+   * `inline` prints into the terminal's own scrollback; `fullscreen` owns
+   * the alternate screen. Defaults to `inline`; `mountTui` picks the real one.
+   */
+  layout?: 'fullscreen' | 'inline';
 }
 
 const FILE_MENU_ROWS = 6;
 const FILE_LIST_MAX_AGE_MS = 5_000;
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const CHIMERA_VERSION = '0.1.0';
-
-type StaticItem =
-  | { kind: 'header'; id: '__header__' }
-  | {
-      kind: 'entry';
-      id: string;
-      entry: ScrollbackEntry;
-      children: SubagentEntry[];
-    };
 
 export function App(props: AppProps): React.ReactElement {
-  const theme = useTheme();
   const themeCtx = useThemeContext();
+  const fullscreen = props.layout === 'fullscreen';
   const app = useApp();
   const { stdout } = useStdout();
   const scrollback = useMemo(() => new Scrollback(props.formatters), [props.formatters]);
@@ -223,6 +199,8 @@ export function App(props: AppProps): React.ReactElement {
   const [rows, setRows] = useState<number>(stdout?.rows ?? 24);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const scrollerRef = useRef<TranscriptScroller | null>(null);
   const [retry, setRetry] = useState<{ attempt: number; maxAttempts: number } | null>(null);
   const [runSteps, setRunSteps] = useState(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -271,6 +249,8 @@ export function App(props: AppProps): React.ReactElement {
     const onResize = () => {
       setColumns(stdout.columns ?? 80);
       setRows(stdout.rows ?? 24);
+      // The fullscreen layout is laid out again by Ink at the new size.
+      if (fullscreen) return;
       // Clear the terminal (screen + scrollback) and home the cursor, then
       // bump the Static epoch so Ink re-emits the historical entries at the
       // new width. Without this, full-width content from previous renders
@@ -282,7 +262,7 @@ export function App(props: AppProps): React.ReactElement {
     return () => {
       stdout.off('resize', onResize);
     };
-  }, [stdout]);
+  }, [stdout, fullscreen]);
 
   // Surface commands-registry warnings once on mount.
   useEffect(() => {
@@ -551,6 +531,18 @@ export function App(props: AppProps): React.ReactElement {
     stickyColRef.current = null;
   }
 
+  /** Throw the transcript away, on screen and in the store. */
+  function resetTranscript(): void {
+    // \x1b[2J clears the visible screen, \x1b[3J clears the scrollback
+    // buffer (xterm extension honored by most modern terminals), \x1b[H
+    // parks the cursor at home so Ink's next frame draws from the top. The
+    // fullscreen layout repaints every row itself.
+    if (!fullscreen) stdout?.write('\x1b[2J\x1b[3J\x1b[H');
+    scrollback.clear();
+    setStaticEpoch((n) => n + 1);
+    setShowHeader(false);
+  }
+
   useInput((char, key) => {
     handleKey(char, key, {
       props,
@@ -592,6 +584,9 @@ export function App(props: AppProps): React.ReactElement {
       fileMenuHighlight,
       setFileMenuHighlight,
       setFileMenuDismissedAt,
+      fullscreen,
+      scrollerRef,
+      setPanelOpen,
     });
   });
 
@@ -803,7 +798,6 @@ export function App(props: AppProps): React.ReactElement {
     dispatchSlash(raw, {
       props,
       scrollback,
-      stdout,
       themeCtx,
       activeSession,
       setActiveSession,
@@ -821,8 +815,7 @@ export function App(props: AppProps): React.ReactElement {
       setOverlayPicker,
       setSessionPicker,
       setRewindPicker,
-      setStaticEpoch,
-      setShowHeader,
+      resetTranscript,
       sendUserMessage,
       injectMidRun,
       cleanupAndExit,
@@ -995,306 +988,164 @@ export function App(props: AppProps): React.ReactElement {
     return null;
   }, [inFlightEntries]);
 
-  const liveRegion = planLiveRegion({
+  function applyOverlaySelection(selection: { paths: string[] } | null): void {
+    const offered = overlayPicker ?? [];
+    setOverlayPicker(null);
+    if (!selection) {
+      scrollback.addInfo('apply cancelled');
+      return;
+    }
+    void (async () => {
+      try {
+        await props.overlay!.apply(selection.paths);
+        scrollback.addInfo(`applied ${selection.paths.length}/${offered.length} overlay paths`);
+      } catch (err) {
+        scrollback.addError(`apply: ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  function cancelSessionPicker(): void {
+    setSessionPicker(null);
+    scrollback.addInfo('/sessions cancelled');
+  }
+
+  function selectSession(selectedId: SessionId): void {
+    setSessionPicker(null);
+    if (selectedId === activeSession.sessionId) {
+      scrollback.addInfo(`already on session ${selectedId.slice(-8)}`);
+      return;
+    }
+    void (async () => {
+      try {
+        await props.client.resumeSession(selectedId);
+        resetTranscript();
+        setActiveSession({ client: props.client, sessionId: selectedId, label: 'session' });
+        setRunning(false);
+        setQueue([]);
+        setStreaming(false);
+        scrollback.addInfo(`switched to session ${selectedId.slice(-8)}`);
+      } catch (err) {
+        scrollback.addError(`/sessions: ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  function cancelRewind(): void {
+    setRewindPicker(null);
+    scrollback.addInfo('/rewind cancelled');
+  }
+
+  function rewindTo(checkpoint: Checkpoint): void {
+    setRewindPicker(null);
+    setRunning(false);
+    setQueue([]);
+    setStreaming(false);
+    void (async () => {
+      try {
+        const rewindResult = await activeSession.client.rewindSession(
+          activeSession.sessionId,
+          checkpoint.index,
+        );
+        resetTranscript();
+        const session = await activeSession.client.getSession(activeSession.sessionId);
+        if (Array.isArray(session.messages) && session.messages.length > 0) {
+          scrollback.rehydrateFromSession(session);
+        }
+        setBufferText(checkpoint.userMessage);
+        scrollback.addInfo(
+          rewindResult.workspaceRestored
+            ? `rewound to checkpoint ${checkpoint.index} (working tree restored)`
+            : `rewound to checkpoint ${checkpoint.index} (conversation only; working tree unchanged)`,
+        );
+      } catch (err) {
+        scrollback.addError(`/rewind: ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  function forkFrom(checkpoint: Checkpoint): void {
+    setRewindPicker(null);
+    void (async () => {
+      try {
+        const { sessionId: childId } = await props.client.forkSession(
+          activeSession.sessionId,
+          undefined,
+          checkpoint.index,
+        );
+        resetTranscript();
+        setActiveSession({ client: props.client, sessionId: childId, label: 'forked' });
+        setRunning(false);
+        setQueue([]);
+        setStreaming(false);
+        const session = await activeSession.client.getSession(childId);
+        if (Array.isArray(session.messages) && session.messages.length > 0) {
+          scrollback.rehydrateFromSession(session);
+        }
+        setBufferText(checkpoint.userMessage);
+        scrollback.addInfo(
+          `forked from checkpoint ${checkpoint.index} into session ${childId.slice(-8)}`,
+        );
+      } catch (err) {
+        scrollback.addError(`/rewind fork: ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  const view: AppView = {
+    props,
+    columns,
     rows,
-    promptLines: buffer.text.split('\n').length,
-    taskCount: tasks.length,
-    queuedCount: queue.length,
+    sandboxMode,
+    activeSession,
+    activeParentId,
+    committedEntries,
+    inFlightEntries,
+    childrenByParent,
+    transcriptEpoch: staticEpoch,
+    showHeader,
+    running,
+    compacting,
+    streaming,
+    retry,
+    runSteps,
+    spinner: SPINNER_FRAMES[spinnerFrame]!,
+    inFlightTool,
+    runStartedAt: runStartedAtRef.current,
+    runOutputTokens: (usageState?.usage.outputTokens ?? 0) - runStartOutputTokensRef.current,
+    tasks,
+    queue,
+    usageState,
+    activeModeName,
+    pendingModeName,
+    currentModelRef,
+    visionRouteRef,
+    buffer,
+    editorOpen,
     helpOpen,
-    modalOpen:
-      pending !== null ||
-      sudoAuthentication !== null ||
-      overlayPicker !== null ||
-      sessionPicker !== null ||
-      rewindPicker !== null,
-  });
+    menuItems,
+    menuHighlight,
+    fileMenuItems,
+    fileMenuHighlight,
+    pending,
+    sudoAuthentication,
+    overlayPicker,
+    sessionPicker,
+    rewindPicker,
+    onResolve,
+    submitSudoPassword,
+    cancelSudoAuthentication,
+    applyOverlaySelection,
+    cancelSessionPicker,
+    selectSession,
+    cancelRewind,
+    rewindTo,
+    forkFrom,
+    panelOpen,
+    scrollerRef,
+  };
 
-  const staticItems = useMemo<StaticItem[]>(() => {
-    const entryItems: StaticItem[] = committedEntries.map((e) => ({
-      kind: 'entry',
-      id: e.id,
-      entry: e,
-      children: childrenByParent.get(e.id) ?? [],
-    }));
-    return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
-  }, [committedEntries, childrenByParent, showHeader]);
-
-  // Steady-state during a run: the buffer is empty and the spinner /
-  // streaming deltas re-render App many times per second. Keep the prompt
-  // subtree referentially stable across those renders, and collapse the
-  // outer layout to a single row when the buffer is single-line so the
-  // dynamic frame's height stays exactly 1 — matching the pre-multiline
-  // structure that did not flicker.
-  const isMultilineBuffer = buffer.text.includes('\n');
-  const isBangBuffer = buffer.text.startsWith('!');
-  const promptBody = useMemo(
-    () =>
-      renderPromptLines(
-        buffer,
-        theme.accent.primary,
-        theme.accent.secondary,
-        editorOpen,
-        isBangBuffer,
-      ),
-    [buffer, editorOpen, theme.accent.primary, theme.accent.secondary, isBangBuffer],
-  );
-
-  return (
-    <>
-      <Static key={`static-${staticEpoch}`} items={staticItems}>
-        {(item) => {
-          if (item.kind === 'header') {
-            return (
-              <Box key={item.id}>
-                <Header
-                  version={CHIMERA_VERSION}
-                  modelRef={props.modelRef}
-                  cwd={props.cwd}
-                  sessionId={props.sessionId}
-                  mode={props.initialMode ?? 'build'}
-                  sandboxMode={sandboxMode}
-                  skillCount={props.skills?.all().length ?? 0}
-                  commandCount={props.commands?.list().length ?? 0}
-                />
-              </Box>
-            );
-          }
-          return (
-            <Box key={item.id} flexDirection="column" marginTop={1}>
-              {renderEntryLines(item.entry, columns, theme, item.children, {
-                sandboxActive: sandboxMode !== 'off',
-              })}
-            </Box>
-          );
-        }}
-      </Static>
-      <Box flexDirection="column" width={columns}>
-        {inFlightEntries.map((e) => (
-          <Box key={e.id} flexDirection="column" marginTop={1}>
-            {renderEntryLines(
-              e,
-              columns,
-              theme,
-              clampInFlightChildren(e.id, childrenByParent.get(e.id) ?? []),
-              { sandboxActive: sandboxMode !== 'off' },
-            )}
-          </Box>
-        ))}
-        {running && liveRegion.taskLines > 0 && (
-          <Box marginTop={1}>
-            <TaskPanel tasks={tasks} maxLines={liveRegion.taskLines - 1} />
-          </Box>
-        )}
-        {(running || compacting) && (
-          <ActivityLine
-            spinner={SPINNER_FRAMES[spinnerFrame]!}
-            label={describeActivity({
-              awaitingApproval: pending !== null,
-              compacting,
-              retry,
-              inFlightTool,
-              streaming,
-            })}
-            elapsedMs={Date.now() - (runStartedAtRef.current ?? Date.now())}
-            tokens={(usageState?.usage.outputTokens ?? 0) - runStartOutputTokensRef.current}
-            step={running ? runSteps + 1 : 0}
-            canInterrupt={running}
-            width={columns}
-          />
-        )}
-        {helpOpen && <HelpPanel />}
-        <QueueList messages={queue} maxLines={liveRegion.queuedLines} />
-        {sudoAuthentication ? (
-          <SudoPasswordModal
-            status={sudoAuthentication.status}
-            error={sudoAuthentication.error}
-            onSubmit={(password) => void submitSudoPassword(password)}
-            onCancel={cancelSudoAuthentication}
-          />
-        ) : pending ? (
-          <PermissionModal
-            command={pending.command}
-            reason={pending.reason}
-            target="host"
-            policyAnalysis={pending.policyAnalysis}
-            mcp={pending.mcp}
-            header={
-              pending.subagent
-                ? `[subagent ${pending.subagent.id.slice(-8)}: ${pending.subagent.purpose}]`
-                : undefined
-            }
-            onResolve={onResolve}
-          />
-        ) : null}
-        {overlayPicker && (
-          <OverlayPicker
-            entries={overlayPicker}
-            onResolve={(selection) => {
-              const entries = overlayPicker;
-              setOverlayPicker(null);
-              if (!selection) {
-                scrollback.addInfo('apply cancelled');
-                return;
-              }
-              void (async () => {
-                try {
-                  await props.overlay!.apply(selection.paths);
-                  scrollback.addInfo(
-                    `applied ${selection.paths.length}/${entries.length} overlay paths`,
-                  );
-                } catch (err) {
-                  scrollback.addError(`apply: ${(err as Error).message}`);
-                }
-              })();
-            }}
-          />
-        )}
-        {sessionPicker && (
-          <SessionPicker
-            sessions={sessionPicker}
-            currentSessionId={activeSession.sessionId}
-            onCancel={() => {
-              setSessionPicker(null);
-              scrollback.addInfo('/sessions cancelled');
-            }}
-            onSelect={(selectedId) => {
-              setSessionPicker(null);
-              if (selectedId === activeSession.sessionId) {
-                scrollback.addInfo(`already on session ${selectedId.slice(-8)}`);
-                return;
-              }
-              void (async () => {
-                try {
-                  await props.client.resumeSession(selectedId);
-                  stdout?.write('\x1b[2J\x1b[3J\x1b[H');
-                  scrollback.clear();
-                  setStaticEpoch((n) => n + 1);
-                  setShowHeader(false);
-                  setActiveSession({
-                    client: props.client,
-                    sessionId: selectedId,
-                    label: 'session',
-                  });
-                  setRunning(false);
-                  setQueue([]);
-                  setStreaming(false);
-                  scrollback.addInfo(`switched to session ${selectedId.slice(-8)}`);
-                } catch (err) {
-                  scrollback.addError(`/sessions: ${(err as Error).message}`);
-                }
-              })();
-            }}
-          />
-        )}
-        {rewindPicker && (
-          <RewindPicker
-            checkpoints={rewindPicker}
-            onCancel={() => {
-              setRewindPicker(null);
-              scrollback.addInfo('/rewind cancelled');
-            }}
-            onRewind={(checkpoint) => {
-              setRewindPicker(null);
-              setRunning(false);
-              setQueue([]);
-              setStreaming(false);
-              void (async () => {
-                try {
-                  const rewindResult = await activeSession.client.rewindSession(
-                    activeSession.sessionId,
-                    checkpoint.index,
-                  );
-                  stdout?.write('\x1b[2J\x1b[3J\x1b[H');
-                  scrollback.clear();
-                  setStaticEpoch((n) => n + 1);
-                  setShowHeader(false);
-                  const s = await activeSession.client.getSession(activeSession.sessionId);
-                  if (Array.isArray(s.messages) && s.messages.length > 0) {
-                    scrollback.rehydrateFromSession(s);
-                  }
-                  setBufferText(checkpoint.userMessage);
-                  scrollback.addInfo(
-                    rewindResult.workspaceRestored
-                      ? `rewound to checkpoint ${checkpoint.index} (working tree restored)`
-                      : `rewound to checkpoint ${checkpoint.index} (conversation only; working tree unchanged)`,
-                  );
-                } catch (err) {
-                  scrollback.addError(`/rewind: ${(err as Error).message}`);
-                }
-              })();
-            }}
-            onFork={(checkpoint) => {
-              setRewindPicker(null);
-              void (async () => {
-                try {
-                  const { sessionId: childId } = await props.client.forkSession(
-                    activeSession.sessionId,
-                    undefined,
-                    checkpoint.index,
-                  );
-                  stdout?.write('\x1b[2J\x1b[3J\x1b[H');
-                  scrollback.clear();
-                  setStaticEpoch((n) => n + 1);
-                  setShowHeader(false);
-                  setActiveSession({
-                    client: props.client,
-                    sessionId: childId,
-                    label: 'forked',
-                  });
-                  setRunning(false);
-                  setQueue([]);
-                  setStreaming(false);
-                  const s = await activeSession.client.getSession(childId);
-                  if (Array.isArray(s.messages) && s.messages.length > 0) {
-                    scrollback.rehydrateFromSession(s);
-                  }
-                  setBufferText(checkpoint.userMessage);
-                  scrollback.addInfo(
-                    `forked from checkpoint ${checkpoint.index} into session ${childId.slice(-8)}`,
-                  );
-                } catch (err) {
-                  scrollback.addError(`/rewind fork: ${(err as Error).message}`);
-                }
-              })();
-            }}
-          />
-        )}
-        {menuOpen && <SlashMenu items={menuItems} highlightIdx={menuHighlight} />}
-        {fileMenuItems.length > 0 && (
-          <FileMenu
-            paths={fileMenuItems}
-            highlightIdx={Math.min(fileMenuHighlight, fileMenuItems.length - 1)}
-          />
-        )}
-        <Box
-          borderStyle="single"
-          borderTop
-          borderBottom={false}
-          borderLeft={false}
-          borderRight={false}
-          borderColor={theme.text.muted}
-          {...(isMultilineBuffer ? { flexDirection: 'column' as const } : {})}
-        >
-          {promptBody}
-        </Box>
-      </Box>
-      <BottomChrome
-        width={columns}
-        cwd={props.cwd}
-        sessionId={activeSession.sessionId}
-        running={running}
-        sandboxMode={sandboxMode}
-        modes={props.modes}
-        activeModeName={activeModeName}
-        pendingModeName={pendingModeName}
-        currentModelRef={currentModelRef}
-        visionRouteRef={visionRouteRef}
-        forked={activeParentId !== null}
-        tasks={tasks}
-        usageState={usageState}
-      />
-    </>
-  );
+  return <InlineView view={view} />;
 }
 
 /**
