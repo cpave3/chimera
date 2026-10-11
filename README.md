@@ -413,6 +413,27 @@ long sessions inside budget (full details in `docs/COMPACTION.md`):
   estimate, the auto-compact trigger, and a per-category breakdown (system
   prompt, summary, user/assistant messages, tool results, archived stubs).
 
+## Project instructions
+
+Chimera puts `AGENTS.md` (or `CLAUDE.md` where there is no `AGENTS.md`) and
+`AGENTS.local.md` into the system prompt, from the working directory up to
+the git root. You do not have to tell the agent to read them.
+
+- **Subdirectories.** A package deeper in the tree can have its own
+  instruction file. The first time the agent reads, edits or writes a file in
+  such a directory, the tool result carries that file (and those of the
+  directories between it and the working directory), once a session. The
+  system prompt does not change, so the provider's cache stays valid.
+- **Size limit.** An instruction file adds at most 32 KiB to the context. A
+  larger file is cut at a line boundary with a note for the model, and the
+  TUI tells you at start. Keep the file short and point to longer documents
+  the agent can read when it needs them.
+- **Skills.** The skill index takes at most 2% of the model's context
+  window. A library too large for that is listed by name per skills
+  directory, without descriptions; the agent can still open any skill.
+- **`/reload`** composes the system prompt again from disk for the session on
+  screen: instruction files, skills, mode and tool list as they are now.
+
 ## Task list
 
 For multi-step work the model maintains a task list via the `task_list` tool

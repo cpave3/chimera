@@ -13,8 +13,14 @@ Chimera ships with two built-ins:
 - **`build`** — the default. No tool allowlist (every registered tool is
   available); minimal prompt fragment. New sessions start in `build` unless
   you pass `--mode <name>` or set `defaultMode` in config.
-- **`plan`** — read-only exploration. `tools: [read, glob, grep, task_list]`;
-  the body steers the model toward building context, presenting a numbered
+- **`plan`** — read-only exploration and research. `tools: [read, glob,
+  grep, task_list, fetch, web_search, spawn_agent(explore), agent_status,
+  agent_stop]`: it can read the repository, look things up on the web, and
+  hand a wide search to the read-only `explore` agent, but it cannot edit a
+  file or run a command. It has no `bash`: the command classifier's `safe`
+  level includes commands that write files, so no bash limit would keep the
+  mode read-only.
+  The body steers the model toward building context, presenting a numbered
   markdown plan, surfacing assumptions, and ending with
   `Plan ready for review.` rather than mutating anything. When the user
   accepts the plan by switching out of plan mode, the next run carries a
@@ -49,7 +55,7 @@ Frontmatter fields:
 | ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `name`        | yes      | Must match the filename stem.                                                                              |
 | `description` | yes      | One-sentence description. Shown in `/mode` listings.                                                       |
-| `tools`       | no       | Tool-name allowlist. Omitted = all tools. `[]` = no tools (pure text). Listed = exactly those. Use the native tool names: `glob` also admits `find` and `ls`, and `edit` also admits `apply_patch`, for models whose profile registers those. |
+| `tools`       | no       | Tool-name allowlist. Omitted = all tools. `[]` = no tools (pure text). Listed = exactly those. Use the native tool names: `glob` also admits `find` and `ls`, and `edit` also admits `apply_patch`, for models whose profile registers those. An entry may carry a limit in parentheses; see [Tool limits](#tool-limits). |
 | `model`       | no       | `providerId/modelId` reference. A soft default; `userModelOverride` (CLI `-m`, `/model`) always wins.      |
 | `color`       | no       | `#rgb` or `#rrggbb` for the TUI status-bar widget. Absent = derived deterministically from `name`.         |
 | `cycle`       | no       | When `false`, excluded from `Shift+Tab` cycling. Default `true`. Mode remains selectable via `/mode`.   |
@@ -57,6 +63,20 @@ Frontmatter fields:
 The body (everything after the closing `---`) is appended verbatim to the
 system prompt under a `# Current mode: <name>` header whenever the mode is
 active.
+
+### Tool limits
+
+An entry of `tools` may limit its tool: `name(value, …)`. The tool is
+registered as usual and refuses a call outside the limit, with an error that
+names the mode.
+
+| Entry | Effect |
+| --- | --- |
+| `spawn_agent(explore)` | `spawn_agent` can start only the `explore` agent. A call must name it with `agent`, and may not pass `tools` or `system_prompt`, which would turn a read-only helper into a writing one. |
+| `spawn_agent(explore, reviewer)` | The same, for two agents. |
+
+`spawn_agent` is the only tool that takes a limit. A limit on any other tool
+gives a warning at start and is ignored; the tool stays in the allowlist.
 
 ## Discovery
 

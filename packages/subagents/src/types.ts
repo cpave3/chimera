@@ -127,6 +127,12 @@ export interface SpawnAgentToolContext {
    */
   agents?: AgentRegistry;
   /**
+   * The agents the active mode limits `spawn_agent` to, if it limits it
+   * (`spawn_agent(explore)` in a mode's tools list). Read at each call, since
+   * the mode can change during a session.
+   */
+  agentLimit?: () => { mode: string; agents: string[] } | undefined;
+  /**
    * The session's background children. When absent, the session cannot wait
    * for a child (a one-shot run), and a `background: true` call runs in the
    * foreground.

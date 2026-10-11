@@ -105,6 +105,27 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
       const { abortSignal } = opts;
       const aiSdkToolCallId = (opts as { toolCallId?: string }).toolCallId;
       const subagentId = newCallId();
+
+      // A mode that limits spawn_agent names the agents it may start. The
+      // agent's own tools and prompt are what make it safe for that mode, so
+      // the call may not replace them.
+      const limit = ctx.agentLimit?.();
+      if (limit) {
+        const allowed = limit.agents.map((name) => `agent: "${name}"`).join(' or ');
+        if (!validated.agent || !limit.agents.includes(validated.agent)) {
+          return errorResult({
+            subagentId,
+            message: `in ${limit.mode} mode spawn_agent can only be called with ${allowed}`,
+          });
+        }
+        if (validated.tools || validated.system_prompt) {
+          return errorResult({
+            subagentId,
+            message: `in ${limit.mode} mode spawn_agent cannot change the agent's tools or system prompt; call it with ${allowed} and no tools or system_prompt`,
+          });
+        }
+      }
+
       // The AI SDK calls `execute` in the same async tick that emits the
       // matching `tool-call` event onto `fullStream`. With one tool call a
       // single microtask yield was enough — but parallel calls (the SDK fires

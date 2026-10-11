@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildTiers, parseFrontmatter, parseToolsCsv } from '@chimera/core';
+import { buildTiers, parseFrontmatter } from '@chimera/core';
 import { colorFor, isValidHex } from './color';
 import type { LoadModesOptions, Mode, ModeCollision, ModeSource } from './types';
 
@@ -26,6 +26,50 @@ function builtinModesDir(): string | undefined {
     // ignore
   }
   return undefined;
+}
+
+const TOOL_ENTRY = /^([\w-]+)\s*(?:\(([^)]*)\))?$/;
+
+/**
+ * Parse a mode's tool list: names separated by commas, each with an
+ * optional limit, as in `read, spawn_agent(explore, review)`. A comma inside
+ * the parentheses belongs to the limit. Names are lowercased; a name given
+ * twice counts once.
+ */
+export function parseToolEntries(raw: string): {
+  tools: string[];
+  limits: Record<string, string[]>;
+} {
+  const entries: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const character of raw) {
+    if (character === '(') depth += 1;
+    if (character === ')') depth = Math.max(0, depth - 1);
+    if (character === ',' && depth === 0) {
+      entries.push(current);
+      current = '';
+    } else {
+      current += character;
+    }
+  }
+  entries.push(current);
+
+  const tools: string[] = [];
+  const limits: Record<string, string[]> = {};
+  for (const entry of entries) {
+    const match = TOOL_ENTRY.exec(unquote(entry.trim()));
+    if (!match) continue;
+    const name = match[1]!.toLowerCase();
+    if (!tools.includes(name)) tools.push(name);
+    if (match[2] !== undefined) {
+      limits[name] = match[2]
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value !== '');
+    }
+  }
+  return { tools, limits };
 }
 
 export function discover(opts: LoadModesOptions): DiscoverResult {
@@ -81,29 +125,17 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         else warn(`modes: ${filePath} — cycle: expected boolean, got "${cycleRaw}"`);
       }
 
-      // Validate inline tools array if present.
+      // `tools` is a list of names, each with an optional limit in parentheses.
       let toolsParsed: string[] | undefined;
+      let toolLimits: Record<string, string[]> | undefined;
       const toolsRaw = fm.tools;
       if (toolsRaw !== undefined) {
         const trimmed = toolsRaw.trim();
-        if (trimmed.length === 0) {
-          // Handle empty value followed by block-list form not supported in core parser.
-          // The subagent/skills block scalar `|` form works via parseFrontmatter,
-          // but the mode-specific indented-list form is handled here.
-          toolsParsed = parseToolsCsv(toolsRaw);
-        } else if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-          const inner = trimmed.slice(1, -1).trim();
-          if (inner.length === 0) {
-            toolsParsed = [];
-          } else {
-            toolsParsed = inner.split(',').map((item) => unquote(item.trim()));
-          }
-        } else if (/^\s*-\s*/.test(trimmed)) {
-          // Single-line `- item` not expected; treat as CSV.
-          toolsParsed = parseToolsCsv(toolsRaw);
-        } else {
-          toolsParsed = parseToolsCsv(toolsRaw);
-        }
+        const inner =
+          trimmed.startsWith('[') && trimmed.endsWith(']') ? trimmed.slice(1, -1) : trimmed;
+        const parsedTools = parseToolEntries(inner);
+        toolsParsed = parsedTools.tools;
+        if (Object.keys(parsedTools.limits).length > 0) toolLimits = parsedTools.limits;
       }
 
       const name = (fm.name ?? '').trim();
@@ -129,6 +161,7 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
         description,
         body: parsed.body,
         tools: toolsParsed,
+        toolLimits,
         model: fm.model,
         rawColor,
         colorHex,

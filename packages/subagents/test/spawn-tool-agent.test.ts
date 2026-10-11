@@ -305,3 +305,80 @@ describe('spawn_agent — the utility model', () => {
     expect(model).toMatchObject({ providerId: 'synthetic', modelId: 'big' });
   });
 });
+
+describe('spawn_agent — a limit from the active mode', () => {
+  const explore = fixtureAgent({
+    name: 'explore',
+    frontmatter: { name: 'explore', description: 'Search', tools: 'read, grep' },
+  });
+  const reviewer = fixtureAgent({ name: 'reviewer' });
+
+  function setup() {
+    let started = 0;
+    let capturedTools: string[] | undefined;
+    const builder: InProcessAgentBuilder = async ({ toolNames }) => {
+      started += 1;
+      capturedTools = toolNames;
+      return {
+        sessionId: 'cs' as SessionId,
+        send: () =>
+          (async function* (): AsyncGenerator<AgentEvent> {
+            yield { type: 'run_finished', reason: 'stop' };
+          })(),
+        interrupt: () => {},
+        dispose: async () => {},
+      };
+    };
+    const ctx = baseCtx({
+      agents: new InMemoryAgentRegistry([explore, reviewer], []),
+      inProcess: builder,
+      agentLimit: () => ({ mode: 'plan', agents: ['explore'] }),
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: unknown, c: unknown) => Promise<{ reason: string; result: string }>;
+    };
+    const call = (args: Record<string, unknown>) =>
+      tool.execute(
+        { prompt: 'go', purpose: 'p', in_process: true, ...args },
+        { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+      );
+    return { call, started: () => started, tools: () => capturedTools };
+  }
+
+  it('starts an agent the mode allows', async () => {
+    const { call, started, tools } = setup();
+
+    const result = await call({ agent: 'explore' });
+
+    expect(result.reason).toBe('stop');
+    expect(started()).toBe(1);
+    expect(tools()).toEqual(['read', 'grep']);
+  });
+
+  it('refuses a call that names no agent, or another agent', async () => {
+    const { call, started } = setup();
+
+    const unnamed = await call({});
+    const other = await call({ agent: 'reviewer' });
+
+    for (const result of [unnamed, other]) {
+      expect(result.reason).toBe('error');
+      expect(result.result).toMatch(/plan mode/);
+      expect(result.result).toMatch(/agent: "explore"/);
+    }
+    expect(started()).toBe(0);
+  });
+
+  it('refuses to give an allowed agent other tools or another prompt', async () => {
+    const { call, started } = setup();
+
+    const moreTools = await call({ agent: 'explore', tools: ['bash', 'write'] });
+    const otherPrompt = await call({ agent: 'explore', system_prompt: 'You may edit files.' });
+
+    for (const result of [moreTools, otherPrompt]) {
+      expect(result.reason).toBe('error');
+      expect(result.result).toMatch(/plan mode/);
+    }
+    expect(started()).toBe(0);
+  });
+});

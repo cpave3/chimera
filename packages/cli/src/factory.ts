@@ -97,6 +97,9 @@ import { McpClientManager } from './mcp/client';
 import { registerMcpTools } from './mcp/tools';
 import type { CliSandboxOptions } from './sandbox-config';
 
+/** Tools that honour a `name(limit)` entry in a mode's tools list. */
+const TOOLS_WITH_LIMITS = new Set(['spawn_agent']);
+
 /** The most of the context window the skills index may take. */
 const SKILL_INDEX_SHARE = 0.02;
 
@@ -289,6 +292,15 @@ export class CliAgentFactory implements AgentFactory {
     this.defaultVisionModel = opts.defaultVisionModel;
     this.fallbackModel = opts.fallbackModel;
     this.utilityModel = this.resolvableModel('utilityModel', opts.utilityModel);
+    for (const mode of this.modes?.all() ?? []) {
+      for (const tool of Object.keys(mode.toolLimits ?? {})) {
+        if (!TOOLS_WITH_LIMITS.has(tool)) {
+          this.warn(
+            `mode "${mode.name}" limits "${tool}", which takes no limit; the limit is ignored`,
+          );
+        }
+      }
+    }
     this.hostAuthentication = opts.hostAuthentication;
     this.diagnosticsConfig = opts.diagnostics;
     this.recallConfig = opts.recall;
@@ -750,6 +762,11 @@ export class CliAgentFactory implements AgentFactory {
         chimeraBinArgs: invocation.preArgs,
         parentHasTty: this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
         agents: this.agents,
+        agentLimit: () => {
+          const mode = this.modes?.find(agent.session.mode);
+          const agents = mode?.toolLimits?.spawn_agent;
+          return mode && agents ? { mode: mode.name, agents } : undefined;
+        },
         background,
         utilityModelRef: this.utilityModel,
         availableModels: advertisedModels,

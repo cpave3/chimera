@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InMemoryModeRegistry } from '@chimera/modes';
+import { InMemoryModeRegistry, loadModes } from '@chimera/modes';
 import { InMemorySkillRegistry } from '@chimera/skills';
 import { loadAgents } from '@chimera/subagents';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -458,6 +458,85 @@ describe('CliAgentFactory', () => {
     expect(again).toContain('## Tools');
     expect(again?.replace(/\n\n# [^\n]*AGENTS\.md\n\nNEW-PROJECT-RULE/, '')).toBe(first);
     expect(factory.composeSystemPromptFor('no-such-session')).toBeUndefined();
+  });
+
+  it('gives plan mode research tools, with spawn_agent held to explore', async () => {
+    const warnings: string[] = [];
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      agents: loadAgents({ cwd, userHome: cwd }),
+      modes: loadModes({ cwd, userHome: cwd, includeClaudeCompat: false }),
+      initialMode: 'plan',
+      webSearch: { provider: 'searxng', baseUrl: 'http://search.example:8181/' },
+      warn: (message) => warnings.push(message),
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const tools = (
+      agent as unknown as {
+        opts: {
+          tools: Record<
+            string,
+            {
+              execute: (
+                args: object,
+                options: object,
+              ) => Promise<{ reason: string; result: string }>;
+            }
+          >;
+        };
+      }
+    ).opts.tools;
+
+    expect(Object.keys(tools).sort()).toEqual(
+      [
+        'agent_status',
+        'agent_stop',
+        'fetch',
+        'glob',
+        'grep',
+        'read',
+        // The handoff tool is registered in every mode.
+        'request_user_input',
+        'spawn_agent',
+        'task_list',
+        'web_search',
+      ].sort(),
+    );
+    const refused = await tools.spawn_agent!.execute(
+      { prompt: 'edit the file', purpose: 'p' },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    expect(refused.reason).toBe('error');
+    expect(refused.result).toMatch(/plan mode.*agent: "explore"/);
+    expect(warnings).toEqual([]);
+  });
+
+  it('warns about a limit on a tool that takes none', async () => {
+    const modesDirectory = join(cwd, '.chimera', 'modes');
+    await mkdir(modesDirectory, { recursive: true });
+    await writeFile(
+      join(modesDirectory, 'careful.md'),
+      '---\nname: careful\ndescription: careful mode\ntools: [read, bash(safe)]\n---\nbody',
+    );
+    const warnings: string[] = [];
+
+    new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      modes: loadModes({ cwd, userHome: cwd, includeClaudeCompat: false }),
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(warnings).toEqual([
+      'mode "careful" limits "bash", which takes no limit; the limit is ignored',
+    ]);
   });
 
   it('says nothing of explore when no such agent exists', async () => {

@@ -24,10 +24,49 @@ describe('loadModes', () => {
     expect(registry.find('plan')?.source).toBe('builtin');
   });
 
-  it('plan builtin allows read-only exploration plus task_list', () => {
+  it('plan builtin reads and researches, with spawn_agent limited to explore, and has no bash', () => {
     const { home, cwd } = makeIsolatedHome();
     const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
-    expect(registry.find('plan')?.tools).toEqual(['read', 'glob', 'grep', 'task_list']);
+    const plan = registry.find('plan');
+
+    expect(plan?.tools).toEqual([
+      'read',
+      'glob',
+      'grep',
+      'task_list',
+      'fetch',
+      'web_search',
+      'spawn_agent',
+      'agent_status',
+      'agent_stop',
+    ]);
+    expect(plan?.toolLimits).toEqual({ spawn_agent: ['explore'] });
+    expect(plan?.tools).not.toContain('bash');
+  });
+
+  it.each([
+    ['a bracketed list', 'tools: [read, spawn_agent(explore, review), grep]'],
+    ['a plain list', 'tools: read, spawn_agent(explore, review), grep'],
+    ['a quoted entry', 'tools: [read, "spawn_agent(explore, review)", grep]'],
+  ])('reads a tool limit from %s', (_label, toolsLine) => {
+    const { home, cwd } = makeIsolatedHome();
+    const directory = join(cwd, '.chimera', 'modes');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, 'research.md'),
+      ['---', 'name: research', 'description: look things up', toolsLine, '---', 'body'].join('\n'),
+    );
+
+    const mode = loadModes({ cwd, userHome: home, includeClaudeCompat: false }).find('research');
+
+    expect(mode?.tools).toEqual(['read', 'spawn_agent', 'grep']);
+    expect(mode?.toolLimits).toEqual({ spawn_agent: ['explore', 'review'] });
+  });
+
+  it('has no limits for a mode that names none', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
+    expect(registry.find('build')?.toolLimits).toBeUndefined();
   });
 
   it('build builtin has no tools allowlist (= all tools)', () => {

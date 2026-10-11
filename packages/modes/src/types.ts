@@ -19,6 +19,12 @@ export interface Mode {
    * are available). `[]` means "no tools at all" (pure-text mode).
    */
   tools?: string[];
+  /**
+   * What a tool is limited to in this mode, from `name(value, …)` in the
+   * tools list: `spawn_agent(explore)` gives `{ spawn_agent: ['explore'] }`.
+   * The tool itself enforces its limit.
+   */
+  toolLimits?: Record<string, string[]>;
   /** Optional `providerId/modelId` reference. Soft default for the mode. */
   model?: string;
   /** Raw `color:` from frontmatter, if any. May or may not be a valid hex. */

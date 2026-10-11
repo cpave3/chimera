@@ -17,3 +17,10 @@ The role prompt SHALL NOT tell the model to look for or read `AGENTS.md` or `CLA
 #### Scenario: Prompt wording
 - **WHEN** the system prompt is composed
 - **THEN** the role section does not name `AGENTS.md`
+
+### Requirement: Prompt recomposition for a live session
+The CLI SHALL be able to compose the system prompt of a live session again from disk, with the same parts as at session start: the role prompt with the session's tool list, the instruction files, the skill index within its limit, and the active mode. `/reload` SHALL use this for the session on screen.
+
+#### Scenario: Reload after an edit
+- **WHEN** the user edits `AGENTS.md` and runs `/reload`
+- **THEN** the session's system prompt has the new content and still has the tool list

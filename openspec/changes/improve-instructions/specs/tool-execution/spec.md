@@ -35,8 +35,8 @@ A mode file MAY limit a tool by writing `name(value, …)` in its `tools` list. 
 - **THEN** the tool returns an error, and no child starts
 
 ### Requirement: Plan mode research tools
-The built-in plan mode SHALL register `fetch`, `web_search` and `spawn_agent` limited to `explore`, beside its read tools. It SHALL NOT register `bash`.
+The built-in plan mode SHALL register `fetch`, `web_search`, `spawn_agent` limited to `explore`, `agent_status` and `agent_stop`, beside its read tools. It SHALL NOT register `bash`.
 
 #### Scenario: Plan mode tools
 - **WHEN** a session is in the built-in plan mode with web search configured
-- **THEN** its tools are `read`, `glob`, `grep`, `task_list`, `fetch`, `web_search` and `spawn_agent`
+- **THEN** its tools are `read`, `glob`, `grep`, `task_list`, `fetch`, `web_search`, `spawn_agent`, `agent_status` and `agent_stop`, and the handoff tool that every mode has

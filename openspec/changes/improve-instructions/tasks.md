@@ -12,11 +12,11 @@
 
 ## 3. Plan mode
 
-- [ ] 3.1 Test and implement the `name(limit)` syntax in mode files
-- [ ] 3.2 Test and implement the agent limit in `spawn_agent`
-- [ ] 3.3 Update the built-in plan mode; wire the active mode's limit
+- [x] 3.1 Test and implement the `name(limit)` syntax in mode files
+- [x] 3.2 Test and implement the agent limit in `spawn_agent`
+- [x] 3.3 Update the built-in plan mode; wire the active mode's limit
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Update `README.md` and `docs/MODES.md`
-- [ ] 4.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+- [x] 4.1 Update `README.md` and `docs/MODES.md`
+- [x] 4.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
