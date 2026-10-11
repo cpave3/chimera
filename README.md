@@ -318,6 +318,16 @@ onto the session's event stream and the TUI prints an info line. All
 background processes for a session are killed when the server shuts down.
 Background commands always run on the host — `target: 'sandbox'` is refused.
 
+## Model profiles
+
+Chimera adapts its tool names, edit tool and system prompt to the model.
+GPT and Codex models edit with `apply_patch`; other models use the
+exact-string `edit` tool. Claude, GPT and Codex models get a lean prompt;
+any other model gets the same prompt plus a short section of explicit
+working rules. The tools section of the prompt is generated from the tools
+the session registers. Every default can be set per model under `models` in
+`~/.chimera/config.json` — see [model profiles](PROVIDERS.md#model-profiles).
+
 ## Post-edit diagnostics
 
 After every successful `edit`/`write`, Chimera can run fast project checks

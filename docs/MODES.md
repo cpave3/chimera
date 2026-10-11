@@ -49,7 +49,7 @@ Frontmatter fields:
 | ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `name`        | yes      | Must match the filename stem.                                                                              |
 | `description` | yes      | One-sentence description. Shown in `/mode` listings.                                                       |
-| `tools`       | no       | Tool-name allowlist. Omitted = all tools. `[]` = no tools (pure text). Listed = exactly those.             |
+| `tools`       | no       | Tool-name allowlist. Omitted = all tools. `[]` = no tools (pure text). Listed = exactly those. Use the native tool names: `glob` also admits `find` and `ls`, and `edit` also admits `apply_patch`, for models whose profile registers those. |
 | `model`       | no       | `providerId/modelId` reference. A soft default; `userModelOverride` (CLI `-m`, `/model`) always wins.      |
 | `color`       | no       | `#rgb` or `#rrggbb` for the TUI status-bar widget. Absent = derived deterministically from `name`.         |
 | `cycle`       | no       | When `false`, excluded from `Shift+Tab` cycling. Default `true`. Mode remains selectable via `/mode`.   |

@@ -85,10 +85,49 @@ default), add a `models` block keyed by `<providerId>/<modelId>`:
 Resolution order: config override → built-in table → `128000` fallback (with
 a one-shot stderr warning so unknown models are visible).
 
-`toolCallShape: "codex"` is an opt-in compatibility mode for Codex-style
-models. It exposes a Pi-like coding tool surface (`bash`, `read`, `edit`,
-`write`, `grep`, `find`, `ls`) while routing execution through Chimera's
-native tools. The default is Chimera's native tool surface.
+### Model profiles
+
+Each model resolves to a profile that decides what the model is given to
+work with. Three fields can be set per model; anything you leave out comes
+from the model's family.
+
+| Field | Values | Default |
+| --- | --- | --- |
+| `toolCallShape` | `chimera`, `codex` | `chimera` |
+| `editFormat` | `replace`, `patch` | `patch` for GPT and Codex model ids (`gpt-*`, `o<digit>*`, `codex*`), `replace` for every other model |
+| `promptStyle` | `lean`, `guided` | `lean` for Claude, GPT and Codex model ids, `guided` for every other model |
+
+```json
+{
+  "models": {
+    "local/qwen3-coder": { "promptStyle": "lean" },
+    "openrouter/some-vendor/some-model": { "editFormat": "patch" }
+  }
+}
+```
+
+- **`editFormat`** picks the edit tool. `replace` registers `edit`
+  (exact-string replacement). `patch` registers `apply_patch` instead, which
+  takes the Codex patch envelope and can add, update, delete and move several
+  files in one call. A patch applies as a whole or not at all.
+- **`promptStyle: "guided"`** appends a short working-method section to the
+  system prompt: use the dedicated tools, read before editing, check each
+  result, keep a task list, never repeat a failed call unchanged. Models that
+  follow such rules unprompted do better with `lean`.
+- **`toolCallShape: "codex"`** renames the tools for models that expect
+  Codex-style names and arguments: `glob` becomes `find`, `ls` is added, and
+  `bash` and `grep` take Codex-style arguments. Every other tool is unchanged,
+  so a codex-shape session has the same capabilities as a native one.
+
+The tools section of the system prompt is generated from the tools the
+session registers, so it always matches the profile and the active mode.
+
+A `/model` change applies the new model's profile on the next run: the tool
+names, the edit tool and the prompt style follow the model. Tool calls
+already in the conversation keep their old names.
+
+The profile also carries an output budget (8% of the context window, between
+2,000 and 25,000 tokens) for the size of a single tool result.
 
 When Codex is reached through Manticore's OpenAI-compatible proxy, keep the
 provider as normal chat-completions and opt the model into the Codex tool
