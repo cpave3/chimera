@@ -315,6 +315,17 @@ chimera sessions rm <id>   # delete a session (rejected if the session has child
 | output_limit   | 2    |
 | interrupted    | 130  |
 
+With `--goal` the code also says how the goal ended:
+
+| Goal                                   | Code |
+| -------------------------------------- | ---- |
+| met                                    | 0    |
+| the check failed                       | 1    |
+| not met at the continuation limit      | 2    |
+| not possible                           | 3    |
+
+See [Goals](#goals).
+
 ## Provider errors, retries, and the response timeout
 
 A model step can fail for reasons that have nothing to do with the task. The
@@ -547,6 +558,51 @@ markdown list, and when you accept it (switch out of plan mode), a one-shot
 system note on the next run tells it to record the plan via `task_list` and
 execute against it.
 
+## Goals
+
+A goal is a completion condition that you state once. Chimera checks it each
+time the agent stops, and the agent continues until the goal is met.
+
+```
+/goal pnpm test passes in packages/api and the changelog has an entry
+/goal            # show the goal
+/goal clear      # remove the goal
+```
+
+```
+chimera run --goal "pnpm test passes in packages/api" "fix the failing tests"
+```
+
+- **The check.** When a run stops cleanly and the session has a goal, the
+  `utilityModel` (the session model when none is set) reads the goal, the
+  agent's last message, the task list and the last 15 tool calls with their
+  results. It needs evidence from tool results. The agent's statement that
+  the work is done is not evidence.
+- **Three answers.** `met` ends the run and removes the goal. `not_met` gives
+  the agent the reason, and the run continues. `impossible` ends the run and
+  removes the goal.
+- **Stop hooks first.** Your `Stop` hooks run before the check. When a hook
+  blocks the stop, the run continues and the check waits for the next stop.
+- **The limit.** One run continues at most `goal.maxContinuations` times
+  (default 20). At the limit the run ends with the reason `max_steps`. The
+  goal stays set, and your next message starts a new count.
+- **A check that fails.** If the checker model fails, is late (60 seconds) or
+  gives no readable answer, the run ends and the goal stays set.
+- **On screen.** The context panel has a `GOAL` section (the footer in the
+  inline layout). Each check adds one line to the transcript, for example
+  `goal not met (1 of 20): the tests were not run`.
+- **Subagents** have no goal check.
+
+```json
+{ "goal": { "maxContinuations": 20 } }
+```
+
+Clients get a `goal_updated` event for each change:
+`{ condition, change, reason?, continuation?, maxContinuations? }`, where
+`change` is `set`, `cleared`, `met`, `not_met`, `impossible`, `limit` or
+`unchecked`. `PUT /v1/sessions/:id/goal` with `{ "condition": "<text>" }` or
+`{ "condition": null }` sets or clears the goal.
+
 ## Web access
 
 Two tools give the agent eyes outside the working tree:
@@ -697,6 +753,7 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
   commands run in the OS sandbox, a Docker mode, or `off`), and what was
   loaded; context use as a bar split into system prompt, skills index and
   history (the split is an estimate; the total is the provider's count); the
+  goal, when one is set (see [Goals](#goals)); the
   plan (the model's task list); the working tree (branch, commits ahead and
   behind, changed files with lines added and removed); other live Chimera
   instances on this machine with their mode and state; and the session's

@@ -21,3 +21,10 @@ While a goal is set, the fullscreen layout SHALL show it in the context panel an
 #### Scenario: Not met
 - **WHEN** a `goal_updated` event with the change `not_met` arrives
 - **THEN** the transcript gains one line with the reason and the continuation count, and no user message
+
+### Requirement: Notices wrap between words
+A notice or an error line of the transcript that is longer than the pane SHALL break between words. A word longer than a line SHALL be cut.
+
+#### Scenario: Long reason
+- **WHEN** a goal result has a reason of three lines
+- **THEN** each line ends at the end of a word
