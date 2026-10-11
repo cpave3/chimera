@@ -8,6 +8,7 @@ import {
   readFile,
   realpath,
   rename,
+  rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
@@ -218,6 +219,11 @@ export class LocalExecutor implements Executor {
       await chmod(tmp, priorMode);
     }
     await rename(tmp, abs);
+  }
+
+  async removeFile(path: string): Promise<void> {
+    const abs = await this.resolveSafe(path);
+    await rm(abs);
   }
 
   async stat(path: string): Promise<StatResult | null> {

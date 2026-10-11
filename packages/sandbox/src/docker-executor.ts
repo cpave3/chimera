@@ -348,6 +348,23 @@ export class DockerExecutor implements Executor {
     }
   }
 
+  async removeFile(path: string): Promise<void> {
+    this.assertStarted();
+    const containerPath = this.toContainerPath(path);
+    const removeResult = await this.runner.run([
+      ...this.execPrefix(),
+      this.containerName,
+      'rm',
+      '--',
+      containerPath,
+    ]);
+    if (removeResult.exitCode !== 0) {
+      throw new Error(
+        `removeFile(${path}) failed: ${removeResult.stderr.trim() || `exit ${removeResult.exitCode}`}`,
+      );
+    }
+  }
+
   async readdir(path: string): Promise<DirEntry[]> {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);

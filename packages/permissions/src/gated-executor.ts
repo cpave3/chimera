@@ -46,6 +46,10 @@ export class GatedExecutor implements Executor {
     return this.inner.writeFile(path, content);
   }
 
+  removeFile(path: string): Promise<void> {
+    return this.inner.removeFile(path);
+  }
+
   stat(path: string): Promise<StatResult | null> {
     return this.inner.stat(path);
   }

@@ -12,6 +12,7 @@ function stubExecutor(result: ExecResult): Executor {
     readFile: async () => '',
     readFileBytes: async () => new Uint8Array(),
     writeFile: async () => {},
+    removeFile: async () => {},
     stat: async () => null,
     cwd: () => '/tmp',
     target: () => 'host',

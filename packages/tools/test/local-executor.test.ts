@@ -46,6 +46,25 @@ describe('LocalExecutor', () => {
     await expect(exec.writeFile('../outside.txt', 'x')).rejects.toBeInstanceOf(PathEscapeError);
   });
 
+  it('removeFile deletes a file under the working directory', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    await exec.writeFile('gone.txt', 'bye');
+    await exec.removeFile('gone.txt');
+    expect(await exec.stat('gone.txt')).toBeNull();
+  });
+
+  it('removeFile rejects a path outside the allowed write directories', async () => {
+    const exec = new LocalExecutor({ cwd: root });
+    const outside = join(root, '..', `chimera-outside-${process.pid}.txt`);
+    await writeFile(outside, 'keep me');
+    try {
+      await expect(exec.removeFile(outside)).rejects.toBeInstanceOf(PathEscapeError);
+      expect(await readFile(outside, 'utf8')).toBe('keep me');
+    } finally {
+      await rm(outside, { force: true });
+    }
+  });
+
   it('stat returns null for missing files', async () => {
     const exec = new LocalExecutor({ cwd: root });
     expect(await exec.stat('missing.txt')).toBeNull();

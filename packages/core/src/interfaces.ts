@@ -42,6 +42,8 @@ export interface Executor {
   readFile(path: string): Promise<string>;
   readFileBytes(path: string): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
+  /** Remove a file, under the same path rules as `writeFile`. */
+  removeFile(path: string): Promise<void>;
   stat(path: string): Promise<StatResult | null>;
   readdir(path: string): Promise<DirEntry[]>;
   cwd(): string;
