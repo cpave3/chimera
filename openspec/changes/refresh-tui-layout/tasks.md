@@ -35,9 +35,9 @@
 
 ## 7. Approval list
 
-- [ ] 7.1 Test and implement the list with arrow, digit and letter keys
+- [x] 7.1 Test and implement the list with arrow, digit and letter keys
 
 ## 8. Wrap-up
 
-- [ ] 8.1 Update `README.md` and the theme example
-- [ ] 8.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+- [x] 8.1 Update `README.md` and the theme example
+- [x] 8.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`

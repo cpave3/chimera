@@ -417,8 +417,9 @@ long sessions inside budget (full details in `docs/COMPACTION.md`):
 
 For multi-step work the model maintains a task list via the `task_list` tool
 (replace-whole-list semantics, statuses `pending` / `in_progress` /
-`completed`). The status bar shows live progress —
-`[tasks 2/5: implement feature]` — and the list is persisted in session
+`completed`). During a run the task panel above the prompt shows the task in
+progress and what follows; the status row keeps the count (`tasks 2/5`). The
+list is persisted in session
 metadata, so it survives resume, forks, and context compaction. The model
 sees the list through its latest `task_list` call; when compaction summarizes
 that call away, the summary ends with a `<tasks>` block that restates every
@@ -478,22 +479,54 @@ chimera --max-subagent-depth 5
 chimera --no-subagents
 ```
 
-## Tool scrollback formatting
-
-Tools render in the scrollback as concise summaries instead of raw JSON args:
+## The TUI screen
 
 ```
-[host] read: src/foo.ts:12-40 (87 lines)
-[host] edit: src/foo.ts (3 replacements)
-[host] bash: pnpm build (exit 0)
-[host] write: next.config.ts (created, 412 bytes)
+› add retry logic to the provider client
+
+  I will add backoff to the stream call. Then I will add a test.
+
+• explored: read 4 files · 2 searches
+  src/agent.ts, src/events.ts, test/agent.test.ts, src/usage.ts, retry, backoff
+• edit: packages/core/src/agent.ts (1 replacement)
+• bash: pnpm --filter @chimera/core test (exit 0)
+
+tasks 2/4
+◼ Add a test for mid-stream errors
+◻ Update README
+
+⠹ running pnpm --filter @chimera/core test · 12s · 3.1k tokens · esc to interrupt
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ > _                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+build · anthropic/claude-opus-4-7 · ctx 42% · cache 81%          tasks 2/4 · ? help
 ```
+
+- **Transcript.** A user message starts with `›`. A tool call starts with a
+  bullet coloured by its state (running, done, failed) and shows a one-line
+  summary instead of raw JSON args; when a sandbox is active the line also
+  says `[host]` or `[sandbox]`. Consecutive successful `read`, `glob`, `find`,
+  `ls` and `grep` calls collapse into one `explored:` line. Fenced code blocks
+  with a known language are syntax-highlighted.
+- **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
+  else `less`): every tool call on its own line, with its full output.
+- **Activity line.** While a run is active, one line says what the agent is
+  doing (thinking, writing, running a tool, waiting for approval, compacting,
+  retrying a provider error), for how long, and how many tokens it has
+  produced.
+- **Task panel.** During a run the task list shows above the prompt, from the
+  task in progress onward, at most six lines.
+- **Status row.** Mode, model, context use, cached share of the last prompt,
+  the sandbox mode when one is active, and the task count.
+- **Help.** `?` at an empty prompt lists the key bindings.
+- **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
+  digit, or the letter shown next to each choice. `Esc` denies.
 
 Each built-in tool ships with a `formatScrollback` hook in its definition
 that produces an args-only summary at call start and a result-aware summary
 once the tool returns. Plugin tools authored via `defineTool` from
 `@chimera/tools` opt in by passing `formatScrollback`; tools without one
-fall back to the original `<name> <truncated-JSON>` rendering.
+fall back to a `<name> <truncated-JSON>` rendering.
 
 ## Multi-line prompt composition
 
@@ -522,19 +555,20 @@ to recall input history.
 
 ## Token usage
 
-The TUI's status bar shows live token usage and the percentage of the model's
-context window consumed by the latest step. The number comes from the AI SDK's
-`usage` payload — no estimation, no extra calls. Cumulative totals persist
-with the session, so resuming an old session shows the same running counter
-on the next prompt.
+The status row shows how full the model's context window is after the latest
+step, as `ctx N%`, and the share of the last prompt the provider served from
+its cache, as `cache N%`. The numbers come from the AI SDK's `usage` payload —
+no estimation, no extra calls. `/context` has the absolute counts and a
+per-category breakdown. Cumulative totals persist with the session, so
+resuming an old session shows the same figures on the next prompt.
 
 Color escalates as the prompt fills the window: gray under 80%, amber from
 80–95%, red at 95% or above. The window itself is resolved from a built-in
 table for known Claude / GPT / o-series models. To override (or add a model
 we don't know about yet), set a `models` block in `~/.chimera/config.json` —
 see `PROVIDERS.md`. When the model isn't in the table and you haven't set
-an override, the window falls back to 128k and the widget shows a `?` next
-to the size to flag the value as approximate.
+an override, the window falls back to 128k and the widget shows a `?` after
+the percentage to flag the value as approximate.
 
 ## What's not here (yet)
 

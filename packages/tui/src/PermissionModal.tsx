@@ -20,9 +20,66 @@ type ModalMode =
   | { kind: 'pattern'; text: string }
   | { kind: 'scope'; pattern: string };
 
+interface Choice {
+  /** The letter key of the earlier prompt; still works. */
+  key: string;
+  label: string;
+  tone: 'allow' | 'deny';
+  run: () => void;
+}
+
 export function PermissionModal(props: PermissionModalProps): React.ReactElement {
   const [mode, setMode] = useState<ModalMode>({ kind: 'choose' });
+  const [selected, setSelected] = useState(0);
   const mandatory = Boolean(props.policyAnalysis);
+  const grantProposal = props.policyAnalysis?.grantProposal;
+
+  const choices: Choice[] = [
+    {
+      key: 'a',
+      label: 'Allow once',
+      tone: 'allow',
+      run: () => props.onResolve({ decision: 'allow' }),
+    },
+    ...(mandatory && grantProposal
+      ? [
+          {
+            key: 'g',
+            label: `Allow + session ${grantProposal.kind} ${grantProposal.path}`,
+            tone: 'allow' as const,
+            run: () => props.onResolve({ decision: 'allow_with_grant', grant: grantProposal }),
+          },
+        ]
+      : []),
+    ...(mandatory
+      ? []
+      : [
+          {
+            key: 'A',
+            label: 'Allow & remember…',
+            tone: 'allow' as const,
+            run: () => setMode({ kind: 'scope', pattern: props.command }),
+          },
+          {
+            key: 'g',
+            label: 'Allow pattern…',
+            tone: 'allow' as const,
+            run: () => setMode({ kind: 'pattern', text: props.command }),
+          },
+        ]),
+    {
+      key: 'd',
+      label: 'Deny once',
+      tone: 'deny',
+      run: () => props.onResolve({ decision: 'deny' }),
+    },
+    {
+      key: 'f',
+      label: 'Deny with feedback…',
+      tone: 'deny',
+      run: () => setMode({ kind: 'feedback', text: '' }),
+    },
+  ];
 
   useInput((input, key) => {
     if (mode.kind === 'feedback') {
@@ -61,15 +118,18 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       }
       return;
     }
-    if (input === 'a') props.onResolve({ decision: 'allow' });
-    else if (input === 'd') props.onResolve({ decision: 'deny' });
-    else if (input === 'f') setMode({ kind: 'feedback', text: '' });
-    else if (mandatory && input === 'g' && props.policyAnalysis?.grantProposal) {
-      props.onResolve({ decision: 'allow_with_grant', grant: props.policyAnalysis.grantProposal });
-    } else if (!mandatory && input === 'A') {
-      setMode({ kind: 'scope', pattern: props.command });
-    } else if (!mandatory && input === 'g') {
-      setMode({ kind: 'pattern', text: props.command });
+    if (key.upArrow) {
+      setSelected((index) => (index + choices.length - 1) % choices.length);
+    } else if (key.downArrow) {
+      setSelected((index) => (index + 1) % choices.length);
+    } else if (key.return) {
+      choices[selected]?.run();
+    } else if (key.escape) {
+      props.onResolve({ decision: 'deny' });
+    } else if (/^[1-9]$/.test(input)) {
+      choices[Number(input) - 1]?.run();
+    } else {
+      choices.find((choice) => choice.key === input)?.run();
     }
   });
 
@@ -144,22 +204,18 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       ))}
       {mandatory && <Text color={muted}>Approval is not filesystem confinement.</Text>}
       <Box marginTop={1} flexDirection="column">
-        <Text>
-          <Text color={success}>[a]</Text> Allow once <Text color={danger}>[d]</Text> Deny once{' '}
-          <Text color={danger}>[f]</Text> Deny with feedback
-        </Text>
-        {mandatory && props.policyAnalysis?.grantProposal ? (
-          <Text>
-            <Text color={success}>[g]</Text> Allow + session{' '}
-            {props.policyAnalysis.grantProposal.kind} {props.policyAnalysis.grantProposal.path}
-          </Text>
-        ) : null}
-        {!mandatory && (
-          <Text>
-            <Text color={success}>[A]</Text> Allow &amp; remember <Text color={success}>[g]</Text>{' '}
-            Allow pattern...
-          </Text>
-        )}
+        {choices.map((choice, index) => {
+          const active = index === selected;
+          return (
+            <Text key={choice.key} bold={active}>
+              <Text color={badge}>{active ? '› ' : '  '}</Text>
+              <Text color={choice.tone === 'allow' ? success : danger}>{`${index + 1}. `}</Text>
+              {choice.label}
+              <Text color={muted}>{` (${choice.key})`}</Text>
+            </Text>
+          );
+        })}
+        <Text color={muted}>↑/↓ select · enter confirm · esc deny</Text>
       </Box>
     </Box>
   );
