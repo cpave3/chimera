@@ -25,8 +25,8 @@
 
 ## 5. Task panel and live-region budget
 
-- [ ] 5.1 Test and implement the task panel
-- [ ] 5.2 Test and implement the live-region cap
+- [x] 5.1 Test and implement the task panel
+- [x] 5.2 Test and implement the live-region cap
 
 ## 6. Code colors
 

@@ -89,3 +89,29 @@ describe('activity line', () => {
     expect(resumed).not.toContain('retry 2/4 ·');
   });
 });
+
+describe('task panel during a run', () => {
+  const tasks: AgentEvent = {
+    type: 'task_list_updated',
+    tasks: [
+      { content: 'write failing test', status: 'completed' },
+      { content: 'implement feature', status: 'in_progress' },
+      { content: 'refactor', status: 'pending' },
+    ],
+  };
+
+  it('lists the task in progress and what follows while the run is active', async () => {
+    const frame = await frameAfter([tasks, bashStart]);
+
+    expect(frame).toContain('◼ implement feature');
+    expect(frame).toContain('◻ refactor');
+    expect(frame).not.toContain('write failing test');
+  });
+
+  it('leaves only the count in the status row once the run has ended', async () => {
+    const frame = await frameAfter([tasks, bashStart, { type: 'run_finished', reason: 'stop' }]);
+
+    expect(frame).not.toContain('◼ implement feature');
+    expect(frame).toContain('tasks 1/3');
+  });
+});

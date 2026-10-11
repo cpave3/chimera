@@ -28,6 +28,7 @@ import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './inp
 import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import { PasteRegistry } from './input/paste';
 import { handleKey } from './key-handler';
+import { planLiveRegion } from './live-region';
 import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
 import {
@@ -48,6 +49,7 @@ import {
 } from './session-events';
 import { BUILTIN_COMMANDS, isBuiltin, OVERLAY_COMMANDS } from './slash-commands';
 import { dispatchSlash } from './slash-dispatch';
+import { TaskPanel } from './TaskPanel';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
 import { clampInFlightChildren, renderEntryLines } from './transcript';
 import { formatTranscript } from './transcript-text';
@@ -208,6 +210,7 @@ export function App(props: AppProps): React.ReactElement {
   /** Vision model the in-flight turn is routed to; null when not routed. */
   const [visionRouteRef, setVisionRouteRef] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
+  const [rows, setRows] = useState<number>(stdout?.rows ?? 24);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [retry, setRetry] = useState<{ attempt: number; maxAttempts: number } | null>(null);
@@ -256,6 +259,7 @@ export function App(props: AppProps): React.ReactElement {
     if (!stdout) return;
     const onResize = () => {
       setColumns(stdout.columns ?? 80);
+      setRows(stdout.rows ?? 24);
       // Clear the terminal (screen + scrollback) and home the cursor, then
       // bump the Static epoch so Ink re-emits the historical entries at the
       // new width. Without this, full-width content from previous renders
@@ -948,6 +952,20 @@ export function App(props: AppProps): React.ReactElement {
     return null;
   }, [inFlightEntries]);
 
+  const liveRegion = planLiveRegion({
+    rows,
+    promptLines: buffer.text.split('\n').length,
+    taskCount: tasks.length,
+    queuedCount: queue.length,
+    helpOpen,
+    modalOpen:
+      pending !== null ||
+      sudoAuthentication !== null ||
+      overlayPicker !== null ||
+      sessionPicker !== null ||
+      rewindPicker !== null,
+  });
+
   const staticItems = useMemo<StaticItem[]>(() => {
     const entryItems: StaticItem[] = committedEntries.map((e) => ({
       kind: 'entry',
@@ -1015,6 +1033,11 @@ export function App(props: AppProps): React.ReactElement {
             )}
           </Box>
         ))}
+        {running && liveRegion.taskLines > 0 && (
+          <Box marginTop={1}>
+            <TaskPanel tasks={tasks} maxLines={liveRegion.taskLines - 1} />
+          </Box>
+        )}
         {(running || compacting) && (
           <ActivityLine
             spinner={SPINNER_FRAMES[spinnerFrame]!}
