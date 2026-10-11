@@ -3,7 +3,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import type { ScrollbackEntry, ToolEntry } from '../src/scrollback';
 import { defaultTheme } from '../src/theme/tokens';
-import { entryGap, renderEntryLines } from '../src/transcript';
+import { entryGap, renderEntryLines, wrapWords } from '../src/transcript';
 
 function line(entry: ScrollbackEntry): string {
   const { lastFrame, unmount } = render(
@@ -101,5 +101,45 @@ describe('entryGap', () => {
     expect(entryGap(user, tool)).toBe(1);
     expect(entryGap(tool, assistant)).toBe(1);
     expect(entryGap(undefined, user)).toBe(1);
+  });
+});
+
+describe('wrapWords', () => {
+  it('breaks a long line between words', () => {
+    expect(wrapWords('add a flag to the list command', 16, 2)).toEqual([
+      'add a flag to',
+      'the list command',
+    ]);
+  });
+
+  it('breaks a word that is longer than a line', () => {
+    expect(wrapWords('see packages/tui/src/transcript.tsx now', 12, 0)).toEqual([
+      'see',
+      'packages/tui',
+      '/src/transcr',
+      'ipt.tsx now',
+    ]);
+  });
+
+  it('keeps the line breaks and the indentation the user typed', () => {
+    expect(wrapWords('one\n\n  two three', 20, 2)).toEqual(['one', '', '  two three']);
+  });
+});
+
+describe('a user message', () => {
+  it('wraps between words, under its marker', () => {
+    const { lastFrame, unmount } = render(
+      <Box flexDirection="column">
+        {renderEntryLines(
+          { id: 'u1', kind: 'user', text: 'add a flag to the list command' },
+          18,
+          defaultTheme,
+        )}
+      </Box>,
+    );
+    const rows = (lastFrame() ?? '').split('\n');
+    unmount();
+
+    expect(rows).toEqual(['› add a flag to', '  the list command']);
   });
 });

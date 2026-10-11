@@ -37,6 +37,31 @@ export function wrapToLines(text: string, width: number, firstOffset: number): s
 }
 
 /**
+ * Wrap prose into one string per visual line, breaking between words. A
+ * word longer than a line is cut. Line breaks and leading spaces in `text`
+ * are kept. The first line is `firstOffset` columns shorter, for a marker.
+ */
+export function wrapWords(text: string, width: number, firstOffset: number): string[] {
+  const available = Math.max(1, width);
+  const lines: string[] = [];
+  let budget = Math.max(1, available - firstOffset);
+  for (const paragraph of text.split('\n')) {
+    let rest = paragraph;
+    while (rest.length > budget) {
+      const space = rest.lastIndexOf(' ', budget);
+      // A break inside the leading indentation would leave an empty line.
+      const breakAt = space > rest.search(/\S/) ? space : budget;
+      lines.push(rest.slice(0, breakAt).trimEnd());
+      rest = rest.slice(breakAt).replace(/^ /, '');
+      budget = available;
+    }
+    lines.push(rest);
+    budget = available;
+  }
+  return lines;
+}
+
+/**
  * Cap of nested subagent child rows rendered while the parent spawn_agent
  * tool entry is still in flight. The whole group lives in Ink's dynamic
  * region until the parent's tool_call_result lands, and a chatty subagent
@@ -140,7 +165,8 @@ export function renderEntryLines(
         ? Array.from({ length: entry.imageCount }, (_, i) => `[Image #${i + 1}]`).join(' ')
         : '';
     const displayText = imageLabels ? `${entry.text} ${imageLabels}` : entry.text;
-    const lines = wrapToLines(displayText, width, USER_MARKER.length);
+    // Continuation lines sit under the text, so every line has the marker's width less.
+    const lines = wrapWords(displayText, width - USER_MARKER.length, 0);
     return [
       <Box key={`${entry.id}:u`} flexDirection="column">
         <Text bold>
