@@ -64,6 +64,8 @@ export interface ModelConfig {
    */
   editFormat?: EditFormat;
   promptStyle?: PromptStyle;
+  /** Tokens one tool result may take in this model's context. */
+  outputBudgetTokens?: number;
   /**
    * Explicitly enable/disable parallel tool calls in the provider request.
    * When `true`, the factory forwards `{ parallelToolCalls: true }` under the

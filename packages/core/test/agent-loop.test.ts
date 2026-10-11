@@ -457,4 +457,32 @@ describe('Agent loop', () => {
       expect(finishReason(events)).toBe('stop');
     });
   });
+
+  describe('tool display', () => {
+    it('tells the user when a tool result was shortened and where the full text is', async () => {
+      const { model } = scriptedModel([toolCallStep('build'), textStep('done')]);
+      const agent = buildAgent({
+        languageModel: model,
+        tools: {
+          build: tool({
+            description: 'returns a result the output budget shortened',
+            inputSchema: z.object({}),
+            execute: async () => ({
+              stdout: 'head\n[… 900 lines omitted …]\ntail',
+              output_archived: [{ field: 'stdout', id: 'pr_0a1b2c3d', tokens: 12_000 }],
+            }),
+          }),
+        } as ToolSet,
+      });
+      agent.setToolFormatters({ build: () => ({ summary: 'make', detail: 'exit 0' }) });
+
+      const events = await collect(agent);
+
+      const result = events.find((event) => event.type === 'tool_call_result');
+      expect(result?.type === 'tool_call_result' ? result.display : undefined).toEqual({
+        summary: 'make',
+        detail: 'exit 0\noutput shortened (12k tokens); full text archived as pr_0a1b2c3d',
+      });
+    });
+  });
 });

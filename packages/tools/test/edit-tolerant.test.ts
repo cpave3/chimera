@@ -82,6 +82,23 @@ describe('edit with imperfect old_string', () => {
     expect(await fileText('list.txt')).toBe('one\nthree\n');
   });
 
+  it('says in the scrollback summary that whitespace was ignored', async () => {
+    await writeFile(join(root, 'a.ts'), '    const a = 1;\n');
+    const executor = new LocalExecutor({ cwd: root });
+    const built = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+    });
+    const args = { path: 'a.ts', old_string: 'const a = 1;  ', new_string: 'const a = 2;' };
+
+    const result = await (built.tools.edit as unknown as EditTool).execute(args, {});
+
+    expect(built.formatters.edit?.(args, result)).toEqual({
+      summary: 'a.ts (1 replacement, matched ignoring whitespace)',
+    });
+  });
+
   it('prefers the exact match and reports no level for it', async () => {
     await writeFile(join(root, 'a.ts'), 'const a = 1;\n');
 

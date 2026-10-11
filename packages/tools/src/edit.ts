@@ -81,7 +81,8 @@ export function buildEditTool(ctx: ToolContext) {
       const head = relPath(args.path, cwd);
       if (!result) return { summary: head };
       const noun = result.replacements === 1 ? 'replacement' : 'replacements';
-      return { summary: `${head} (${result.replacements} ${noun})` };
+      const tolerance = result.matched ? ', matched ignoring whitespace' : '';
+      return { summary: `${head} (${result.replacements} ${noun}${tolerance})` };
     },
   });
 }

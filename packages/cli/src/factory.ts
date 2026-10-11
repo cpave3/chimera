@@ -71,8 +71,12 @@ import {
   createWebSearchProvider,
   type DiagnosticsConfig,
   type FormatScrollback,
+  interceptTools,
   LocalExecutor,
+  outputBudget,
+  repeatNote,
   TaskListStore,
+  type ToolCallInterceptor,
   type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
@@ -384,6 +388,7 @@ export class CliAgentFactory implements AgentFactory {
         toolCallShape: initialProfile.toolCallShape,
         editFormat: initialProfile.editFormat,
         promptStyle: initialProfile.promptStyle,
+        outputBudgetTokens: initialProfile.outputBudgetTokens,
       },
     };
     if (session) session.model = init.model;
@@ -733,6 +738,16 @@ export class CliAgentFactory implements AgentFactory {
     }
     const surfaces = new Map<string, ToolSurface>();
     const formatters: Record<string, FormatScrollback<any, any>> = {};
+    // Every tool of every surface runs through the same interceptors, so
+    // their state (the repeat counter) follows the session, not the surface.
+    const toolInterceptors: ToolCallInterceptor[] = [
+      outputBudget({
+        budgetTokens: () =>
+          agent.session.model.outputBudgetTokens ?? initialProfile.outputBudgetTokens,
+        store: recallStore,
+      }),
+      repeatNote(),
+    ];
     const surfaceFor = (
       surfaceModel: Pick<ModelConfig, 'toolCallShape' | 'editFormat'>,
     ): ToolSurface => {
@@ -767,7 +782,7 @@ export class CliAgentFactory implements AgentFactory {
         surfaceTools = allowed;
       }
       const surface: ToolSurface = {
-        tools: surfaceTools,
+        tools: interceptTools(surfaceTools, toolInterceptors),
         snippets: { ...built.snippets, ...extraSnippets },
       };
       surfaces.set(key, surface);
@@ -857,6 +872,7 @@ export class CliAgentFactory implements AgentFactory {
         toolCallShape: profile.toolCallShape,
         editFormat: profile.editFormat,
         promptStyle: profile.promptStyle,
+        outputBudgetTokens: profile.outputBudgetTokens,
         ...generation.modelFields,
       };
       return { model: newModel, provider: newProvider, modelId: newModelId, newWindow, generation };

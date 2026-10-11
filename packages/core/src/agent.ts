@@ -1014,7 +1014,10 @@ export class Agent {
     const fmt = this.toolFormatters[name];
     if (!fmt) return undefined;
     try {
-      return fmt(args, result);
+      const display = fmt(args, result);
+      const shortened = describeShortenedOutput(result);
+      if (!shortened) return display;
+      return { ...display, detail: display.detail ? `${display.detail}\n${shortened}` : shortened };
     } catch {
       return undefined;
     }
@@ -2366,6 +2369,22 @@ export class Agent {
       error: errorMessage,
     });
   }
+}
+
+/**
+ * A line for the scrollback when the output budget shortened a tool result:
+ * the user sees less than the tool produced and should know where the rest is.
+ */
+function describeShortenedOutput(result: unknown): string | undefined {
+  const archived = (result as { output_archived?: unknown } | undefined)?.output_archived;
+  if (!Array.isArray(archived) || archived.length === 0) return undefined;
+  const entries = archived as Array<{ id?: string; tokens?: number }>;
+  const tokens = entries.reduce((sum, entry) => sum + (entry.tokens ?? 0), 0);
+  const ids = entries.flatMap((entry) => (entry.id ? [entry.id] : []));
+  const size = tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+  return ids.length > 0
+    ? `output shortened (${size} tokens); full text archived as ${ids.join(', ')}`
+    : `output shortened (${size} tokens)`;
 }
 
 const OUTPUT_CONTINUATION_NOTE =
