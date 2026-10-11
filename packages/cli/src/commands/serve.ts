@@ -183,6 +183,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     toolsAllowlist,
     models: config.models,
     defaultVisionModel: config.defaultVisionModel,
+    fallbackModel: config.fallbackModel,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,

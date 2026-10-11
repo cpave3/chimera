@@ -1,6 +1,6 @@
 import { ChimeraClient } from '@chimera/client';
 import { Compactor } from '@chimera/compaction';
-import type { ModelConfig, SandboxMode } from '@chimera/core';
+import type { ModelConfig, RunFinishedReason, SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import {
@@ -177,6 +177,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       },
       models: config.models,
       defaultVisionModel: config.defaultVisionModel,
+      fallbackModel: config.fallbackModel,
       compaction: compactionConfig,
       compactor,
       responseTimeoutMs: config.responseTimeoutMs,
@@ -254,13 +255,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     sessionId = sessionResult.sessionId;
 
     let finalText = '';
-    let exitReason:
-      | 'stop'
-      | 'error'
-      | 'max_steps'
-      | 'interrupted'
-      | 'timeout'
-      | 'waiting_for_input' = 'stop';
+    let exitReason: RunFinishedReason = 'stop';
     let errorMessage: string | undefined;
 
     const activeSessionId = sessionId;
@@ -326,7 +321,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 export interface FinalizeOverlayInput {
   sessionId: string;
   cwd: string;
-  exitReason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout' | 'waiting_for_input';
+  exitReason: RunFinishedReason;
   applyOnSuccess: boolean;
 }
 
@@ -342,11 +337,9 @@ export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void
   await discardOverlay(input.sessionId);
 }
 
-function exitCodeFor(
-  reason: 'stop' | 'error' | 'max_steps' | 'interrupted' | 'timeout' | 'waiting_for_input',
-): number {
+function exitCodeFor(reason: RunFinishedReason): number {
   if (reason === 'stop' || reason === 'waiting_for_input') return 0;
-  if (reason === 'max_steps') return 2;
+  if (reason === 'max_steps' || reason === 'output_limit') return 2;
   if (reason === 'interrupted') return 130;
   return 1;
 }

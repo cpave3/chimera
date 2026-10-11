@@ -77,6 +77,13 @@ export interface ChimeraConfig {
    * Must have verified image support or an explicit `vision: true` declaration.
    */
   defaultVisionModel?: string;
+  /**
+   * Model (`<providerId>/<modelId>`) a run moves to when its model stays
+   * unavailable after four retries (rate limits, overload, outages). The
+   * rest of that run uses the fallback; the next run starts on the session
+   * model again.
+   */
+  fallbackModel?: string;
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
   commandPolicy?: {
@@ -112,8 +119,9 @@ export interface ChimeraConfig {
   /** Ordered list cycled by Shift+Tab in the TUI. Defaults to ["build", "plan"]. */
   cycleModes?: string[];
   /**
-   * Per-step wall-clock timeout for LLM `streamText` calls (ms).
-   * A value of `0` disables the timeout. Defaults to 120000.
+   * Idle timeout for a model step (ms): how long the model may produce no
+   * stream output. Tool execution time does not count. A value of `0`
+   * disables the timeout. Defaults to 120000.
    */
   responseTimeoutMs?: number;
   /**

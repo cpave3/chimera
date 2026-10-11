@@ -1,14 +1,15 @@
-import type { AgentEvent, CallId, ModelConfig, SandboxMode, SessionId } from '@chimera/core';
+import type {
+  AgentEvent,
+  CallId,
+  ModelConfig,
+  RunFinishedReason,
+  SandboxMode,
+  SessionId,
+} from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { AgentRegistry } from './agents/types';
 
-export type SubagentReason =
-  | 'stop'
-  | 'max_steps'
-  | 'error'
-  | 'timeout'
-  | 'interrupted'
-  | 'waiting_for_input';
+export type SubagentReason = RunFinishedReason;
 
 export interface SubagentSpawnOptions {
   prompt: string;

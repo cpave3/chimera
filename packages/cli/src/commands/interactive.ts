@@ -165,6 +165,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     },
     models: config.models,
     defaultVisionModel: config.defaultVisionModel,
+    fallbackModel: config.fallbackModel,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,

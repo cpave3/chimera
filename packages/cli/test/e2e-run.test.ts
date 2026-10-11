@@ -117,6 +117,49 @@ describe('chimera run E2E (stub provider)', () => {
     // The real assertion is that the run completed cleanly.
   });
 
+  it('exits 2 when the answer keeps hitting the output limit', { timeout: 20000 }, async () => {
+    const cutOffModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'an answer that never finishes' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'length', raw: 'length' },
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
+    const factory: AgentFactory = {
+      build: async (init) => ({
+        agent: new Agent({
+          cwd: init.cwd,
+          model: init.model,
+          languageModel: cutOffModel,
+          tools: {},
+          sandboxMode: init.sandboxMode,
+          home,
+          contextWindow: 200_000,
+        }),
+      }),
+    };
+
+    const result = await runOneShot({
+      prompt: 'write a very long answer',
+      cwd: workspace,
+      home,
+      factoryOverride: factory,
+      modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+    });
+
+    expect(result.exitCode).toBe(2);
+  });
+
   it('exits 0 when the agent requests user input', { timeout: 20000 }, async () => {
     let agent: Agent;
     const model = new MockLanguageModelV3({

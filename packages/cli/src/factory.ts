@@ -160,8 +160,9 @@ export interface CliAgentFactoryOptions {
    */
   compactor?: Compactor;
   /**
-   * Per-step wall-clock timeout for LLM `streamText` calls (ms).
-   * A value of `0` disables the timeout. Defaults to 120000.
+   * Idle timeout for a model step (ms): how long the model may produce no
+   * stream output. Tool execution time does not count. A value of `0`
+   * disables the timeout. Defaults to 120000.
    */
   responseTimeoutMs?: number;
   /** Post-edit diagnostics feedback config (auto-detection on by default). */
@@ -176,6 +177,11 @@ export interface CliAgentFactoryOptions {
    * surfaces (as an actionable error) when images actually appear.
    */
   defaultVisionModel?: string;
+  /**
+   * Model (`<providerId>/<modelId>`) a run moves to when its model stays
+   * unavailable after every retry.
+   */
+  fallbackModel?: string;
   /** Present only for the owner-local interactive TUI. */
   hostAuthentication?: HostAuthenticationCapability;
 }
@@ -211,6 +217,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly compactor: Compactor | undefined;
   private readonly responseTimeoutMs: number | undefined;
   private readonly defaultVisionModel: string | undefined;
+  private readonly fallbackModel: string | undefined;
   private readonly hostAuthentication: HostAuthenticationCapability | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
@@ -247,6 +254,7 @@ export class CliAgentFactory implements AgentFactory {
     this.compactor = opts.compactor;
     this.responseTimeoutMs = opts.responseTimeoutMs;
     this.defaultVisionModel = opts.defaultVisionModel;
+    this.fallbackModel = opts.fallbackModel;
     this.hostAuthentication = opts.hostAuthentication;
     this.diagnosticsConfig = opts.diagnostics;
     this.recallConfig = opts.recall;
@@ -874,42 +882,52 @@ export class CliAgentFactory implements AgentFactory {
           reason: `defaultVisionModel "${visionRef}" has no verified image support. Set "vision": true under "models" only if this endpoint accepts images.`,
         };
       }
-      try {
-        const { provider: visionProvider, modelId: visionModelId } =
-          this.registry.resolve(visionRef);
-        const visionProviderSpec = this.providersConfig.providers[visionProvider.id];
-        const visionProviderShape = visionProviderSpec?.shape ?? visionProvider.shape;
-        const visionWindow = resolveContextWindow({
-          providerShape: visionProviderShape,
-          providerId: visionProvider.id,
-          modelId: visionModelId,
-          override: this.modelsConfig[visionRef]?.contextWindow,
-          warn: this.warn,
-        });
-        const visionModelOpts = this.modelsConfig[visionRef];
-        const generation = this.resolveGeneration(visionRef);
-        return {
-          status: 'ok',
-          ref: visionRef,
-          model: {
-            providerId: visionProvider.id,
-            modelId: visionModelId,
-            maxSteps: agent.session.model.maxSteps,
-            ...this.resolveModelInput(visionRef, agent.session.modelInputOverrides?.[visionRef]),
-            toolCallShape: visionModelOpts?.toolCallShape,
-            ...generation.modelFields,
-          },
-          languageModel: visionProvider.getModel(visionModelId, agent.session.id),
-          contextWindow: visionWindow.value,
-          contextWindowIsApproximate: visionWindow.source === 'fallback',
-          providerOptions: generation.providerOptions,
-        };
-      } catch (err) {
-        return { status: 'unavailable', reason: (err as Error).message };
-      }
+      return this.resolveRunModel(agent, visionRef);
     });
 
+    const fallbackRef = this.fallbackModel;
+    if (fallbackRef) {
+      agent.setFallbackModelResolver(() => this.resolveRunModel(agent, fallbackRef));
+    }
+
     return { agent, gate, hookRunner };
+  }
+
+  /**
+   * Resolve a model that takes over for the rest of one run (vision route or
+   * fallback), with the session's step cap and that model's own settings.
+   */
+  private resolveRunModel(agent: Agent, ref: string): VisionModelResolution {
+    try {
+      const { provider, modelId } = this.registry.resolve(ref);
+      const providerSpec = this.providersConfig.providers[provider.id];
+      const window = resolveContextWindow({
+        providerShape: providerSpec?.shape ?? provider.shape,
+        providerId: provider.id,
+        modelId,
+        override: this.modelsConfig[ref]?.contextWindow,
+        warn: this.warn,
+      });
+      const generation = this.resolveGeneration(ref);
+      return {
+        status: 'ok',
+        ref,
+        model: {
+          providerId: provider.id,
+          modelId,
+          maxSteps: agent.session.model.maxSteps,
+          ...this.resolveModelInput(ref, agent.session.modelInputOverrides?.[ref]),
+          toolCallShape: this.modelsConfig[ref]?.toolCallShape,
+          ...generation.modelFields,
+        },
+        languageModel: provider.getModel(modelId, agent.session.id),
+        contextWindow: window.value,
+        contextWindowIsApproximate: window.source === 'fallback',
+        providerOptions: generation.providerOptions,
+      };
+    } catch (err) {
+      return { status: 'unavailable', reason: (err as Error).message };
+    }
   }
 
   private modelCapabilities = new Map<string, ModelCapabilities>();
