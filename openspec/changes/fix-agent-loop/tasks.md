@@ -34,4 +34,4 @@
 
 - [x] 6.1 Show `provider_retry` and `model_fallback` in the TUI scrollback
 - [x] 6.2 Update `README.md`, `docs/COMPACTION.md`, and `PROVIDERS.md`
-- [ ] 6.3 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+- [x] 6.3 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
