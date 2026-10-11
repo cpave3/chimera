@@ -1218,7 +1218,11 @@ describe('Agent', () => {
         ],
       },
     });
-    const p = agent.raisePermissionRequest(req);
+    // As the gate raises a request that the approval reviewer escalated.
+    const p = agent.raisePermissionRequest({
+      ...req,
+      reviewerReason: 'deletes a directory the user did not name',
+    });
     await agent.resolvePermission(req.requestId, 'allow');
     const res = await p;
     expect(res.decision).toBe('allow');
@@ -1228,6 +1232,7 @@ describe('Agent', () => {
     expect(requestEvent).toMatchObject({
       type: 'permission_request',
       policyAnalysis: { findings: [{ kind: 'risk', level: 'danger' }] },
+      reviewerReason: 'deletes a directory the user did not name',
     });
   });
 

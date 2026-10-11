@@ -64,6 +64,8 @@ export type AgentEvent =
       reason?: string;
       policyAnalysis?: CommandPolicyAnalysis;
       mcp?: PermissionRequest['mcp'];
+      /** Why the approval reviewer sent the request to the user. */
+      reviewerReason?: string;
     }
   | {
       type: 'permission_resolved';
@@ -72,6 +74,17 @@ export type AgentEvent =
       remembered: boolean;
     }
   | { type: 'permission_timeout'; requestId: string }
+  /** The approval reviewer examined a request before the user was asked. */
+  | {
+      type: 'approval_reviewed';
+      requestId: string;
+      /** The tool call that asked, when one did. */
+      callId?: CallId;
+      decision: 'allow' | 'escalate';
+      reason: string;
+      /** Set when this decision made the reviewer stop for the session. */
+      stopped?: 'consecutive' | 'total';
+    }
   /** The model put questions to the user; the tool call waits for `question_resolved`. */
   | { type: 'question_request'; requestId: string; questions: Question[] }
   | { type: 'question_resolved'; requestId: string; status: 'answered' | 'cancelled' }

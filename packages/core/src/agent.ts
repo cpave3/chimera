@@ -450,6 +450,7 @@ export class Agent {
         reason: req.reason,
         policyAnalysis: req.policyAnalysis,
         mcp: req.mcp,
+        ...(req.reviewerReason ? { reviewerReason: req.reviewerReason } : {}),
       });
     });
   }

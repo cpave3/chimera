@@ -60,6 +60,8 @@ export interface McpPermissionCall {
   tool: string;
   cwd: string;
   args: unknown;
+  /** The AI SDK's id of the tool call that asks. */
+  toolCallId?: string;
 }
 
 export interface McpPermissionPreview {
@@ -86,9 +88,13 @@ export interface PermissionRequest {
   osSandbox?: boolean;
   /**
    * The model asks to run the command outside the OS sandbox, with `reason`.
-   * Always decided by the user.
+   * Never admitted by an auto-approve level or an allow rule.
    */
   unsandboxed?: boolean;
+  /** The AI SDK's id of the tool call that asks, when a tool call does. */
+  toolCallId?: string;
+  /** Why the approval reviewer sent this request to the user. */
+  reviewerReason?: string;
 }
 
 export type PermissionDecisionAction =
@@ -105,6 +111,7 @@ export type PermissionDecisionSource =
   | 'hook'
   | 'headless'
   | 'policy'
+  | 'reviewer'
   | 'user';
 
 export interface PermissionResolution {
@@ -123,9 +130,12 @@ export interface PermissionResolution {
    * - `rule`     — matched a deny rule in the rule store.
    * - `hook`     — blocked by a `PermissionRequest` lifecycle hook.
    * - `headless` — server-side auto-deny when the parent has no TTY.
+   * - `reviewer` — the approval reviewer escalated and nobody could be asked.
    * - `user`     — interactively rejected at the prompt.
    */
   denialSource?: Exclude<PermissionDecisionSource, 'automatic'>;
+  /** The approval reviewer's reason, when its escalation is the denial. */
+  reviewerReason?: string;
 }
 
 export type HostAuthenticationResult =
