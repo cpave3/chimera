@@ -1,6 +1,13 @@
 import type { Session, ToolCallRecord } from '@chimera/core';
 import { describe, expect, it, vi } from 'vitest';
-import { Scrollback } from '../src/scrollback';
+import { Scrollback, type ScrollbackEntry } from '../src/scrollback';
+
+/** Every tool call in the transcript, including those folded into an exploration group. */
+function toolEntries(entries: ScrollbackEntry[]) {
+  return entries.flatMap((entry) =>
+    entry.kind === 'explore' ? entry.members : entry.kind === 'tool' ? [entry] : [],
+  );
+}
 
 function rehydrate(messages: unknown[], toolCalls: ToolCallRecord[] = []) {
   const scrollback = new Scrollback();
@@ -805,7 +812,7 @@ describe('Scrollback.rehydrateFromSession', () => {
         ],
       },
     ]);
-    const toolEntry = entries.find((entry) => entry.kind === 'tool');
+    const toolEntry = toolEntries(entries)[0];
     expect(toolEntry!.toolResult).toEqual({ content: 'file body' });
   });
 
@@ -915,7 +922,7 @@ describe('Scrollback.rehydrateFromSession', () => {
       ],
       toolCalls: [],
     } as Pick<Session, 'messages' | 'toolCalls'>);
-    const toolEntry = scrollback.all().find((entry) => entry.kind === 'tool');
+    const toolEntry = toolEntries(scrollback.all())[0];
     expect(toolEntry).toBeDefined();
     if (toolEntry?.kind !== 'tool') throw new Error('unreachable');
     expect(toolEntry.text).toBe('package.json (34 lines)');

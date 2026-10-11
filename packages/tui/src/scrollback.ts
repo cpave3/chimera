@@ -92,15 +92,65 @@ export interface ModeChangeEntry extends BaseEntry {
   modeTo: string;
 }
 
+/**
+ * A run of consecutive successful exploration calls (reads, searches,
+ * listings) shown as one line. `text` is the summary; `members` keeps every
+ * call for the transcript view.
+ */
+export interface ExploreEntry extends BaseEntry {
+  kind: 'explore';
+  members: ToolEntry[];
+  /** Set when the run ended while the group was still the last entry. */
+  closed?: boolean;
+}
+
 export type ScrollbackEntry =
   | UserEntry
   | AssistantEntry
   | ThinkingEntry
   | ToolEntry
+  | ExploreEntry
   | InfoEntry
   | ErrorEntry
   | SubagentEntry
   | ModeChangeEntry;
+
+const SEARCH_TOOLS = new Set(['grep']);
+const LISTING_TOOLS = new Set(['glob', 'find', 'ls']);
+const EXPLORATION_TOOLS = new Set(['read', ...SEARCH_TOOLS, ...LISTING_TOOLS]);
+
+function isExplorationInFlight(entry: ScrollbackEntry): boolean {
+  return (
+    entry.kind === 'tool' &&
+    EXPLORATION_TOOLS.has(entry.toolName) &&
+    entry.toolResult === undefined &&
+    entry.toolError === undefined
+  );
+}
+
+/** A finished call that only looked at things: the kind a group absorbs. */
+function isGroupableExploration(entry: ToolEntry): boolean {
+  if (!EXPLORATION_TOOLS.has(entry.toolName) || entry.toolError !== undefined) return false;
+  if (entry.toolResult === undefined || entry.skillName !== undefined) return false;
+  return (entry.toolResult as { kind?: unknown } | null)?.kind !== 'image';
+}
+
+function plural(count: number, noun: string, pluralNoun = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : pluralNoun}`;
+}
+
+function summarizeExploration(members: ToolEntry[]): string {
+  const reads = members.filter((member) => member.toolName === 'read').length;
+  const searches = members.filter((member) => SEARCH_TOOLS.has(member.toolName)).length;
+  const listings = members.filter((member) => LISTING_TOOLS.has(member.toolName)).length;
+  return [
+    reads > 0 ? `read ${plural(reads, 'file')}` : '',
+    searches > 0 ? plural(searches, 'search', 'searches') : '',
+    listings > 0 ? plural(listings, 'listing') : '',
+  ]
+    .filter((part) => part !== '')
+    .join(' · ');
+}
 
 export interface ScrollbackOptions {
   /**
@@ -248,6 +298,11 @@ export class Scrollback {
     if (entry.kind === 'tool') {
       return entry.toolResult !== undefined || entry.toolError !== undefined;
     }
+    // A group stays open, and uncommitted, while only exploration calls
+    // still in flight follow it: each of them joins the group as it returns.
+    if (entry.kind === 'explore') {
+      return entry.closed === true || !this.entries.slice(index + 1).every(isExplorationInFlight);
+    }
     // A trailing mode_change stays uncommitted so consecutive switches can
     // collapse into one row before it is baked into <Static>.
     if (entry.kind === 'mode_change') return index !== lastTopLevelIdx;
@@ -266,8 +321,63 @@ export class Scrollback {
     while (this.committedCount < this.entries.length) {
       const entry = this.entries[this.committedCount]!;
       if (!this.isFinalized(entry, this.committedCount, lastTopLevelIdx)) break;
+      // Committing is what closes a group: nothing can join it once printed.
+      if (entry.kind === 'explore') entry.closed = true;
       this.committedCount += 1;
     }
+  }
+
+  /**
+   * Fold a finished exploration call into the open group, or start a group
+   * with it. A call that something other than exploration already followed
+   * stays a plain tool line: its place in the transcript is taken.
+   */
+  private groupExploration(entry: ToolEntry): void {
+    const index = this.entries.indexOf(entry);
+    if (index < 0) return;
+    const following = this.entries.slice(index + 1);
+    let groupIndex = this.entries.length - 1;
+    while (
+      groupIndex >= 0 &&
+      (groupIndex === index || isExplorationInFlight(this.entries[groupIndex]!))
+    ) {
+      groupIndex -= 1;
+    }
+    const candidate = groupIndex >= 0 ? this.entries[groupIndex] : undefined;
+    if (candidate?.kind === 'explore' && !candidate.closed) {
+      candidate.members.push(entry);
+      candidate.text = summarizeExploration(candidate.members);
+      this.entries.splice(index, 1);
+      return;
+    }
+    if (!following.every(isExplorationInFlight)) return;
+    this.entries[index] = {
+      id: this.newId(),
+      kind: 'explore',
+      text: summarizeExploration([entry]),
+      members: [entry],
+    };
+  }
+
+  /** Take the last grouped call back out so it can carry its own annotations. */
+  private ungroupLast(toolName: string): ToolEntry | undefined {
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const candidate = this.entries[index]!;
+      if (candidate.kind === 'tool' && candidate.toolName === toolName) return candidate;
+      if (candidate.kind !== 'explore') continue;
+      const member = candidate.members.at(-1);
+      if (member?.toolName !== toolName) return undefined;
+      candidate.members.pop();
+      if (candidate.members.length === 0) {
+        this.entries.splice(index, 1, member);
+      } else {
+        candidate.text = summarizeExploration(candidate.members);
+        candidate.closed = true;
+        this.entries.splice(index + 1, 0, member);
+      }
+      return member;
+    }
+    return undefined;
   }
 
   /**
@@ -674,6 +784,7 @@ export class Scrollback {
             entry.displayName = ev.display.label ?? entry.displayName;
             entry.detail = ev.display.detail;
           }
+          if (isGroupableExploration(entry)) this.groupExploration(entry);
           dirty = true;
         }
         return;
@@ -689,14 +800,13 @@ export class Scrollback {
         return;
       }
       if (ev.type === 'skill_activated') {
-        for (let i = this.entries.length - 1; i >= 0; i -= 1) {
-          const candidate = this.entries[i]!;
-          if (candidate.kind === 'tool' && candidate.toolName === 'read') {
-            candidate.skillName = ev.skillName;
-            candidate.skillSource = ev.source;
-            dirty = true;
-            return;
-          }
+        // The read that loaded the skill has just been grouped with the reads
+        // around it; it gets its own line again so the skill note has a home.
+        const read = this.ungroupLast('read');
+        if (read) {
+          read.skillName = ev.skillName;
+          read.skillSource = ev.source;
+          dirty = true;
         }
         return;
       }
@@ -859,6 +969,7 @@ export class Scrollback {
           ) {
             entry.toolError = `run ended (${ev.reason}) before tool result`;
           }
+          if (entry.kind === 'explore') entry.closed = true;
         }
         dirty = true;
         if (ev.reason === 'error' && ev.error) {

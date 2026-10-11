@@ -28,7 +28,7 @@ describe('Scrollback commit cursor', () => {
     scrollback.apply({
       type: 'tool_call_start',
       callId: 'b',
-      name: 'read',
+      name: 'write',
       args: {},
       target: 'host',
     });

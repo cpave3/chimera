@@ -208,6 +208,28 @@ export function renderEntryLines(
     }
     return out;
   }
+  if (entry.kind === 'explore') {
+    // A group of one says more as the plain tool line it would have been.
+    if (entry.members.length === 1) {
+      return renderEntryLines({ ...entry.members[0]!, id: entry.id }, columns, theme, [], options);
+    }
+    const prefixLen = TOOL_BULLET.length;
+    const names = entry.members.map((member) => member.text).join(', ');
+    const room = Math.max(1, width - prefixLen);
+    return [
+      <Box key={`${entry.id}:x`} flexDirection="column">
+        <Text>
+          <Text color={entry.closed ? theme.text.muted : theme.ui.accent}>{TOOL_BULLET}</Text>
+          <Text color={theme.accent.secondary}>{`explored: ${entry.text}`}</Text>
+        </Text>
+        <Box paddingLeft={prefixLen}>
+          <Text color={theme.text.muted}>
+            {names.length > room ? `${names.slice(0, room - 1)}…` : names}
+          </Text>
+        </Box>
+      </Box>,
+    ];
+  }
   if (entry.kind === 'subagent') {
     const idShort = entry.subagentId ? entry.subagentId.slice(-4) : '?';
     const labelParts = [`[subagent ${idShort}`];
