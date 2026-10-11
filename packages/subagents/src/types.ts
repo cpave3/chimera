@@ -116,6 +116,12 @@ export interface SpawnAgentToolContext {
    */
   agents?: AgentRegistry;
   /**
+   * The `utilityModel` config key: the model an agent definition gets when
+   * it says `model: utility`. Without it, such a definition runs on the
+   * parent's model.
+   */
+  utilityModelRef?: string;
+  /**
    * Model refs (`provider/model`) to advertise in the tool description so
    * the parent agent knows what it can pass via the `model` arg. The first
    * entry is rendered as the default. Empty/undefined skips the section.

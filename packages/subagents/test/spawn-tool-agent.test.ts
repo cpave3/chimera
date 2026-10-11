@@ -238,3 +238,70 @@ describe('spawn_agent — agent definition resolution', () => {
 });
 
 type _Unused = SandboxMode;
+
+describe('spawn_agent — the utility model', () => {
+  const utilityAgent = fixtureAgent({
+    name: 'explore',
+    frontmatter: { name: 'explore', description: 'Search', tools: 'read', model: 'utility' },
+  });
+
+  /** The model the child of one call was built with. */
+  async function childModel(
+    over: Partial<SpawnAgentToolContext>,
+    args: Record<string, unknown> = {},
+  ): Promise<ModelConfig | undefined> {
+    let captured: ModelConfig | undefined;
+    const builder: InProcessAgentBuilder = async ({ model }) => {
+      captured = model;
+      return {
+        sessionId: 'cs' as SessionId,
+        send: () =>
+          (async function* (): AsyncGenerator<AgentEvent> {
+            yield { type: 'run_finished', reason: 'stop' };
+          })(),
+        interrupt: () => {},
+        dispose: async () => {},
+      };
+    };
+    const ctx = baseCtx({
+      agents: new InMemoryAgentRegistry([utilityAgent], []),
+      inProcess: builder,
+      getParentModel: () => ({ ref: 'manticore/gpt', settings: { temperature: 0.2 } }),
+      ...over,
+    });
+    const tool = buildSpawnAgentTool(ctx).tool as unknown as {
+      execute: (a: unknown, c: unknown) => Promise<unknown>;
+    };
+    await tool.execute(
+      { prompt: 'go', purpose: 'p', agent: 'explore', in_process: true, ...args },
+      { abortSignal: new AbortController().signal, toolCallId: 't', messages: [] },
+    );
+    return captured;
+  }
+
+  it('runs a `model: utility` definition on the configured utility model', async () => {
+    const model = await childModel({ utilityModelRef: 'anthropic/claude-haiku-4-5' });
+
+    expect(model).toMatchObject({ providerId: 'anthropic', modelId: 'claude-haiku-4-5' });
+    expect(model?.settings).toBeUndefined();
+  });
+
+  it('runs it on the parent model, with its settings, when no utility model is set', async () => {
+    const model = await childModel({});
+
+    expect(model).toMatchObject({
+      providerId: 'manticore',
+      modelId: 'gpt',
+      settings: { temperature: 0.2 },
+    });
+  });
+
+  it('lets the model argument of the call win', async () => {
+    const model = await childModel(
+      { utilityModelRef: 'anthropic/claude-haiku-4-5' },
+      { model: 'synthetic/big' },
+    );
+
+    expect(model).toMatchObject({ providerId: 'synthetic', modelId: 'big' });
+  });
+});

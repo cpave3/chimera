@@ -11,10 +11,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./builtin/*": "./builtin/*"
   },
   "files": [
-    "dist"
+    "dist",
+    "builtin"
   ],
   "scripts": {
     "build": "tsup",

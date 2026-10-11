@@ -8,6 +8,8 @@ import { driveInProcess, spawnInProcessChild } from './spawn-in-process';
 import type { SpawnAgentToolContext, SubagentResult } from './types';
 
 const DEFAULT_TOOLS = ['bash', 'read', 'write', 'edit', 'glob', 'grep'];
+/** What an agent definition writes as its model to get the `utilityModel` config key. */
+const UTILITY_MODEL = 'utility';
 
 const ARGS_SCHEMA = z.object({
   prompt: z.string().min(1).describe('The instructions for the subagent.'),
@@ -130,7 +132,9 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         agentSystemPrompt = def.body;
         agentTools = parseToolsCsv(def.frontmatter['tools']);
         const rawModel = def.frontmatter['model']?.trim();
-        if (rawModel && rawModel.includes('/')) {
+        if (rawModel === UTILITY_MODEL) {
+          agentModelRef = ctx.utilityModelRef;
+        } else if (rawModel?.includes('/')) {
           agentModelRef = rawModel;
         }
       }

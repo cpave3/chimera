@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildTiers, parseFrontmatter, parseToolsCsv } from '@chimera/core';
 import type { AgentCollision, AgentDefinition, AgentSource, LoadAgentsOptions } from './types';
 
@@ -10,12 +11,31 @@ export interface DiscoverResult {
 
 export { parseToolsCsv };
 
+/**
+ * Locate the bundled `builtin/` directory at runtime. The directory ships at
+ * `<package-root>/builtin/`, which is `../builtin/` from the compiled
+ * `dist/index.js`. During vitest, `import.meta.url` points into
+ * `src/agents/`, one level deeper.
+ */
+function builtinAgentsDir(): string | undefined {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [join(here, '..', 'builtin'), join(here, '..', '..', 'builtin')]) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate;
+    } catch {
+      // not this one
+    }
+  }
+  return undefined;
+}
+
 export function discover(opts: LoadAgentsOptions): DiscoverResult {
   const tiers = buildTiers({
     cwd: opts.cwd,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     assetType: 'agents',
+    builtinDir: builtinAgentsDir(),
   });
   const byName = new Map<string, AgentDefinition>();
   const collisions: AgentCollision[] = [];
@@ -66,6 +86,9 @@ export function discover(opts: LoadAgentsOptions): DiscoverResult {
         frontmatter: parsed.frontmatter,
       };
       const existing = byName.get(name);
+      // A definition that replaces a built-in one is the supported way to
+      // change it, not a mistake to report.
+      if (existing && agent.source === 'builtin') continue;
       if (existing) {
         collisions.push({
           name,

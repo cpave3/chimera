@@ -33,6 +33,12 @@ function writeAgent(
   return target;
 }
 
+/** What the user's own directories hold; the bundled definitions have their own tests below. */
+function discoverOwn(options: Parameters<typeof discover>[0]) {
+  const result = discover(options);
+  return { ...result, agents: result.agents.filter((agent) => agent.source !== 'builtin') };
+}
+
 describe('agents discover', () => {
   it('discovers agents from project/.chimera/agents and parses frontmatter', () => {
     const dir = join(cwd, '.chimera', 'agents');
@@ -43,7 +49,7 @@ describe('agents discover', () => {
       'You are a correctness reviewer. Check the diff.',
     );
 
-    const result = discover({ cwd, userHome });
+    const result = discoverOwn({ cwd, userHome });
     expect(result.agents).toHaveLength(1);
     const [agent] = result.agents;
     expect(agent.name).toBe('review-correctness');
@@ -76,7 +82,7 @@ describe('agents discover', () => {
       'name: reviewer\ndescription: from claude-user\n',
     );
 
-    const result = discover({ cwd, userHome });
+    const result = discoverOwn({ cwd, userHome });
     expect(result.agents).toHaveLength(1);
     expect(result.agents[0].source).toBe('project');
     expect(result.agents[0].description).toBe('from project');
@@ -87,7 +93,7 @@ describe('agents discover', () => {
 
   it('falls back to filename when frontmatter has no name field', () => {
     writeAgent(join(cwd, '.chimera', 'agents'), 'tidy-up', 'description: implicit name\n');
-    const result = discover({ cwd, userHome });
+    const result = discoverOwn({ cwd, userHome });
     expect(result.agents).toHaveLength(1);
     expect(result.agents[0].name).toBe('tidy-up');
   });
@@ -99,7 +105,7 @@ describe('agents discover', () => {
       'name: not-reviewer\ndescription: oops\n',
     );
     const warnings: string[] = [];
-    const result = discover({ cwd, userHome, onWarning: (m) => warnings.push(m) });
+    const result = discoverOwn({ cwd, userHome, onWarning: (m) => warnings.push(m) });
     expect(result.agents).toHaveLength(0);
     expect(warnings.some((w) => w.includes('does not match filename'))).toBe(true);
   });
@@ -107,7 +113,7 @@ describe('agents discover', () => {
   it('skips files missing a description', () => {
     writeAgent(join(cwd, '.chimera', 'agents'), 'noop', 'name: noop\n');
     const warnings: string[] = [];
-    const result = discover({ cwd, userHome, onWarning: (m) => warnings.push(m) });
+    const result = discoverOwn({ cwd, userHome, onWarning: (m) => warnings.push(m) });
     expect(result.agents).toHaveLength(0);
     expect(warnings.some((w) => w.includes('description'))).toBe(true);
   });
@@ -118,7 +124,7 @@ describe('agents discover', () => {
       'reviewer',
       'name: reviewer\ndescription: claude only\n',
     );
-    const result = discover({ cwd, userHome, includeClaudeCompat: false });
+    const result = discoverOwn({ cwd, userHome, includeClaudeCompat: false });
     expect(result.agents).toHaveLength(0);
   });
 
@@ -126,7 +132,7 @@ describe('agents discover', () => {
     const dir = join(cwd, '.chimera', 'agents');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'notes.txt'), '---\nname: notes\ndescription: x\n---\n');
-    const result = discover({ cwd, userHome });
+    const result = discoverOwn({ cwd, userHome });
     expect(result.agents).toHaveLength(0);
   });
 });
@@ -140,5 +146,40 @@ describe('parseToolsCsv', () => {
     expect(parseToolsCsv(undefined)).toEqual([]);
     expect(parseToolsCsv('')).toEqual([]);
     expect(parseToolsCsv(',, ,')).toEqual([]);
+  });
+});
+
+describe('built-in agents', () => {
+  it('offers explore with no setup, as a read-only agent on the utility model', () => {
+    const { agents } = discover({ cwd, userHome });
+    const explore = agents.find((agent) => agent.name === 'explore');
+
+    expect(explore?.source).toBe('builtin');
+    expect(parseToolsCsv(explore?.frontmatter.tools)).toEqual([
+      'read',
+      'glob',
+      'grep',
+      'fetch',
+      'web_search',
+    ]);
+    expect(explore?.frontmatter.model).toBe('utility');
+    expect(explore?.body).toMatch(/path:line/);
+  });
+
+  it('gives way to a user definition of the same name, without a warning', () => {
+    writeAgent(
+      join(userHome, '.chimera', 'agents'),
+      'explore',
+      'name: explore\ndescription: My own search helper\n',
+      'Search my way.',
+    );
+    const warnings: string[] = [];
+
+    const { agents } = discover({ cwd, userHome, onWarning: (message) => warnings.push(message) });
+    const explore = agents.find((agent) => agent.name === 'explore');
+
+    expect(explore?.source).toBe('user');
+    expect(explore?.body).toBe('Search my way.');
+    expect(warnings).toEqual([]);
   });
 });
