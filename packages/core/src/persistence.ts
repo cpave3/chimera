@@ -15,6 +15,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { PersistedEvent } from './events';
+import type { Goal } from './goal';
 import { newSessionId, type SessionId } from './ids';
 import {
   DEFAULT_SESSION_MODE,
@@ -73,6 +74,7 @@ interface SessionMetadata {
   pendingPermissionFeedback?: string[];
   /** Model-maintained task list (task_list tool). */
   tasks?: TaskItem[];
+  goal?: Goal;
 }
 
 function toMetadata(session: Session): SessionMetadata {
@@ -99,6 +101,7 @@ function toMetadata(session: Session): SessionMetadata {
     additionalWritePaths: session.additionalWritePaths,
     pendingPermissionFeedback: session.pendingPermissionFeedback,
     tasks: session.tasks,
+    goal: session.goal,
   };
 }
 
@@ -203,6 +206,9 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
       ? parsed.pendingPermissionFeedback
       : [],
     tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+    ...(typeof parsed.goal?.condition === 'string'
+      ? { goal: { condition: parsed.goal.condition } }
+      : {}),
   };
 
   const snapshot = await readLatestStepSnapshot(sessionId, home);

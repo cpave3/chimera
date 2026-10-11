@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai';
 import type { CommandPolicyAnalysis } from './command-policy';
+import type { GoalChange } from './goal';
 import type { CallId, SessionId } from './ids';
 import type { PermissionRequest } from './interfaces';
 import type { Question } from './questions';
@@ -74,6 +75,18 @@ export type AgentEvent =
       remembered: boolean;
     }
   | { type: 'permission_timeout'; requestId: string }
+  /** The session's goal was set or cleared, or a check of it gave a result. */
+  | {
+      type: 'goal_updated';
+      /** The goal after this event; null when the session has none. */
+      condition: string | null;
+      change: GoalChange;
+      /** The checker's reason, for a change that a check made. */
+      reason?: string;
+      /** For `not_met` and `limit`: continuations of this run so far, and the limit. */
+      continuation?: number;
+      maxContinuations?: number;
+    }
   /** The approval reviewer examined a request before the user was asked. */
   | {
       type: 'approval_reviewed';

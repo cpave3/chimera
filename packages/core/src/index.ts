@@ -7,6 +7,7 @@ export * from './context-tracker';
 export * from './discovery';
 export { EventQueue } from './event-queue';
 export * from './events';
+export * from './goal';
 export * from './ids';
 export * from './image-header';
 export * from './interfaces';

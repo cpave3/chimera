@@ -10,13 +10,13 @@ import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } fr
 import { readImageDimensions } from './image-header';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
 import { elideImageToolResults } from './message-parts';
-import type { QuestionRequest, QuestionResolution } from './questions';
 import {
   type ModelSettings,
   type ModelSettingsPatch,
   type ModelSettingsState,
   patchModelSettings,
 } from './model-settings';
+import type { QuestionRequest, QuestionResolution } from './questions';
 
 type ModelResolution = {
   model: ModelConfig;
@@ -39,6 +39,14 @@ export type ToolFormatter = (args: unknown, result?: unknown) => ToolDisplay;
  */
 export type ProviderOptions = Record<string, Record<string, unknown>>;
 
+import {
+  buildGoalCheckPrompt,
+  DEFAULT_GOAL_MAX_CONTINUATIONS,
+  formatGoalMessage,
+  type Goal,
+  type GoalVerdict,
+  parseGoalVerdict,
+} from './goal';
 import {
   appendSessionEvent,
   forkSession,
@@ -69,6 +77,15 @@ export interface StopHook {
     reason?: string;
     additionalContext?: string;
   }>;
+}
+
+export interface GoalCheck {
+  /** One question to the checker's model: the text of its reply. */
+  ask(prompt: { system: string; prompt: string }, signal: AbortSignal): Promise<string>;
+  /** `not_met` continuations one run may take. Default 20. */
+  maxContinuations?: number;
+  /** How long the model may take. Default 60 seconds. */
+  timeoutMs?: number;
 }
 
 export interface TimeoutHook {
@@ -155,6 +172,11 @@ export interface AgentOptions {
    * reason and loops into a fresh LLM turn instead of finishing.
    */
   stopHook?: StopHook;
+  /**
+   * Checks the session's goal at each clean stop, after the Stop hook let
+   * the run end. Without it a goal is kept but never checked.
+   */
+  goalCheck?: GoalCheck;
   /**
    * Optional timeout hook. When provided, fired synchronously when a step
    * exceeds `responseTimeoutMs` and the agent aborts. Purely observational;
@@ -655,6 +677,128 @@ export class Agent {
    */
   get signal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /**
+   * Set the session's goal, or clear it with null. A new goal replaces the
+   * one before. Returns the event that says so; the caller publishes it,
+   * because the session can be idle.
+   */
+  setGoal(condition: string | null): Extract<AgentEvent, { type: 'goal_updated' }> {
+    const text = condition?.trim() ?? '';
+    if (text === '') delete this.session.goal;
+    else this.session.goal = { condition: text };
+    void writeSessionMetadata(this.session, this.opts.home).catch(() => {
+      // best-effort; the next step writes the metadata again
+    });
+    return text === ''
+      ? { type: 'goal_updated', condition: null, change: 'cleared' }
+      : { type: 'goal_updated', condition: text, change: 'set' };
+  }
+
+  /**
+   * Ask the checker whether the goal is met. `message` is set when the run
+   * goes on: it is what the agent is told. `interrupted`: the user stopped
+   * the run while the checker worked.
+   */
+  private async checkGoal(
+    goal: Goal,
+    continuations: number,
+  ): Promise<
+    'interrupted' | { event: Extract<AgentEvent, { type: 'goal_updated' }>; message?: string }
+  > {
+    const check = this.opts.goalCheck!;
+    const maxContinuations = check.maxContinuations ?? DEFAULT_GOAL_MAX_CONTINUATIONS;
+    const timeoutMs = check.timeoutMs ?? GOAL_CHECK_TIMEOUT_MS;
+    const lastAssistant = this.session.messages
+      .filter((message) => message.role === 'assistant')
+      .at(-1);
+    const prompt = buildGoalCheckPrompt({
+      condition: goal.condition,
+      lastAssistantMessage: lastAssistant ? textOf(lastAssistant.content) : '',
+      tasks: this.session.tasks,
+      toolCalls: this.session.toolCalls,
+    });
+    const stop = new AbortController();
+    const interrupt = this.abortController.signal;
+    const onInterrupt = () => stop.abort();
+    interrupt.addEventListener('abort', onInterrupt, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // A timer of its own: a model call that ignores the signal must not hold the run.
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        stop.abort();
+        resolve(null);
+      }, timeoutMs);
+    });
+    const interrupted = new Promise<'interrupted'>((resolve) => {
+      stop.signal.addEventListener('abort', () => {
+        if (interrupt.aborted) resolve('interrupted');
+      });
+    });
+    let verdict: GoalVerdict | null = null;
+    let failure = "the checker's reply had no answer";
+    try {
+      const reply = await Promise.race([check.ask(prompt, stop.signal), late, interrupted]);
+      if (reply === 'interrupted') return 'interrupted';
+      if (reply === null) {
+        failure = `the checker did not answer in ${Math.round(timeoutMs / 1000)} seconds`;
+      } else {
+        verdict = parseGoalVerdict(reply);
+      }
+    } catch (error) {
+      if (interrupt.aborted) return 'interrupted';
+      failure = `the checker failed: ${(error as Error).message}`;
+    } finally {
+      clearTimeout(timer);
+      interrupt.removeEventListener('abort', onInterrupt);
+    }
+
+    const { condition } = goal;
+    if (!verdict) {
+      return { event: { type: 'goal_updated', condition, change: 'unchecked', reason: failure } };
+    }
+    if (verdict.result === 'not_met') {
+      if (continuations >= maxContinuations) {
+        return {
+          event: {
+            type: 'goal_updated',
+            condition,
+            change: 'limit',
+            reason: verdict.reason,
+            continuation: continuations,
+            maxContinuations,
+          },
+        };
+      }
+      const continuation = continuations + 1;
+      return {
+        event: {
+          type: 'goal_updated',
+          condition,
+          change: 'not_met',
+          reason: verdict.reason,
+          continuation,
+          maxContinuations,
+        },
+        message: formatGoalMessage({
+          condition,
+          reason: verdict.reason,
+          continuation,
+          maxContinuations,
+        }),
+      };
+    }
+    // Met, or not possible: either way the goal has had its answer.
+    delete this.session.goal;
+    return {
+      event: {
+        type: 'goal_updated',
+        condition: null,
+        change: verdict.result,
+        reason: verdict.reason,
+      },
+    };
   }
 
   /**
@@ -1527,6 +1671,7 @@ export class Agent {
       | 'output_limit' = 'stop';
     let errorMessage: string | undefined;
     let stopRetryCount = 0;
+    let goalContinuations = 0;
     // Retries already spent on the step currently being attempted; reset each
     // time a step completes.
     let providerRetries = 0;
@@ -2382,6 +2527,26 @@ export class Agent {
         terminalReason = 'max_steps';
       }
 
+      // Goal check: the last word on a clean stop, after the user's Stop hook
+      // let the run end.
+      if (terminalReason === 'stop' && this.session.goal && this.opts.goalCheck) {
+        const outcome = await this.checkGoal(this.session.goal, goalContinuations);
+        if (outcome === 'interrupted') {
+          terminalReason = 'interrupted';
+        } else {
+          queue.push(outcome.event);
+          if (outcome.message !== undefined) {
+            goalContinuations++;
+            this.session.messages.push({ role: 'user', content: outcome.message });
+            queue.push({ type: 'user_message', content: outcome.message });
+            // Fresh abort controller for the next turn.
+            this.abortController = new AbortController();
+            continue;
+          }
+          if (outcome.event.change === 'limit') terminalReason = 'max_steps';
+        }
+      }
+
       break; // No more retries.
     }
 
@@ -2527,6 +2692,14 @@ function tailHasImageParts(messages: ModelMessage[]): boolean {
  * them in the first bytes; a JPEG's SOF marker sits past whatever EXIF the
  * camera wrote, so read a chunk rather than paying to load whole files.
  */
+const GOAL_CHECK_TIMEOUT_MS = 60_000;
+
+/** The text of a message's content: the string itself, or its text parts. */
+function textOf(content: ModelMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+}
+
 const IMAGE_HEADER_BYTES = 64 * 1024;
 
 async function readImageHeader(path: string): Promise<Uint8Array | undefined> {

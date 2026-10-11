@@ -1,4 +1,5 @@
 import type { ModelMessage } from 'ai';
+import type { Goal } from './goal';
 import type { CallId, SessionId } from './ids';
 import type { ModelCapabilities, ModelSettings } from './model-settings';
 
@@ -186,6 +187,8 @@ export interface Session {
    * metadata so it survives resume and context compaction.
    */
   tasks: TaskItem[];
+  /** The completion condition the user set; checked at each clean stop of a run. */
+  goal?: Goal;
 }
 
 /** Default mode for new sessions. Mirrored in `@chimera/modes`. */
