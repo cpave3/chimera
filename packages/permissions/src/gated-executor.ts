@@ -70,7 +70,7 @@ export class GatedExecutor implements Executor {
     if (resolution.decision === 'deny') {
       return {
         stdout: '',
-        stderr: permissionDenialMessage(resolution.denialSource),
+        stderr: permissionDenialMessage(resolution.denialSource, resolution.reviewerReason),
         exitCode: -1,
         timedOut: false,
         stdoutTruncated: false,

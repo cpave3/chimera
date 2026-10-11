@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
   CommandPolicyFinding,
+  Executor,
   PermissionDecisionSource,
   PermissionRequest,
   PermissionResolution,
@@ -10,6 +11,7 @@ import type {
 import type { HookRunner } from '@chimera/hooks';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DefaultPermissionGate, type GateOptions } from '../src/gate';
+import { GatedExecutor } from '../src/gated-executor';
 import type { ApprovalReview, ReviewInput } from '../src/reviewer';
 
 const pathFinding: CommandPolicyFinding = {
@@ -139,6 +141,15 @@ describe('the approval reviewer in the gate', () => {
     });
     expect(asked).toHaveLength(0);
     expect(audited).toEqual([{ source: 'reviewer', decision: 'deny', review: escalate }]);
+  });
+
+  it('gives a host command of another tool the same denial text', async () => {
+    const { gate: built } = gate(escalate, { headlessAutoDeny: true });
+    const inner = { cwd: () => cwd, target: () => 'host' } as unknown as Executor;
+
+    const result = await new GatedExecutor({ inner, gate: built }).exec('make cache');
+
+    expect(result.stderr).toBe('denied by reviewer: writes outside the task');
   });
 
   it('lets a headless session run what the reviewer allows', async () => {

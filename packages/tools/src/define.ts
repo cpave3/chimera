@@ -12,7 +12,7 @@ export interface DefineToolOptions<I, O> {
   // hand to `tool()`. We don't constrain it here — the I/O generics on
   // `defineTool` are what the formatter and execute see.
   inputSchema: unknown;
-  execute: (args: I, opts: { abortSignal?: AbortSignal }) => Promise<O>;
+  execute: (args: I, opts: { abortSignal?: AbortSignal; toolCallId?: string }) => Promise<O>;
   formatScrollback?: FormatScrollback<I, O>;
 }
 

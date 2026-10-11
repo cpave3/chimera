@@ -69,10 +69,10 @@ export function buildBashTool(ctx: ToolContext) {
       osSandboxDescription(ctx),
     promptSnippet: 'Run a shell command: builds, tests, git, anything without a dedicated tool.',
     inputSchema: BASH_SCHEMA,
-    execute: async (args, { abortSignal }) => {
+    execute: async (args, { abortSignal, toolCallId }) => {
       const command = args.command;
       if (args.run_in_background) {
-        return launchBackground(ctx, args);
+        return launchBackground(ctx, args, toolCallId);
       }
 
       const target: 'sandbox' | 'host' =
@@ -102,10 +102,13 @@ export function buildBashTool(ctx: ToolContext) {
           command,
           cwd: executor.cwd(),
           ...(args.reason ? { reason: args.reason } : {}),
+          ...(toolCallId ? { toolCallId } : {}),
           ...scope.request,
         });
         if (resolution.decision === 'deny') {
-          return refuse(permissionDenialMessage(resolution.denialSource));
+          return refuse(
+            permissionDenialMessage(resolution.denialSource, resolution.reviewerReason),
+          );
         }
         if (resolution.authentication === 'sudo') {
           if (!ctx.hostAuthentication) {
@@ -174,7 +177,11 @@ function hostScope(
   return { sandboxed: false, request: { unsandboxed: true } };
 }
 
-async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashResult> {
+async function launchBackground(
+  ctx: ToolContext,
+  args: BashArgs,
+  toolCallId?: string,
+): Promise<BashResult> {
   const refuse = (stderr: string): BashResult => ({
     stdout: '',
     stderr,
@@ -201,10 +208,11 @@ async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashR
       command: args.command,
       cwd: (ctx.bashHostExecutor ?? ctx.hostExecutor).cwd(),
       ...(args.reason ? { reason: args.reason } : {}),
+      ...(toolCallId ? { toolCallId } : {}),
       ...scope.request,
     });
     if (resolution.decision === 'deny') {
-      return refuse(permissionDenialMessage(resolution.denialSource));
+      return refuse(permissionDenialMessage(resolution.denialSource, resolution.reviewerReason));
     }
   }
   const launched = manager.launch(

@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PermissionGate } from '@chimera/core';
+import type { PermissionGate, PermissionRequest } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BackgroundProcessManager } from '../src/background';
 import { buildTools } from '../src/build';
 import { LocalExecutor } from '../src/local-executor';
 
@@ -151,6 +152,42 @@ describe('buildTools', () => {
 
     expect(result).toMatchObject({ exit_code: -1, stderr: 'denied by user' });
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('bash tells the gate which tool call asks, and gives the model the reason of the reviewer', async () => {
+    const requests: PermissionRequest[] = [];
+    const permissionGate: PermissionGate = {
+      request: async (request) => {
+        requests.push(request);
+        return {
+          decision: 'deny',
+          remembered: false,
+          denialSource: 'reviewer',
+          reviewerReason: 'the user did not ask for a push',
+        };
+      },
+      check: () => null,
+      addRule: () => {},
+      listRules: () => [],
+      removeRule: () => {},
+    };
+    const toolset = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      permissionGate,
+      backgroundProcesses: new BackgroundProcessManager({ cwd: root }),
+    }).tools as unknown as Record<string, AnyTool>;
+
+    const foreground = await toolset.bash!.execute({ command: 'git push' }, { toolCallId: 'c1' });
+    const background = await toolset.bash!.execute(
+      { command: 'git push', run_in_background: true },
+      { toolCallId: 'c2' },
+    );
+
+    expect(requests.map((request) => request.toolCallId)).toEqual(['c1', 'c2']);
+    expect(foreground.stderr).toBe('denied by reviewer: the user did not ask for a push');
+    expect(background.stderr).toBe('denied by reviewer: the user did not ask for a push');
   });
 
   it('authenticates approved sudo before executing the exact command', async () => {
