@@ -7,6 +7,7 @@ import { wrapLanguageModel } from 'ai';
 import { codexContinuationMiddleware, codexMetadataExtractor } from './codex-continuation';
 import { buildKeyResolver } from './key';
 import { assertModelCapabilities, localCapabilities } from './model-settings';
+import { markCacheBreakpoints } from './prompt-cache';
 import type {
   Provider,
   ProviderRegistry,
@@ -73,7 +74,11 @@ function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOption
         model: factory(),
         middleware: {
           specificationVersion: 'v3',
-          async transformParams({ params }) {
+          async transformParams({ params: callParams }) {
+            const params =
+              spec.promptCaching === false
+                ? callParams
+                : { ...callParams, prompt: markCacheBreakpoints(callParams.prompt) };
             const thinking = params.providerOptions?.anthropic?.thinking as
               | { type?: string; budgetTokens?: number }
               | undefined;

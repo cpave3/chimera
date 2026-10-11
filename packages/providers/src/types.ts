@@ -18,6 +18,11 @@ export interface ProviderSpec {
    * current session's id at getModel() time.
    */
   headers?: Record<string, string>;
+  /**
+   * Only meaningful for 'anthropic' shape. Default: true. Set false for a
+   * proxy that rejects `cache_control` fields.
+   */
+  promptCaching?: boolean;
 }
 
 export interface ProvidersConfig {
