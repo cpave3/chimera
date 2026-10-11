@@ -8,6 +8,7 @@ import type {
   HostAuthenticationCapability,
   ModelCapabilities,
   ModelConfig,
+  ModelProfile,
   ModelSettings,
   SessionId,
   VisionModelResolution,
@@ -18,6 +19,7 @@ import {
   type InterruptHook,
   loadSession,
   newSessionId,
+  renderToolsSection,
   type StopHook,
   type TimeoutHook,
   type UserInputRequiredHook,
@@ -29,6 +31,7 @@ import {
   applyAllowlist,
   computeAllowlist,
   DEFAULT_MODE_NAME,
+  expandAllowlist,
   type Mode,
   type ModeRegistry,
 } from '@chimera/modes';
@@ -53,6 +56,7 @@ import {
   localCapabilities,
   type ProvidersConfig,
   resolveContextWindow,
+  resolveModelProfile,
   resolveModelSettings,
 } from '@chimera/providers';
 import { RecallStore } from '@chimera/recall';
@@ -306,6 +310,21 @@ export class CliAgentFactory implements AgentFactory {
         }).filter(([, value]) => value !== undefined),
       ),
     };
+    // Profile fields the caller set on the model it asked for. They win over
+    // config for that model only; any other model resolves from config.
+    const explicitProfileByRef: Record<string, Partial<ModelProfile>> = {
+      [`${init.model.providerId}/${init.model.modelId}`]: definedFields({
+        toolCallShape: init.model.toolCallShape,
+        editFormat: init.model.editFormat,
+        promptStyle: init.model.promptStyle,
+      }),
+    };
+    const profileFor = (profileRef: string, profileModelId: string, contextWindow: number) =>
+      resolveModelProfile({
+        modelId: profileModelId,
+        contextWindow,
+        options: { ...this.modelsConfig[profileRef], ...explicitProfileByRef[profileRef] },
+      });
     const startupMode = this.modes?.find(session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME);
     if (!session && startupMode?.model && startupMode.model !== sessionModelRef) {
       const target = this.registry.resolve(startupMode.model);
@@ -317,8 +336,6 @@ export class CliAgentFactory implements AgentFactory {
           maxSteps: init.model.maxSteps,
           vision: this.modelsConfig[startupMode.model]?.vision,
           imageLongEdge: this.modelsConfig[startupMode.model]?.imageLongEdge,
-          toolCallShape:
-            this.modelsConfig[startupMode.model]?.toolCallShape ?? init.model.toolCallShape,
         },
       };
     }
@@ -358,6 +375,18 @@ export class CliAgentFactory implements AgentFactory {
       override: this.modelsConfig[ref]?.contextWindow,
       warn: this.warn,
     });
+
+    const initialProfile = profileFor(ref, modelId, resolvedWindow.value);
+    init = {
+      ...init,
+      model: {
+        ...init.model,
+        toolCallShape: initialProfile.toolCallShape,
+        editFormat: initialProfile.editFormat,
+        promptStyle: initialProfile.promptStyle,
+      },
+    };
+    if (session) session.model = init.model;
 
     const skillsReg = this.skills;
     const extensions = skillsReg ? [() => skillsReg.buildIndex() || null] : undefined;
@@ -399,15 +428,6 @@ export class CliAgentFactory implements AgentFactory {
     }
     const activeMode: Mode | undefined =
       initialModeObj ?? (modesReg ? modesReg.find(DEFAULT_MODE_NAME) : undefined);
-
-    const composedSystemPrompt = composeSystemPrompt({
-      cwd: init.cwd,
-      model: init.model,
-      sandboxMode: init.sandboxMode,
-      extensions,
-      mode: activeMode ? { name: activeMode.name, body: activeMode.body } : undefined,
-    });
-    const effectiveSystemPrompt = this.systemPromptOverride ?? composedSystemPrompt;
 
     const hookRunner: HookRunner = new DefaultHookRunner({
       cwd: init.cwd,
@@ -463,8 +483,9 @@ export class CliAgentFactory implements AgentFactory {
       cwd: init.cwd,
       model: init.model,
       languageModel,
-      tools: {} as never, // filled in below after gate is built
-      systemPrompt: effectiveSystemPrompt,
+      // Tools and system prompt are set below, once the gate exists and the
+      // model profile has picked the tool surface.
+      tools: {} as never,
       sandboxMode: init.sandboxMode,
       session,
       sessionId,
@@ -627,24 +648,11 @@ export class CliAgentFactory implements AgentFactory {
       },
     });
 
-    const built = buildTools({
-      sandboxExecutor,
-      hostExecutor,
-      bashHostExecutor: local,
-      permissionGate: gate,
-      hostAuthentication: this.hostAuthentication,
-      commandRequiresSudo,
-      sandboxMode: init.sandboxMode,
-      toolCallShape: init.model.toolCallShape,
-      backgroundProcesses,
-      diagnostics,
-      webSearch: this.webSearchProvider,
-      taskList,
-      recall: recallStore,
-      requestUserInput: async (request) => agent.requestUserInput(request),
-    });
-    const tools = built.tools;
-    const formatters = { ...built.formatters };
+    // Tools registered outside @chimera/tools. They do not depend on the
+    // model profile, so they are built once and merged into every surface.
+    const extraTools: ToolSet = {};
+    const extraFormatters: Record<string, FormatScrollback<any, any>> = {};
+    const extraSnippets: Record<string, string> = {};
 
     if (this.subagents.enabled !== false) {
       const invocation = resolveChimeraInvocation();
@@ -682,8 +690,9 @@ export class CliAgentFactory implements AgentFactory {
         availableModels: advertisedModels,
         modelOptions: this.modelsConfig,
       });
-      tools.spawn_agent = spawn.tool;
-      if (spawn.formatScrollback) formatters.spawn_agent = spawn.formatScrollback;
+      extraTools.spawn_agent = spawn.tool;
+      if (spawn.formatScrollback) extraFormatters.spawn_agent = spawn.formatScrollback;
+      extraSnippets.spawn_agent = 'Delegate a focused task to a fresh agent and get its answer.';
     }
 
     if (Object.keys(this.mcpServers).length > 0) {
@@ -705,100 +714,122 @@ export class CliAgentFactory implements AgentFactory {
       await registerMcpTools({
         manager,
         servers: this.mcpServers,
-        tools,
-        formatters,
+        tools: extraTools,
+        formatters: extraFormatters,
         gate,
         cwd: init.cwd,
         warn: this.warn,
       });
     }
 
-    this.lastFormatters = formatters;
     this.liveAgents.set(agent.session.id, agent);
 
-    // Apply an agent-definition tools allowlist before mode filtering. The
-    // mode filter then intersects: if a mode also restricts tools, the child
-    // ends up with the intersection of the two allowlists.
-    if (this.toolsAllowlist) {
-      const allowed = new Set(this.toolsAllowlist);
-      for (const name of Object.keys(tools)) {
-        if (!allowed.has(name) && name !== 'request_user_input') {
-          delete tools[name];
-        }
-      }
+    // One tool surface per model profile: the built-in tools under that
+    // profile's names and edit format, plus the profile-independent extras.
+    // Built on first use, so a session that never changes model builds one.
+    interface ToolSurface {
+      tools: ToolSet;
+      snippets: Record<string, string>;
     }
-
-    agent.setToolFormatters(formatters);
-
-    if (modesReg && activeMode) {
-      const allowlist = computeAllowlist(activeMode);
-      if (allowlist) {
-        for (const wanted of allowlist) {
-          if (!(wanted in tools)) {
-            this.warn(
-              `mode "${activeMode.name}" lists tool "${wanted}" but it is not registered; dropping`,
-            );
-          }
-        }
-      }
-      const filtered = applyAllowlist(tools, allowlist);
-      filtered.request_user_input = tools.request_user_input;
-      agent.setTools(filtered as ToolSet);
-      agent.setSystemPrompt(
-        appendToolSurfacePrompt(
-          effectiveSystemPrompt,
-          filtered as ToolSet,
-          init.model.toolCallShape,
-        ),
-      );
-
-      // The resolver lets the agent recompose its own system prompt + tool
-      // set when a queued mode switch is drained at the top of the next run.
-      agent.setModeResolver((nextName) => {
-        const next = modesReg.find(nextName);
-        if (!next) {
-          throw new Error(`Unknown mode "${nextName}"`);
-        }
-        const nextSystemPrompt = composeSystemPrompt({
-          cwd: init.cwd,
-          model: agent.session.model,
-          sandboxMode: init.sandboxMode,
-          extensions,
-          mode: { name: next.name, body: next.body },
-        });
-        const nextAllowlist = computeAllowlist(next);
-        const nextTools = applyAllowlist(tools, nextAllowlist) as ToolSet;
-        nextTools.request_user_input = tools.request_user_input;
-        // Resolve previous mode dynamically from `agent.session.mode` —
-        // the static `activeMode` captured at session construction is only
-        // accurate for the very first switch; later switches (build → plan
-        // → review) need the *currently* active mode to compute
-        // `effectiveModelChanged` correctly.
-        const previousMode = modesReg.find(agent.session.mode);
-        const effectiveModel = agent.session.userModelOverride ?? next.model ?? sessionModelRef;
-        const previousModel =
-          agent.session.userModelOverride ?? previousMode?.model ?? sessionModelRef;
-        return {
-          systemPrompt: appendToolSurfacePrompt(
-            nextSystemPrompt,
-            nextTools,
-            agent.session.model.toolCallShape,
-          ),
-          tools: nextTools,
-          effectiveModel,
-          effectiveModelChanged: effectiveModel !== previousModel,
-        };
+    const surfaces = new Map<string, ToolSurface>();
+    const formatters: Record<string, FormatScrollback<any, any>> = {};
+    const surfaceFor = (
+      surfaceModel: Pick<ModelConfig, 'toolCallShape' | 'editFormat'>,
+    ): ToolSurface => {
+      const key = `${surfaceModel.toolCallShape ?? 'chimera'}/${surfaceModel.editFormat ?? 'replace'}`;
+      const existing = surfaces.get(key);
+      if (existing) return existing;
+      const built = buildTools({
+        sandboxExecutor,
+        hostExecutor,
+        bashHostExecutor: local,
+        permissionGate: gate,
+        hostAuthentication: this.hostAuthentication,
+        commandRequiresSudo,
+        sandboxMode: init.sandboxMode,
+        toolCallShape: surfaceModel.toolCallShape,
+        editFormat: surfaceModel.editFormat,
+        backgroundProcesses,
+        diagnostics,
+        webSearch: this.webSearchProvider,
+        taskList,
+        recall: recallStore,
+        requestUserInput: async (request) => agent.requestUserInput(request),
       });
-    } else {
-      agent.setTools(tools);
-      agent.setSystemPrompt(
-        appendToolSurfacePrompt(effectiveSystemPrompt, tools, init.model.toolCallShape),
-      );
-    }
+      let surfaceTools: ToolSet = { ...built.tools, ...extraTools };
+      // An agent definition's tools list applies before mode filtering: a
+      // mode that also restricts tools leaves the intersection of the two.
+      if (this.toolsAllowlist) {
+        const allowed = applyAllowlist(surfaceTools, new Set(this.toolsAllowlist));
+        if (surfaceTools.request_user_input) {
+          allowed.request_user_input = surfaceTools.request_user_input;
+        }
+        surfaceTools = allowed;
+      }
+      const surface: ToolSurface = {
+        tools: surfaceTools,
+        snippets: { ...built.snippets, ...extraSnippets },
+      };
+      surfaces.set(key, surface);
+      // Formatters accumulate across surfaces: earlier tool calls in the
+      // scrollback keep rendering after the model, and its tool names, change.
+      Object.assign(formatters, built.formatters, extraFormatters);
+      this.lastFormatters = formatters;
+      agent.setToolFormatters(formatters);
+      return surface;
+    };
 
-    // Model-change resolver: allows the user to switch models at runtime via
-    // `/model <ref>` (or clear the override with `/model default`).
-    const resolveChange = (
+    const toolsInMode = (surface: ToolSurface, mode: Mode | undefined): ToolSet => {
+      const allowlist = mode ? computeAllowlist(mode) : undefined;
+      if (!allowlist) return surface.tools;
+      const filtered = applyAllowlist(surface.tools, allowlist);
+      if (surface.tools.request_user_input) {
+        filtered.request_user_input = surface.tools.request_user_input;
+      }
+      return filtered;
+    };
+
+    const promptFor = (
+      promptModel: ModelConfig,
+      mode: Mode | undefined,
+      promptToolSet: ToolSet,
+      surface: ToolSurface,
+    ): string => {
+      const promptTools = Object.entries(promptToolSet).map(([name, definition]) => ({
+        name,
+        snippet: surface.snippets[name] ?? firstLine(definition.description ?? name),
+      }));
+      if (this.systemPromptOverride !== undefined) {
+        return `${this.systemPromptOverride}\n\n${renderToolsSection(promptTools)}`;
+      }
+      return composeSystemPrompt({
+        cwd: init.cwd,
+        model: promptModel,
+        sandboxMode: init.sandboxMode,
+        extensions,
+        mode: mode ? { name: mode.name, body: mode.body } : undefined,
+        tools: promptTools,
+        promptStyle: promptModel.promptStyle,
+      });
+    };
+
+    const initialSurface = surfaceFor(init.model);
+    const initialAllowlist = activeMode ? computeAllowlist(activeMode) : undefined;
+    if (activeMode && initialAllowlist) {
+      const { missing } = expandAllowlist(initialAllowlist, Object.keys(initialSurface.tools));
+      for (const wanted of missing) {
+        this.warn(
+          `mode "${activeMode.name}" lists tool "${wanted}" but it is not registered; dropping`,
+        );
+      }
+    }
+    const initialTools = toolsInMode(initialSurface, activeMode);
+    agent.setTools(initialTools);
+    agent.setSystemPrompt(promptFor(init.model, activeMode, initialTools, initialSurface));
+
+    // Everything about a model that follows from its ref: used when the user
+    // or a mode moves the session to another model.
+    const describeModel = (
       ref: string,
       overrides = agent.session.modelSettingsOverrides?.[ref] ?? {},
     ) => {
@@ -817,39 +848,71 @@ export class CliAgentFactory implements AgentFactory {
         overrides,
         agent.session.modelCreationDefaults?.[ref],
       );
+      const profile = profileFor(ref, newModelId, newWindow.value);
       const newModel: ModelConfig = {
         providerId: newProvider.id,
         modelId: newModelId,
         maxSteps: agent.session.model.maxSteps,
         ...this.resolveModelInput(ref, agent.session.modelInputOverrides?.[ref]),
-        // Runtime /model changes swap the language model, not the registered
-        // tool set. Preserve the session's existing tool surface.
-        toolCallShape: agent.session.model.toolCallShape,
+        toolCallShape: profile.toolCallShape,
+        editFormat: profile.editFormat,
+        promptStyle: profile.promptStyle,
         ...generation.modelFields,
       };
-      const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
-      const currentTools = currentMode
-        ? (applyAllowlist(tools, computeAllowlist(currentMode)) as ToolSet)
-        : tools;
-      currentTools.request_user_input = tools.request_user_input;
-      const newSystemPrompt = composeSystemPrompt({
-        cwd: init.cwd,
-        model: newModel,
-        sandboxMode: init.sandboxMode,
-        extensions,
-        mode: currentMode ? { name: currentMode.name, body: currentMode.body } : undefined,
+      return { model: newModel, provider: newProvider, modelId: newModelId, newWindow, generation };
+    };
+
+    if (modesReg && activeMode) {
+      // The resolver lets the agent recompose its own system prompt + tool
+      // set when a queued mode switch is drained at the top of the next run.
+      agent.setModeResolver((nextName) => {
+        const next = modesReg.find(nextName);
+        if (!next) {
+          throw new Error(`Unknown mode "${nextName}"`);
+        }
+        // Resolve previous mode dynamically from `agent.session.mode` —
+        // the static `activeMode` captured at session construction is only
+        // accurate for the very first switch; later switches (build → plan
+        // → review) need the *currently* active mode to compute
+        // `effectiveModelChanged` correctly.
+        const previousMode = modesReg.find(agent.session.mode);
+        const effectiveModel = agent.session.userModelOverride ?? next.model ?? sessionModelRef;
+        const previousModel =
+          agent.session.userModelOverride ?? previousMode?.model ?? sessionModelRef;
+        const effectiveModelChanged = effectiveModel !== previousModel;
+        const nextModel = effectiveModelChanged
+          ? describeModel(effectiveModel).model
+          : agent.session.model;
+        const surface = surfaceFor(nextModel);
+        const nextTools = toolsInMode(surface, next);
+        return {
+          systemPrompt: promptFor(nextModel, next, nextTools, surface),
+          tools: nextTools,
+          effectiveModel,
+          effectiveModelChanged,
+        };
       });
+    }
+
+    // Model-change resolver: allows the user to switch models at runtime via
+    // `/model <ref>` (or clear the override with `/model default`). The new
+    // model brings its own profile, so the tool surface and prompt follow it.
+    const resolveChange = (
+      ref: string,
+      overrides = agent.session.modelSettingsOverrides?.[ref] ?? {},
+    ) => {
+      const described = describeModel(ref, overrides);
+      const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
+      const surface = surfaceFor(described.model);
+      const currentTools = toolsInMode(surface, currentMode);
       return {
-        model: newModel,
-        languageModel: newProvider.getModel(newModelId, agent.session.id),
-        systemPrompt: appendToolSurfacePrompt(
-          newSystemPrompt,
-          currentTools,
-          agent.session.model.toolCallShape,
-        ),
-        contextWindow: newWindow.value,
-        contextWindowIsApproximate: newWindow.source === 'fallback',
-        providerOptions: generation.providerOptions,
+        model: described.model,
+        languageModel: described.provider.getModel(described.modelId, agent.session.id),
+        systemPrompt: promptFor(described.model, currentMode, currentTools, surface),
+        tools: currentTools,
+        contextWindow: described.newWindow.value,
+        contextWindowIsApproximate: described.newWindow.source === 'fallback',
+        providerOptions: described.generation.providerOptions,
       };
     };
     agent.setModelChangeResolver(resolveChange);
@@ -1135,54 +1198,15 @@ async function tryLoadSession(sessionId: string, home?: string) {
   }
 }
 
-function appendToolSurfacePrompt(
-  systemPrompt: string,
-  tools: ToolSet,
-  toolCallShape: ModelConfig['toolCallShape'],
-): string {
-  let prompt = systemPrompt;
-  if (toolCallShape === 'codex') {
-    const names = Object.keys(tools).sort();
-    if (names.length > 0) {
-      const snippets = names.map((name) => `- ${name}: ${toolPromptSnippet(name)}`);
-      const lines = [
-        '# Active tools',
-        '',
-        'Only call tools from this list. If a tool name is not listed here, it is unavailable in this session.',
-        ...snippets,
-        '',
-        'Use the tool-calling channel for tools; do not print JSON as assistant text. The bash tool takes { command, timeout? }, where timeout is seconds.',
-        'When multiple tool calls are independent (one does not need the result of another), call them together in the same step so they run in parallel.',
-      ];
-      prompt = `${prompt}\n\n${lines.join('\n')}`;
-    }
-  }
-  if (tools.web_search) {
-    prompt +=
-      '\n\n# Web search\n\nDo not invent, assume, or guess URLs. When you need an external URL that the user or trusted context has not already provided, use web_search first, then pass the exact URL returned by web_search to fetch.';
-  }
-  return prompt;
+function firstLine(text: string): string {
+  const line = text.split('\n', 1)[0] ?? '';
+  return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 }
 
-function toolPromptSnippet(name: string): string {
-  switch (name) {
-    case 'bash':
-      return 'Run a shell command with { command, timeout? }.';
-    case 'read':
-      return 'Read a file or directory.';
-    case 'write':
-      return 'Create or overwrite a file.';
-    case 'edit':
-      return 'Replace exact text in a file.';
-    case 'grep':
-      return 'Search file contents for patterns.';
-    case 'find':
-      return 'Find files by glob pattern.';
-    case 'ls':
-      return 'List directory contents.';
-    default:
-      return 'Project-specific tool.';
-  }
+function definedFields<T extends object>(fields: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
 }
 
 /**

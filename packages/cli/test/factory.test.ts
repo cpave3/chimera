@@ -529,21 +529,28 @@ describe('CliAgentFactory', () => {
     });
 
     const tools = (agent as unknown as { opts: { tools: Record<string, unknown> } }).opts.tools;
+    // Every native tool stays; only glob is renamed (find) and ls is added.
+    // A Codex model id also resolves to the patch edit format.
     expect(Object.keys(tools).sort()).toEqual([
+      'apply_patch',
       'bash',
-      'edit',
+      'bash_kill',
+      'bash_output',
+      'fetch',
       'find',
       'grep',
       'ls',
       'read',
+      'recall',
       'request_user_input',
+      'task_list',
       'write',
     ]);
     const systemPrompt = (agent as unknown as { opts: { systemPrompt: string } }).opts.systemPrompt;
-    expect(systemPrompt).toContain('# Active tools');
-    expect(systemPrompt).toContain('- find: Find files by glob pattern');
-    expect(systemPrompt).toContain('- ls: List directory contents');
-    expect(systemPrompt).not.toContain('- glob:');
+    expect(systemPrompt).toContain('## Tools');
+    expect(systemPrompt).toContain('- find — Find files by name pattern.');
+    expect(systemPrompt).toContain('- ls — List a directory.');
+    expect(systemPrompt).not.toContain('- glob —');
   });
 
   describe('vision model resolver', () => {

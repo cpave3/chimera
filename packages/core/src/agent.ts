@@ -23,6 +23,8 @@ type ModelResolution = {
   contextWindow: number;
   contextWindowIsApproximate: boolean;
   systemPrompt: string;
+  /** The tool set for this model's profile; omitted keeps the current tools. */
+  tools?: ToolSet;
   providerOptions?: ProviderOptions;
 };
 
@@ -318,6 +320,8 @@ export class Agent {
     contextWindow: number;
     contextWindowIsApproximate: boolean;
     systemPrompt: string;
+    /** The tool set for the new model's profile; omitted keeps the current tools. */
+    tools?: ToolSet;
     providerOptions?: ProviderOptions;
   };
   /**
@@ -658,6 +662,7 @@ export class Agent {
       contextWindow: number;
       contextWindowIsApproximate: boolean;
       systemPrompt: string;
+      tools?: ToolSet;
       providerOptions?: ProviderOptions;
     },
   ): void {
@@ -794,6 +799,7 @@ export class Agent {
       model: resolved.model,
       languageModel: resolved.languageModel,
       systemPrompt: resolved.systemPrompt,
+      ...(resolved.tools ? { tools: resolved.tools } : {}),
       contextWindow: resolved.contextWindow,
       contextWindowIsApproximate: resolved.contextWindowIsApproximate,
       providerOptions: resolved.providerOptions,
@@ -1881,6 +1887,17 @@ export class Agent {
                   }
                 } else if (info.name === 'write' || info.name === 'edit') {
                   this.resolveAndTrackPath(rec?.args, true);
+                } else if (info.name === 'apply_patch') {
+                  // One patch touches several files; its result lists them.
+                  const files = (result as { files?: unknown } | undefined)?.files;
+                  for (const file of Array.isArray(files) ? files : []) {
+                    const { path, movedTo } = file as { path?: unknown; movedTo?: unknown };
+                    for (const changedPath of [path, movedTo]) {
+                      if (typeof changedPath === 'string') {
+                        this.session.fileOps.writes.add(resolve(this.session.cwd, changedPath));
+                      }
+                    }
+                  }
                 }
                 callInfo.delete(part.toolCallId);
                 this.callIdByToolCallId.delete(part.toolCallId);

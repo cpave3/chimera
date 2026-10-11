@@ -3,8 +3,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
   CompactionConfig,
+  EditFormat,
   ModelConfig,
   ModelSettings,
+  PromptStyle,
   SettingCapability,
 } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
@@ -24,6 +26,18 @@ export interface ModelOptions {
    * tool names and argument schemas. Undefined uses Chimera's native surface.
    */
   toolCallShape?: 'chimera' | 'codex';
+  /**
+   * How the model edits files: `replace` registers the exact-string `edit`
+   * tool, `patch` registers `apply_patch`. Defaults to `patch` for GPT and
+   * Codex model ids and `replace` for every other model.
+   */
+  editFormat?: EditFormat;
+  /**
+   * `guided` adds explicit working rules to the system prompt. Defaults to
+   * `lean` for Claude, GPT and Codex model ids and `guided` for every other
+   * model.
+   */
+  promptStyle?: PromptStyle;
   /**
    * Overrides discovered image support, including explicit false. When
    * omitted, verified provider metadata or an SDK declaration can enable

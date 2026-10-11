@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { APICallError, type LanguageModel, type ToolSet, tool } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -348,6 +348,42 @@ describe('Agent loop', () => {
       expect(calls).toHaveLength(3);
       expect(finishReason(events)).toBe('output_limit');
       expect(agent.session.status).toBe('idle');
+    });
+  });
+
+  describe('file tracking', () => {
+    it('records every file an apply_patch call changed', async () => {
+      const { model } = scriptedModel([toolCallStep('apply_patch'), textStep('patched')]);
+      const agent = buildAgent({
+        languageModel: model,
+        cwd: '/project',
+        tools: {
+          apply_patch: tool({
+            description: 'stands in for the real apply_patch tool',
+            inputSchema: z.object({}),
+            execute: async () => ({
+              files: [
+                { path: 'src/a.ts', operation: 'updated', additions: 1, deletions: 1 },
+                {
+                  path: 'old/b.ts',
+                  operation: 'moved',
+                  movedTo: 'src/b.ts',
+                  additions: 0,
+                  deletions: 0,
+                },
+              ],
+            }),
+          }),
+        } as ToolSet,
+      });
+
+      await collect(agent);
+
+      expect([...agent.session.fileOps.writes].sort()).toEqual([
+        resolve('/project/old/b.ts'),
+        resolve('/project/src/a.ts'),
+        resolve('/project/src/b.ts'),
+      ]);
     });
   });
 });
