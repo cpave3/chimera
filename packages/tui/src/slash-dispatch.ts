@@ -34,6 +34,8 @@ export interface SlashContext {
   pendingModeName: string | null;
   setPendingModeName: Dispatch<SetStateAction<string | null>>;
   currentModelRef: string;
+  /** The session's goal, or null when none is set. */
+  goal: string | null;
   overlayMode: boolean;
   setOverlayPicker: Dispatch<SetStateAction<OverlayDiffEntry[] | null>>;
   setSessionPicker: Dispatch<SetStateAction<SessionInfo[] | null>>;
@@ -71,6 +73,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     pendingModeName,
     setPendingModeName,
     currentModelRef,
+    goal,
     overlayMode,
     setOverlayPicker,
     setSessionPicker,
@@ -385,6 +388,24 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     case '/memory':
       void openMemoryIndex();
       return;
+    case '/goal': {
+      const condition = arg.trim();
+      if (condition === '') {
+        scrollback.addInfo(
+          goal
+            ? `goal: ${goal}`
+            : 'no goal is set. /goal <condition> sets one; /goal clear removes it.',
+        );
+        return;
+      }
+      // The session answers with a goal_updated event, which draws the change.
+      void activeSession.client
+        .setGoal(activeSession.sessionId, condition === 'clear' ? null : condition)
+        .catch((error: unknown) => {
+          scrollback.addError(`/goal: ${(error as Error).message}`);
+        });
+      return;
+    }
     case '/context': {
       void (async () => {
         try {

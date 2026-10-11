@@ -1,7 +1,28 @@
 import type { AgentEvent, CallId, Session, ToolCallRecord, ToolDisplay } from '@chimera/core';
-import { countImageParts, parseBackgroundAgentMessage } from '@chimera/core';
+import { countImageParts, parseBackgroundAgentMessage, parseGoalMessage } from '@chimera/core';
 import { formatElapsed } from './activity';
 import { formatTokens } from './usage-format';
+
+/** What a `goal_updated` event says, as one line of the transcript. */
+export function goalLine(event: Extract<AgentEvent, { type: 'goal_updated' }>): string {
+  const why = event.reason ? `: ${event.reason}` : '';
+  switch (event.change) {
+    case 'set':
+      return `goal set: ${event.condition}`;
+    case 'cleared':
+      return 'goal cleared';
+    case 'met':
+      return `goal met${why}`;
+    case 'not_met':
+      return `goal not met (${event.continuation} of ${event.maxContinuations})${why}`;
+    case 'limit':
+      return `goal: limit of ${event.maxContinuations} continuations reached${why}`;
+    case 'impossible':
+      return `goal not possible${why}`;
+    case 'unchecked':
+      return `goal not checked${why}`;
+  }
+}
 
 /**
  * Structural type matching `@chimera/tools`' `FormatScrollback<I, O>`. Defined
@@ -834,7 +855,15 @@ export class Scrollback {
           else this.addInfo(text);
           return;
         }
+        // What the goal check tells the agent has its own line, from `goal_updated`.
+        if (parseGoalMessage(ev.content)) return;
         this.addUserMessage(ev.content, (ev as { imageCount?: number }).imageCount);
+        return;
+      }
+      if (ev.type === 'goal_updated') {
+        const line = goalLine(ev);
+        if (ev.change === 'unchecked' || ev.change === 'impossible') this.addError(line);
+        else this.addInfo(line);
         return;
       }
       if (ev.type === 'tool_call_start') {

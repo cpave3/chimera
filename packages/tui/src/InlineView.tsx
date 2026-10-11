@@ -190,6 +190,7 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
         visionRouteRef={view.visionRouteRef}
         forked={view.activeParentId !== null}
         tasks={tasks}
+        goal={view.goal}
         usageState={view.usageState}
       />
     </>

@@ -367,8 +367,9 @@ export function renderEntryLines(
       </Text>,
     ];
   }
+  // Notices and errors are prose: a break inside a word makes them hard to read.
   if (entry.kind === 'info' || entry.kind === 'mode_change') {
-    const lines = wrapToLines(entry.text, width, 0);
+    const lines = wrapWords(entry.text, width, 0);
     return lines.map((line, i) => (
       // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
       <Text key={`${entry.id}:${i}`} color={theme.text.muted}>
@@ -376,7 +377,7 @@ export function renderEntryLines(
       </Text>
     ));
   }
-  const lines = wrapToLines(entry.text, width, 0);
+  const lines = wrapWords(entry.text, width, 0);
   return lines.map((line, i) => (
     // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
     <Text key={`${entry.id}:${i}`} color={theme.status.error}>

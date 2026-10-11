@@ -37,6 +37,8 @@ export interface SessionEventContext {
   setCurrentModelRef: Dispatch<SetStateAction<string>>;
   setCompacting: Dispatch<SetStateAction<boolean>>;
   setTasks: Dispatch<SetStateAction<{ content: string; status: string }[]>>;
+  /** The session's goal, or null. */
+  setGoal: Dispatch<SetStateAction<string | null>>;
   /** The provider retry the run is waiting on, shown in the activity line. */
   setRetry: Dispatch<SetStateAction<{ attempt: number; maxAttempts: number } | null>>;
   /** Model steps finished in the run in progress. */
@@ -69,6 +71,7 @@ export function applySessionEvent(
     setCurrentModelRef,
     setCompacting,
     setTasks,
+    setGoal,
     setRetry,
     setRunSteps,
   } = context;
@@ -257,6 +260,8 @@ export function applySessionEvent(
     scrollback.addError(`compaction failed: ${ev.error}`);
   } else if (ev.type === 'task_list_updated') {
     setTasks(ev.tasks);
+  } else if (ev.type === 'goal_updated') {
+    setGoal(ev.condition);
   } else if (ev.type === 'background_process_exited') {
     const outcome = ev.status === 'killed' ? 'killed' : `exited (exit ${ev.exitCode ?? 'unknown'})`;
     scrollback.addInfo(`background process ${ev.shellId} ${outcome}: ${ev.command}`);

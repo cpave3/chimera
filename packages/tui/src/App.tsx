@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { ChimeraClient, ChimeraHttpError } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
 import type {
@@ -15,16 +17,14 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { parseAttachTokens, readForAttach } from './attach-paths';
 import { runBangCommand } from './bang';
-import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
 import type { Peer } from './ContextPanel';
-import { completionContext, listProjectFiles, rankFiles } from './file-completion';
+import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
 import { FullscreenView } from './FullscreenView';
+import { completionContext, listProjectFiles, rankFiles } from './file-completion';
 import { InlineView } from './InlineView';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
 import {
@@ -33,10 +33,10 @@ import {
   openFileInEditor as openFileInEditorImpl,
   openInEditor as openInEditorImpl,
 } from './input/external-editor';
-import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import type { MouseBus } from './input/mouse';
-import type { Region } from './input/screen-selection';
+import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import { PasteRegistry } from './input/paste';
+import type { Region } from './input/screen-selection';
 import { handleKey } from './key-handler';
 import type { NotificationReason } from './notify';
 import type { OverlayDiffEntry } from './OverlayPicker';
@@ -297,6 +297,7 @@ export function App(props: AppProps): React.ReactElement | null {
     unknownWindow: boolean;
   } | null>(null);
   const [tasks, setTasks] = useState<{ content: string; status: string }[]>([]);
+  const [goal, setGoal] = useState<string | null>(null);
   const wasBusyRef = useRef(false);
   const [menuHighlight, setMenuHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
@@ -524,6 +525,7 @@ export function App(props: AppProps): React.ReactElement | null {
         setCurrentModelRef(`${s.model.providerId}/${s.model.modelId}`);
         const sessionTasks = (s as { tasks?: { content: string; status: string }[] }).tasks;
         setTasks(Array.isArray(sessionTasks) ? sessionTasks : []);
+        setGoal(s.goal?.condition ?? null);
         // Only rehydrate if the session actually has prior messages — avoids
         // wiping a fresh "/new" session's empty scrollback unnecessarily.
         if (Array.isArray(s.messages) && s.messages.length > 0) {
@@ -613,6 +615,7 @@ export function App(props: AppProps): React.ReactElement | null {
       setCurrentModelRef,
       setCompacting,
       setTasks,
+      setGoal,
       setRetry,
       setRunSteps,
       onInputRequired: () => notify?.('input', { runMs: 0 }),
@@ -1002,6 +1005,7 @@ export function App(props: AppProps): React.ReactElement | null {
       pendingModeName,
       setPendingModeName,
       currentModelRef,
+      goal,
       overlayMode,
       setOverlayPicker,
       setSessionPicker,
@@ -1321,6 +1325,7 @@ export function App(props: AppProps): React.ReactElement | null {
     runStartedAt: runStartedAtRef.current,
     runOutputTokens: (usageState?.usage.outputTokens ?? 0) - runStartOutputTokensRef.current,
     tasks,
+    goal,
     queue,
     usageState,
     activeModeName,

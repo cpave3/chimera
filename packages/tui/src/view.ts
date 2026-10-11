@@ -71,6 +71,8 @@ export interface AppView {
   runOutputTokens: number;
 
   tasks: { content: string; status: string }[];
+  /** The session's goal, or null when none is set. */
+  goal: string | null;
   queue: string[];
   usageState: UsageState | null;
   activeModeName: string;

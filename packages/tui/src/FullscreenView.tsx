@@ -322,6 +322,7 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
           systemTokens={systemTokens}
           skillsTokens={skillsTokens}
           tasks={tasks}
+          goal={view.goal}
           worktree={worktree}
           peers={peers}
         />

@@ -28,6 +28,11 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
     description: 'Re-read user commands and AGENTS.md/AGENTS.local.md/CLAUDE.md from disk',
   },
   { name: '/memory', description: "Edit the project's memory index in $EDITOR" },
+  {
+    name: '/goal',
+    description:
+      'Set a completion condition that is checked at each stop (/goal <condition> | clear)',
+  },
   { name: '/theme', description: 'List or apply a colour theme (/theme <name>)' },
   { name: '/subagents', description: 'List active subagents of the current session' },
   { name: '/attach', description: 'Attach the TUI to a subagent by id (/attach <id>)' },

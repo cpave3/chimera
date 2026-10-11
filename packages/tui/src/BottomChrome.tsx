@@ -24,6 +24,8 @@ export interface BottomChromeProps {
   forked: boolean;
   running: boolean;
   tasks: { content: string; status: string }[];
+  /** The session's goal, or null when none is set. */
+  goal?: string | null;
   usageState: UsageState | null;
 }
 
@@ -39,6 +41,7 @@ interface Item {
 const SEPARATOR_WIDTH = 3;
 const GAUGE_CELLS = 10;
 const MAX_TASK_NAME = 40;
+const MAX_GOAL_NAME = 40;
 const MAX_CWD = 48;
 
 function rowWidth(items: Item[]): number {
@@ -84,6 +87,7 @@ export const BottomChrome = memo(function BottomChrome({
   forked,
   running,
   tasks,
+  goal,
   usageState,
 }: BottomChromeProps): React.ReactElement {
   const theme = useTheme();
@@ -191,6 +195,11 @@ export const BottomChrome = memo(function BottomChrome({
     if (current) {
       placeLeft.push(text('task', `◼ ${clipEnd(current.content, MAX_TASK_NAME)}`, muted, 25));
     }
+  }
+  if (goal) {
+    placeLeft.push(
+      text('goal', `goal: ${clipEnd(goal, MAX_GOAL_NAME)}`, theme.accent.secondary, 45),
+    );
   }
 
   // Row 2, right: the keys that matter in this state.

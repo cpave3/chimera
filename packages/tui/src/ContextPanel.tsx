@@ -6,6 +6,7 @@ import { displayPath } from './display-path';
 import type { UsageState } from './session-events';
 import { useTheme } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
+import { wrapWords } from './transcript';
 import { formatTokens, pickUsageColor } from './usage-format';
 import { CHIMERA_VERSION } from './version';
 import type { SandboxLabel } from './view';
@@ -37,6 +38,8 @@ export interface ContextPanelProps {
   systemTokens: number | null;
   skillsTokens: number;
   tasks: { content: string; status: string }[];
+  /** The session's goal, or null when none is set. */
+  goal: string | null;
   worktree: WorktreeStatus | null;
   peers: Peer[];
 }
@@ -46,6 +49,7 @@ const PADDING_COLUMNS = 2;
 const MAX_PLAN_LINES = 8;
 const MAX_WORKTREE_FILES = 8;
 const MAX_PEERS = 5;
+const MAX_GOAL_LINES = 3;
 const HALF_GAP_COLUMNS = 2;
 // A completed task above the current one keeps the reader's place in the plan.
 const PLAN_LEAD_IN = 1;
@@ -244,6 +248,25 @@ export const ContextPanel = memo(function ContextPanel(
             {' history'}
           </Text>
         )}
+      </Box>,
+    );
+  }
+
+  if (props.goal) {
+    const lines = wrapWords(props.goal, inner, 0);
+    const shown = lines.slice(0, MAX_GOAL_LINES);
+    if (lines.length > MAX_GOAL_LINES) {
+      shown[MAX_GOAL_LINES - 1] = `${shown[MAX_GOAL_LINES - 1]!.slice(0, inner - 1)}…`;
+    }
+    sections.push(
+      <Box key="goal" flexDirection="column" flexShrink={0}>
+        <Heading theme={theme}>GOAL</Heading>
+        {shown.map((line, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: wrapped lines have no id; position is their identity
+          <Text key={index} color={theme.text.primary}>
+            {line}
+          </Text>
+        ))}
       </Box>,
     );
   }
