@@ -37,7 +37,7 @@ Every `ChimeraToolDef` carries `promptSnippet`. `composeSystemPrompt` receives `
 
 ### `apply_patch` as a JSON tool with one string field
 
-The tool takes `{ patch: string }` in the Codex envelope (`*** Begin Patch` … `*** End Patch`, with `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:`). Chimera reaches GPT models through Chat Completions, which has no freeform-grammar tools, so the JSON form is the portable one. Hunks are located by context: exact match first, then ignoring trailing whitespace, then ignoring all leading and trailing whitespace — the same ladder the Codex CLI uses. The whole patch is parsed and every hunk located before any file is written, so a bad hunk leaves the tree unchanged. The tool uses the sandbox executor, so path rules, post-edit diagnostics and file tracking match `edit`.
+The tool takes `{ input: string }` (the parameter name of the Codex JSON tool) in the Codex envelope (`*** Begin Patch` … `*** End Patch`, with `*** Add File:`, `*** Update File:`, `*** Delete File:` and `*** Move to:`). Chimera reaches GPT models through Chat Completions, which has no freeform-grammar tools, so the JSON form is the portable one. Hunks are located by context: exact match first, then ignoring trailing whitespace, then ignoring all leading and trailing whitespace — the same ladder the Codex CLI uses. The whole patch is parsed and every hunk located before any file is written, so a bad hunk leaves the tree unchanged. The tool uses the sandbox executor, so path rules, post-edit diagnostics and file tracking match `edit`.
 
 `Executor.removeFile` is added for `Delete File` and `Move to`. `LocalExecutor` applies the same path check as `writeFile`.
 

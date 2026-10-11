@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai';
+import { buildApplyPatchTool } from './apply-patch';
 import { buildBashKillTool, buildBashOutputTool } from './background-tools';
 import { buildBashTool } from './bash';
 import { buildCodexToolDefs } from './codex-adapter';
@@ -27,7 +28,9 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
     bash: buildBashTool(ctx),
     read: buildReadTool(ctx),
     write: buildWriteTool(ctx),
-    edit: buildEditTool(ctx),
+    ...(ctx.editFormat === 'patch'
+      ? { apply_patch: buildApplyPatchTool(ctx) }
+      : { edit: buildEditTool(ctx) }),
     glob: buildGlobTool(ctx),
     grep: buildGrepTool(ctx),
     fetch: buildFetchTool(ctx),

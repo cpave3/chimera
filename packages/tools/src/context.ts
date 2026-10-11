@@ -1,4 +1,5 @@
 import type {
+  EditFormat,
   Executor,
   HostAuthenticationCapability,
   PermissionGate,
@@ -25,6 +26,11 @@ export interface ToolContext {
    * Chimera's native tool names and schemas.
    */
   toolCallShape?: 'chimera' | 'codex';
+  /**
+   * `patch` registers `apply_patch` in place of `edit`. Undefined means
+   * `replace`.
+   */
+  editFormat?: EditFormat;
   /**
    * When present, the bash tool accepts `run_in_background` and the
    * `bash_output` / `bash_kill` tools are registered. Background processes
