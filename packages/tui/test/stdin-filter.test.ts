@@ -63,6 +63,37 @@ describe('createFilteredStdin', () => {
     expect(reads).toEqual(['a\nb', 'plain']);
   });
 
+  it('hands mouse reports to the listener and keeps them out of the key stream', () => {
+    const queue: (string | null)[] = ['a\x1b[<64;10;5Mb', '\x1b[<65;1', '0;5M', null];
+    const upstream = new EventEmitter() as unknown as NodeJS.ReadStream;
+    Object.assign(upstream, {
+      isTTY: true,
+      pause() {},
+      resume() {},
+      setRawMode() {},
+      setEncoding() {},
+      read() {
+        return queue.shift() ?? null;
+      },
+      ref() {},
+      unref() {},
+    });
+    const wheel: string[] = [];
+    const filtered = createFilteredStdin(upstream, undefined, (event) => wheel.push(event.kind));
+    const reads: unknown[] = [];
+    filtered.on('readable', () => {
+      while (true) {
+        const chunk: unknown = filtered.read();
+        if (chunk === null) break;
+        reads.push(chunk);
+      }
+    });
+    (upstream as unknown as EventEmitter).emit('readable');
+
+    expect(reads).toEqual(['ab']);
+    expect(wheel).toEqual(['wheel-up', 'wheel-down']);
+  });
+
   it('stops pulling upstream bytes while paused for terminal handoff', () => {
     const queue: (string | null)[] = ['secret-password\r', null];
     let raw = false;

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { extractMouseReports, type MouseEvent } from './mouse';
 import { PasteRegistry, shouldCompactPaste } from './paste';
 
 /**
@@ -60,6 +61,7 @@ export function translateModifiedKeys(chunk: string): string {
 export function createFilteredStdin(
   upstream: NodeJS.ReadStream,
   pasteRegistry?: PasteRegistry,
+  onMouse?: (event: MouseEvent) => void,
 ): NodeJS.ReadStream {
   const wrapper = new EventEmitter() as EventEmitter & Partial<NodeJS.ReadStream>;
   const queue: string[] = [];
@@ -97,6 +99,17 @@ export function createFilteredStdin(
     return 0;
   }
 
+  /**
+   * Queue typed input for Ink, with mouse reports taken out and sent to
+   * `onMouse`. Returns the start of a report the input ended inside.
+   */
+  function queueKeys(input: string): string {
+    const { rest, events, incomplete } = extractMouseReports(input);
+    for (const event of events) onMouse?.(event);
+    if (rest.length > 0) queue.push(translateModifiedKeys(rest));
+    return incomplete;
+  }
+
   function processInput(chunk: string): void {
     pendingInput += chunk;
     while (pendingInput.length > 0) {
@@ -123,12 +136,12 @@ export function createFilteredStdin(
       if (startIndex < 0) {
         const retainedLength = markerPrefixLength(pendingInput, pasteStart);
         const output = pendingInput.slice(0, pendingInput.length - retainedLength);
-        if (output.length > 0) queue.push(translateModifiedKeys(output));
-        pendingInput = retainedLength > 0 ? pendingInput.slice(-retainedLength) : '';
+        const incompleteReport = queueKeys(output);
+        pendingInput =
+          incompleteReport + (retainedLength > 0 ? pendingInput.slice(-retainedLength) : '');
         return;
       }
-      const output = pendingInput.slice(0, startIndex);
-      if (output.length > 0) queue.push(translateModifiedKeys(output));
+      queueKeys(pendingInput.slice(0, startIndex));
       pendingInput = pendingInput.slice(startIndex + pasteStart.length);
       pasteContent = '';
     }
