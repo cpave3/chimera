@@ -1462,12 +1462,21 @@ export class Agent {
           };
 
           const responseTimeoutMs = this.opts.responseTimeoutMs ?? 120_000;
-          if (responseTimeoutMs > 0) {
+          // The timer measures model silence only: every stream part restarts
+          // it, and it stays off while a tool of this step is executing (the
+          // AI SDK runs tools inside the stream, so the loop below does not
+          // finish until they return).
+          let toolsInFlight = 0;
+          const armResponseTimeout = () => {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            timeoutHandle = undefined;
+            if (responseTimeoutMs <= 0 || toolsInFlight > 0) return;
             timeoutHandle = setTimeout(() => {
               timedOut = true;
               this.abortController.abort();
             }, responseTimeoutMs);
-          }
+          };
+          armResponseTimeout();
 
           // Message count the prompt was built from; pairs with the step's
           // reported inputTokens in the context tracker.
@@ -1498,6 +1507,15 @@ export class Agent {
           });
 
           for await (const part of stream.fullStream) {
+            if (part.type === 'tool-call') {
+              toolsInFlight += 1;
+            } else if (
+              part.type === 'tool-error' ||
+              (part.type === 'tool-result' && !(part as { preliminary?: boolean }).preliminary)
+            ) {
+              toolsInFlight = Math.max(0, toolsInFlight - 1);
+            }
+            armResponseTimeout();
             switch (part.type) {
               case 'text-start': {
                 // Flush an unconcluded text block before starting a new one.
