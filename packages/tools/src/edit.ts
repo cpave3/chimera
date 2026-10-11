@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
+import { describeMiss, locateTolerant, type MatchLevel } from './edit-match';
 import { relPath } from './format';
 
 const EDIT_SCHEMA = z.object({
@@ -20,6 +21,8 @@ type EditResult = {
   startLine: number;
   contextBefore: string[];
   contextAfter: string[];
+  /** Present when old_string only matched after whitespace was ignored. */
+  matched?: Exclude<MatchLevel, 'exact'>;
   diagnostics?: string;
 };
 
@@ -30,21 +33,29 @@ export function buildEditTool(ctx: ToolContext) {
   return defineTool<EditArgs, EditResult>({
     description:
       'Exact-string replace in a file under the working directory or /tmp. Errors if old_string is not found, or is found more than once without replace_all=true. ' +
-      'No regex — old_string and new_string are literal.',
+      'No regex — old_string and new_string are literal. If old_string differs from the file only in whitespace and matches one place, the edit still applies and the result says so.',
     promptSnippet: 'Replace an exact string in a file.',
     inputSchema: EDIT_SCHEMA,
     execute: async (args) => {
       const content = await ctx.sandboxExecutor.readFile(args.path);
       const count = countOccurrences(content, args.old_string);
-      if (count === 0) {
-        throw new Error('old_string not found');
-      }
       if (count > 1 && !args.replace_all) {
         throw new Error(
           `old_string matches ${count} occurrences; pass replace_all=true or disambiguate`,
         );
       }
-      const matchIndex = content.indexOf(args.old_string);
+      // An exact miss is usually whitespace: fall back to matching whole
+      // lines with trailing whitespace, then indentation, ignored.
+      const tolerant =
+        count === 0 && !args.replace_all
+          ? locateTolerant(content, args.old_string, args.new_string)
+          : undefined;
+      if (count === 0 && !tolerant) {
+        throw new Error(describeMiss(content, args.old_string));
+      }
+      const matchIndex = tolerant ? tolerant.start : content.indexOf(args.old_string);
+      const matchEnd = tolerant ? tolerant.end : matchIndex + args.old_string.length;
+      const replacement = tolerant ? tolerant.replacement : args.new_string;
       const startLine = lineNumberAt(content, matchIndex);
       const contextBefore = linesAbove(content, matchIndex, CONTEXT_LINES);
       // String.prototype.replace expands $&, $`, $', $$ in the replacement string
@@ -52,18 +63,17 @@ export function buildEditTool(ctx: ToolContext) {
       // when new_string contains shell regex anchors like '^foo$'.
       const next = args.replace_all
         ? content.split(args.old_string).join(args.new_string)
-        : content.slice(0, matchIndex) +
-          args.new_string +
-          content.slice(matchIndex + args.old_string.length);
+        : content.slice(0, matchIndex) + replacement + content.slice(matchEnd);
       await ctx.sandboxExecutor.writeFile(args.path, next);
-      const afterEnd = matchIndex + args.new_string.length;
+      const afterEnd = matchIndex + replacement.length;
       const contextAfter = linesBelow(next, afterEnd, CONTEXT_LINES);
       const diagnostics = await ctx.diagnostics?.collect(args.path);
       return {
-        replacements: count,
+        replacements: tolerant ? 1 : count,
         startLine,
         contextBefore,
         contextAfter,
+        ...(tolerant ? { matched: tolerant.level } : {}),
         ...(diagnostics ? { diagnostics } : {}),
       };
     },

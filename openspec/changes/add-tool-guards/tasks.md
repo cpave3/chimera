@@ -1,9 +1,9 @@
 ## 1. Tolerant edit
 
-- [ ] 1.1 Test and implement the trailing-whitespace level
-- [ ] 1.2 Test and implement the any-whitespace level with re-indentation
-- [ ] 1.3 Test and implement the ambiguity error
-- [ ] 1.4 Test and implement the closest-block error
+- [x] 1.1 Test and implement the trailing-whitespace level
+- [x] 1.2 Test and implement the any-whitespace level with re-indentation
+- [x] 1.3 Test and implement the ambiguity error
+- [x] 1.4 Test and implement the closest-block error
 
 ## 2. Tool-call repair
 

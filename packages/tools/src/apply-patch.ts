@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
+import type { MatchLevel } from './edit-match';
 import { relPath } from './format';
 
 const BEGIN = '*** Begin Patch';
@@ -32,8 +33,6 @@ type PatchOperation =
   | { kind: 'add'; path: string; lines: string[] }
   | { kind: 'delete'; path: string }
   | { kind: 'update'; path: string; moveTo?: string; hunks: Hunk[] };
-
-export type MatchLevel = 'exact' | 'trailing-whitespace' | 'any-whitespace';
 
 export interface PatchedFile {
   path: string;
