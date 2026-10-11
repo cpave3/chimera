@@ -94,8 +94,8 @@ from the model's family.
 | Field | Values | Default |
 | --- | --- | --- |
 | `toolCallShape` | `chimera`, `codex` | `chimera` |
-| `editFormat` | `replace`, `patch` | `patch` for GPT and Codex model ids (`gpt-*`, `o<digit>*`, `codex*`), `replace` for every other model |
-| `promptStyle` | `lean`, `guided` | `lean` for Claude, GPT and Codex model ids, `guided` for every other model |
+| `editFormat` | `replace`, `patch` | `patch` for GPT and Codex model ids (`gpt`, `gpt-*`, `o<digit>*`, `codex*`) and for any model with `toolCallShape: "codex"`; `replace` for every other model |
+| `promptStyle` | `lean`, `guided` | `lean` for Claude, GPT and Codex model ids and for any model with `toolCallShape: "codex"`; `guided` for every other model |
 
 ```json
 {

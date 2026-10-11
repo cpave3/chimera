@@ -29,13 +29,14 @@ export interface ModelOptions {
   /**
    * How the model edits files: `replace` registers the exact-string `edit`
    * tool, `patch` registers `apply_patch`. Defaults to `patch` for GPT and
-   * Codex model ids and `replace` for every other model.
+   * Codex model ids and for models with `toolCallShape: "codex"`, and to
+   * `replace` for every other model.
    */
   editFormat?: EditFormat;
   /**
    * `guided` adds explicit working rules to the system prompt. Defaults to
-   * `lean` for Claude, GPT and Codex model ids and `guided` for every other
-   * model.
+   * `lean` for Claude, GPT and Codex model ids and for models with
+   * `toolCallShape: "codex"`, and to `guided` for every other model.
    */
   promptStyle?: PromptStyle;
   /**
