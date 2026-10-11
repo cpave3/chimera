@@ -1,3 +1,4 @@
+export { buildApplyPatchTool } from './apply-patch';
 export * from './background';
 export { buildBashKillTool, buildBashOutputTool } from './background-tools';
 export { buildBashTool } from './bash';
@@ -9,6 +10,8 @@ export { buildEditTool } from './edit';
 export * from './errors';
 export { buildGlobTool } from './glob';
 export { buildGrepTool } from './grep';
+export * from './guards';
+export * from './intercept';
 export * from './local-executor';
 export { buildReadTool } from './read';
 export { buildRecallTool, type RecallStoreApi } from './recall';
