@@ -13,6 +13,7 @@ import type {
 } from '@chimera/core';
 import type { HookRunner } from '@chimera/hooks';
 import { matchRule } from './matching';
+import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
 import type { AutoApproveLevel } from './types';
 
@@ -54,7 +55,15 @@ export interface GateOptions {
     request: PermissionRequest;
     resolution: PermissionResolution;
     source: PermissionDecisionSource;
+    review?: ApprovalReview;
   }) => void;
+  /**
+   * Examines a request before the user is asked about it. Without one,
+   * every request that needs approval goes to the user.
+   */
+  reviewer?: ApprovalReviewer;
+  /** Called with each decision of the reviewer. */
+  onReview?: (request: PermissionRequest, review: ApprovalReview) => void;
 }
 
 /**
@@ -112,6 +121,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
     | undefined;
   private readonly commandPolicy: GateOptions['commandPolicy'];
   private readonly audit: GateOptions['audit'];
+  private readonly reviewer: ApprovalReviewer | undefined;
+  private readonly onReview: GateOptions['onReview'];
 
   constructor(opts: GateOptions) {
     this.store = new RuleStore(opts.cwd, opts.home);
@@ -123,6 +134,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
     this.emitResolved = opts.emitResolved;
     this.commandPolicy = opts.commandPolicy;
     this.audit = opts.audit;
+    this.reviewer = opts.reviewer;
+    this.onReview = opts.onReview;
   }
 
   check(req: PermissionRequest): PermissionResolution | null {
@@ -142,8 +155,10 @@ export class DefaultPermissionGate implements McpPermissionGate {
    * 3. If a hookRunner is configured, fire PermissionRequest. A pre-hook
    *    block (exit 2) denies without raising the user prompt — the executor
    *    renders this denial as `{ error: "denied by hook" }`.
-   * 4. If headlessAutoDeny and host target, deny without raising.
-   * 5. Otherwise call raiseRequest to suspend the agent for user decision.
+   * 4. If an approval reviewer is configured and the request is its to
+   *    decide, its `allow` allows the call and its `escalate` goes on.
+   * 5. If headlessAutoDeny and host target, deny without raising.
+   * 6. Otherwise call raiseRequest to suspend the agent for user decision.
    */
   async requestMcp(
     call: McpPermissionCall,
@@ -157,6 +172,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
       command: identity,
       cwd: call.cwd,
       mcp: { server: call.server, tool: call.tool, preview: mcpArgumentPreview(call.args) },
+      ...(call.toolCallId ? { toolCallId: call.toolCallId } : {}),
     };
     const matchingRule = matchRule(request, this.store.all());
     if (matchingRule?.decision === 'deny') {
@@ -172,7 +188,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     if (trustedTools.includes(call.tool)) {
       return this.audited(request, { decision: 'allow', remembered: false }, 'automatic');
     }
-    return this.prompt(request);
+    return this.prompt(request, call.args);
   }
 
   async request(req: PermissionRequest): Promise<PermissionResolution> {
@@ -233,7 +249,15 @@ export class DefaultPermissionGate implements McpPermissionGate {
     return this.prompt(evaluatedRequest);
   }
 
-  private async prompt(req: PermissionRequest): Promise<PermissionResolution> {
+  /**
+   * Put a request to whoever decides it: a blocking hook, the approval
+   * reviewer, then the user. `mcpArguments` are for the reviewer only; the
+   * request itself goes to clients without argument values.
+   */
+  private async prompt(
+    req: PermissionRequest,
+    mcpArguments?: unknown,
+  ): Promise<PermissionResolution> {
     if (this.hookRunner) {
       const result = await this.hookRunner.fire({
         event: 'PermissionRequest',
@@ -254,28 +278,52 @@ export class DefaultPermissionGate implements McpPermissionGate {
         );
       }
     }
+    const review =
+      (await this.reviewer?.review({
+        request: req,
+        ...(mcpArguments === undefined ? {} : { mcpArguments }),
+      })) ?? undefined;
+    if (review) this.onReview?.(req, review);
+    if (review?.decision === 'allow') {
+      return this.audited(req, { decision: 'allow', remembered: false }, 'reviewer', review);
+    }
     if ((this.headlessAutoDeny || (req.mcp && this.mcpHeadlessAutoDeny)) && req.target === 'host') {
       this.emitResolved?.(req.requestId, 'deny', false);
-      return this.audited(
-        req,
-        { decision: 'deny', remembered: false, denialSource: 'headless' },
-        'headless',
-      );
+      // The reviewer wanted the user to decide, and there is nobody to ask:
+      // the model gets the reviewer's reason in place of a bare denial.
+      return review
+        ? this.audited(
+            req,
+            {
+              decision: 'deny',
+              remembered: false,
+              denialSource: 'reviewer',
+              reviewerReason: review.reason,
+            },
+            'reviewer',
+            review,
+          )
+        : this.audited(
+            req,
+            { decision: 'deny', remembered: false, denialSource: 'headless' },
+            'headless',
+          );
     }
-    const raised = await this.raise(req);
+    const raised = await this.raise(review ? { ...req, reviewerReason: review.reason } : req);
     const resolution =
       raised.decision === 'deny' && !raised.denialSource
         ? { ...raised, denialSource: 'user' as const }
         : raised;
-    return this.audited(req, resolution, 'user');
+    return this.audited(req, resolution, 'user', review);
   }
 
   private audited(
     request: PermissionRequest,
     resolution: PermissionResolution,
     source: PermissionDecisionSource,
+    review?: ApprovalReview,
   ): PermissionResolution {
-    this.audit?.({ request, resolution, source });
+    this.audit?.({ request, resolution, source, ...(review ? { review } : {}) });
     return resolution;
   }
 

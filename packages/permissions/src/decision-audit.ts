@@ -7,6 +7,7 @@ import type {
   PermissionResolution,
 } from '@chimera/core';
 import { logsDir } from '@chimera/core';
+import type { ApprovalReview } from './reviewer';
 
 export interface PermissionDecisionAuditOptions {
   home?: string;
@@ -19,6 +20,8 @@ export interface PermissionAuditEntry {
   request: PermissionRequest;
   resolution: PermissionResolution;
   source: PermissionDecisionSource;
+  /** What the approval reviewer decided before this decision was made. */
+  review?: ApprovalReview;
   feedback?: string;
   grant?: { id: string; kind: 'read' | 'write'; path: string };
 }
@@ -65,10 +68,21 @@ export class PermissionDecisionAudit {
       source: entry.source,
       remembered: entry.resolution.remembered,
       findings,
+      ...(entry.review ? { reviewer: this.reviewerRecord(entry) } : {}),
       ...(!entry.request.mcp && feedback ? { feedback } : {}),
       ...(!entry.request.mcp && grant ? { grant } : {}),
     };
     appendFileSync(this.path, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
     chmodSync(this.path, 0o600);
+  }
+
+  private reviewerRecord(entry: PermissionAuditEntry) {
+    const { decision, reason, stopped } = entry.review!;
+    return {
+      decision,
+      // The reviewer read the arguments of an MCP call and can repeat them.
+      ...(entry.request.mcp ? {} : { reason }),
+      ...(stopped ? { stopped } : {}),
+    };
   }
 }

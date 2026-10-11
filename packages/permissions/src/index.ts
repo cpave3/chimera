@@ -7,6 +7,7 @@ export * from './path-authorization-stage';
 export * from './pi-safe-shell-adapter';
 export * from './pipeline';
 export * from './policy-review';
+export * from './reviewer';
 export * from './risk-stage';
 export * from './rule-store';
 export * from './scary-command-stage';
