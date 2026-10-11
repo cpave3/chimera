@@ -16,7 +16,7 @@ const WEB_SEARCH_RULE = `Do not invent, assume, or guess URLs. When you need an 
 
 const ROLE_BODY = `## Project conventions
 
-If \`AGENTS.md\` or \`CLAUDE.md\` exists at the repo root or above the file you're editing, read it before making changes. Also check for \`AGENTS.local.md\` at each level — it is a higher-priority local override. Project rules — comment style, error handling, migration patterns, commit conventions — override your defaults; skipping them produces work that has to be rewritten.
+The project's instruction files are included below, and the instruction file of a subdirectory arrives with the first file you touch there, so you do not need to look for them. Project rules — comment style, error handling, migration patterns, commit conventions — override your defaults; skipping them produces work that has to be rewritten.
 
 ## Style
 

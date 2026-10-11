@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { composeSystemPrompt, discoverAgentsFiles } from '../src/prompts/compose';
+import {
+  composeSystemPrompt,
+  discoverAgentsFiles,
+  oversizedInstructionFiles,
+} from '../src/prompts/compose';
 
 describe('composeSystemPrompt', () => {
   let home: string;
@@ -110,9 +114,10 @@ describe('composeSystemPrompt', () => {
     expect(out).toMatch(/target='host'/);
     // file:line output convention
     expect(out).toMatch(/path\/to\/file\.ts:42/);
-    // Project conventions: read AGENTS.md / CLAUDE.md before editing
+    // Project conventions: the files are supplied, so the model is not sent to find them
     expect(out).toContain('## Project conventions');
-    expect(out).toMatch(/AGENTS\.md.*CLAUDE\.md|CLAUDE\.md.*AGENTS\.md/);
+    expect(out).toMatch(/instruction files are included below/i);
+    expect(out.slice(0, out.indexOf('# Chimera Session'))).not.toMatch(/AGENTS\.md|CLAUDE\.md/);
     // Migration completion rule
     expect(out).toMatch(/Finish migrations/i);
     expect(out).toMatch(/compat shim/i);
@@ -122,6 +127,36 @@ describe('composeSystemPrompt', () => {
     expect(out).toContain('## Tests');
     expect(out).toMatch(/exercise the same code a real caller hits/i);
     expect(out).toMatch(/not implemented/i); // smell-check phrase
+  });
+
+  describe('a large instruction file', () => {
+    const KIB = 1024;
+    const line = `${'x'.repeat(63)}\n`;
+
+    it('goes into the prompt whole when it is within 32 KiB', async () => {
+      await writeFile(join(home, 'AGENTS.md'), `${line.repeat(31 * 16)}LAST-LINE`);
+
+      const prompt = composeSystemPrompt({ cwd: home, home });
+
+      expect(prompt).toContain('LAST-LINE');
+      expect(prompt).not.toMatch(/was cut/);
+      expect(oversizedInstructionFiles(home, home)).toEqual([]);
+    });
+
+    it('is cut at a line boundary, and says so', async () => {
+      const path = join(home, 'AGENTS.md');
+      await writeFile(path, `${line.repeat(50 * 16)}LAST-LINE`);
+
+      const prompt = composeSystemPrompt({ cwd: home, home });
+      const body = prompt.slice(prompt.indexOf(`# ${path}`));
+
+      expect(body).not.toContain('LAST-LINE');
+      expect(body).toMatch(/\[This file was cut: only the first 32 KiB of 50 KiB are shown\.\]/);
+      // Whole lines only: the last line of content before the note is complete.
+      expect(body).toMatch(/x{63}\n\n\[This file was cut/);
+      expect(Buffer.byteLength(body)).toBeLessThan(33 * KIB);
+      expect(oversizedInstructionFiles(home, home)).toEqual([{ path, bytes: 50 * KIB + 9 }]);
+    });
   });
 
   it('walks up to a git root and concatenates AGENTS.md files with closer files last', async () => {

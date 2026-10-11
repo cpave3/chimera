@@ -163,6 +163,8 @@ export interface AppProps {
    * terminal for.
    */
   screen?: { leave(): void; enter(): void };
+  /** Lines to show at the top of the transcript when the TUI starts. */
+  startupNotices?: string[];
   /** Called with the session on screen, at start and after every switch. */
   onActiveSessionChange?: (sessionId: SessionId) => void;
   /**
@@ -315,8 +317,9 @@ export function App(props: AppProps): React.ReactElement | null {
     };
   }, [stdout, fullscreen]);
 
-  // Surface commands-registry warnings once on mount.
+  // Surface startup notices and commands-registry warnings once on mount.
   useEffect(() => {
+    for (const notice of props.startupNotices ?? []) scrollback.addInfo(notice);
     const reg = props.commands;
     if (!reg) return;
     for (const c of reg.collisions()) {

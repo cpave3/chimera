@@ -133,6 +133,58 @@ export function discoverAgentsFiles(cwd: string, home = homedir()): string[] {
   return files.reverse();
 }
 
+/** What one instruction file may add to the model's context. */
+export const INSTRUCTION_FILE_LIMIT_BYTES = 32 * 1024;
+const KIB = 1024;
+
+export interface InstructionFile {
+  content: string;
+  /** Size of the file on disk. */
+  bytes: number;
+  /** True when `content` is the start of the file only. */
+  cut: boolean;
+}
+
+/**
+ * Read an instruction file for the model. A file over the limit is cut at
+ * a line boundary and ends with a line that says so, so the model knows it
+ * has not seen everything. Returns null when the file cannot be read.
+ */
+export function readInstructionFile(path: string): InstructionFile | null {
+  let raw: Buffer;
+  try {
+    raw = readFileSync(path);
+  } catch {
+    return null;
+  }
+  if (raw.byteLength <= INSTRUCTION_FILE_LIMIT_BYTES) {
+    return { content: raw.toString('utf8'), bytes: raw.byteLength, cut: false };
+  }
+  const head = raw.subarray(0, INSTRUCTION_FILE_LIMIT_BYTES).toString('utf8');
+  const lastBreak = head.lastIndexOf('\n');
+  // A file that is one long line has no boundary to cut at.
+  const kept = lastBreak > 0 ? head.slice(0, lastBreak + 1) : head;
+  const note = `[This file was cut: only the first ${INSTRUCTION_FILE_LIMIT_BYTES / KIB} KiB of ${Math.round(raw.byteLength / KIB)} KiB are shown.]`;
+  return { content: `${kept}\n${note}`, bytes: raw.byteLength, cut: true };
+}
+
+/** The instruction files of the system prompt that are over the size limit. */
+export function oversizedInstructionFiles(
+  cwd: string,
+  home?: string,
+): Array<{ path: string; bytes: number }> {
+  const oversized: Array<{ path: string; bytes: number }> = [];
+  for (const path of discoverAgentsFiles(cwd, home)) {
+    try {
+      const bytes = statSync(path).size;
+      if (bytes > INSTRUCTION_FILE_LIMIT_BYTES) oversized.push({ path, bytes });
+    } catch {
+      // gone since discovery
+    }
+  }
+  return oversized;
+}
+
 export function composeSystemPrompt(opts: ComposeOptions): string {
   // Order: role → session block (system-injected) → AGENTS.md / AGENTS.local.md
   // files (user-authored) → extensions. The session block goes BEFORE AGENTS.md
@@ -144,12 +196,9 @@ export function composeSystemPrompt(opts: ComposeOptions): string {
 
   const files = discoverAgentsFiles(opts.cwd, opts.home);
   for (const f of files) {
-    try {
-      const body = readFileSync(f, 'utf8');
-      parts.push(`\n\n# ${f}\n\n${body}`);
-    } catch {
-      // race: file vanished; skip
-    }
+    const file = readInstructionFile(f);
+    // null: the file vanished since discovery
+    if (file) parts.push(`\n\n# ${f}\n\n${file.content}`);
   }
 
   for (const ext of opts.extensions ?? []) {

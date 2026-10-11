@@ -78,6 +78,7 @@ import {
   type FormatScrollback,
   interceptTools,
   LocalExecutor,
+  nestedInstructions,
   outputBudget,
   repeatNote,
   TaskListStore,
@@ -794,6 +795,8 @@ export class CliAgentFactory implements AgentFactory {
         store: recallStore,
       }),
       repeatNote(),
+      // Last, so the output budget does not cut an instruction file it just added.
+      nestedInstructions({ cwd: init.cwd }),
     ];
     const surfaceFor = (
       surfaceModel: Pick<ModelConfig, 'toolCallShape' | 'editFormat'>,

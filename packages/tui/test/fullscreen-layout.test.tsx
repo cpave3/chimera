@@ -98,3 +98,16 @@ describe('fullscreen layout', () => {
     expect(frame).toMatch(/cwd +\S*chimera\S*/);
   });
 });
+
+describe('startup notices', () => {
+  it('open the transcript', async () => {
+    const { lastFrame, unmount } = mountFullscreen({
+      startupNotices: ['/repo/AGENTS.md is 50 KiB; only its first 32 KiB are used.'],
+    });
+    await settle();
+    const frame = plain(lastFrame());
+    unmount();
+
+    expect(frame).toContain('/repo/AGENTS.md is 50 KiB');
+  });
+});

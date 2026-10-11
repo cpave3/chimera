@@ -1,7 +1,12 @@
 import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
 import { Compactor } from '@chimera/compaction';
-import { composeSystemPrompt, type SandboxMode } from '@chimera/core';
+import {
+  composeSystemPrompt,
+  INSTRUCTION_FILE_LIMIT_BYTES,
+  oversizedInstructionFiles,
+  type SandboxMode,
+} from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
@@ -70,6 +75,15 @@ export interface InteractiveOptions {
   mcpConfig?: string;
   /** From `--inline`: print into the terminal's scrollback for this invocation. */
   inline?: boolean;
+}
+
+/** One notice per instruction file of the system prompt that was cut to the size limit. */
+export function instructionFileNotices(cwd: string, home?: string): string[] {
+  const kib = (bytes: number) => Math.round(bytes / 1024);
+  return oversizedInstructionFiles(cwd, home).map(
+    (file) =>
+      `${file.path} is ${kib(file.bytes)} KiB; only its first ${kib(INSTRUCTION_FILE_LIMIT_BYTES)} KiB are used. Move detail into files the agent can read when it needs them.`,
+  );
 }
 
 /** What a fullscreen session leaves on the terminal when it ends. */
@@ -263,6 +277,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const extensions = skills ? [() => skills.buildIndex() || null] : undefined;
 
   const handle = mountTui({
+    startupNotices: instructionFileNotices(opts.cwd, opts.home),
     layout: opts.inline ? 'inline' : config.tui?.layout,
     mouse: config.tui?.mouse,
     notifications: config.tui?.notifications,

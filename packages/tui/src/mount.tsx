@@ -92,6 +92,8 @@ export interface MountOptions {
   mouse?: boolean;
   /** The other live Chimera instances, for the fullscreen context panel. */
   listPeers?: () => Promise<Peer[]>;
+  /** Lines to show at the top of the transcript when the TUI starts. */
+  startupNotices?: string[];
   /**
    * How to ask for attention when a run ends, a permission request opens or
    * the agent needs input. `auto` (the default) notifies through the
@@ -296,6 +298,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         mouse={mouse}
         screen={screen}
         listPeers={opts.listPeers}
+        startupNotices={opts.startupNotices}
         notify={notify}
         onActiveSessionChange={(sessionId) => {
           activeSessionId = sessionId;
