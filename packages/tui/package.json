@@ -27,6 +27,7 @@
     "@chimera/core": "workspace:*",
     "@chimera/modes": "workspace:*",
     "@chimera/skills": "workspace:*",
+    "chalk": "^5.6.2",
     "ink": "npm:@jrichman/ink@6.6.9",
     "lowlight": "^3.3.0",
     "marked": "^18.0.2",

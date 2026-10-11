@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 import { formatElapsed } from './activity';
+import { frameOn } from './frame';
 import { renderMarkdown } from './markdown';
 import type { ScrollbackEntry, SubagentEntry, ToolEntry } from './scrollback';
 import { renderToolBody } from './ToolBody';
@@ -224,7 +225,7 @@ export function renderEntryLines(
             flexDirection="column"
             marginLeft={prefixLen}
             width={width - prefixLen}
-            borderStyle="round"
+            borderStyle={frameOn('round', theme.base.background)}
             borderColor={theme.surface.border ?? theme.text.muted}
             paddingX={1}
           >

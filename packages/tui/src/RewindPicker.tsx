@@ -1,3 +1,4 @@
+import { useFrame } from './frame';
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
 import type { Checkpoint } from '@chimera/core';
@@ -12,6 +13,7 @@ export interface RewindPickerProps {
 
 export function RewindPicker(props: RewindPickerProps): React.ReactElement {
   const theme = useTheme();
+  const frame = useFrame('round');
   const [highlight, setHighlight] = useState(0);
 
   useInput((input, key) => {
@@ -40,14 +42,14 @@ export function RewindPicker(props: RewindPickerProps): React.ReactElement {
 
   if (props.checkpoints.length === 0) {
     return (
-      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+      <Box flexDirection="column" borderStyle={frame} paddingX={1}>
         <Text>No checkpoints. Press Esc to close.</Text>
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle={frame} paddingX={1}>
       <Text bold>Rewind to checkpoint</Text>
       <Text color={theme.text.muted}>Enter rewind · Shift+Enter fork · Esc cancel</Text>
       <Box flexDirection="column" marginTop={1}>

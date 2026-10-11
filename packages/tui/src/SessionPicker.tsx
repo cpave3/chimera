@@ -1,3 +1,4 @@
+import { useFrame } from './frame';
 import type { SessionId, SessionInfo } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -77,6 +78,7 @@ function basename(p: string): string {
 
 export function SessionPicker(props: SessionPickerProps): React.ReactElement {
   const theme = useTheme();
+  const frame = useFrame('round');
   const rows = useMemo(() => buildSessionTreeRows(props.sessions), [props.sessions]);
   const [highlight, setHighlight] = useState<number>(() => {
     const idx = rows.findIndex((r) => r.info.id === props.currentSessionId);
@@ -111,14 +113,14 @@ export function SessionPicker(props: SessionPickerProps): React.ReactElement {
 
   if (rows.length === 0) {
     return (
-      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+      <Box flexDirection="column" borderStyle={frame} paddingX={1}>
         <Text>No persisted sessions. Press Esc to close.</Text>
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+    <Box flexDirection="column" borderStyle={frame} paddingX={1}>
       <Text bold>Sessions ({rows.length})</Text>
       <Text color={theme.text.muted}>↑/↓ navigate · Enter switch · Esc cancel</Text>
       <Box flexDirection="column" marginTop={1}>

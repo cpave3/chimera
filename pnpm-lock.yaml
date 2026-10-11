@@ -450,6 +450,9 @@ importers:
       '@chimera/skills':
         specifier: workspace:*
         version: link:../skills
+      chalk:
+        specifier: ^5.6.2
+        version: 5.6.2
       ink:
         specifier: npm:@jrichman/ink@6.6.9
         version: '@jrichman/ink@6.6.9(@types/react@19.2.14)(react@19.2.5)'

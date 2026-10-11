@@ -1,3 +1,4 @@
+import { useFrame } from './frame';
 import { Box, Text } from 'ink';
 import React from 'react';
 import { useTheme } from './theme/ThemeProvider';
@@ -18,6 +19,7 @@ export const SLASH_MENU_MAX_ROWS = 8;
 
 export function SlashMenu({ items, highlightIdx }: SlashMenuProps): React.ReactElement {
   const theme = useTheme();
+  const frame = useFrame('round');
   const start = Math.max(
     0,
     Math.min(
@@ -28,7 +30,7 @@ export function SlashMenu({ items, highlightIdx }: SlashMenuProps): React.ReactE
   const visible = items.slice(start, start + SLASH_MENU_MAX_ROWS);
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.text.muted}>
+    <Box flexDirection="column" borderStyle={frame} borderColor={theme.text.muted}>
       {visible.map((item, i) => {
         const idx = start + i;
         const selected = idx === highlightIdx;

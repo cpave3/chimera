@@ -1,3 +1,4 @@
+import { useFrame } from './frame';
 import { Box, Text, useInput } from 'ink';
 import React, { useEffect, useRef, useState } from 'react';
 import { useTheme } from './theme/ThemeProvider';
@@ -13,6 +14,7 @@ export function SudoPasswordModal(props: SudoPasswordModalProps): React.ReactEle
   const passwordRef = useRef(new Uint8Array());
   const [passwordLength, setPasswordLength] = useState(0);
   const theme = useTheme();
+  const frame = useFrame('round');
 
   useEffect(
     () => () => {
@@ -77,7 +79,7 @@ export function SudoPasswordModal(props: SudoPasswordModalProps): React.ReactEle
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.status.error} padding={1}>
+    <Box flexDirection="column" borderStyle={frame} borderColor={theme.status.error} padding={1}>
       <Text color={theme.status.error} bold>
         Sudo authentication
       </Text>

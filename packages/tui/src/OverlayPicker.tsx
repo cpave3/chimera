@@ -1,3 +1,4 @@
+import { useFrame } from './frame';
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
 import { useTheme } from './theme/ThemeProvider';
@@ -17,6 +18,7 @@ const HINT = 'space toggle · a all · n none · enter apply · esc cancel';
 
 export function OverlayPicker({ entries, onResolve }: OverlayPickerProps): React.ReactElement {
   const theme = useTheme();
+  const frame = useFrame('round');
   const [selected, setSelected] = useState<Set<number>>(() => new Set(entries.map((_, i) => i)));
   const [cursor, setCursor] = useState(0);
 
@@ -58,7 +60,7 @@ export function OverlayPicker({ entries, onResolve }: OverlayPickerProps): React
   });
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.accent.primary} paddingX={1}>
+    <Box flexDirection="column" borderStyle={frame} borderColor={theme.accent.primary} paddingX={1}>
       <Text color={theme.accent.primary} bold>
         Overlay changes — choose which to apply
       </Text>

@@ -1,3 +1,4 @@
+import { useFrame } from './frame';
 import type { AgentEvent, PermissionDecisionAction, PermissionRequest } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
@@ -134,6 +135,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   });
 
   const theme = useTheme();
+  const frame = useFrame('round');
   const badge = theme.ui.badge;
   const danger = theme.status.error;
   const success = theme.status.success;
@@ -141,7 +143,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
 
   if (mode.kind === 'feedback') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={danger} padding={1}>
+      <Box flexDirection="column" borderStyle={frame} borderColor={danger} padding={1}>
         <Text color={danger}>Deny with feedback (Enter to send, Esc to cancel):</Text>
         <Text>{mode.text}</Text>
       </Box>
@@ -149,7 +151,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   }
   if (mode.kind === 'pattern') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={badge} padding={1}>
+      <Box flexDirection="column" borderStyle={frame} borderColor={badge} padding={1}>
         <Text color={badge}>Edit pattern (Enter to confirm):</Text>
         <Text>{mode.text}</Text>
       </Box>
@@ -157,14 +159,14 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   }
   if (mode.kind === 'scope') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={badge} padding={1}>
+      <Box flexDirection="column" borderStyle={frame} borderColor={badge} padding={1}>
         <Text color={badge}>Remember for [s]ession, [p]roject, or [g]lobal?</Text>
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={danger} padding={1}>
+    <Box flexDirection="column" borderStyle={frame} borderColor={danger} padding={1}>
       <Text color={danger} bold>
         Permission required
       </Text>
