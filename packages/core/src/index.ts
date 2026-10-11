@@ -1,6 +1,7 @@
 export * from './agent';
-export * from './command-policy';
+export * from './ask-model';
 export * from './background-agent-message';
+export * from './command-policy';
 export * from './context-breakdown';
 export * from './context-tracker';
 export * from './discovery';
@@ -16,7 +17,7 @@ export * from './permission';
 export * from './persistence';
 export * from './project-memory';
 export * from './prompts/compose';
-export * from './questions';
 export { type PromptTool, renderToolsSection } from './prompts/role';
+export * from './questions';
 export * from './types';
 export * from './workspace-checkpoints';
