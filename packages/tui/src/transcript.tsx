@@ -74,21 +74,40 @@ export interface RenderEntryOptions {
 }
 
 const USER_MARKER = '› ';
-const TOOL_BULLET = '• ';
+const ASSISTANT_MARKER = '◆ ';
 const TURN_RULE = '─── ';
 
 type ToolState = 'running' | 'done' | 'failed';
 
+// The glyph alone tells the state, so it still reads without colour.
 const TOOL_STATE_GLYPH: Record<ToolState, string> = {
-  running: TOOL_BULLET,
-  done: '✓ ',
+  running: '○ ',
+  done: '● ',
   failed: '✗ ',
 };
+const TOOL_MARKER_WIDTH = TOOL_STATE_GLYPH.done.length;
 const TOOL_STATE_COLOR: Record<ToolState, (theme: Theme) => string> = {
-  running: (theme) => theme.ui.accent,
+  running: (theme) => theme.status.warning,
   done: (theme) => theme.status.success,
   failed: (theme) => theme.status.error,
 };
+
+/** Tools whose body is a change to a file, drawn as a bordered block. */
+const FILE_CHANGE_TOOLS = new Set(['edit', 'apply_patch', 'write']);
+// Two border columns and one column of padding on each side.
+const BODY_FRAME_WIDTH = 4;
+
+function isToolLine(entry: ScrollbackEntry): boolean {
+  return entry.kind === 'tool' || entry.kind === 'explore';
+}
+
+/**
+ * Blank lines a layout leaves above `entry`. Tool lines that follow each
+ * other read as one block of work, so nothing separates them.
+ */
+export function entryGap(previous: ScrollbackEntry | undefined, entry: ScrollbackEntry): number {
+  return previous && isToolLine(previous) && isToolLine(entry) ? 0 : 1;
+}
 
 /** A command that ran but exited non-zero failed as far as the reader cares. */
 function toolState(entry: ToolEntry): ToolState {
@@ -138,8 +157,11 @@ export function renderEntryLines(
   }
   if (entry.kind === 'assistant') {
     return [
-      <Box key={`${entry.id}:a`} flexDirection="column" paddingLeft={2}>
-        {renderMarkdown(entry.text, theme, Math.max(10, width - 2))}
+      <Box key={`${entry.id}:a`}>
+        <Text color={theme.ui.accent}>{ASSISTANT_MARKER}</Text>
+        <Box flexDirection="column" flexGrow={1}>
+          {renderMarkdown(entry.text, theme, Math.max(10, width - ASSISTANT_MARKER.length))}
+        </Box>
       </Box>,
     ];
   }
@@ -161,9 +183,18 @@ export function renderEntryLines(
       ? `${entry.toolTarget === 'host' ? '[host]' : '[sandbox]'} `
       : '';
     const namePrefix = entry.displayName ?? entry.toolName;
-    const title = namePrefix ? `${namePrefix}: ` : '';
-    const prefixLen = TOOL_BULLET.length;
+    const title = namePrefix ? `${namePrefix} ` : '';
+    const prefixLen = TOOL_MARKER_WIDTH;
     const state = toolState(entry);
+    const changesFile = FILE_CHANGE_TOOLS.has(entry.toolName ?? '');
+    // A change to a file is what the reader came for; lookups stay quiet.
+    const lineColor = changesFile ? theme.text.primary : theme.text.muted;
+    const body = renderToolBody(
+      entry,
+      changesFile
+        ? { width: width - prefixLen - BODY_FRAME_WIDTH, prefixLen: 0, theme }
+        : { width, prefixLen, theme },
+    );
     const duration =
       entry.durationMs !== undefined && entry.durationMs >= 1000
         ? ` · ${formatDuration(entry.durationMs)}`
@@ -173,12 +204,12 @@ export function renderEntryLines(
       <Box key={`${entry.id}:t`} flexDirection="column">
         <Text>
           <Text color={TOOL_STATE_COLOR[state](theme)}>{TOOL_STATE_GLYPH[state]}</Text>
-          <Text color={theme.accent.secondary}>{textLines[0] ?? ''}</Text>
+          <Text color={lineColor}>{textLines[0] ?? ''}</Text>
         </Text>
         {textLines.slice(1).map((line, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
           <Box key={i} paddingLeft={prefixLen}>
-            <Text color={theme.accent.secondary}>{line}</Text>
+            <Text color={lineColor}>{line}</Text>
           </Box>
         ))}
         {entry.detail !== undefined &&
@@ -188,7 +219,20 @@ export function renderEntryLines(
               <Text color={theme.text.muted}>{line}</Text>
             </Box>
           ))}
-        {renderToolBody(entry, { width, prefixLen, theme })}
+        {changesFile && body.length > 0 ? (
+          <Box
+            flexDirection="column"
+            marginLeft={prefixLen}
+            width={width - prefixLen}
+            borderStyle="round"
+            borderColor={theme.surface.border ?? theme.text.muted}
+            paddingX={1}
+          >
+            {body}
+          </Box>
+        ) : (
+          body
+        )}
         {entry.skillName && (
           <Box paddingLeft={prefixLen}>
             <Text color={theme.ui.accent}>📚 skill: {entry.skillName}</Text>
@@ -242,19 +286,19 @@ export function renderEntryLines(
     if (entry.members.length === 1) {
       return renderEntryLines({ ...entry.members[0]!, id: entry.id }, columns, theme, [], options);
     }
-    const prefixLen = TOOL_BULLET.length;
+    const prefixLen = TOOL_MARKER_WIDTH;
     const names = entry.members.map((member) => member.text).join(', ');
     const room = Math.max(1, width - prefixLen);
     return [
       <Box key={`${entry.id}:x`} flexDirection="column">
         <Text>
-          <Text color={entry.closed ? theme.status.success : theme.ui.accent}>
-            {entry.closed ? TOOL_STATE_GLYPH.done : TOOL_BULLET}
+          <Text color={TOOL_STATE_COLOR[entry.closed ? 'done' : 'running'](theme)}>
+            {TOOL_STATE_GLYPH[entry.closed ? 'done' : 'running']}
           </Text>
-          <Text color={theme.accent.secondary}>{`explored: ${entry.text}`}</Text>
+          <Text color={theme.text.muted}>{entry.text}</Text>
         </Text>
         <Box paddingLeft={prefixLen}>
-          <Text color={theme.text.muted}>
+          <Text color={theme.text.dim ?? theme.text.muted}>
             {names.length > room ? `${names.slice(0, room - 1)}…` : names}
           </Text>
         </Box>

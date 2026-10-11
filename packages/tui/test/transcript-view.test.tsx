@@ -57,7 +57,7 @@ describe('transcript view', () => {
       />,
     );
     await settle();
-    expect(lastFrame()).toContain('explored: read 3 files');
+    expect(lastFrame()).toContain('● read 3 files');
 
     stdin.write('\x14');
     await settle();

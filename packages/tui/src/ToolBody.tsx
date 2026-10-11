@@ -334,7 +334,7 @@ function hunkRow(
   return (
     <Box key={key} paddingLeft={prefixLen}>
       <Text wrap="truncate">
-        <Text color={theme.text.muted}>{`${gutter} `}</Text>
+        <Text color={theme.text.dim ?? theme.text.muted}>{`${gutter} `}</Text>
         <Text color={fg} backgroundColor={bg}>{`${sigil} ${padded}`}</Text>
       </Text>
     </Box>

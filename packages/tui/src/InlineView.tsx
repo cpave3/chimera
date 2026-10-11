@@ -14,7 +14,7 @@ import { SlashMenu } from './SlashMenu';
 import type { ScrollbackEntry, SubagentEntry } from './scrollback';
 import { TaskPanel } from './TaskPanel';
 import { useTheme } from './theme/ThemeProvider';
-import { clampInFlightChildren, renderEntryLines } from './transcript';
+import { clampInFlightChildren, entryGap, renderEntryLines } from './transcript';
 import { CHIMERA_VERSION } from './version';
 import { type AppView, dialogOpen } from './view';
 
@@ -25,6 +25,8 @@ type StaticItem =
       id: string;
       entry: ScrollbackEntry;
       children: SubagentEntry[];
+      /** Blank lines above the entry. */
+      gap: number;
     };
 
 /**
@@ -41,11 +43,12 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
   // growing prefix of the entry order. The Scrollback store owns that
   // cursor; entries past it render in the live region below.
   const staticItems = useMemo<StaticItem[]>(() => {
-    const entryItems: StaticItem[] = view.committedEntries.map((entry) => ({
+    const entryItems: StaticItem[] = view.committedEntries.map((entry, index) => ({
       kind: 'entry',
       id: entry.id,
       entry,
       children: view.childrenByParent.get(entry.id) ?? [],
+      gap: entryGap(view.committedEntries[index - 1], entry),
     }));
     return view.showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
   }, [view.committedEntries, view.childrenByParent, view.showHeader]);
@@ -100,7 +103,7 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
             );
           }
           return (
-            <Box key={item.id} flexDirection="column" marginTop={1}>
+            <Box key={item.id} flexDirection="column" marginTop={item.gap}>
               {renderEntryLines(item.entry, columns, theme, item.children, {
                 sandboxActive: sandboxMode !== 'off',
               })}
@@ -109,8 +112,15 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
         }}
       </Static>
       <Box flexDirection="column" width={columns}>
-        {view.inFlightEntries.map((entry) => (
-          <Box key={entry.id} flexDirection="column" marginTop={1}>
+        {view.inFlightEntries.map((entry, index) => (
+          <Box
+            key={entry.id}
+            flexDirection="column"
+            marginTop={entryGap(
+              view.inFlightEntries[index - 1] ?? view.committedEntries.at(-1),
+              entry,
+            )}
+          >
             {renderEntryLines(
               entry,
               columns,

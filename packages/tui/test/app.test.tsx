@@ -79,7 +79,7 @@ describe('App', () => {
       <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
     );
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(lastFrame()).toContain('burnlite / add_task_to_project: project_id');
+    expect(lastFrame()).toContain('burnlite / add_task_to_project project_id');
     expect(lastFrame()).not.toContain('mcp_burnlite_add_x00005f_task');
     expect(lastFrame()).not.toContain('private-value');
     unmount();
@@ -122,7 +122,7 @@ describe('App', () => {
 
     it('marks a tool call with a bullet and no target badge when no sandbox is active', async () => {
       const frame = await frameWithToolCall('host', 'off');
-      expect(frame).toContain('• bash: echo hi');
+      expect(frame).toContain('○ bash echo hi');
       expect(frame).not.toContain('[host]');
     });
 
@@ -131,7 +131,7 @@ describe('App', () => {
       ['host', '[host]'],
     ] as const)('says where a %s tool call runs when a sandbox is active', async (target, badge) => {
       const frame = await frameWithToolCall(target, 'bind');
-      expect(frame).toContain(`• ${badge} bash: echo hi`);
+      expect(frame).toContain(`○ ${badge} bash echo hi`);
     });
 
     it('marks a user message with a glyph instead of "you:"', async () => {

@@ -29,8 +29,8 @@ describe('exploration group line', () => {
     };
     const out = frame(group);
 
-    expect(out).toContain('• explored: read 2 files · 1 search');
-    expect(frame({ ...group, closed: true })).toContain('✓ explored: read 2 files · 1 search');
+    expect(out).toContain('○ read 2 files · 1 search');
+    expect(frame({ ...group, closed: true })).toContain('● read 2 files · 1 search');
     expect(out).toContain('src/a.ts, src/b.ts, TODO');
   });
 
@@ -50,7 +50,7 @@ describe('exploration group line', () => {
       members: [member('read', 'src/a.ts (87 lines)')],
     });
 
-    expect(out).toContain('✓ read: src/a.ts (87 lines)');
+    expect(out).toContain('● read src/a.ts (87 lines)');
     expect(out).not.toContain('explored');
   });
 });
