@@ -3,6 +3,7 @@ import type { CommandPolicyAnalysis } from '@chimera/core';
 export type HookEvent =
   | 'SessionCreated'
   | 'UserPromptSubmit'
+  | 'PreToolUse'
   | 'PostToolUse'
   | 'PermissionRequest'
   | 'PermissionResolved'
@@ -15,11 +16,12 @@ export type HookEvent =
   | 'OnError'
   | 'UserInputRequired';
 
-export const PRE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(['PermissionRequest']);
+export const PRE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(['PreToolUse', 'PermissionRequest']);
 
 export const ALL_HOOK_EVENTS: readonly HookEvent[] = [
   'SessionCreated',
   'UserPromptSubmit',
+  'PreToolUse',
   'PostToolUse',
   'PermissionRequest',
   'PermissionResolved',
@@ -47,6 +49,12 @@ export interface SessionCreatedPayload extends HookPayloadBase {
 export interface UserPromptSubmitPayload extends HookPayloadBase {
   event: 'UserPromptSubmit';
   user_message: string;
+}
+
+export interface PreToolUsePayload extends HookPayloadBase {
+  event: 'PreToolUse';
+  tool_name: string;
+  tool_input: Record<string, unknown>;
 }
 
 export interface PostToolUsePayload extends HookPayloadBase {
@@ -117,6 +125,7 @@ export interface CompactionEndPayload extends HookPayloadBase {
 export type HookPayload =
   | SessionCreatedPayload
   | UserPromptSubmitPayload
+  | PreToolUsePayload
   | PostToolUsePayload
   | PermissionRequestPayload
   | PermissionResolvedPayload
@@ -132,6 +141,7 @@ export type HookPayload =
 export type FirePayload =
   | { event: 'SessionCreated'; session_name?: string }
   | { event: 'UserPromptSubmit'; user_message: string }
+  | { event: 'PreToolUse'; tool_name: string; tool_input: Record<string, unknown> }
   | {
       event: 'PostToolUse';
       tool_name: string;

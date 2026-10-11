@@ -1,8 +1,8 @@
 ## 1. PreToolUse
 
-- [ ] 1.1 Test and add the `PreToolUse` event to the hook types as a pre-class event
-- [ ] 1.2 Test and implement the interceptor (allow, block, block with JSON, timeout)
-- [ ] 1.3 Wire the interceptor first in the factory's list; list the event in `chimera hooks`
+- [x] 1.1 Test and add the `PreToolUse` event to the hook types as a pre-class event
+- [x] 1.2 Test and implement the interceptor (allow, block, block with JSON, timeout)
+- [x] 1.3 Wire the interceptor first in the factory's list; list the event in `chimera hooks`
 
 ## 2. Deferred MCP tools
 

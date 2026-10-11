@@ -648,6 +648,42 @@ describe('CliAgentFactory', () => {
     });
   });
 
+  it('asks the PreToolUse hook before a tool runs, and obeys a block', async () => {
+    const hooks = join(cwd, '.chimera', 'hooks', 'PreToolUse');
+    await mkdir(hooks, { recursive: true });
+    await writeFile(
+      join(hooks, 'guard.sh'),
+      '#!/bin/sh\npayload=$(cat)\ncase "$payload" in *frozen.txt*) echo "frozen.txt is read-only" >&2; exit 2;; esac\nexit 0\n',
+      { mode: 0o755 },
+    );
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const { write } = (
+      agent as unknown as {
+        opts: {
+          tools: Record<string, { execute: (args: object, options: object) => Promise<unknown> }>;
+        };
+      }
+    ).opts.tools;
+
+    await write!.execute({ path: 'open.txt', content: 'yes' }, { toolCallId: 'a', messages: [] });
+    await expect(
+      write!.execute({ path: 'frozen.txt', content: 'no' }, { toolCallId: 'b', messages: [] }),
+    ).rejects.toThrow('blocked by PreToolUse hook: frozen.txt is read-only');
+
+    expect(await readFile(join(cwd, 'open.txt'), 'utf8')).toBe('yes');
+    await expect(readFile(join(cwd, 'frozen.txt'), 'utf8')).rejects.toThrow();
+  });
+
   it('says nothing of explore when no such agent exists', async () => {
     const factory = new CliAgentFactory({
       providersConfig: anthropicOnly,

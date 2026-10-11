@@ -98,6 +98,7 @@ import type {
 import { McpAuth } from './mcp/auth';
 import { McpClientManager } from './mcp/client';
 import { registerMcpTools } from './mcp/tools';
+import { preToolUseHook } from './pre-tool-use';
 import type { CliSandboxOptions } from './sandbox-config';
 
 /** Tools that honour a `name(limit)` entry in a mode's tools list. */
@@ -509,6 +510,8 @@ export class CliAgentFactory implements AgentFactory {
     const hookRunner: HookRunner = new DefaultHookRunner({
       cwd: init.cwd,
       sessionId,
+      // A home override moves the global hooks with the rest of Chimera's state.
+      globalRoot: this.home ? join(this.home, '.chimera', 'hooks') : undefined,
     });
 
     const stopHook: StopHook = {
@@ -844,6 +847,8 @@ export class CliAgentFactory implements AgentFactory {
     // Every tool of every surface runs through the same interceptors, so
     // their state (the repeat counter) follows the session, not the surface.
     const toolInterceptors: ToolCallInterceptor[] = [
+      // First: a hook that blocks a call stops it before anything else sees it.
+      preToolUseHook(hookRunner),
       outputBudget({
         budgetTokens: () =>
           agent.session.model.outputBudgetTokens ?? initialProfile.outputBudgetTokens,

@@ -203,6 +203,68 @@ exit 0
     });
   });
 
+  describe('PreToolUse', () => {
+    const call = {
+      event: 'PreToolUse',
+      tool_name: 'write',
+      tool_input: { path: 'a.sql' },
+    } as const;
+
+    it('gives the hook the tool name and its input', async () => {
+      const captured = join(root, 'payload.json');
+      await dropScript('PreToolUse', 'capture.sh', `#!/bin/sh\ncat > "${captured}"\n`);
+
+      const result = await newRunner().fire(call);
+
+      expect(result.blocked).toBe(false);
+      expect(JSON.parse(await readFile(captured, 'utf8'))).toEqual({
+        event: 'PreToolUse',
+        session_id: sessionId,
+        cwd,
+        tool_name: 'write',
+        tool_input: { path: 'a.sql' },
+      });
+    });
+
+    it('blocks on exit 2, with stderr as the reason', async () => {
+      await dropScript(
+        'PreToolUse',
+        'guard.sh',
+        '#!/bin/sh\necho "no writes to migrations/" >&2\nexit 2\n',
+      );
+
+      const result = await newRunner().fire(call);
+
+      expect(result).toMatchObject({ blocked: true, reason: 'no writes to migrations/' });
+    });
+
+    it('blocks on a JSON block decision', async () => {
+      await dropScript(
+        'PreToolUse',
+        'guard.sh',
+        `#!/bin/sh\necho '{"decision":"block","reason":"frozen"}'\n`,
+      );
+
+      expect(await newRunner().fire(call)).toMatchObject({ blocked: true, reason: 'frozen' });
+    });
+
+    it('allows when the hook fails or runs out of time', async () => {
+      await dropScript('PreToolUse', 'broken.sh', '#!/bin/sh\nexit 1\n');
+      expect((await newRunner().fire(call)).blocked).toBe(false);
+
+      await dropScript('PreToolUse', 'broken.sh', '#!/bin/sh\nsleep 5\n');
+      const slow = new DefaultHookRunner({
+        cwd,
+        sessionId,
+        globalRoot,
+        projectRoot,
+        timeoutMs: 200,
+        log: () => {},
+      });
+      expect((await slow.fire(call)).blocked).toBe(false);
+    });
+  });
+
   it('reports blocked when a pre-event hook exits with code 2', async () => {
     await dropScript(
       'PermissionRequest',
