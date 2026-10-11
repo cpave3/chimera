@@ -1,5 +1,11 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './loader';
+import {
+  deepMerge,
+  getDefaultThemePath,
+  loadUserTheme,
+  pickBaseTheme,
+  type TuiLayout,
+} from './loader';
 import { defaultTheme } from './tokens';
 import type { Theme, ThemeContextValue } from './types';
 
@@ -16,6 +22,8 @@ export interface ThemeProviderProps {
   activeName?: string;
   /** Override the disk path read by `reload()`. Tests pass a temp file. */
   themePath?: string;
+  /** The layout the theme is for; `reload()` starts from that layout's palette. */
+  layout?: TuiLayout;
   children: React.ReactNode;
 }
 
@@ -30,6 +38,7 @@ export function ThemeProvider({
   isUserTheme = false,
   activeName,
   themePath,
+  layout,
   children,
 }: ThemeProviderProps): React.ReactElement {
   const [state, setState] = useState<ThemeState>({
@@ -39,7 +48,7 @@ export function ThemeProvider({
   });
 
   const reload = useCallback(() => {
-    const base = pickBaseTheme();
+    const base = pickBaseTheme(process.env, layout);
     const path = themePath ?? getDefaultThemePath();
     const result = loadUserTheme(path);
     if (result.kind === 'ok') {
@@ -51,7 +60,7 @@ export function ThemeProvider({
     } else {
       setState({ theme: base, isUserTheme: false, activeName: undefined });
     }
-  }, [themePath]);
+  }, [themePath, layout]);
 
   const value = useMemo<ThemeContextValue>(() => ({ ...state, reload }), [state, reload]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

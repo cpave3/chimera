@@ -12,7 +12,7 @@ import {
   pickBaseTheme,
 } from '../src/theme/loader';
 import { BUILTIN_PRESETS } from '../src/theme/presets';
-import { defaultTheme, plainTheme } from '../src/theme/tokens';
+import { defaultTheme, fullscreenTheme, plainTheme } from '../src/theme/tokens';
 import type { PartialTheme, Theme } from '../src/theme/types';
 
 describe('pickBaseTheme', () => {
@@ -26,6 +26,49 @@ describe('pickBaseTheme', () => {
 
   it('returns plainTheme when NO_COLOR has any value', () => {
     expect(pickBaseTheme({ NO_COLOR: '1' })).toBe(plainTheme);
+  });
+
+  it('gives the fullscreen layout a palette with its own background', () => {
+    const theme = pickBaseTheme({}, 'fullscreen');
+    expect(theme).toBe(fullscreenTheme);
+    expect(theme.base.background).toBe('#1f1d27');
+    expect(theme.accent.primary).toBe('#b79cf7');
+    expect(theme.surface.panel).toBe('#1b1a22');
+  });
+
+  it('keeps the ANSI palette, with no fills, for the inline layout', () => {
+    const theme = pickBaseTheme({}, 'inline');
+    expect(theme).toBe(defaultTheme);
+    expect(theme.base.background).toBeUndefined();
+    expect(theme.surface).toEqual({});
+  });
+
+  it('fills no surface under NO_COLOR, in either layout', () => {
+    expect(pickBaseTheme({ NO_COLOR: '1' }, 'fullscreen')).toBe(plainTheme);
+    expect(plainTheme.surface).toEqual({});
+  });
+});
+
+describe('surface tokens', () => {
+  it('merges a user surface colour over the base', () => {
+    const merged = deepMerge(fullscreenTheme, { surface: { panel: '#101010' } });
+    expect(merged.surface.panel).toBe('#101010');
+    expect(merged.surface.raised).toBe(fullscreenTheme.surface.raised);
+  });
+
+  it('reads the surface group from a theme file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chimera-theme-surface-'));
+    const path = join(dir, 'theme.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ surface: { border: '#333333' }, text: { dim: '#555555' } }),
+    );
+    const result = loadUserTheme(path);
+    rmSync(dir, { recursive: true, force: true });
+    expect(result).toMatchObject({
+      kind: 'ok',
+      theme: { surface: { border: '#333333' }, text: { dim: '#555555' } },
+    });
   });
 });
 
@@ -75,6 +118,7 @@ describe('deepMerge', () => {
       function: 'blue',
       type: 'cyan',
     },
+    surface: {},
   };
 
   it('returns base theme when user theme is empty', () => {

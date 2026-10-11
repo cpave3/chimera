@@ -2,6 +2,7 @@ import type {
   AccentTokens,
   BaseTokens,
   StatusTokens,
+  SurfaceTokens,
   SyntaxTokens,
   TextTokens,
   Theme,
@@ -47,6 +48,9 @@ export const defaultSyntaxTokens: SyntaxTokens = {
   type: 'cyan',
 };
 
+export const defaultSurfaceTokens: SurfaceTokens = {};
+
+/** ANSI colour names, so the inline layout follows the terminal's own palette. */
 export const defaultTheme: Theme = {
   base: defaultBaseTokens,
   accent: defaultAccentTokens,
@@ -54,6 +58,35 @@ export const defaultTheme: Theme = {
   text: defaultTextTokens,
   ui: defaultUITokens,
   syntax: defaultSyntaxTokens,
+  surface: defaultSurfaceTokens,
+};
+
+/**
+ * The fullscreen layout paints its own background, so every colour is
+ * explicit and tuned against that background.
+ */
+export const fullscreenTheme: Theme = {
+  base: { background: '#1f1d27', foreground: '#dcd9e6' },
+  accent: { primary: '#b79cf7', secondary: '#7aa7ff', tertiary: '#e6d76a' },
+  status: {
+    success: '#8fd18b',
+    warning: '#e6d76a',
+    error: '#f08a8a',
+    info: '#7aa7ff',
+    successBg: '#1f3326',
+    errorBg: '#3a2228',
+  },
+  text: { primary: '#dcd9e6', secondary: '#ffffff', muted: '#7d7896', dim: '#57536a' },
+  ui: { badge: '#f0b35a', accent: '#b79cf7' },
+  syntax: {
+    keyword: '#b79cf7',
+    string: '#8fd18b',
+    comment: '#7d7896',
+    number: '#f0b35a',
+    function: '#7aa7ff',
+    type: '#e6d76a',
+  },
+  surface: { panel: '#1b1a22', raised: '#26232f', sunken: '#2c2937', border: '#3a3648' },
 };
 
 // NO_COLOR mode: every token resolves to 'white' (or 'gray' for muted) so the
@@ -72,4 +105,5 @@ export const plainTheme: Theme = {
     function: 'white',
     type: 'white',
   },
+  surface: {},
 };

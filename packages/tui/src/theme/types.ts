@@ -51,6 +51,23 @@ export interface TextTokens {
   primary: AnsiColor;
   secondary: AnsiColor;
   muted: AnsiColor;
+  /** One step quieter than `muted`: placeholders, gutters, key hints. */
+  dim?: AnsiColor;
+}
+
+/**
+ * Fills and lines of the fullscreen layout. All optional: a layout draws a
+ * surface without a fill when its colour is not set, so a theme on the
+ * terminal's own background needs none of them.
+ */
+export interface SurfaceTokens {
+  /** The context panel. */
+  panel?: AnsiColor;
+  /** The prompt box. */
+  raised?: AnsiColor;
+  /** The empty part of a gauge. */
+  sunken?: AnsiColor;
+  border?: AnsiColor;
 }
 
 export interface UITokens {
@@ -75,6 +92,7 @@ export interface Theme {
   text: TextTokens;
   ui: UITokens;
   syntax: SyntaxTokens;
+  surface: SurfaceTokens;
 }
 
 export type PartialTheme = {

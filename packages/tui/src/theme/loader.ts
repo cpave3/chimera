@@ -2,13 +2,19 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { BUILTIN_PRESETS } from './presets';
-import { defaultTheme, plainTheme } from './tokens';
+import { defaultTheme, fullscreenTheme, plainTheme } from './tokens';
 import type { PartialTheme, Theme } from './types';
 
+export type TuiLayout = 'fullscreen' | 'inline';
+
 // NO_COLOR spec: any non-empty value disables color. Empty string is ignored.
-export function pickBaseTheme(env: NodeJS.ProcessEnv = process.env): Theme {
+export function pickBaseTheme(
+  env: NodeJS.ProcessEnv = process.env,
+  layout: TuiLayout = 'inline',
+): Theme {
   const v = env.NO_COLOR;
-  return v !== undefined && v !== '' ? plainTheme : defaultTheme;
+  if (v !== undefined && v !== '') return plainTheme;
+  return layout === 'fullscreen' ? fullscreenTheme : defaultTheme;
 }
 
 export function getDefaultThemePath(): string {
@@ -40,6 +46,7 @@ export function deepMerge(base: Theme, user: PartialTheme): Theme {
     text: mergeGroup(base.text, user.text),
     ui: mergeGroup(base.ui, user.ui),
     syntax: mergeGroup(base.syntax, user.syntax),
+    surface: mergeGroup(base.surface, user.surface),
   };
 }
 
@@ -48,7 +55,7 @@ export type LoadResult =
   | { kind: 'missing' }
   | { kind: 'error'; message: string };
 
-const KNOWN_GROUPS = new Set(['base', 'accent', 'status', 'text', 'ui', 'syntax']);
+const KNOWN_GROUPS = new Set(['base', 'accent', 'status', 'text', 'ui', 'syntax', 'surface']);
 
 export function loadUserTheme(themePath: string): LoadResult {
   if (!existsSync(themePath)) {
