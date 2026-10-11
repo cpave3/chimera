@@ -1090,16 +1090,11 @@ export class Agent {
 
   private composeSystemPrompt(planHandoff: boolean): string | undefined {
     const parts: string[] = [];
+    // Nothing that changes between steps belongs here: the system prompt is
+    // the head of the provider's cached prefix. The task list lives in the
+    // conversation (latest task_list call, or the <tasks> block compaction
+    // writes into a summary).
     if (this.opts.systemPrompt) parts.push(this.opts.systemPrompt);
-    if (this.session.tasks.length > 0) {
-      const lines = this.session.tasks.map((task) => `- [${task.status}] ${task.content}`);
-      parts.push(
-        '# Current tasks\n\n' +
-          'Authoritative task-list state for this session (persisted outside the ' +
-          'conversation; update it with the task_list tool):\n' +
-          lines.join('\n'),
-      );
-    }
     if (planHandoff) {
       parts.push(
         '# Plan accepted\n\n' +

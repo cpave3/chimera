@@ -1,5 +1,5 @@
 import type { ModelMessage } from 'ai';
-import type { FileOps } from '@chimera/core';
+import type { FileOps, TaskItem } from '@chimera/core';
 import type { ArchivedRef } from './types';
 
 /**
@@ -14,6 +14,20 @@ export function formatArchivedBlock(refs: ArchivedRef[]): string {
     lines.push(`  <entry id="${ref.id}" tool="${ref.toolName}">${ref.argsBrief}</entry>`);
   }
   lines.push('</archived>');
+  return lines.join('\n');
+}
+
+/**
+ * Authoritative task-list state, appended to a summary when the task_list
+ * call that last carried the list was summarized away. Without it the model
+ * would only see the list as prose after a compaction.
+ */
+export function formatTasksBlock(tasks: TaskItem[]): string {
+  const lines = ['<tasks>'];
+  for (const task of tasks) {
+    lines.push(`  <task status="${task.status}">${task.content}</task>`);
+  }
+  lines.push('</tasks>');
   return lines.join('\n');
 }
 

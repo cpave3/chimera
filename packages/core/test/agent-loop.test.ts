@@ -115,4 +115,33 @@ describe('Agent loop', () => {
       expect(finishReason(events)).toBe('stop');
     });
   });
+
+  describe('stable system prompt', () => {
+    function systemPromptOf(call: StreamCall): unknown {
+      return call.prompt.filter((message) => message.role === 'system');
+    }
+
+    it('sends the same system prompt before and after a task list update', async () => {
+      const { model, calls } = scriptedModel([toolCallStep('plan_work'), textStep('finished')]);
+      const agent: Agent = buildAgent({
+        languageModel: model,
+        systemPrompt: 'You are a test agent.',
+        tools: {
+          plan_work: tool({
+            description: 'records a task the way the task_list tool does',
+            inputSchema: z.object({}),
+            execute: async () => {
+              agent.session.tasks = [{ content: 'write the code', status: 'in_progress' }];
+              return { ok: true };
+            },
+          }),
+        } as ToolSet,
+      });
+
+      await collect(agent);
+
+      expect(calls).toHaveLength(2);
+      expect(systemPromptOf(calls[1]!)).toEqual(systemPromptOf(calls[0]!));
+    });
+  });
 });

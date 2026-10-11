@@ -2283,30 +2283,14 @@ describe('system prompt composition (tasks + plan handoff)', () => {
     return typeof sys?.content === 'string' ? sys.content : JSON.stringify(sys?.content ?? '');
   }
 
-  it('injects the live task list into the system prompt', async () => {
+  it('keeps the task list out of the system prompt', async () => {
     const mock = textMock();
     const agent = makeAgent(mock);
-    agent.session.tasks = [
-      { content: 'write failing test', status: 'completed' },
-      { content: 'implement feature', status: 'in_progress' },
-    ];
+    agent.session.tasks = [{ content: 'implement feature', status: 'in_progress' }];
     for await (const _ev of agent.run('hi')) {
       // drain
     }
-    const system = systemOf(mock.doStreamCalls[0]);
-    expect(system).toContain('base prompt');
-    expect(system).toContain('# Current tasks');
-    expect(system).toContain('- [completed] write failing test');
-    expect(system).toContain('- [in_progress] implement feature');
-  });
-
-  it('omits the tasks block when the list is empty', async () => {
-    const mock = textMock();
-    const agent = makeAgent(mock);
-    for await (const _ev of agent.run('hi')) {
-      // drain
-    }
-    expect(systemOf(mock.doStreamCalls[0])).not.toContain('# Current tasks');
+    expect(systemOf(mock.doStreamCalls[0])).toBe('base prompt');
   });
 
   it('adds a one-shot plan-handoff note on the first run after leaving plan mode', async () => {

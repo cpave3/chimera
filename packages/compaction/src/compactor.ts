@@ -4,7 +4,12 @@ import { dirname, join } from 'node:path';
 import type { FileOps, Session } from '@chimera/core';
 import type { LanguageModel, ModelMessage } from 'ai';
 import { generateText } from 'ai';
-import { buildCompactionPrompt, formatArchivedBlock, formatFilesBlock } from './prompt';
+import {
+  buildCompactionPrompt,
+  formatArchivedBlock,
+  formatFilesBlock,
+  formatTasksBlock,
+} from './prompt';
 import { type EstimateOptions, estimateTokens } from './token-estimate';
 import type {
   ArchivedRef,
@@ -177,9 +182,17 @@ export class Compactor {
         model,
         messages: [{ role: 'user', content: prompt }],
       });
-      summaryText = this.ensureFilesBlock(result.text, session.fileOps);
+      summaryText = this.ensureFilesBlock(
+        result.text.replace(STALE_TASKS_BLOCK, ''),
+        session.fileOps,
+      );
       if (archivedRefs.length > 0) {
         summaryText = `${summaryText}\n${formatArchivedBlock(archivedRefs)}`;
+      }
+      // A task_list call still in the tail is newer context than this summary
+      // sits at; restating the list ahead of it would read as an older state.
+      if (session.tasks.length > 0 && !hasTaskListCall(tailMessages)) {
+        summaryText = `${summaryText}\n${formatTasksBlock(session.tasks)}`;
       }
     }
 
@@ -270,6 +283,17 @@ const STUB_PATTERN =
   /\[Result archived — retrieve with: recall\(\{ id: "(pr_[0-9a-f]{8,12})" \}\)\](?: — (\S+) output)?/;
 const ARCHIVED_ENTRY_PATTERN = /<entry id="(pr_[0-9a-f]{8,12})" tool="([^"]*)">([^<]*)<\/entry>/g;
 const MAX_ARCHIVED_REFS = 20;
+// A previous summary's <tasks> block that the model copied into its output.
+const STALE_TASKS_BLOCK = /<tasks>[\s\S]*?<\/tasks>\n?/g;
+
+function hasTaskListCall(messages: ModelMessage[]): boolean {
+  return messages.some(
+    (message) =>
+      message.role === 'assistant' &&
+      typeof message.content !== 'string' &&
+      message.content.some((part) => part.type === 'tool-call' && part.toolName === 'task_list'),
+  );
+}
 
 /**
  * Gather every recall id referenced by the messages about to be summarized:

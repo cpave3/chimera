@@ -145,6 +145,7 @@ describe('Compactor', () => {
       mode: 'build',
       userModelOverride: null,
       fileOps: { reads: new Set(), writes: new Set() },
+      tasks: [],
     };
   }
 
@@ -317,6 +318,75 @@ describe('Compactor', () => {
       const first = JSON.parse(lines[0]!);
       const second = JSON.parse(lines[1]!);
       expect(second.ts).toBeGreaterThanOrEqual(first.ts);
+    });
+  });
+
+  describe('task list block', () => {
+    function summarizingCompactor(keepRecentTokens = 30) {
+      return new Compactor({
+        home,
+        contextWindow: 100,
+        config: { enabled: true, reserveTokens: 10, keepRecentTokens },
+        resolveModel: async () =>
+          new MockLanguageModelV3({
+            doGenerate: async () => ({
+              content: [{ type: 'text', text: '## Goal\nship it' }],
+              finishReason: { unified: 'stop', raw: 'stop' },
+              usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+              warnings: [],
+            }),
+          }),
+      });
+    }
+
+    const taskListCall = (toolCallId: string): ModelMessage[] => [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId, toolName: 'task_list', input: { tasks: [] } }],
+      } as ModelMessage,
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId,
+            toolName: 'task_list',
+            output: { type: 'json', value: { ok: true } },
+          },
+        ],
+      } as ModelMessage,
+    ];
+
+    it('writes the tasks into the summary when the last task_list call is summarized', async () => {
+      const session = makeSession([
+        ...taskListCall('call-1'),
+        { role: 'user', content: 'x'.repeat(500) },
+        { role: 'assistant', content: 'done' },
+      ]);
+      session.tasks = [
+        { content: 'write failing test', status: 'completed' },
+        { content: 'implement feature', status: 'in_progress' },
+      ];
+
+      const result = await summarizingCompactor().compact(session, 'manual');
+
+      expect(result.summary).toContain('<tasks>');
+      expect(result.summary).toContain('<task status="completed">write failing test</task>');
+      expect(result.summary).toContain('<task status="in_progress">implement feature</task>');
+      expect(session.messages[0]).toMatchObject({ role: 'assistant', content: result.summary });
+    });
+
+    it('leaves the tasks out when a task_list call survives in the kept messages', async () => {
+      const session = makeSession([
+        { role: 'user', content: 'x'.repeat(2000) },
+        ...taskListCall('call-2'),
+      ]);
+      session.tasks = [{ content: 'implement feature', status: 'in_progress' }];
+
+      const result = await summarizingCompactor(200).compact(session, 'manual');
+
+      expect(result.messagesReplaced).toBe(1);
+      expect(result.summary).not.toContain('<tasks>');
     });
   });
 });
