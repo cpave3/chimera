@@ -1,4 +1,4 @@
-import type { SandboxMode, SessionStatus } from '@chimera/core';
+import type { SessionStatus } from '@chimera/core';
 import { Box, Text } from 'ink';
 import React, { memo } from 'react';
 import { contextBar } from './context-bar';
@@ -8,6 +8,7 @@ import { useTheme } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
 import { formatTokens, pickUsageColor } from './usage-format';
 import { CHIMERA_VERSION } from './version';
+import type { SandboxLabel } from './view';
 import type { WorktreeFile, WorktreeStatus } from './worktree';
 
 /** Another live Chimera instance on this machine. */
@@ -28,7 +29,7 @@ export interface ContextPanelProps {
   sessionId: string;
   forked: boolean;
   cwd: string;
-  sandboxMode: SandboxMode;
+  sandboxMode: SandboxLabel;
   skillCount: number;
   commandCount: number;
   usageState: UsageState | null;

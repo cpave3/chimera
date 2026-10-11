@@ -54,6 +54,8 @@ export interface MountOptions {
   cycleModes?: string[];
   initialMode?: string;
   sandboxMode?: SandboxMode;
+  /** Host commands run in the operating system's sandbox. */
+  osSandbox?: boolean;
   overlay?: OverlayHandlers;
   /**
    * When provided, called by `/reload` to re-compose the system prompt
@@ -336,6 +338,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         cycleModes={opts.cycleModes}
         initialMode={opts.initialMode}
         sandboxMode={opts.sandboxMode}
+        osSandbox={opts.osSandbox}
         overlay={opts.overlay}
         reloadSystemPrompt={opts.reloadSystemPrompt}
         formatters={opts.formatters}

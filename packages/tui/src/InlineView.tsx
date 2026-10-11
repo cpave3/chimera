@@ -95,7 +95,7 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
                   cwd={props.cwd}
                   sessionId={props.sessionId}
                   mode={props.initialMode ?? 'build'}
-                  sandboxMode={sandboxMode}
+                  sandboxMode={view.sandboxLabel}
                   skillCount={props.skills?.all().length ?? 0}
                   commandCount={props.commands?.list().length ?? 0}
                 />
@@ -182,7 +182,7 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
         cwd={props.cwd}
         sessionId={view.activeSession.sessionId}
         running={running}
-        sandboxMode={sandboxMode}
+        sandboxMode={view.sandboxLabel}
         modes={props.modes}
         activeModeName={view.activeModeName}
         pendingModeName={view.pendingModeName}

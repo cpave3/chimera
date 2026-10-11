@@ -1,8 +1,8 @@
-import type { SandboxMode } from '@chimera/core';
 import { Box, Text } from 'ink';
 import React from 'react';
 import { displayPath } from './display-path';
 import { useTheme } from './theme/ThemeProvider';
+import type { SandboxLabel } from './view';
 
 export interface HeaderProps {
   version: string;
@@ -10,7 +10,7 @@ export interface HeaderProps {
   cwd: string;
   sessionId: string;
   mode: string;
-  sandboxMode: SandboxMode;
+  sandboxMode: SandboxLabel;
   skillCount: number;
   commandCount: number;
 }

@@ -1,4 +1,3 @@
-import type { SandboxMode } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import { Box, Text } from 'ink';
 import React, { memo } from 'react';
@@ -7,13 +6,14 @@ import { StatusBar } from './StatusBar';
 import type { UsageState } from './session-events';
 import { useTheme } from './theme/ThemeProvider';
 import { formatTokens, pickUsageColor } from './usage-format';
+import type { SandboxLabel } from './view';
 
 export interface BottomChromeProps {
   /** Terminal width; the rows drop their least important items to fit it. */
   width: number;
   cwd: string;
   sessionId: string;
-  sandboxMode: SandboxMode;
+  sandboxMode: SandboxLabel;
   modes?: ModeRegistry;
   activeModeName: string;
   /** A mode switch queued for the next run, shown as `active → pending`. */

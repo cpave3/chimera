@@ -24,6 +24,9 @@ export interface SudoAuthenticationState {
   error?: string;
 }
 
+/** What confines the session's commands: a Docker sandbox mode, `os` for the OS sandbox, or `off`. */
+export type SandboxLabel = SandboxMode | 'os';
+
 /** What the transcript pane lets the key handler do. Fullscreen layout only. */
 export interface TranscriptScroller {
   /** Negative scrolls toward earlier output. */
@@ -42,6 +45,7 @@ export interface AppView {
   columns: number;
   rows: number;
   sandboxMode: SandboxMode;
+  sandboxLabel: SandboxLabel;
   activeSession: ActiveSession;
   /** Set when the session shown is a fork or a subagent of another. */
   activeParentId: SessionId | null;

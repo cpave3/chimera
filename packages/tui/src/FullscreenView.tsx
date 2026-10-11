@@ -315,7 +315,7 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
           sessionId={view.activeSession.sessionId}
           forked={view.activeParentId !== null}
           cwd={resolve(props.cwd)}
-          sandboxMode={view.sandboxMode}
+          sandboxMode={view.sandboxLabel}
           skillCount={props.skills?.all().length ?? 0}
           commandCount={props.commands?.list().length ?? 0}
           usageState={view.usageState}

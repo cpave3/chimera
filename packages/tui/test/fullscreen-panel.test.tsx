@@ -38,6 +38,21 @@ describe('context panel', () => {
     expect(text).toMatch(/loaded +60 skills · 9 cmds/);
   });
 
+  it('says that host commands run in the OS sandbox, and leaves a Docker sandbox its own name', async () => {
+    expect(await panel({ sandboxMode: 'off', osSandbox: true })).toMatch(/sandbox +os/);
+    expect(await panel({ sandboxMode: 'bind', osSandbox: true })).toMatch(/sandbox +bind/);
+  });
+
+  it('says the same in the inline layout, which has no panel', async () => {
+    const { lastFrame, unmount } = mountFullscreen({ layout: 'inline', osSandbox: true });
+    await settle(100);
+    const frame = plain(lastFrame());
+    unmount();
+
+    expect(frame).toContain('mode build · sandbox os');
+    expect(frame).not.toContain('sandbox off');
+  });
+
   it('shows how full the context is', async () => {
     const text = await panel({}, [usage(76_000)]);
 

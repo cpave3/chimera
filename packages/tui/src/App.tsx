@@ -96,6 +96,8 @@ export interface AppProps {
   /** Initial active mode (overrides registry default). Default: "build". */
   initialMode?: string;
   sandboxMode?: SandboxMode;
+  /** Host commands run in the operating system's sandbox. */
+  osSandbox?: boolean;
   overlay?: OverlayHandlers;
   /**
    * When provided, called by `/reload` to re-compose the system prompt
@@ -1301,6 +1303,7 @@ export function App(props: AppProps): React.ReactElement | null {
     columns,
     rows,
     sandboxMode,
+    sandboxLabel: sandboxMode === 'off' && props.osSandbox ? 'os' : sandboxMode,
     activeSession,
     activeParentId,
     committedEntries,
