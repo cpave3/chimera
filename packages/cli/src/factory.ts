@@ -16,6 +16,8 @@ import type {
 } from '@chimera/core';
 import {
   Agent,
+  type AskModelOptions,
+  askModel,
   composeSystemPrompt,
   type InterruptHook,
   loadSession,
@@ -44,11 +46,13 @@ import {
   BalancedPolicyEvaluator,
   CommandPolicyPipeline,
   commandRequiresSudo,
+  createSessionReviewer,
   DefaultPermissionGate,
   GatedExecutor,
   PathAuthorizationStage,
   PermissionDecisionAudit,
   PiSafeShellAdapter,
+  type ReviewPrompt,
   RiskStage,
   ScaryCommandStage,
   ShellEffectsStage,
@@ -95,6 +99,7 @@ import {
   type WebSearchProvider,
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
+import { reviewContext } from './approval-reviewer';
 import type {
   HostBashPolicyConfig,
   McpServerConfig,
@@ -149,6 +154,11 @@ export interface CliAgentFactoryOptions {
   sandbox?: CliSandboxOptions;
   /** Finds the OS sandbox this machine can run. Tests replace it. */
   detectOsSandbox?: () => OsSandboxKind | null;
+  /**
+   * Let the utility model examine a request that needs approval before the
+   * user is asked. Default: false.
+   */
+  approvalReviewer?: boolean;
   /**
    * Optional agent-definition registry. When present, `spawn_agent` resolves
    * its `agent` arg against this registry and surfaces available agents in
@@ -257,6 +267,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveExecutors = new Map<SessionId, LocalExecutor>();
   private readonly liveOsSandboxes = new Map<SessionId, OsSandbox>();
   private readonly detectOsSandbox: () => OsSandboxKind | null;
+  private readonly approvalReviewer: boolean;
   /** The OS sandbox of this machine; undefined until the first session looks for it. */
   private osSandboxKind: OsSandboxKind | null | undefined;
   private readonly liveAgents = new Map<SessionId, Agent>();
@@ -304,6 +315,7 @@ export class CliAgentFactory implements AgentFactory {
       sandboxWritePaths: [],
     };
     this.detectOsSandbox = opts.detectOsSandbox ?? detectOsSandbox;
+    this.approvalReviewer = opts.approvalReviewer === true;
     this.home = opts.home;
     this.skills = opts.skills;
     this.agents = opts.agents;
@@ -536,6 +548,9 @@ export class CliAgentFactory implements AgentFactory {
     });
     this.liveExecutors.set(sessionId, local);
     if (hostCommands.osSandbox) this.liveOsSandboxes.set(sessionId, hostCommands.osSandbox);
+    const osSandboxForPrompt = hostCommands.osSandbox
+      ? { network: hostCommands.osSandbox.spec.network }
+      : undefined;
 
     const modesReg = this.modes;
     const requestedMode = session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
@@ -699,6 +714,32 @@ export class CliAgentFactory implements AgentFactory {
       hookRunner,
       emitResolved: (requestId, decision, remembered) =>
         agent.emitPermissionResolved(requestId, decision, remembered),
+      ...(this.approvalReviewer
+        ? {
+            reviewer: createSessionReviewer({
+              judge: (prompt, signal) => this.askReviewerModel(agent, prompt, signal),
+              context: () =>
+                reviewContext({
+                  messages: agent.session.messages,
+                  cwd: init.cwd,
+                  home: this.home,
+                }),
+            }),
+            onReview: (request, review) => {
+              const callId = request.toolCallId
+                ? agent.resolveCallId(request.toolCallId)
+                : undefined;
+              agent.pushEvent({
+                type: 'approval_reviewed',
+                requestId: request.requestId,
+                ...(callId ? { callId } : {}),
+                decision: review.decision,
+                reason: review.reason,
+                ...(review.stopped ? { stopped: review.stopped } : {}),
+              });
+            },
+          }
+        : {}),
     });
 
     // Wire remember handler so resolvePermission's `remember` arg persists a rule.
@@ -1003,12 +1044,15 @@ export class CliAgentFactory implements AgentFactory {
         snippet: surface.snippets[name] ?? firstLine(definition.description ?? name),
       }));
       if (this.systemPromptOverride !== undefined) {
-        return `${this.systemPromptOverride}\n\n${renderToolsSection(promptTools)}`;
+        return `${this.systemPromptOverride}\n\n${renderToolsSection(promptTools, {
+          osSandbox: osSandboxForPrompt !== undefined,
+        })}`;
       }
       return composeSystemPrompt({
         cwd: init.cwd,
         model: promptModel,
         sandboxMode: init.sandboxMode,
+        osSandbox: osSandboxForPrompt,
         extensions: [
           ...(skillIndexFor(contextWindow) ?? []),
           ...(memoryDirectory
@@ -1335,6 +1379,28 @@ export class CliAgentFactory implements AgentFactory {
         parallelToolCalls: resolved.settings.parallelToolCalls,
       },
     };
+  }
+
+  /**
+   * One question to the approval reviewer's model: the utility model, or the
+   * model the session uses now. The reviewer gets no tools.
+   */
+  private askReviewerModel(
+    agent: Agent,
+    prompt: ReviewPrompt,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const { model: sessionModel, id: sessionId } = agent.session;
+    const ref = this.utilityModel ?? `${sessionModel.providerId}/${sessionModel.modelId}`;
+    const { provider, modelId } = this.registry.resolve(ref);
+    return askModel({
+      model: provider.getModel(modelId, sessionId),
+      system: prompt.system,
+      prompt: prompt.prompt,
+      signal,
+      providerOptions: this.resolveGeneration(ref)
+        .providerOptions as AskModelOptions['providerOptions'],
+    });
   }
 
   /**

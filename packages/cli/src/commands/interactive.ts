@@ -27,7 +27,13 @@ import {
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
-import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../config';
+import {
+  approvalReviewerEnabled,
+  loadConfig,
+  resolveHostBashPolicy,
+  resolveMcpServers,
+  resolveModel,
+} from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
@@ -191,6 +197,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     defaultVisionModel: config.defaultVisionModel,
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
+    approvalReviewer: approvalReviewerEnabled(config),
     memory: config.memory,
     userCanAnswer: true,
     compaction: compactionConfig,

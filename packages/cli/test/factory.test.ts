@@ -1096,6 +1096,17 @@ describe('CliAgentFactory', () => {
         expect(inConfigured.exit_code).toBe(0);
       });
 
+      it('tells the model in the system prompt that bash runs in the OS sandbox', async () => {
+        const { agent } = await session(factoryWith({}));
+        const plain = await session(factoryWith({ hostBashPolicy: policy({ osSandbox: 'off' }) }));
+        const promptOf = (built: typeof agent) =>
+          (built as unknown as { opts: { systemPrompt: string } }).opts.systemPrompt;
+
+        expect(promptOf(agent)).toMatch(/^- sandbox: os — /m);
+        expect(promptOf(agent)).toMatch(/To change a file outside[^.]*unsandboxed: true/);
+        expect(promptOf(plain.agent)).toMatch(/^- sandbox: off — no sandbox/m);
+      });
+
       it('gives a sandboxed command no network when the network setting is off', async () => {
         const listener = createServer((_request, response) => response.end('ok'));
         await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));

@@ -94,13 +94,18 @@ async function describeMcpTools(options: DescribeOptions): Promise<McpToolEntry[
         tool: tool({
           description,
           inputSchema: jsonSchema<Record<string, unknown>>(definition.inputSchema),
-          execute: async (args, { abortSignal }) => {
+          execute: async (args, { abortSignal, toolCallId }) => {
             const resolution = await gate.requestMcp(
-              { requestId: newRequestId(), server, tool: definition.name, args, cwd },
+              { requestId: newRequestId(), server, tool: definition.name, args, cwd, toolCallId },
               config.trustedTools ?? [],
             );
-            if (resolution.decision === 'deny')
-              return { error: `MCP call ${server}/${definition.name} denied` };
+            if (resolution.decision === 'deny') {
+              const byReviewer =
+                resolution.denialSource === 'reviewer'
+                  ? ` by reviewer: ${resolution.reviewerReason ?? 'the request needs the user'}`
+                  : '';
+              return { error: `MCP call ${server}/${definition.name} denied${byReviewer}` };
+            }
             try {
               const result = await manager.call(server, definition.name, args, abortSignal);
               return result.isError

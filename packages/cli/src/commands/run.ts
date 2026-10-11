@@ -18,7 +18,13 @@ import {
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
-import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../config';
+import {
+  approvalReviewerEnabled,
+  loadConfig,
+  resolveHostBashPolicy,
+  resolveMcpServers,
+  resolveModel,
+} from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
@@ -181,6 +187,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       defaultVisionModel: config.defaultVisionModel,
       fallbackModel: config.fallbackModel,
       utilityModel: config.utilityModel,
+      approvalReviewer: approvalReviewerEnabled(config),
       memory: config.memory,
       compaction: compactionConfig,
       compactor,

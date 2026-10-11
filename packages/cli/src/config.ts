@@ -110,11 +110,16 @@ export interface ChimeraConfig {
   fallbackModel?: string;
   /**
    * One low-cost model (`<providerId>/<modelId>`) for helper work: agent
-   * definitions with `model: utility` (the built-in `explore` agent), and
-   * compaction summaries when `compaction.model` is not set. Without it,
-   * helper work runs on the session model.
+   * definitions with `model: utility` (the built-in `explore` agent), the
+   * approval reviewer, and compaction summaries when `compaction.model` is
+   * not set. Without it, helper work runs on the session model.
    */
   utilityModel?: string;
+  /**
+   * Let the utility model examine a host command or an MCP call that needs
+   * approval before the user is asked. Off by default.
+   */
+  approvalReviewer?: { enabled?: boolean };
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
   commandPolicy?: {
@@ -238,6 +243,8 @@ const hostBashPolicySchema = z
     sandboxWritePaths: z.array(z.string()).optional(),
   })
   .strict();
+
+const approvalReviewerSchema = z.object({ enabled: z.boolean().optional() }).strict();
 
 const tuiSchema = z
   .object({
@@ -370,6 +377,10 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   if (!result.success) {
     throw new Error(`Invalid commandPolicy.hostBash in ${path}: ${result.error.message}`);
   }
+  const reviewer = approvalReviewerSchema.safeParse(config.approvalReviewer ?? {});
+  if (!reviewer.success) {
+    throw new Error(`Invalid approvalReviewer in ${path}: ${reviewer.error.message}`);
+  }
   const tui = tuiSchema.safeParse(config.tui ?? {});
   if (!tui.success) {
     throw new Error(
@@ -377,6 +388,10 @@ export function loadConfig(home = homedir()): ChimeraConfig {
     );
   }
   return config;
+}
+
+export function approvalReviewerEnabled(config: ChimeraConfig): boolean {
+  return config.approvalReviewer?.enabled === true;
 }
 
 export function resolveHostBashPolicy(

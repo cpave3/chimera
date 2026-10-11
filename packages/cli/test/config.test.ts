@@ -2,7 +2,13 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../src/config';
+import {
+  approvalReviewerEnabled,
+  loadConfig,
+  resolveHostBashPolicy,
+  resolveMcpServers,
+  resolveModel,
+} from '../src/config';
 
 it('rejects invalid MCP server configuration with config path and server name', async () => {
   const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-invalid-'));
@@ -125,6 +131,30 @@ describe('OS sandbox settings', () => {
     expect(() => loadConfig(unknownMode)).toThrow(/osSandbox/);
     expect(() => loadConfig(unknownNetwork)).toThrow(/network/);
     expect(() => loadConfig(pathsNotAList)).toThrow(/sandboxWritePaths/);
+  });
+});
+
+describe('approval reviewer setting', () => {
+  async function homeWith(config: object): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-config-'));
+    await mkdir(join(home, '.chimera'), { recursive: true });
+    await writeFile(join(home, '.chimera', 'config.json'), JSON.stringify(config));
+    return home;
+  }
+
+  it('is off unless the config turns it on', async () => {
+    const on = await homeWith({ approvalReviewer: { enabled: true } });
+    const off = await homeWith({ approvalReviewer: {} });
+
+    expect(approvalReviewerEnabled({})).toBe(false);
+    expect(approvalReviewerEnabled(loadConfig(off))).toBe(false);
+    expect(approvalReviewerEnabled(loadConfig(on))).toBe(true);
+  });
+
+  it('refuses a key it does not know', async () => {
+    const home = await homeWith({ approvalReviewer: { enabled: true, model: 'x/y' } });
+
+    expect(() => loadConfig(home)).toThrow(/approvalReviewer/);
   });
 });
 
