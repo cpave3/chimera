@@ -25,3 +25,6 @@ export type {
   LoadAgentsOptions,
   ReloadingAgentsOptions,
 } from './agents';
+export { BackgroundAgents, buildBackgroundAgentTools } from './background';
+export type { BackgroundAgent, BackgroundAgentsOptions } from './background';
+export type { BackgroundStarted } from './types';

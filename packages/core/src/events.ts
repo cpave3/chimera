@@ -121,6 +121,12 @@ export type AgentEvent =
       childSessionId: SessionId;
       url: string;
       purpose: string;
+      /**
+       * True for a child the model started with `background: true`: the tool
+       * call that started it returns at once, and the child's events go on
+       * after that call's result.
+       */
+      background?: boolean;
     }
   | { type: 'subagent_event'; subagentId: string; event: AgentEvent }
   | {

@@ -8,6 +8,7 @@ import type {
 } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { AgentRegistry } from './agents/types';
+import type { BackgroundAgents } from './background';
 
 export type SubagentReason = RunFinishedReason;
 
@@ -32,6 +33,16 @@ export interface SubagentResult {
   steps: number;
   tool_calls_count: number;
   usage?: { inputTokens: number; outputTokens: number };
+  /** Something the model should know about how the call was run. */
+  note?: string;
+}
+
+/** What `spawn_agent` returns for a child it started in the background. */
+export interface BackgroundStarted {
+  subagent_id: string;
+  status: 'running';
+  session_id: SessionId;
+  note: string;
 }
 
 /**
@@ -115,6 +126,12 @@ export interface SpawnAgentToolContext {
    * the tool description so the model can pick a definition by name.
    */
   agents?: AgentRegistry;
+  /**
+   * The session's background children. When absent, the session cannot wait
+   * for a child (a one-shot run), and a `background: true` call runs in the
+   * foreground.
+   */
+  background?: BackgroundAgents;
   /**
    * The `utilityModel` config key: the model an agent definition gets when
    * it says `model: utility`. Without it, such a definition runs on the

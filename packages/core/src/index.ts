@@ -1,5 +1,6 @@
 export * from './agent';
 export * from './command-policy';
+export * from './background-agent-message';
 export * from './context-breakdown';
 export * from './context-tracker';
 export * from './discovery';

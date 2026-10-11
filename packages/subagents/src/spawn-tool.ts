@@ -5,11 +5,25 @@ import { z } from 'zod';
 import { parseToolsCsv } from './agents/frontmatter';
 import { type ChildHandle, driveChild, spawnChimeraChild, teardownChild } from './spawn-child';
 import { driveInProcess, spawnInProcessChild } from './spawn-in-process';
-import type { SpawnAgentToolContext, SubagentResult } from './types';
+import type { DriveResult } from './subagent-driver';
+import type { BackgroundStarted, SpawnAgentToolContext, SubagentResult } from './types';
 
 const DEFAULT_TOOLS = ['bash', 'read', 'write', 'edit', 'glob', 'grep'];
 /** What an agent definition writes as its model to get the `utilityModel` config key. */
 const UTILITY_MODEL = 'utility';
+const BACKGROUND_NOTE =
+  'The agent runs in the background. Its answer arrives as a message when it ends, so go on with other work. Use agent_status to check on it and agent_stop to stop it.';
+const FOREGROUND_NOTE =
+  'Ran in the foreground: this session ends with its run, so it cannot wait for a background agent.';
+
+/** A child that has started, whichever way it runs. */
+interface Launched {
+  childSessionId: string;
+  url: string;
+  /** Run the child to its end; the signal interrupts it. */
+  drive(signal: AbortSignal): Promise<DriveResult>;
+  teardown(): Promise<void>;
+}
 
 const ARGS_SCHEMA = z.object({
   prompt: z.string().min(1).describe('The instructions for the subagent.'),
@@ -53,6 +67,15 @@ const ARGS_SCHEMA = z.object({
       'Run the child in-process (no separate chimera serve). Default false. ' +
         'In-process children are not visible to chimera ls / chimera attach.',
     ),
+  background: z
+    .boolean()
+    .optional()
+    .describe(
+      'Start the agent and return at once with its id. Its answer arrives later as a ' +
+        'message. Use it for work whose result you do not need for your next steps. ' +
+        'A background agent cannot ask the user for approval: a command that needs ' +
+        'approval is denied.',
+    ),
 });
 
 export type SpawnAgentArgs = z.infer<typeof ARGS_SCHEMA>;
@@ -66,17 +89,18 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
   const modelIndex = buildModelIndex(ctx.availableModels);
   const description = [baseDescription, agentIndex, modelIndex].filter((s) => s).join('\n\n');
 
-  return defineTool<SpawnAgentArgs, SubagentResult>({
+  return defineTool<SpawnAgentArgs, SubagentResult | BackgroundStarted>({
     description,
     inputSchema: ARGS_SCHEMA,
     formatScrollback: (args, result) => {
       const label = args.purpose && args.purpose.length > 0 ? args.purpose : args.prompt;
       const head = clipSpawnLabel(label);
       if (!result) return { summary: head };
+      if ('status' in result) return { summary: `${head} (background)` };
       const tag = result.reason === 'stop' ? 'done' : result.reason;
       return { summary: `${head} (${tag})` };
     },
-    execute: async (args, opts): Promise<SubagentResult> => {
+    execute: async (args, opts): Promise<SubagentResult | BackgroundStarted> => {
       const validated = ARGS_SCHEMA.parse(args);
       const { abortSignal } = opts;
       const aiSdkToolCallId = (opts as { toolCallId?: string }).toolCallId;
@@ -160,6 +184,15 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         });
       }
 
+      // A background child is not part of the run that started it: only
+      // `agent_stop` and the end of the session interrupt it.
+      const inBackground = validated.background === true && ctx.background !== undefined;
+      const ownController = new AbortController();
+      const childSignal = inBackground ? ownController.signal : effectiveSignal;
+      const onChildEvent = (event: Parameters<SpawnAgentToolContext['emit']>[0]) =>
+        ctx.emit({ type: 'subagent_event', subagentId, event });
+
+      let launched: Launched;
       if (inProcess) {
         if (!ctx.inProcess) {
           return errorResult({
@@ -169,54 +202,25 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         }
         const parsedModel = parseModelRef(modelRef, ctx.modelOptions);
         if (modelSettings) parsedModel.settings = modelSettings;
-        const desiredSandboxMode = inheritSandboxMode(ctx.sandboxMode, validated);
         try {
           const handle = await spawnInProcessChild({
             builder: ctx.inProcess,
             cwd: childCwd,
             modelRef,
             parsedModel,
-            sandboxMode: desiredSandboxMode,
-            parentAbortSignal: effectiveSignal,
+            sandboxMode: inheritSandboxMode(ctx.sandboxMode, validated),
+            parentAbortSignal: childSignal,
             systemPrompt: effectiveSystemPrompt,
             toolNames: effectiveTools ?? DEFAULT_TOOLS,
             currentDepth: ctx.currentDepth + 1,
             maxDepth: ctx.maxDepth,
           });
-
-          ctx.emit({
-            type: 'subagent_spawned',
-            subagentId,
-            parentCallId,
+          launched = {
             childSessionId: handle.childSessionId,
             url: '',
-            purpose: validated.purpose,
-          });
-
-          const driven = await driveInProcess(
-            handle,
-            validated.prompt,
-            (ev) => ctx.emit({ type: 'subagent_event', subagentId, event: ev }),
-            { signal: effectiveSignal, timeoutMs },
-          );
-
-          await handle.dispose();
-
-          ctx.emit({
-            type: 'subagent_finished',
-            subagentId,
-            parentCallId,
-            result: driven.finalText,
-            reason: driven.reason,
-          });
-
-          return {
-            subagent_id: subagentId,
-            result: driven.finalText || (driven.errorMessage ?? ''),
-            reason: driven.reason,
-            session_id: handle.childSessionId,
-            steps: driven.steps,
-            tool_calls_count: driven.toolCallsCount,
+            drive: (signal) =>
+              driveInProcess(handle, validated.prompt, onChildEvent, { signal, timeoutMs }),
+            teardown: () => handle.dispose(),
           };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -229,66 +233,105 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           });
           return errorResult({ subagentId, message: msg });
         }
-      }
-
-      // Child-process path.
-      let handle: ChildHandle | undefined;
-      try {
-        handle = await spawnChimeraChild({
-          chimeraBin: ctx.chimeraBin,
-          chimeraBinArgs: ctx.chimeraBinArgs,
-          cwd: childCwd,
-          parentSessionId: ctx.parentSessionId,
-          modelRef,
-          autoApprove: ctx.autoApprove,
-          modelSettings,
-          sandbox: validated.sandbox === undefined ? ctx.sandboxMode !== 'off' : validated.sandbox,
-          sandboxMode: validated.sandbox_mode,
-          parentHasTty: ctx.parentHasTty,
-          currentSubagentDepth: ctx.currentDepth + 1,
-          maxSubagentDepth: ctx.maxDepth,
-          systemPrompt: effectiveSystemPrompt,
-          tools: effectiveTools,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // No subagent_spawned emitted — handshake never completed.
-        return errorResult({ subagentId, message: msg });
+      } else {
+        let handle: ChildHandle;
+        try {
+          handle = await spawnChimeraChild({
+            chimeraBin: ctx.chimeraBin,
+            chimeraBinArgs: ctx.chimeraBinArgs,
+            cwd: childCwd,
+            parentSessionId: ctx.parentSessionId,
+            modelRef,
+            autoApprove: ctx.autoApprove,
+            modelSettings,
+            sandbox:
+              validated.sandbox === undefined ? ctx.sandboxMode !== 'off' : validated.sandbox,
+            sandboxMode: validated.sandbox_mode,
+            // Nobody watches a background child: its events are dropped
+            // while the parent is idle, so an approval request would wait
+            // for a prompt that never opens. It runs headless instead, and a
+            // command that needs approval is denied at once.
+            parentHasTty: inBackground ? false : ctx.parentHasTty,
+            currentSubagentDepth: ctx.currentDepth + 1,
+            maxSubagentDepth: ctx.maxDepth,
+            systemPrompt: effectiveSystemPrompt,
+            tools: effectiveTools,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // No subagent_spawned emitted — handshake never completed.
+          return errorResult({ subagentId, message: msg });
+        }
+        launched = {
+          childSessionId: handle.childSessionId,
+          url: handle.url,
+          drive: (signal) =>
+            driveChild(handle, validated.prompt, onChildEvent, { signal, timeoutMs }),
+          teardown: () => teardownChild(handle),
+        };
       }
 
       ctx.emit({
         type: 'subagent_spawned',
         subagentId,
         parentCallId,
-        childSessionId: handle.childSessionId,
-        url: handle.url,
+        childSessionId: launched.childSessionId,
+        url: launched.url,
         purpose: validated.purpose,
+        ...(inBackground ? { background: true } : {}),
       });
 
-      const driven = await driveChild(
-        handle,
-        validated.prompt,
-        (ev) => ctx.emit({ type: 'subagent_event', subagentId, event: ev }),
-        { signal: effectiveSignal, timeoutMs },
-      );
+      const runToEnd = async (signal: AbortSignal): Promise<DriveResult> => {
+        let driven: DriveResult;
+        try {
+          driven = await launched.drive(signal);
+          await launched.teardown();
+        } catch (err) {
+          driven = {
+            finalText: '',
+            reason: 'error',
+            errorMessage: err instanceof Error ? err.message : String(err),
+            steps: 0,
+            toolCallsCount: 0,
+          };
+        }
+        ctx.emit({
+          type: 'subagent_finished',
+          subagentId,
+          parentCallId,
+          result:
+            driven.finalText || (driven.reason === 'error' ? (driven.errorMessage ?? '') : ''),
+          reason: driven.reason,
+        });
+        return driven;
+      };
 
-      await teardownChild(handle);
+      if (inBackground) {
+        ctx.background!.start(
+          { id: subagentId, purpose: validated.purpose, agent: validated.agent },
+          (stopSignal) => {
+            if (stopSignal.aborted) ownController.abort();
+            else stopSignal.addEventListener('abort', () => ownController.abort(), { once: true });
+            return runToEnd(ownController.signal);
+          },
+        );
+        return {
+          subagent_id: subagentId,
+          status: 'running',
+          session_id: launched.childSessionId,
+          note: BACKGROUND_NOTE,
+        };
+      }
 
-      ctx.emit({
-        type: 'subagent_finished',
-        subagentId,
-        parentCallId,
-        result: driven.finalText,
-        reason: driven.reason,
-      });
-
+      const driven = await runToEnd(childSignal);
       return {
         subagent_id: subagentId,
         result: driven.finalText || (driven.errorMessage ?? ''),
         reason: driven.reason,
-        session_id: handle.childSessionId,
+        session_id: launched.childSessionId,
         steps: driven.steps,
         tool_calls_count: driven.toolCallsCount,
+        ...(validated.background ? { note: FOREGROUND_NOTE } : {}),
       };
     },
   });
