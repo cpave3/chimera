@@ -30,7 +30,7 @@ import {
 import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
-import { removeLockfile, writeLockfile } from '../lockfile';
+import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { listPeers } from '../peers';
 import { CHIMERA_CLI_VERSION } from '../program';
@@ -265,6 +265,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     opts.home,
   );
 
+  const stopLockfileCleanup = removeLockfileOnExit(process.pid, opts.home);
+
   const overlay: OverlayHandlers | undefined =
     sandboxMode === 'overlay'
       ? {
@@ -320,6 +322,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       process.stdout.write(formatExitSummary(handle.activeSessionId()));
     }
   } finally {
+    stopLockfileCleanup();
     removeLockfile(process.pid, opts.home);
     (commands as Partial<ReloadingCommandRegistry>).close?.();
     (agents as Partial<ReloadingAgentRegistry>).close?.();

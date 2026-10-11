@@ -398,8 +398,8 @@ export function buildProgram(): Command {
   program
     .command('ls')
     .description('List running chimera instances.')
-    .action(() => {
-      runLs();
+    .action(async () => {
+      await runLs();
     });
 
   const sessions = program.command('sessions').description('Manage persisted sessions.');

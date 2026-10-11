@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
 import type { Peer } from '@chimera/tui';
-import { type Lockfile, listLiveInstances } from './lockfile';
+import { type Lockfile, listVerifiedInstances } from './lockfile';
 
 // A peer that is busy answers late; the panel shows it without a state
 // rather than hold every other row back.
@@ -28,18 +28,25 @@ function peerLabels(instances: Lockfile[]): string[] {
 }
 
 /**
- * The other live Chimera instances on this machine, from their lockfiles,
- * each asked what its session is doing.
+ * The other Chimera instances that are really running on this machine, each
+ * asked what its session is doing. An instance that is there but slow to
+ * answer is listed without a state; a lockfile left by an instance that is
+ * gone is not listed.
  */
 export async function listPeers(options: ListPeersOptions = {}): Promise<Peer[]> {
   const selfPid = options.selfPid ?? process.pid;
   const baseFetch = options.fetch ?? fetch;
-  const others = listLiveInstances(options.home).filter((instance) => instance.pid !== selfPid);
+  const verified = await listVerifiedInstances({
+    home: options.home,
+    fetch: baseFetch,
+    timeoutMs: PEER_TIMEOUT_MS,
+  });
+  const others = verified.filter((instance) => instance.pid !== selfPid);
   const labels = peerLabels(others);
   return Promise.all(
     others.map(async (instance, index): Promise<Peer> => {
       const label = labels[index]!;
-      if (!instance.sessionId) return { label };
+      if (!instance.responsive || !instance.sessionId) return { label };
       const client = new ChimeraClient({
         baseUrl: instance.url,
         fetch: (input, init) =>
@@ -49,6 +56,7 @@ export async function listPeers(options: ListPeersOptions = {}): Promise<Peer[]>
         const { mode, status } = await client.getSessionStatus(instance.sessionId);
         return { label, mode, status };
       } catch {
+        // An instance on an older build has no status endpoint.
         return { label };
       }
     }),

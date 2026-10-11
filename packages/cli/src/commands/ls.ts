@@ -1,7 +1,8 @@
-import { listLiveInstances } from '../lockfile';
+import { listVerifiedInstances } from '../lockfile';
 
-export function runLs(home?: string): void {
-  const instances = listLiveInstances(home);
+/** List the instances that are running: each is asked, so a stale lockfile is not shown. */
+export async function runLs(home?: string): Promise<void> {
+  const instances = await listVerifiedInstances({ home });
   if (instances.length === 0) {
     process.stdout.write('No running chimera instances.\n');
     return;
