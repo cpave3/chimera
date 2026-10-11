@@ -127,3 +127,27 @@ A user message SHALL start with `›` and SHALL wrap between words. Assistant te
 #### Scenario: Assistant text
 - **WHEN** the model answers with text
 - **THEN** the first line of the answer starts with `◆`
+
+### Requirement: Mouse selection
+In the fullscreen layout, a drag with the left mouse button SHALL select text and show the selection as a highlight. When the button is released, the selected text SHALL go to the clipboard, through the system's clipboard tool when one is available and the session is not over SSH, and through the terminal's clipboard sequence (OSC 52) in every case. The TUI SHALL say how many characters were copied. A selection SHALL stay within the screen region it starts in (the transcript column or the context panel). Trailing blanks of a row SHALL NOT be copied, and rows after the first SHALL lose the indent that the first row starts at. A click without a drag SHALL NOT change the clipboard. The highlight SHALL be removed after a short time, and at once on a key press or a scroll.
+
+#### Scenario: Copy from the transcript
+- **WHEN** the user drags across `Describe a task to` in the transcript and releases the button
+- **THEN** the clipboard holds `Describe a task to`, and the hints row says `copied 18 characters`
+
+#### Scenario: Panel stays out
+- **WHEN** the user drags from the transcript to a point over the context panel
+- **THEN** the copied text ends at the edge of the transcript column
+
+#### Scenario: Code keeps its shape
+- **WHEN** the user selects an indented code block from its first character to its last
+- **THEN** the copied lines have the indentation of the code, without the transcript's own indent
+
+#### Scenario: Click
+- **WHEN** the user clicks without dragging
+- **THEN** nothing is copied
+
+#### Scenario: Mouse left to the terminal
+- **WHEN** `tui.mouse` is `false`
+- **THEN** the TUI asks for no mouse reports, and the terminal's own selection works
+

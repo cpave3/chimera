@@ -23,7 +23,8 @@ const KEY_BINDINGS: Array<[keys: string, action: string]> = [
 const FULLSCREEN_KEY_BINDINGS: Array<[keys: string, action: string]> = [
   ['PgUp / PgDn', 'scroll the transcript (also the mouse wheel)'],
   ['Ctrl+B', 'show or hide the context panel'],
-  ['Shift+drag', 'select text with the terminal'],
+  ['Drag', 'select text; it is copied when you release the button'],
+  ['Shift+drag', "select with the terminal's own selection instead"],
 ];
 
 const KEY_COLUMN_WIDTH = Math.max(...KEY_BINDINGS.map(([keys]) => keys.length)) + 2;

@@ -33,6 +33,7 @@ import {
 } from './input/external-editor';
 import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import type { MouseBus } from './input/mouse';
+import type { Region } from './input/screen-selection';
 import { PasteRegistry } from './input/paste';
 import { handleKey } from './key-handler';
 import type { NotificationReason } from './notify';
@@ -162,8 +163,16 @@ export interface AppProps {
   readWorktree?: (cwd: string) => Promise<WorktreeStatus | null>;
   /** The other live Chimera instances, for the context panel. */
   listPeers?: () => Promise<Peer[]>;
-  /** Wheel events, which the terminal input filter takes out of the key stream. */
+  /** Pointer events, which the terminal input filter takes out of the key stream. */
   mouse?: MouseBus;
+  /**
+   * Tells the mount which columns a mouse selection may cover: the
+   * transcript column and the panel are separate, so a selection in one
+   * never takes text from the other.
+   */
+  onSelectableRegions?: (regions: Region[]) => void;
+  /** The mouse selection on screen, which a key press or a scroll ends. */
+  screenSelection?: { clear(): void };
   /**
    * Gives the terminal back before an editor or a pager runs, and takes it
    * again after: the alternate screen, and the reports the TUI asked the
@@ -192,6 +201,7 @@ export interface AppProps {
 const FILE_MENU_ROWS = 6;
 const FILE_LIST_MAX_AGE_MS = 5_000;
 const WHEEL_LINES = 3;
+const COPIED_NOTICE_MS = 2_000;
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export function App(props: AppProps): React.ReactElement | null {
@@ -633,13 +643,27 @@ export function App(props: AppProps): React.ReactElement | null {
     setShowHeader(false);
   }
 
-  const { mouse } = props;
+  const { mouse, screenSelection } = props;
+  const [copiedCharacters, setCopiedCharacters] = useState<number | null>(null);
   useEffect(() => {
     if (!fullscreen || !mouse) return;
-    return mouse.subscribe((event) => {
-      scrollerRef.current?.scrollBy(event.kind === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES);
+    let noticeTimer: NodeJS.Timeout | undefined;
+    const unsubscribe = mouse.subscribe((event) => {
+      if (event.kind === 'wheel-up' || event.kind === 'wheel-down') {
+        // The text moves under a highlight that is fixed to the screen.
+        screenSelection?.clear();
+        scrollerRef.current?.scrollBy(event.kind === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES);
+      } else if (event.kind === 'copied') {
+        setCopiedCharacters(event.characters);
+        clearTimeout(noticeTimer);
+        noticeTimer = setTimeout(() => setCopiedCharacters(null), COPIED_NOTICE_MS);
+      }
     });
-  }, [fullscreen, mouse]);
+    return () => {
+      clearTimeout(noticeTimer);
+      unsubscribe();
+    };
+  }, [fullscreen, mouse, screenSelection]);
 
   /** Run a program that takes over the terminal, then take the screen back. */
   async function withScreenHandoff<T>(operation: () => Promise<T>): Promise<T> {
@@ -654,6 +678,7 @@ export function App(props: AppProps): React.ReactElement | null {
   }
 
   useInput((char, key) => {
+    screenSelection?.clear();
     handleKey(char, key, {
       props,
       scrollback,
@@ -1290,6 +1315,7 @@ export function App(props: AppProps): React.ReactElement | null {
     forkFrom,
     panelOpen,
     scrollerRef,
+    copiedCharacters,
   };
 
   if (exiting) return null;

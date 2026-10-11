@@ -52,6 +52,8 @@ export function fitHints(hints: Array<[text: string, keep: number]>, room: numbe
   return kept.map(([text]) => text).join(HINT_SEPARATOR);
 }
 const COLUMN_PADDING = 2;
+// The panel's border column and its left padding.
+const PANEL_TEXT_INSET = 3;
 const MAX_QUEUED_LINES = 3;
 const MAX_TASK_LINES = 6;
 const WORKTREE_SETTLE_MS = 400;
@@ -189,6 +191,17 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
   const pendingBadge = pendingMode ? ` → ${pendingMode.toUpperCase()}` : '';
   const hintRoom =
     textWidth - badge.length - pendingBadge.length - 2 - (facts === '' ? 0 : facts.length + 2);
+  // Where a mouse selection may run: the transcript column, or the panel's text.
+  const { onSelectableRegions } = props;
+  useEffect(() => {
+    onSelectableRegions?.([
+      { left: COLUMN_PADDING, right: columns - panelColumns - COLUMN_PADDING },
+      ...(panelColumns > 0
+        ? [{ left: columns - panelColumns + PANEL_TEXT_INSET, right: columns - COLUMN_PADDING }]
+        : []),
+    ]);
+  }, [onSelectableRegions, columns, panelColumns]);
+
   const hints = scrolled
     ? 'pgdn to the latest output'
     : fitHints(
@@ -282,7 +295,13 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
               {badge}
             </Text>
             {pendingMode && <Text color={modeColor(pendingMode)}>{pendingBadge}</Text>}
-            <Text color={dim}>{`  ${hints}`}</Text>
+            {view.copiedCharacters === null ? (
+              <Text color={dim}>{`  ${hints}`}</Text>
+            ) : (
+              <Text color={theme.status.success}>
+                {`  copied ${view.copiedCharacters} ${view.copiedCharacters === 1 ? 'character' : 'characters'}`}
+              </Text>
+            )}
           </Text>
           {facts !== '' && <Text color={theme.text.muted}>{facts}</Text>}
         </Box>

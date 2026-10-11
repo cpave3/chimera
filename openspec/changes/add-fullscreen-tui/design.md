@@ -26,8 +26,8 @@ a second:
 
 **Non-Goals:**
 
-- Text selection inside the app. The terminal's own selection applies
-  (Shift+drag while the wheel is captured).
+- Selection beyond what is on screen (no auto-scroll while dragging), and
+  word or line selection by double or triple click.
 - Cost in money. No price data exists in the configuration.
 - A second transcript renderer. Both layouts draw entries with the same
   function.
@@ -59,12 +59,24 @@ absolute `scrollTop`, so new output does not move the text the user reads.
 Scrolling back to the end, sending a message or pressing End follows the
 tail again.
 
-### D4. Mouse wheel
+### D4. Mouse: wheel and selection
 
-Fullscreen enables SGR mouse reporting (`?1000h ?1006h`) for the wheel only.
-The stdin filter splits a burst of mouse reports into one item each, and the
-key handler reads them. Terminals keep native selection on Shift+drag.
-`tui.mouse: false` turns the capture off.
+Fullscreen enables SGR mouse reporting with button events and motion while a
+button is down (`?1002h ?1006h`). The stdin filter takes the reports out of
+the key stream. The wheel scrolls the transcript.
+
+While the TUI takes mouse reports the terminal cannot select for the user,
+and in tmux the Shift bypass selects across panes. So the TUI selects
+itself. The Ink fork has a DOM-style selection, but it is undocumented and
+tied to its caches; the selection here works on the screen instead: the
+mount keeps the last frame Ink drew (`onRender`), a drag paints a highlight
+over it with direct writes, and the frame's own rows are written back when
+the selection moves or ends. Ink's line-diffing writer rewrites the rows it
+changes, so the highlight is painted again after each frame. The layout
+reports its selectable regions (transcript column, panel text), and a
+selection stays in the region it starts in. On release the text goes to the
+clipboard both ways: the system tool (`wl-copy`, `xclip`, `xsel`, `pbcopy`;
+not over SSH) and OSC 52. `tui.mouse: false` turns all of it off.
 
 ### D5. Layout choice
 

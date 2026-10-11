@@ -24,13 +24,18 @@ describe('extractMouseReports', () => {
     });
   });
 
-  it('drops clicks and releases without an event', () => {
-    expect(extractMouseReports(`${ESC}[<0;3;4M${ESC}[<0;3;4m`)).toEqual({
-      rest: '',
-      events: [],
-      focus: [],
-      incomplete: '',
-    });
+  it('reports the left button going down, moving and going up, with zero-based cells', () => {
+    const input = `${ESC}[<0;3;4M${ESC}[<32;9;4M${ESC}[<0;9;4m`;
+    expect(extractMouseReports(input).events).toEqual([
+      { kind: 'press', x: 2, y: 3 },
+      { kind: 'drag', x: 8, y: 3 },
+      { kind: 'release', x: 8, y: 3 },
+    ]);
+  });
+
+  it('ignores the other buttons and plain pointer motion', () => {
+    const input = `${ESC}[<2;3;4M${ESC}[<2;3;4m${ESC}[<1;3;4M${ESC}[<35;5;5M`;
+    expect(extractMouseReports(input)).toEqual({ rest: '', events: [], focus: [], incomplete: '' });
   });
 
   it('holds back a report that the chunk cut in two', () => {

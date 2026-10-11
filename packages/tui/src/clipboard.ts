@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -135,4 +135,82 @@ export async function saveImageToSession(
   const path = join(dir, name);
   await writeFile(path, image.data);
   return path;
+}
+
+/**
+ * The escape sequence that asks the terminal to put text on the clipboard
+ * (OSC 52). It also works over SSH, where the clipboard is on the user's
+ * machine and no local tool can reach it.
+ */
+export function clipboardSequence(text: string): string {
+  return `\x1b]52;c;${Buffer.from(text, 'utf8').toString('base64')}\x07`;
+}
+
+export interface ClipboardCommand {
+  command: string;
+  args: string[];
+}
+
+/** The system tools that take text for the clipboard on stdin, best first. */
+export function clipboardCommands(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): ClipboardCommand[] {
+  // A tool on the remote end of an SSH session fills the remote clipboard.
+  if (env.SSH_CONNECTION || env.SSH_TTY) return [];
+  if (platform === 'darwin') return [{ command: 'pbcopy', args: [] }];
+  if (platform === 'win32') return [{ command: 'clip', args: [] }];
+  const commands: ClipboardCommand[] = [];
+  if (env.WAYLAND_DISPLAY) commands.push({ command: 'wl-copy', args: [] });
+  if (env.DISPLAY) {
+    commands.push(
+      { command: 'xclip', args: ['-selection', 'clipboard'] },
+      { command: 'xsel', args: ['--clipboard', '--input'] },
+    );
+  }
+  return commands;
+}
+
+const CLIPBOARD_TOOL_TIMEOUT_MS = 2_000;
+
+function pipeToCommand(command: string, args: string[], input: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    try {
+      const child = spawn(command, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+      const timer = setTimeout(() => settle(false), CLIPBOARD_TOOL_TIMEOUT_MS);
+      timer.unref();
+      child.once('error', () => settle(false));
+      child.once('close', (code) => settle(code === 0));
+      child.stdin.on('error', () => settle(false));
+      child.stdin.end(input);
+    } catch {
+      settle(false);
+    }
+  });
+}
+
+/**
+ * Put text on the system clipboard with the first tool that takes it. False
+ * when there is no tool; the terminal's own clipboard sequence is then the
+ * only way, and the caller sends it in every case.
+ */
+export async function writeClipboardText(
+  text: string,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    run?: (command: string, args: string[], input: string) => Promise<boolean>;
+  } = {},
+): Promise<boolean> {
+  const run = options.run ?? pipeToCommand;
+  for (const { command, args } of clipboardCommands(options.env, options.platform)) {
+    if (await run(command, args, text)) return true;
+  }
+  return false;
 }

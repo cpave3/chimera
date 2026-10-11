@@ -2,7 +2,14 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { type ClipboardImage, isImageFile, saveImageToSession } from '../src/clipboard';
+import {
+  type ClipboardImage,
+  clipboardCommands,
+  clipboardSequence,
+  isImageFile,
+  saveImageToSession,
+  writeClipboardText,
+} from '../src/clipboard';
 
 const mockImage: ClipboardImage = {
   data: Buffer.from('fake-image-data'),
@@ -48,5 +55,54 @@ describe('saveImageToSession', () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('copying text', () => {
+  it('wraps the text for the terminal clipboard, as base64', () => {
+    expect(clipboardSequence('héllo')).toBe(
+      `\x1b]52;c;${Buffer.from('héllo', 'utf8').toString('base64')}\x07`,
+    );
+  });
+
+  it.each([
+    ['Wayland', { WAYLAND_DISPLAY: 'wayland-0' }, 'linux', ['wl-copy', []]],
+    ['X11', { DISPLAY: ':0' }, 'linux', ['xclip', ['-selection', 'clipboard']]],
+    ['macOS', {}, 'darwin', ['pbcopy', []]],
+  ] as const)('uses the system tool on %s', (_label, env, platform, expected) => {
+    expect(clipboardCommands(env, platform)[0]).toEqual({
+      command: expected[0],
+      args: expected[1],
+    });
+  });
+
+  it('uses no system tool over SSH, where it would fill the wrong clipboard', () => {
+    expect(
+      clipboardCommands({ WAYLAND_DISPLAY: 'wayland-0', SSH_CONNECTION: '10.0.0.1 22' }, 'linux'),
+    ).toEqual([]);
+  });
+
+  it('gives the text to the first tool that takes it', async () => {
+    const tried: string[] = [];
+    const copied = await writeClipboardText('some text', {
+      env: { DISPLAY: ':0' },
+      platform: 'linux',
+      run: async (command, _args, input) => {
+        tried.push(`${command}:${input}`);
+        return command === 'xsel';
+      },
+    });
+
+    expect(copied).toBe(true);
+    expect(tried).toEqual(['xclip:some text', 'xsel:some text']);
+  });
+
+  it('says so when no tool took the text', async () => {
+    const copied = await writeClipboardText('x', {
+      env: {},
+      platform: 'linux',
+      run: async () => true,
+    });
+    expect(copied).toBe(false);
   });
 });

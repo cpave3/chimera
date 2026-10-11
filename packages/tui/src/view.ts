@@ -97,6 +97,8 @@ export interface AppView {
 
   panelOpen: boolean;
   scrollerRef: MutableRefObject<TranscriptScroller | null>;
+  /** Characters of a selection that just went to the clipboard; null when there is nothing to say. */
+  copiedCharacters: number | null;
 }
 
 /** A permission prompt, a password prompt or a picker has the keyboard. */

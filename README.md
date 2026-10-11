@@ -643,9 +643,20 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
   shows the model and the context percentage instead.
 - **Prompt box and hints row.** The row under the prompt shows the mode as a
   badge and the keys that matter in the current state.
-- **Mouse.** Chimera takes the wheel only. Select text with the terminal as
-  usual, with `Shift` held (`Option` in iTerm2). Set `tui.mouse` to `false`
-  to leave the mouse to the terminal; the wheel then does not scroll.
+- **Mouse.** The wheel scrolls the transcript. Drag with the left button to
+  select text: the selection is copied to the clipboard when you release the
+  button, and the hints row says how much was copied. A selection stays in
+  the column it starts in, so a copy from the transcript never takes the
+  panel along, and code keeps its shape (later lines lose the indent the
+  first line starts at). The copy goes through the system clipboard tool
+  (`wl-copy`, `xclip`, `xsel`, `pbcopy`) and through the terminal's own
+  clipboard sequence (OSC 52), which is what reaches your machine over SSH.
+  In tmux, OSC 52 needs `set -g set-clipboard on`; the system tool needs
+  nothing. A selection covers what is on screen; for more, scroll and copy
+  again, or open the transcript with `Ctrl+T`. `Shift`+drag still gives you
+  the terminal's own selection (`Option` in iTerm2). Set `tui.mouse` to
+  `false` to leave the mouse to the terminal entirely; the wheel then does
+  not scroll.
 - **Exit.** The alternate screen takes the session with it, so Chimera prints
   the session id and the `chimera --session <id>` command that resumes it.
   `Ctrl+T` opens the full transcript in a pager at any time.

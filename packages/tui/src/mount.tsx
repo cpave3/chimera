@@ -10,11 +10,14 @@ import type {
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { basename, resolve } from 'node:path';
+import chalk from 'chalk';
 import { render } from 'ink';
 import { App, type OverlayHandlers } from './App';
 import type { Peer } from './ContextPanel';
-import { MOUSE_DISABLE, MOUSE_ENABLE, MouseBus } from './input/mouse';
+import { clipboardSequence, writeClipboardText } from './clipboard';
+import { MOUSE_DISABLE, MOUSE_ENABLE, type MouseEvent, MouseBus } from './input/mouse';
 import { PasteRegistry } from './input/paste';
+import { type Region, ScreenSelection } from './input/screen-selection';
 import { createFilteredStdin } from './input/stdin-filter';
 import {
   decideNotification,
@@ -122,6 +125,8 @@ export function resolveLayout(
   return requested ?? 'fullscreen';
 }
 
+const SELECTION_FLASH_MS = 1_200;
+
 const ATTENTION_TEXT: Record<NotificationReason, string> = {
   run_finished: 'run finished',
   approval: 'approval needed',
@@ -212,6 +217,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
   const screen = {
     leave() {
       if (!stdout.isTTY) return;
+      selection?.clear();
       stdout.write(`${terminalModesOff}${fullscreen ? LEAVE_ALTERNATE_SCREEN : ''}`);
     },
     enter() {
@@ -250,6 +256,47 @@ export function mountTui(opts: MountOptions): TuiHandle {
 
   const pasteRegistry = new PasteRegistry();
   const mouse = new MouseBus();
+
+  // Mouse selection. The terminal cannot select for the user while the TUI
+  // takes mouse reports, so the TUI does it: drag paints a highlight over
+  // the last frame, and release sends the text to the clipboard.
+  let selectableRegions: Region[] = [];
+  const accent = theme.ui.accent;
+  const selection = captureMouse
+    ? new ScreenSelection({
+        write: (text) => stdout.write(text),
+        regionAt: (point) =>
+          selectableRegions.find((region) => point.x >= region.left && point.x < region.right) ??
+          selectableRegions[0] ?? { left: 0, right: stdout.columns ?? 80 },
+        highlight: accent.startsWith('#')
+          ? chalk
+              .bgHex(accent)
+              .hex(theme.base.background?.startsWith('#') ? theme.base.background : '#000000')
+          : chalk.inverse,
+      })
+    : undefined;
+  let selectionFlash: NodeJS.Timeout | undefined;
+  const onMouse = (event: MouseEvent) => {
+    if (event.kind === 'press') {
+      clearTimeout(selectionFlash);
+      selection?.press(event.x, event.y);
+    } else if (event.kind === 'drag') {
+      selection?.drag(event.x, event.y);
+    } else if (event.kind === 'release') {
+      const text = selection?.release();
+      if (!text) return;
+      // Both ways: the terminal's clipboard sequence reaches the user's
+      // machine over SSH, and the system tool works where a terminal
+      // ignores the sequence.
+      stdout.write(clipboardSequence(text));
+      void writeClipboardText(text);
+      mouse.emit({ kind: 'copied', characters: text.length });
+      // The highlight shows what was taken, then goes: the screen under it moves on.
+      selectionFlash = setTimeout(() => selection?.clear(), SELECTION_FLASH_MS);
+    } else {
+      mouse.emit(event);
+    }
+  };
   if (stdout.isTTY) stdout.write('\x1b[?2004h');
   let activeSessionId = opts.sessionId;
 
@@ -303,6 +350,10 @@ export function mountTui(opts: MountOptions): TuiHandle {
         startupNotices={opts.startupNotices}
         memoryIndexPath={opts.memoryIndexPath}
         notify={notify}
+        onSelectableRegions={(regions) => {
+          selectableRegions = regions;
+        }}
+        screenSelection={selection}
         onActiveSessionChange={(sessionId) => {
           activeSessionId = sessionId;
         }}
@@ -311,10 +362,13 @@ export function mountTui(opts: MountOptions): TuiHandle {
     {
       exitOnCtrlC: false,
       stdin: createFilteredStdin(process.stdin, pasteRegistry, {
-        onMouse: (event) => mouse.emit(event),
+        onMouse,
         onFocus: (focused) => focusTracker.report(focused),
       }),
       ...(fullscreen ? { alternateBuffer: true, incrementalRendering: true } : {}),
+      ...(selection
+        ? { onRender: ({ output }: { output: string }) => selection.frame(output) }
+        : {}),
     },
   );
   if (stdout.isTTY) stdout.write(terminalModesOn);
