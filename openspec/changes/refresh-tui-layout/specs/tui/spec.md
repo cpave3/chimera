@@ -40,11 +40,15 @@ Consecutive successful `read`, `glob`, `find`, `ls` and `grep` calls SHALL appea
 - **THEN** the transcript has one exploration line that says 4 files and 2 searches, followed by the edit
 
 ### Requirement: Transcript view
-`Ctrl+T` SHALL open a view of the whole session on the alternate screen in which every tool call has its own line and its full body. `q` or `Esc` SHALL return to the normal screen with the scrollback unchanged.
+`Ctrl+T` SHALL open the whole session in a pager (`$PAGER`, else `less`) in which every tool call has its own line and its full output. Leaving the pager SHALL return to the TUI with the scrollback unchanged. When the pager cannot be started, the TUI SHALL say why.
 
 #### Scenario: Open the transcript
 - **WHEN** the user presses `Ctrl+T` after a run that grouped three reads
 - **THEN** the view lists the three reads individually
+
+#### Scenario: No pager available
+- **WHEN** the user presses `Ctrl+T` and the pager command does not exist
+- **THEN** the transcript shows a line that names the failure
 
 ### Requirement: Task panel
 While a run is active and the session has a task list, the TUI SHALL show the tasks with their status above the prompt, at most 6 lines, starting from the task in progress.

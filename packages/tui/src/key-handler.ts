@@ -52,6 +52,7 @@ export interface KeyContext {
   interruptRun: () => void;
   cleanupAndExit: () => Promise<void>;
   runEditorHandoff: () => Promise<void>;
+  runTranscriptView: () => Promise<void>;
   handleSubmit: (text: string) => Promise<void>;
   handleSlash: (raw: string) => void;
   handlePasteImage: () => Promise<void>;
@@ -88,6 +89,7 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     interruptRun,
     cleanupAndExit,
     runEditorHandoff,
+    runTranscriptView,
     handleSubmit,
     handleSlash,
     handlePasteImage,
@@ -188,6 +190,10 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     }
   }
 
+  if (key.ctrl && char === 't') {
+    void runTranscriptView();
+    return;
+  }
   if (key.ctrl && char === 'g') {
     void runEditorHandoff();
     return;

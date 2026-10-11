@@ -7,6 +7,7 @@ const KEY_BINDINGS: Array<[keys: string, action: string]> = [
   ['\\ then Enter', 'new line (also Shift+Enter or Alt+Enter where supported)'],
   ['Ctrl+G', 'edit the prompt in $EDITOR'],
   ['Ctrl+V', 'paste an image'],
+  ['Ctrl+T', 'open the full transcript in a pager'],
   ['Up / Down', 'prompt history'],
   ['Shift+Tab', 'cycle mode'],
   ['/', 'commands; Tab completes'],

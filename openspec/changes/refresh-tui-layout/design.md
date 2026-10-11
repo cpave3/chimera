@@ -31,7 +31,9 @@ The `Scrollback` store owns the commit cursor. A run of consecutive exploration 
 
 ### Detail lives in the transcript view
 
-Expanding a group in place is impossible under `<Static>`. `Ctrl+T` switches to the alternate screen and renders the session from the scrollback store with every tool call on its own line and full tool bodies, with paging keys. Leaving it restores the normal screen untouched.
+Expanding a group in place is impossible under `<Static>`. `Ctrl+T` formats the session from the scrollback store as text, with every tool call on its own line and its full output, and hands the terminal to a pager (`$PAGER`, else `less -R -Q +G`) through the same handoff the `Ctrl+G` editor uses. The pager owns the alternate screen, so the normal screen is untouched when it exits, and it brings scrolling and search for free.
+
+Alternative considered: render the view with Ink on the alternate screen. Rejected: Ink tracks the height of its last frame and erases that many lines on the next render, so switching screens under it wipes part of the printed transcript on the way back, and entries committed while the view is open would be printed to the alternate screen and lost.
 
 ### The activity line is derived, not stored
 

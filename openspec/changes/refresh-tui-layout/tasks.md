@@ -21,7 +21,7 @@
 
 - [x] 4.1 Test and implement the markers for user messages and tool lines
 - [x] 4.2 Test and implement grouped exploration calls in the scrollback store
-- [ ] 4.3 Test and implement the `Ctrl+T` transcript view
+- [x] 4.3 Test and implement the `Ctrl+T` transcript view
 
 ## 5. Task panel and live-region budget
 

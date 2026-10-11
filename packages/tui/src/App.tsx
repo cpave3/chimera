@@ -25,6 +25,7 @@ import { Header } from './Header';
 import { HelpPanel } from './HelpPanel';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
+import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import { PasteRegistry } from './input/paste';
 import { handleKey } from './key-handler';
 import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
@@ -49,6 +50,7 @@ import { BUILTIN_COMMANDS, isBuiltin, OVERLAY_COMMANDS } from './slash-commands'
 import { dispatchSlash } from './slash-dispatch';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
 import { clampInFlightChildren, renderEntryLines } from './transcript';
+import { formatTranscript } from './transcript-text';
 
 function sessionHasActiveRun(status: SessionStatus): boolean {
   return status === 'running' || status === 'waiting_for_permission';
@@ -105,6 +107,11 @@ export interface AppProps {
    * mouse as inactive (the inline TUI does not enable mouse tracking).
    */
   openInEditor?: (args: { initialText: string }) => Promise<OpenInEditorResult>;
+  /**
+   * Injection point for the Ctrl+T transcript view. Defaults to a pager on
+   * the real terminal.
+   */
+  openInPager?: (args: { text: string }) => Promise<OpenInPagerResult>;
   /**
    * Initial message to submit when the TUI mounts (e.g. from `--prompt <text>`).
    * Goes through the same handling as if the user typed it and pressed Enter.
@@ -532,6 +539,7 @@ export function App(props: AppProps): React.ReactElement {
       interruptRun,
       cleanupAndExit,
       runEditorHandoff,
+      runTranscriptView,
       handleSubmit,
       handleSlash,
       handlePasteImage,
@@ -560,6 +568,24 @@ export function App(props: AppProps): React.ReactElement {
         scrollback.addInfo(`editor: ${result.reason}`);
         setBuffer((b) => ({ ...b }));
       }
+    } finally {
+      editorOpenRef.current = false;
+      setEditorOpen(false);
+    }
+  }
+
+  async function runTranscriptView(): Promise<void> {
+    if (editorOpenRef.current) return;
+    editorOpenRef.current = true;
+    setEditorOpen(true);
+    try {
+      const handler =
+        props.openInPager ??
+        ((args: { text: string }) =>
+          openInPagerImpl({ text: args.text, stdout: process.stdout, stdin: process.stdin }));
+      const text = formatTranscript(scrollback.all(), { color: props.openInPager === undefined });
+      const result = await handler({ text });
+      if (!result.ok) scrollback.addInfo(`transcript: ${result.reason}`);
     } finally {
       editorOpenRef.current = false;
       setEditorOpen(false);
