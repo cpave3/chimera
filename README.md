@@ -482,19 +482,94 @@ chimera --no-subagents
 
 ## The TUI screen
 
+The TUI has two layouts. **Fullscreen** is the default: it takes the
+terminal's alternate screen and keeps a context panel beside the transcript.
+**Inline** prints into the terminal's own scrollback and repaints only a few
+rows under it; use it on a slow link (for example SSH with high latency) or
+when you want the session to stay in your scrollback.
+
+```
+chimera              # fullscreen
+chimera --inline     # inline, for this invocation
+```
+
+```json
+{ "tui": { "layout": "inline", "mouse": true } }
+```
+
+`tui.layout` in `~/.chimera/config.json` sets the default (`fullscreen` or
+`inline`); the flag wins. Without a TTY on stdout, or with `TERM=dumb`,
+Chimera uses the inline layout whatever is set. `resume`, `continue` and
+`attach` take `--inline` too.
+
+### Fullscreen layout
+
+```
+  › add a --json flag to yg list and cover it with a test          ◆ chimera v0.1.0
+                                                                    model        manticore/gpt
+  ● read 1 file · 1 search                                          session           8AWWBRGC
+    src/yg/commands/list.ts (120 lines), "formatWorktree" · 3 …     cwd     ~/Projects/yggdrasil
+  ● edit src/yg/commands/list.ts (1 replacement)                    sandbox                off
+    ╭──────────────────────────────────────────────────────────╮    loaded  60 skills · 9 cmds
+    │ 44 +   if (opts.json) return print(JSON.stringify(trees… │
+    │ 45     const rows = trees.map(formatWorktree)            │    CONTEXT · 76k / 200k   38%
+    ╰──────────────────────────────────────────────────────────╯    ▄▄▄▄▄▄▄▄▄▄▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+  ● bash pnpm vitest run yg/list (exit 0) · 4.2s                    ■ system ■ skills ■ history
+    ✓ 14 passed
+                                                                    PLAN · 2/4
+  ◆ Added --json to yg list. Writing a snapshot test next.          ✓ locate list command
+                                                                    ✓ add --json option
+  ○ write src/yg/commands/list.test.ts                              ▸ snapshot test for JSON shape
+                                                                    ○ update README usage
+
+                                                                    WORKTREE
+                                                                    yg/json-flag            ↑1
+  ⠹ write src/yg/commands/list.test.ts · 12s · step 6 · esc to …    M list.ts           +18 −3
+                                                                    A list.test.ts
+    › message chimera
+                                                                    PEERS
+   BUILD   enter steer · tab queue · esc interrupt                  ● api          plan · idle
+                                                                    ↑ 3.2k ↓ 640     cache 81%
+```
+
+- **Transcript pane.** It follows the newest output. `PgUp`, `PgDn` and the
+  mouse wheel scroll it; while you are scrolled away, new output does not
+  move what you read. `PgDn` to the end, or sending a message, follows the
+  newest output again. A long session mounts the newest entries only and
+  loads earlier ones when you scroll up from the top.
+- **Context panel.** Model, session, working directory, sandbox, and what was
+  loaded; context use as a bar split into system prompt, skills index and
+  history (the split is an estimate; the total is the provider's count); the
+  plan (the model's task list); the working tree (branch, commits ahead and
+  behind, changed files with lines added and removed); other live Chimera
+  instances on this machine with their mode and state; and the session's
+  token totals with the cached share of the last prompt. `Ctrl+B` hides and
+  shows the panel. Under 100 columns the panel is dropped, and the hints row
+  shows the model and the context percentage instead.
+- **Prompt box and hints row.** The row under the prompt shows the mode as a
+  badge and the keys that matter in the current state.
+- **Mouse.** Chimera takes the wheel only. Select text with the terminal as
+  usual, with `Shift` held (`Option` in iTerm2). Set `tui.mouse` to `false`
+  to leave the mouse to the terminal; the wheel then does not scroll.
+- **Exit.** The alternate screen takes the session with it, so Chimera prints
+  the session id and the `chimera --session <id>` command that resumes it.
+  `Ctrl+T` opens the full transcript in a pager at any time.
+
+### Inline layout
+
 ```
 › add retry logic to the provider client
 
-  I will add backoff to the stream call. Then I will add a test.
+◆ I will add backoff to the stream call. Then I will add a test.
 
-✓ explored: read 3 files · 1 search
+● read 3 files · 1 search
   src/agent.ts (2409 lines), src/events.ts (217 lines), retry (4 matches), …
-
-✓ edit: packages/core/src/agent.ts (1 replacement)
-  1481 -           const stream = streamText({
-  1481 +           const stream = this.startStep({
-
-✗ bash: pnpm --filter @chimera/core test (exit 1) · 8.2s
+● edit packages/core/src/agent.ts (1 replacement)
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ 1481 -           const stream = streamText({                             │
+  │ 1481 +           const stream = this.startStep({                         │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+✗ bash pnpm --filter @chimera/core test (exit 1) · 8.2s
 
 ─── 1m 12s · 6 steps · 7 tool calls · ↑ 114k ↓ 3.7k tokens · cache 78%
 
@@ -508,21 +583,6 @@ build · anthropic/claude-opus-4-7 · sandbox off   ▰▰▰▰▱▱▱▱▱�
 ~/Projects/chimera · session 12345678 · tasks 2/4 · ◼ Add a test…      enter steer
 ```
 
-- **Transcript.** A user message starts with `›`. A tool call starts with a
-  glyph for its state (`•` running, `✓` returned, `✗` failed or exited
-  non-zero) and shows a one-line summary instead of raw JSON args, with the
-  duration when the call took a second or more. When a sandbox is active the
-  line also says `[host]` or `[sandbox]`. Consecutive successful `read`,
-  `glob`, `find`, `ls` and `grep` calls collapse into one `explored:` line.
-  Fenced code blocks with a known language are syntax-highlighted.
-- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
-  tokens in and out, and the cached share.
-- **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
-  else `less`): every tool call on its own line, with its full output.
-- **Activity line.** While a run is active, one line says what the agent is
-  doing (thinking, writing, running a tool, waiting for approval, compacting,
-  retrying a provider error), for how long, on which step, and how many
-  tokens it has produced.
 - **Task panel.** During a run the task list shows above the prompt, from the
   task in progress onward, at most six lines.
 - **Footer.** Row 1: mode, model and sandbox on the left; a context gauge with
@@ -532,6 +592,26 @@ build · anthropic/claude-opus-4-7 · sandbox off   ▰▰▰▰▱▱▱▱▱�
   right. On a narrow terminal each row drops its least important items first.
 - **Start banner.** Version, model, working directory, session, mode, sandbox,
   and the number of skills and commands loaded.
+
+### In both layouts
+
+- **Transcript lines.** A user message starts with `›` and assistant text
+  with `◆`. A tool call starts with a glyph for its state (`○` running, `●`
+  returned, `✗` failed or exited non-zero) and shows a one-line summary
+  instead of raw JSON args, with the duration when the call took a second or
+  more. Tool calls that follow each other sit together. When a sandbox is
+  active the line also says `[host]` or `[sandbox]`. Consecutive successful
+  `read`, `glob`, `find`, `ls` and `grep` calls collapse into one line. An
+  edit, a patch or a written file is drawn in a border. Fenced code blocks
+  with a known language are syntax-highlighted.
+- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
+  tokens in and out, and the cached share.
+- **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
+  else `less`): every tool call on its own line, with its full output.
+- **Activity line.** While a run is active, one line says what the agent is
+  doing (thinking, writing, running a tool, waiting for approval, compacting,
+  retrying a provider error), for how long, on which step, and how many
+  tokens it has produced.
 - **Help.** `?` at an empty prompt lists the key bindings.
 - **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
   digit, or the letter shown next to each choice. `Esc` denies.
@@ -569,10 +649,11 @@ to recall input history.
 
 ## Token usage
 
-The first footer row shows how full the model's context window is after the
-latest step: a gauge with a percentage, and the tokens used over the window
-size (`84k/200k`). Next to it is the share of the last prompt the provider
-served from its cache (`cache 81%`). The numbers come from the AI SDK's
+The context panel (the first footer row in the inline layout) shows how full
+the model's context window is after the latest step: a gauge with a
+percentage, and the tokens used over the window size (`84k/200k`). With it
+is the share of the last prompt the provider served from its cache
+(`cache 81%`). The numbers come from the AI SDK's
 `usage` payload — no estimation, no extra calls. `/context` has a
 per-category breakdown. Cumulative totals persist with the session, so
 resuming an old session shows the same figures on the next prompt.
@@ -582,8 +663,8 @@ Color escalates as the prompt fills the window: gray under 80%, amber from
 table for known Claude / GPT / o-series models. To override (or add a model
 we don't know about yet), set a `models` block in `~/.chimera/config.json` —
 see `PROVIDERS.md`. When the model isn't in the table and you haven't set
-an override, the window falls back to 128k and the footer shows a `?` after
-the window size to flag the value as approximate.
+an override, the window falls back to 128k and a `?` after the window size
+flags the value as approximate.
 
 ## What's not here (yet)
 
@@ -613,10 +694,13 @@ Only specify the tokens you want to override; the rest inherit from the default 
 
 - `base` — `foreground`, `background`
 - `accent` — `primary`, `secondary`, `tertiary`
-- `status` — `success`, `warning`, `error`, `info`
-- `text` — `primary`, `secondary`, `muted`
+- `status` — `success`, `warning`, `error`, `info`, `successBg`, `errorBg` (diff rows)
+- `text` — `primary`, `secondary`, `muted`, `dim`
 - `ui` — `badge`, `accent`
 - `syntax` — `keyword`, `string`, `comment`, `number`, `function`, `type` (fenced code blocks)
+- `surface` — `panel`, `raised`, `sunken`, `border` (fills and lines of the fullscreen layout)
+
+The two layouts start from different defaults. The fullscreen layout paints its own background, so its default theme is a set of explicit colours (background `#1f1d27`, accent `#b79cf7`) with fills for the panel and the prompt box. The inline layout sits on your terminal's background, so its default theme uses ANSI colour names and no fills. Your `theme.json` merges over whichever applies. A surface with no colour is drawn without a fill; set `base.background` and the `surface` colours together when you re-skin the fullscreen layout. `NO_COLOR` gives both layouts a plain theme with no fills.
 
 JSON has no native comments, so the loader strips unknown top-level keys — you can leave a `_comment` field in the file as a note. If the JSON is malformed, the TUI prints `theme: ...` on stderr at startup and falls back to the default theme.
 

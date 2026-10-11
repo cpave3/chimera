@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { Box, Text } from 'ink';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityLine } from './ActivityLine';
@@ -233,7 +234,7 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
           </Box>
         )}
         <Box flexDirection="column" flexShrink={0}>
-          {view.helpOpen && <HelpPanel />}
+          {view.helpOpen && <HelpPanel fullscreen />}
           <QueueList messages={view.queue} maxLines={MAX_QUEUED_LINES} />
           <Dialogs view={view} />
           {view.menuItems.length > 0 && (
@@ -293,7 +294,7 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
           visionRouteRef={view.visionRouteRef}
           sessionId={view.activeSession.sessionId}
           forked={view.activeParentId !== null}
-          cwd={props.cwd}
+          cwd={resolve(props.cwd)}
           sandboxMode={view.sandboxMode}
           skillCount={props.skills?.all().length ?? 0}
           commandCount={props.commands?.list().length ?? 0}

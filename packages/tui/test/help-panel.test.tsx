@@ -14,7 +14,7 @@ function idleClient(): ChimeraClient {
   } as unknown as ChimeraClient;
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
 
 describe('help panel', () => {
   it('opens on ? at an empty prompt and closes on Escape', async () => {

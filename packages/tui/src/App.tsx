@@ -143,6 +143,11 @@ export interface AppProps {
   /** Injection point for tests: the size to lay out for, in place of the terminal's. */
   terminalSize?: { columns: number; rows: number };
   /**
+   * Injection point for tests: finished entries the fullscreen transcript
+   * mounts at a time. Defaults to 300.
+   */
+  transcriptWindow?: number;
+  /**
    * Reads the working tree for the context panel. Defaults to git in the
    * working directory.
    */

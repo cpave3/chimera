@@ -75,4 +75,26 @@ describe('fullscreen layout', () => {
     expect(hidden).not.toContain('◆ chimera');
     expect(shown).toContain('◆ chimera');
   });
+
+  it('lists its own keys in the help panel', async () => {
+    const { lastFrame, unmount, stdin } = mountFullscreen();
+    await settle();
+    stdin.write('?');
+    await settle();
+    const frame = plain(lastFrame());
+    unmount();
+
+    expect(frame).toContain('PgUp / PgDn');
+    expect(frame).toContain('Ctrl+B');
+    expect(frame).toContain('Shift+drag');
+  });
+
+  it('shows the working directory as a full path', async () => {
+    const { lastFrame, unmount } = mountFullscreen({ cwd: '.' });
+    await settle();
+    const frame = plain(lastFrame());
+    unmount();
+
+    expect(frame).toMatch(/cwd +\S*chimera\S*/);
+  });
 });

@@ -114,44 +114,44 @@ describe('fullscreen transcript scrolling', () => {
 });
 
 describe('a long transcript', () => {
-  const HEADER = '… 400 earlier entries · scroll up for more';
+  const HEADER = '… 30 earlier entries · scroll up for more';
 
   /** Page up until the top of the mounted entries is on screen. */
   async function pageToTop(
     stdin: { write: (data: string) => void },
     lastFrame: () => string | undefined,
   ) {
-    for (let page = 0; page < 60 && !plain(lastFrame()).includes(HEADER); page += 1) {
+    for (let page = 0; page < 10 && !plain(lastFrame()).includes(HEADER); page += 1) {
       stdin.write(PAGE_UP);
       await settle(30);
     }
   }
 
   it('mounts a window of the newest entries and says how many came before', async () => {
-    const { lastFrame, unmount, session, stdin } = mountFullscreen();
-    say(session, 700);
-    await settle(400);
+    const { lastFrame, unmount, session, stdin } = mountFullscreen({ transcriptWindow: 20 });
+    say(session, 50);
+    await settle(120);
     await pageToTop(stdin, lastFrame);
     const top = plain(lastFrame());
     unmount();
 
     expect(top).toContain(HEADER);
-    expect(top).toContain('message number 401.');
-    expect(top).not.toContain('message number 400.');
-  }, 20_000);
+    expect(top).toContain('message number 31.');
+    expect(top).not.toContain('message number 30.');
+  });
 
   it('mounts earlier entries on a scroll up from the top, and keeps the place', async () => {
-    const { lastFrame, unmount, session, stdin } = mountFullscreen();
-    say(session, 700);
-    await settle(400);
+    const { lastFrame, unmount, session, stdin } = mountFullscreen({ transcriptWindow: 20 });
+    say(session, 50);
+    await settle(120);
     await pageToTop(stdin, lastFrame);
     stdin.write(PAGE_UP);
-    await settle(300);
+    await settle(80);
     const grown = plain(lastFrame());
     unmount();
 
     expect(grown).not.toContain(HEADER);
-    expect(grown).toContain('message number 400.');
-    expect(grown).toContain('message number 401.');
-  }, 20_000);
+    expect(grown).toContain('message number 30.');
+    expect(grown).toContain('message number 31.');
+  });
 });

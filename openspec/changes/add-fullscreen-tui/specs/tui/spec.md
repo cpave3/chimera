@@ -77,7 +77,7 @@ Ctrl+B SHALL hide and show the context panel. The TUI SHALL hide the panel when 
 - **THEN** the panel is hidden and the hints row shows the model and the context percentage
 
 ### Requirement: Transcript scrolling
-In the fullscreen layout the transcript SHALL follow the newest output until the user scrolls. PageUp, PageDown and the mouse wheel SHALL scroll the transcript. While the user is scrolled away from the end, new output SHALL NOT move the visible text, and the TUI SHALL show that newer output exists. Scrolling to the end, pressing End on an empty prompt, or sending a message SHALL follow the newest output again.
+In the fullscreen layout the transcript SHALL follow the newest output until the user scrolls. PageUp, PageDown and the mouse wheel SHALL scroll the transcript, also while a permission prompt or a picker is open. While the user is scrolled away from the end, new output SHALL NOT move the visible text, and the hints row SHALL name the key that returns to the newest output. Scrolling to the end or sending a message SHALL follow the newest output again. A burst of scroll events that arrives between two frames SHALL add up.
 
 #### Scenario: Follow
 - **WHEN** new output arrives and the user has not scrolled
@@ -96,25 +96,29 @@ In the fullscreen layout the transcript SHALL follow the newest output until the
 - **THEN** the transcript scrolls up by three lines
 
 ### Requirement: Long transcripts stay responsive
-The fullscreen layout SHALL draw each finished transcript entry once and reuse the result until the width or the theme changes. It SHALL mount at most the newest 300 entries, and SHALL mount 300 more each time the user scrolls to the top while earlier entries exist.
+The fullscreen layout SHALL draw each finished transcript entry once and reuse the result until the width or the theme changes. It SHALL mount a window of the newest finished entries: at most 600 while it follows the newest output, cut back to the newest 300 when that number is passed. A line above the window SHALL say how many earlier entries exist. A scroll up from the top of the window SHALL mount 300 earlier entries and SHALL keep the text on screen in place.
 
 #### Scenario: Long session
-- **WHEN** the transcript has 1,000 entries
-- **THEN** 300 entries are mounted and a line at the top says how many earlier entries exist
+- **WHEN** the transcript has 700 entries and the user has not scrolled
+- **THEN** the newest 300 entries are mounted, and the line above them says that 400 earlier entries exist
 
-#### Scenario: Scroll to the top
-- **WHEN** the user scrolls to the top of the mounted entries
-- **THEN** 300 earlier entries are mounted
+#### Scenario: Scroll up from the top
+- **WHEN** the user is at the top of the window and scrolls up
+- **THEN** 300 earlier entries are mounted and the entry that was at the top is still on screen
 
 ### Requirement: Fullscreen handoff
-When the TUI hands the terminal to an editor or a pager from the fullscreen layout, it SHALL return to the alternate screen and repaint the whole screen when the program exits.
+When the TUI hands the terminal to an editor or a pager from the fullscreen layout, or is suspended, it SHALL leave the alternate screen and stop mouse reports first, and SHALL return to the alternate screen and repaint the whole screen afterwards. When the session ends, its last frame SHALL be empty, so that nothing of the layout is copied to the terminal's main screen.
 
 #### Scenario: Editor returns
 - **WHEN** the user presses Ctrl+G, edits the prompt and exits the editor
 - **THEN** the fullscreen layout is drawn again with the edited prompt
 
+#### Scenario: Suspend and resume
+- **WHEN** the user presses Ctrl+Z and later resumes the process
+- **THEN** the shell is shown on the main screen while the process is stopped, and the fullscreen layout is drawn again in full on resume
+
 ### Requirement: Transcript line style
-A user message SHALL start with `›`. Assistant text SHALL start with `◆`. A tool line SHALL start with `●` in the colour of its state: running, returned or failed. Tool lines that follow each other SHALL have no blank line between them. The body of an edit, a patch or a written file SHALL be drawn inside a border.
+A user message SHALL start with `›` and SHALL wrap between words. Assistant text SHALL start with `◆`. A tool line SHALL start with a glyph for its state: `○` running, `●` returned, `✗` failed. Tool lines that follow each other SHALL have no blank line between them. The body of an edit, a patch or a written file SHALL be drawn inside a border. A border on a screen with a painted background SHALL carry that background.
 
 #### Scenario: Tool group
 - **WHEN** the model calls `read`, then `grep`, then `edit`

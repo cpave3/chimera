@@ -93,12 +93,13 @@ export function TranscriptPane({
     themeVersionRef.current = { theme, version: themeVersionRef.current.version + 1 };
   }
 
+  const windowStep = view.props.transcriptWindow ?? WINDOW_STEP;
   const finished = view.committedEntries;
   let firstMounted = Math.min(windowStart, finished.length);
   // Nobody reads the top while the view follows the end, so the window
   // slides forward there; a scrolled view keeps every entry it has.
-  if (scrollTop === null && finished.length - firstMounted > 2 * WINDOW_STEP) {
-    firstMounted = finished.length - WINDOW_STEP;
+  if (scrollTop === null && finished.length - firstMounted > 2 * windowStep) {
+    firstMounted = finished.length - windowStep;
     setWindowStart(firstMounted);
   }
 
@@ -133,7 +134,7 @@ export function TranscriptPane({
     if (current === 0 && lines < 0 && firstMounted > 0) {
       if (heightBeforeGrowthRef.current === null) {
         heightBeforeGrowthRef.current = scrollHeight;
-        setWindowStart(Math.max(0, firstMounted - WINDOW_STEP));
+        setWindowStart(Math.max(0, firstMounted - windowStep));
       }
       return;
     }

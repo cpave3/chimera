@@ -19,14 +19,22 @@ const KEY_BINDINGS: Array<[keys: string, action: string]> = [
   ['Ctrl+Z', 'suspend'],
 ];
 
+/** Keys that exist only where the TUI owns the screen. */
+const FULLSCREEN_KEY_BINDINGS: Array<[keys: string, action: string]> = [
+  ['PgUp / PgDn', 'scroll the transcript (also the mouse wheel)'],
+  ['Ctrl+B', 'show or hide the context panel'],
+  ['Shift+drag', 'select text with the terminal'],
+];
+
 const KEY_COLUMN_WIDTH = Math.max(...KEY_BINDINGS.map(([keys]) => keys.length)) + 2;
 
 /** The key bindings, shown on `?` at an empty prompt instead of a permanent hints row. */
-export function HelpPanel(): React.ReactElement {
+export function HelpPanel({ fullscreen = false }: { fullscreen?: boolean }): React.ReactElement {
   const theme = useTheme();
+  const bindings = fullscreen ? [...KEY_BINDINGS, ...FULLSCREEN_KEY_BINDINGS] : KEY_BINDINGS;
   return (
     <Box flexDirection="column" marginTop={1}>
-      {KEY_BINDINGS.map(([keys, action]) => (
+      {bindings.map(([keys, action]) => (
         <Text key={keys}>
           <Text color={theme.accent.primary}>{keys.padEnd(KEY_COLUMN_WIDTH)}</Text>
           <Text color={theme.text.muted}>{action}</Text>
