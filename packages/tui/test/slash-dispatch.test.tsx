@@ -963,9 +963,9 @@ describe('TUI /theme slash dispatch', () => {
 
     // Type a message while compacting.
     await type(stdin, 'hello while compacting\r');
-    await waitFor(() => lastFrame()!.includes('queued (1)'));
+    await waitFor(() => lastFrame()!.includes('queued 1 ·'));
     const frame = lastFrame();
-    expect(frame).toContain('queued (1)');
+    expect(frame).toContain('queued 1 ·');
     expect(frame).toContain('hello while compacting');
 
     // End compaction.
@@ -976,8 +976,8 @@ describe('TUI /theme slash dispatch', () => {
       tokensAfter: 200,
       messagesReplaced: 5,
     });
-    await waitFor(() => !lastFrame()!.includes('queued ('));
-    expect(lastFrame()).not.toContain('queued (');
+    await waitFor(() => !lastFrame()!.includes('queued 1 ·'));
+    expect(lastFrame()).not.toContain('queued 1 ·');
 
     unmount();
   });
@@ -1095,8 +1095,8 @@ describe('TUI bang dispatch', () => {
 
     // Bang queues while busy.
     await type(stdin, '!echo hello\r');
-    await waitFor(() => lastFrame()!.includes('queued (1)'));
-    expect(lastFrame()).toContain('queued (1)');
+    await waitFor(() => lastFrame()!.includes('queued 1 ·'));
+    expect(lastFrame()).toContain('queued 1 ·');
 
     // Release busy - bang drains and appends to history without model.
     client.pushEvent({
@@ -1140,7 +1140,7 @@ describe('TUI bang dispatch', () => {
     await type(stdin, '!echo b\r');
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(lastFrame()).toContain('queued (2)');
+    expect(lastFrame()).toContain('queued 2 ·');
 
     client.pushEvent({
       type: 'compaction_finished',
@@ -1150,7 +1150,7 @@ describe('TUI bang dispatch', () => {
       messagesReplaced: 5,
     });
     await new Promise((r) => setTimeout(r, 300));
-    expect(lastFrame()).not.toContain('queued (');
+    expect(lastFrame()).not.toContain('queued 1 ·');
     expect(appended).toHaveLength(2);
     expect(appended[0]).toContain('!echo a');
     expect(appended[1]).toContain('!echo b');

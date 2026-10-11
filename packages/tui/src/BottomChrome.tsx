@@ -195,10 +195,10 @@ export const BottomChrome = memo(function BottomChrome({
 
   // Row 2, right: the keys that matter in this state.
   const hints = running
-    ? ['enter steer', 'esc interrupt', 'ctrl+t transcript']
+    ? ['enter steer', 'tab queue', 'esc interrupt', 'ctrl+t transcript']
     : ['? help', '/ commands', 'shift+tab mode', 'ctrl+t transcript'];
   const placeRight: Item[] = hints.map((hint, index) =>
-    text(`hint${index}`, hint, muted, index < 2 ? 15 - index : 5 - index),
+    text(`hint${index}`, hint, muted, 15 - index),
   );
 
   const everythingFits = rowWidth(stateLeft) + rowWidth(stateRight) + 2 <= width;

@@ -1,8 +1,8 @@
 ## 1. Queue for the next turn
 
-- [ ] 1.1 Test and implement Tab to queue during a run
-- [ ] 1.2 Test and implement the queue list and Up to take a message back
-- [ ] 1.3 Remove the `queued:` transcript lines
+- [x] 1.1 Test and implement Tab to queue during a run
+- [x] 1.2 Test and implement the queue list and Up to take a message back
+- [x] 1.3 Remove the `queued:` transcript lines
 
 ## 2. File completion
 

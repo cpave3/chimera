@@ -5,7 +5,6 @@ import type { useStdout } from 'ink';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AppProps } from './App';
 import type { OverlayDiffEntry } from './OverlayPicker';
-import { previewLine } from './prompt-view';
 import { buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
 import type { Scrollback } from './scrollback';
 import { BUILTIN_COMMANDS, findClosestCommand } from './slash-commands';
@@ -302,7 +301,6 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     case '/rewind': {
       if (busy) {
         setQueue((q) => [...q, raw]);
-        scrollback.addInfo(`queued: ${previewLine(raw)}`);
         return;
       }
       void (async () => {
@@ -431,7 +429,6 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     case '/compact': {
       if (busy) {
         setQueue((q) => [...q, raw]);
-        scrollback.addInfo(`queued: ${previewLine(raw)}`);
         return;
       }
       setCompacting(true);

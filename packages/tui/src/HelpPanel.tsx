@@ -4,6 +4,7 @@ import { useTheme } from './theme/ThemeProvider';
 
 const KEY_BINDINGS: Array<[keys: string, action: string]> = [
   ['Enter', 'send; during a run, steer the agent'],
+  ['Tab', 'during a run, hold the message for the next turn'],
   ['\\ then Enter', 'new line (also Shift+Enter or Alt+Enter where supported)'],
   ['Ctrl+G', 'edit the prompt in $EDITOR'],
   ['Ctrl+V', 'paste an image'],

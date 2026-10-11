@@ -56,6 +56,9 @@ export interface KeyContext {
   handleSubmit: (text: string) => Promise<void>;
   handleSlash: (raw: string) => void;
   handlePasteImage: () => Promise<void>;
+  /** Messages held for the next turn. */
+  queue: string[];
+  setQueue: Dispatch<SetStateAction<string[]>>;
 }
 
 /** Handle one key press at the prompt. */
@@ -93,6 +96,8 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     handleSubmit,
     handleSlash,
     handlePasteImage,
+    queue,
+    setQueue,
   } = context;
   if (pending) return; // handled by modal
   if (overlayPicker) return; // handled by picker
@@ -220,6 +225,12 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     return;
   }
   if (key.upArrow) {
+    if (latestText.length === 0 && queue.length > 0) {
+      // The newest queued message comes back for editing before history does.
+      setBufferText(queue.at(-1)!);
+      setQueue((queued) => queued.slice(0, -1));
+      return;
+    }
     if (latestText.length === 0) {
       if (historyRef.current.length === 0) return;
       historyIdxRef.current = Math.max(0, historyIdxRef.current - 1);
@@ -260,6 +271,12 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
   if (key.ctrl && char === 'e') {
     stickyColRef.current = null;
     setBuffer((b) => moveLineEnd(b));
+    return;
+  }
+  if (key.tab && running && !latestText.startsWith('/') && latestText.trim() !== '') {
+    // Enter steers the run in progress; Tab holds the message for the next turn.
+    setQueue((queued) => [...queued, latestText]);
+    setBufferText('');
     return;
   }
   if (key.tab && latestText.startsWith('/') && !latestText.includes('\n')) {

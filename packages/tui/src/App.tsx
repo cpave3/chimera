@@ -13,7 +13,7 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
-import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Static, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityLine } from './ActivityLine';
 import { describeActivity } from './activity';
@@ -37,6 +37,7 @@ import {
   requiresSudoAuthentication,
 } from './permission-queue';
 import { previewLine, renderPromptLines } from './prompt-view';
+import { QueueList } from './QueueList';
 import { RewindPicker } from './RewindPicker';
 import { SessionPicker } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
@@ -549,6 +550,8 @@ export function App(props: AppProps): React.ReactElement {
       handleSubmit,
       handleSlash,
       handlePasteImage,
+      queue,
+      setQueue,
     });
   });
 
@@ -606,7 +609,6 @@ export function App(props: AppProps): React.ReactElement {
       if (command.length === 0) return;
       if (busy) {
         setQueue((q) => [...q, expandedText]);
-        scrollback.addInfo(`queued: ${previewLine(text)}`);
         return;
       }
       await handleBang(command);
@@ -624,7 +626,6 @@ export function App(props: AppProps): React.ReactElement {
       // Compacting or a ! command is in flight (no active run to inject into);
       // queue so the message lands as the next turn once the run is idle.
       setQueue((q) => [...q, expandedText]);
-      scrollback.addInfo(`queued: ${previewLine(text)}`);
       return;
     }
     await sendUserMessage(expandedText);
@@ -1062,13 +1063,7 @@ export function App(props: AppProps): React.ReactElement {
           />
         )}
         {helpOpen && <HelpPanel />}
-        {queue.length > 0 && (
-          <Box>
-            <Text color={theme.text.muted}>
-              {`queued (${queue.length}): ${previewLine(queue[0]!)}${queue.length > 1 ? ` (+${queue.length - 1} more)` : ''}`}
-            </Text>
-          </Box>
-        )}
+        <QueueList messages={queue} maxLines={liveRegion.queuedLines} />
         {sudoAuthentication ? (
           <SudoPasswordModal
             status={sudoAuthentication.status}

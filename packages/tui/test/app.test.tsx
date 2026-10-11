@@ -235,7 +235,7 @@ describe('App', () => {
     expect(sends).toEqual(['first']);
     expect(appendCalls).toEqual(['second']);
     expect(lastFrame()).toContain('injected:');
-    expect(lastFrame()).not.toContain('queued (');
+    expect(lastFrame()).not.toContain('queued 1 ·');
 
     firstSendResolve?.();
     unmount();
@@ -858,7 +858,7 @@ describe('App', () => {
     expect(appendCalls).toContain('second follow-up');
     // The first message was sent; the ! command ran after the run ended.
     expect(sends[0]).toBe('first follow-up');
-    expect(lastFrame()).not.toContain('queued (');
+    expect(lastFrame()).not.toContain('queued 1 ·');
 
     sendResolvers[1]?.();
     unmount();
@@ -1985,7 +1985,7 @@ describe('App', () => {
       await new Promise((r) => setTimeout(r, 1));
     }
     await new Promise((r) => setTimeout(r, 30));
-    expect(lastFrame()!).toContain('queued (1)');
+    expect(lastFrame()!).toContain('queued 1 ·');
     expect(sends).toEqual([]);
 
     // End compaction.
@@ -1997,7 +1997,7 @@ describe('App', () => {
       messagesReplaced: 5,
     });
     await new Promise((r) => setTimeout(r, 30));
-    expect(lastFrame()!).not.toContain('queued (');
+    expect(lastFrame()!).not.toContain('queued 1 ·');
     expect(lastFrame()!).not.toContain('compacting');
     expect(lastFrame()!).toContain('compaction done');
     expect(sends).toEqual(['hello during compact']);

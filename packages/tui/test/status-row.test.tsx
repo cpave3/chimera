@@ -103,6 +103,7 @@ describe('footer', () => {
     expect(idle).toContain('/ commands');
     expect(running).toContain('esc interrupt');
     expect(running).toContain('enter steer');
+    expect(running).toContain('tab queue');
     expect(running).not.toContain('/ commands');
   });
 
