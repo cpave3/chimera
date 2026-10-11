@@ -2,6 +2,7 @@ import type { Checkpoint, SessionInfo } from '@chimera/core';
 import type { Key } from 'ink';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { AppProps } from './App';
+import { acceptCompletion, type CompletionContext } from './file-completion';
 import {
   backspace,
   endsWithUnescapedBackslashAtCursor,
@@ -59,6 +60,13 @@ export interface KeyContext {
   /** Messages held for the next turn. */
   queue: string[];
   setQueue: Dispatch<SetStateAction<string[]>>;
+  /** The `@`/`#` word under the cursor and the files offered for it. */
+  fileContext: CompletionContext | null;
+  fileMenuItems: string[];
+  fileMenuHighlight: number;
+  setFileMenuHighlight: Dispatch<SetStateAction<number>>;
+  /** Records the word the menu was closed on, so it stays closed for that word. */
+  setFileMenuDismissedAt: Dispatch<SetStateAction<number | null>>;
 }
 
 /** Handle one key press at the prompt. */
@@ -98,6 +106,11 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     handlePasteImage,
     queue,
     setQueue,
+    fileContext,
+    fileMenuItems,
+    fileMenuHighlight,
+    setFileMenuHighlight,
+    setFileMenuDismissedAt,
   } = context;
   if (pending) return; // handled by modal
   if (overlayPicker) return; // handled by picker
@@ -125,6 +138,26 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
   } else if (char === '?' && !key.ctrl && !key.meta && bufferRef.current.text === '') {
     setHelpOpen(true);
     return;
+  }
+  if (fileContext && fileMenuItems.length > 0) {
+    const selected = Math.min(fileMenuHighlight, fileMenuItems.length - 1);
+    if (key.escape) {
+      setFileMenuDismissedAt(fileContext.start);
+      return;
+    }
+    if (key.upArrow) {
+      setFileMenuHighlight(Math.max(0, selected - 1));
+      return;
+    }
+    if (key.downArrow) {
+      setFileMenuHighlight(Math.min(fileMenuItems.length - 1, selected + 1));
+      return;
+    }
+    if (key.tab || key.return) {
+      setBuffer((buffer) => acceptCompletion(buffer, fileContext, fileMenuItems[selected]!));
+      stickyColRef.current = null;
+      return;
+    }
   }
   if (key.escape && running && !menuOpen) {
     interruptRun();

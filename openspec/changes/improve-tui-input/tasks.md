@@ -6,9 +6,9 @@
 
 ## 2. File completion
 
-- [ ] 2.1 Test and implement file ranking
-- [ ] 2.2 Test and implement the file source (git, directory fallback)
-- [ ] 2.3 Test and implement the menu and its keys in the prompt
+- [x] 2.1 Test and implement file ranking
+- [x] 2.2 Test and implement the file source (git, directory fallback)
+- [x] 2.3 Test and implement the menu and its keys in the prompt
 
 ## 3. Notifications
 

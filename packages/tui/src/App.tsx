@@ -21,6 +21,8 @@ import { parseAttachTokens, readForAttach } from './attach-paths';
 import { BottomChrome } from './BottomChrome';
 import { runBangCommand } from './bang';
 import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
+import { FileMenu } from './FileMenu';
+import { completionContext, listProjectFiles, rankFiles } from './file-completion';
 import { Header } from './Header';
 import { HelpPanel } from './HelpPanel';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
@@ -111,6 +113,11 @@ export interface AppProps {
    */
   openInEditor?: (args: { initialText: string }) => Promise<OpenInEditorResult>;
   /**
+   * Lists the files offered after `@` and `#`. Defaults to git's file list
+   * for the working directory, with a directory walk outside a repository.
+   */
+  listFiles?: (cwd: string) => Promise<string[]>;
+  /**
    * Injection point for the Ctrl+T transcript view. Defaults to a pager on
    * the real terminal.
    */
@@ -145,6 +152,8 @@ interface SudoAuthenticationState {
   error?: string;
 }
 
+const FILE_MENU_ROWS = 6;
+const FILE_LIST_MAX_AGE_MS = 5_000;
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const CHIMERA_VERSION = '0.1.0';
 
@@ -349,6 +358,32 @@ export function App(props: AppProps): React.ReactElement {
 
   const menuOpen = menuItems.length > 0;
 
+  // File completion: the list under an `@` or `#` word in the prompt.
+  const fileContext = useMemo(() => completionContext(buffer), [buffer]);
+  const [projectFiles, setProjectFiles] = useState<string[]>([]);
+  const projectFilesLoadedAtRef = useRef(0);
+  const [fileMenuHighlight, setFileMenuHighlight] = useState(0);
+  const [fileMenuDismissedAt, setFileMenuDismissedAt] = useState<number | null>(null);
+  const fileWordStart = fileContext?.start ?? null;
+  const fileQuery = fileContext?.query ?? null;
+  useEffect(() => {
+    if (fileWordStart === null) return;
+    if (Date.now() - projectFilesLoadedAtRef.current < FILE_LIST_MAX_AGE_MS) return;
+    projectFilesLoadedAtRef.current = Date.now();
+    void (props.listFiles ?? listProjectFiles)(props.cwd).then(setProjectFiles, () => {});
+  }, [fileWordStart, props.cwd, props.listFiles]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new query starts at the best match
+  useEffect(() => {
+    setFileMenuHighlight(0);
+  }, [fileQuery]);
+  const fileMenuItems = useMemo(
+    () =>
+      fileContext && fileMenuDismissedAt !== fileContext.start
+        ? rankFiles(projectFiles, fileContext.query, FILE_MENU_ROWS)
+        : [],
+    [fileContext, fileMenuDismissedAt, projectFiles],
+  );
+
   useEffect(() => {
     setMenuHighlight(0);
   }, [buffer.text]);
@@ -552,6 +587,11 @@ export function App(props: AppProps): React.ReactElement {
       handlePasteImage,
       queue,
       setQueue,
+      fileContext,
+      fileMenuItems,
+      fileMenuHighlight,
+      setFileMenuHighlight,
+      setFileMenuDismissedAt,
     });
   });
 
@@ -1220,6 +1260,12 @@ export function App(props: AppProps): React.ReactElement {
           />
         )}
         {menuOpen && <SlashMenu items={menuItems} highlightIdx={menuHighlight} />}
+        {fileMenuItems.length > 0 && (
+          <FileMenu
+            paths={fileMenuItems}
+            highlightIdx={Math.min(fileMenuHighlight, fileMenuItems.length - 1)}
+          />
+        )}
         <Box
           borderStyle="single"
           borderTop

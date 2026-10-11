@@ -6,6 +6,10 @@ import { App } from '../src/App';
 
 const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function* noEvents(): AsyncGenerator<AgentEvent> {
+  yield* [];
+}
+
 /** A session whose event stream the test feeds, recording what the TUI sends. */
 function session() {
   const waiters: Array<(event: AgentEvent) => void> = [];
@@ -24,8 +28,9 @@ function session() {
         yield next ?? (await new Promise<AgentEvent>((resolve) => waiters.push(resolve)));
       }
     },
-    send: async function* (_sessionId: string, text: string) {
+    send: (_sessionId: string, text: string) => {
       sent.push(text);
+      return noEvents();
     },
     appendMessage: async (_sessionId: string, text: string) => {
       steered.push(text);
