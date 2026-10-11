@@ -19,6 +19,7 @@
 - [x] 4.1 Test and add the config keys; detect and wire the sandbox in the factory; warn once
 - [x] 4.2 Test and add the git directory of a worktree, a submodule or a parent repository to the writable paths
 - [x] 4.3 Test and add the sandbox sentence of the `bash` description and the `sandbox os` label of the TUI
+- [x] 4.4 Test and correct the system prompt: `sandbox: os` and the file-access rule
 
 ## 5. Wrap-up
 

@@ -60,7 +60,11 @@ A session's reviewer SHALL stop after 3 escalations in a row or 10 escalations i
 - **THEN** the next request goes to the user and the reviewer model is not called
 
 ### Requirement: Reviewer decisions in the audit log
-Each reviewer decision SHALL be in the decision audit log with its reason: an `allow` as a record with the source `reviewer`, an `escalate` on the record of the decision that followed it.
+Each reviewer decision SHALL be in the decision audit log with its reason: an `allow` as a record with the source `reviewer`, an `escalate` on the record of the decision that followed it. For an MCP call the record SHALL hold the decision without the reason, because the reason can repeat an argument value.
+
+#### Scenario: MCP call
+- **WHEN** the reviewer allows an MCP call with a reason that quotes an argument
+- **THEN** the audit record has the reviewer's decision and not the reason
 
 #### Scenario: Allowed by the reviewer
 - **WHEN** the reviewer allows a command

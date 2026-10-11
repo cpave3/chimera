@@ -104,9 +104,52 @@ Strict mode retains allow-by-proof behavior and also prompts when shell effects 
 
 `autoAllowThrough` accepts `none`, `safe`, `caution`, or `danger`; critical is never automatically allowed. `enabled: false` restores legacy host permission behavior only for non-sudo commands and prints a warning. Mandatory sudo approval, authentication, and credential-invalidation blocks remain active.
 
+## Approval reviewer
+
+```json
+{
+  "approvalReviewer": { "enabled": true },
+  "utilityModel": "anthropic/claude-haiku-4-5"
+}
+```
+
+The approval reviewer is a second model that examines a request before Chimera asks you. It is off by default. It uses the `utilityModel`, or the session model when no `utilityModel` is set.
+
+The reviewer examines only a request that Chimera would put to you: a host command with promptable findings, an unsandboxed request, or an MCP call that is not trusted. It does not change these decisions:
+
+- A request that `autoApprove` or an allow rule admits runs without the reviewer.
+- A deny rule, a hard block or a blocking `PermissionRequest` hook denies the request before the reviewer.
+- A sudo command, and a command with a `danger` or `critical` risk finding, always goes to you.
+
+The reviewer reads:
+
+- the tool call: the command, the working directory and the agent's reason, or the MCP server, tool and arguments;
+- the policy findings;
+- your messages in the session;
+- the project instruction files.
+
+The reviewer does not read tool results or assistant text. Text that a tool brought into the session cannot ask for its own approval. Each part of the input has a size limit.
+
+The reviewer gives one of two answers, with a reason:
+
+| Answer | With a user | With nobody to ask |
+| --- | --- | --- |
+| `allow` | The call runs. The tool line shows `approved by reviewer`. | The call runs. |
+| `escalate` | The usual prompt opens and shows the reason. | The call is denied. The tool result is `denied by reviewer: <reason>`. |
+
+A model error, no answer in 30 seconds, or a reply with no decision counts as `escalate`.
+
+The reviewer stops for the session after 3 escalations in a row or 10 escalations in the session. Requests then come to you as they did before. The TUI shows one notice.
+
+Each decision is in the decision audit. An `allow` is a record with `"source": "reviewer"`. An `escalate` is on the record of the decision that followed it. Both have a `reviewer` object with the decision and the reason. For an MCP call the reason is left out, because it can repeat an argument value.
+
+Clients get an `approval_reviewed` event for each decision: `{ requestId, callId?, decision, reason, stopped? }`. A `permission_request` event for an escalated request has a `reviewerReason` field.
+
+The reviewer is a model and can be wrong. Keep it off when a wrong `allow` is not acceptable. With the OS sandbox on, a wrongly allowed command still cannot write outside the sandbox, unless the allowed request was an unsandboxed one.
+
 ## Decision audit
 
-Every automatic allow, rule decision, hard block, hook/headless denial, and user approval/rejection is appended to:
+Every automatic allow, rule decision, hard block, hook/headless denial, reviewer decision, and user approval/rejection is appended to:
 
 ```text
 ~/.chimera/logs/permission-decisions.jsonl

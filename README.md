@@ -175,6 +175,27 @@ network access from sandboxed commands. See
 [Host bash command policy](docs/bash-command-policy.md#os-sandbox) for the
 rules and the limits. The macOS profile was not run on a Mac.
 
+### Approval reviewer
+
+```json
+{ "approvalReviewer": { "enabled": true } }
+```
+
+The approval reviewer is off by default. When it is on, a host command or an
+MCP call that needs your approval goes to the `utilityModel` first. The
+reviewer reads the call, the policy findings, your messages and the project
+instructions. It answers `allow` or `escalate`.
+
+- `allow` runs the call. The tool line shows `approved by reviewer`.
+- `escalate` opens the usual prompt, which shows the reviewer's reason.
+- In a session that has nobody to ask, `escalate` is a denial. The model gets
+  the reason.
+
+Sudo commands and commands with a `danger` or `critical` finding always go to
+you. See
+[Host bash command policy](docs/bash-command-policy.md#approval-reviewer) for
+the rules, the limits and the audit record.
+
 ### Docker sandbox
 
 Tool calls can be routed through a Docker container instead of running directly
@@ -591,9 +612,9 @@ one.
 
 `utilityModel` names one low-cost model for helper work. An agent definition
 selects it with `model: utility` in its frontmatter, as `explore` does.
-Compaction summaries use it too, unless `compaction.model` is set. Without
-the key, helper work runs on the session model. A reference that cannot be
-resolved gives one warning and is ignored.
+Compaction summaries use it too, unless `compaction.model` is set. The
+approval reviewer uses it. Without the key, helper work runs on the session
+model. A reference that cannot be resolved gives one warning and is ignored.
 
 ### Background agents
 

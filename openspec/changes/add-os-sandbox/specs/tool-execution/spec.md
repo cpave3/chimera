@@ -30,6 +30,13 @@ With the OS sandbox active, the `bash` tool description SHALL say where a comman
 - **WHEN** a session's host commands run in the OS sandbox
 - **THEN** the `bash` description names the working directory and `unsandboxed: true`
 
+### Requirement: Sandbox in the system prompt
+With the OS sandbox active, the session block of the system prompt SHALL name the sandbox as `os` and SHALL say where a bash command may write and how to ask for an unsandboxed run. The file-access rule SHALL say that a change outside the working directory and the temp directory needs an unsandboxed run. The prompt SHALL NOT say that there is no sandbox.
+
+#### Scenario: Active
+- **WHEN** a session starts with the OS sandbox active
+- **THEN** its system prompt has the line `- sandbox: os — …` and names `unsandboxed: true`
+
 ### Requirement: Blocked command note
 When a sandboxed command fails and its output shows that the sandbox refused a write, or refused the network while the network setting is `off`, the tool result SHALL carry a note that says what the sandbox allows and how to ask for an unsandboxed run.
 

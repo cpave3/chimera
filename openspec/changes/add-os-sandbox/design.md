@@ -102,8 +102,12 @@ gives a sandboxed command nothing it does not have in the plain case, where
 
 With the sandbox active, the `bash` tool description says what a command may
 write and how to ask for an unsandboxed run, so a small model does not have
-to fail first. The TUI shows `sandbox os` where it showed `sandbox off`; the
-CLI passes that state when it mounts the TUI.
+to fail first. The system prompt says the same: its session block reads
+`sandbox: os` in place of `sandbox: off — no sandbox`, and the file-access
+rule says that a change outside the project needs an unsandboxed run. A real
+run showed why: the model read "no sandbox" and planned for it. The TUI
+shows `sandbox os` where it showed `sandbox off`; the CLI passes that state
+when it mounts the TUI.
 
 ### D9. A factory without a policy
 

@@ -26,6 +26,19 @@ rebuilding, vitest errors with `Failed to resolve entry for package
 Dependency DAG (no back-edges): `cli → tui, server, client, permissions,
 hooks, sandbox, tools, providers, commands, skills, core`.
 
+### `ai` is bundled into the CLI
+
+`ai` is a **devDependency** of `packages/cli`, so tsup inlines what the CLI
+imports from it. `tool` and `jsonSchema` survive that. `generateText` does
+not: it pulls in the gateway provider and `@vercel/oidc`, a CommonJS module,
+and the built binary dies at start with `Dynamic require of "path" is not
+supported`. Vitest runs the sources, so only the tests that start
+`dist/bin.js` notice.
+
+For a model call in the CLI, use `askModel` from `@chimera/core`, where `ai`
+is a real dependency. After a build, `node packages/cli/dist/bin.js --version`
+shows in a second whether the binary still starts.
+
 ## User-home layout: always `~/.chimera/`, never `~/.config/chimera/`
 
 Every piece of Chimera state under the user's home goes in `~/.chimera/`:

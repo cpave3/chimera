@@ -90,9 +90,14 @@ the tool line with that `callId` when the decision is `allow`.
 
 `packages/permissions` holds the reviewer's rules: eligibility, limits, the
 prompt text and the parser. It takes a `judge` function. The CLI factory
-supplies one that calls `generateText` on the `utilityModel`, or the session
-model. So the permissions package keeps no dependency on the AI SDK, and the
-tests need no model.
+supplies one that asks the `utilityModel`, or the session model. So the
+permissions package keeps no dependency on the AI SDK, and its tests need no
+model.
+
+The call itself is `askModel` in `packages/core`. `ai` is a devDependency of
+the CLI and tsup inlines it; `generateText` pulls in a CommonJS module that
+cannot run in that bundle, and the built binary did not start. Core has `ai`
+as a real dependency.
 
 ## Risks / Trade-offs
 

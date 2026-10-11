@@ -12,7 +12,7 @@ For a host command that will run in the OS sandbox, the permission gate SHALL NO
 - **THEN** the user is asked, as without the sandbox
 
 ### Requirement: Approval of an unsandboxed run
-A request to run a command outside the OS sandbox SHALL be approval-required: the gate SHALL ask the user even when the auto-approve level or an allow rule would admit the command, SHALL show the model's reason, and SHALL deny the request in a headless session. A deny rule that matches SHALL deny it without a prompt. The decision SHALL be written to the decision audit log.
+A request to run a command outside the OS sandbox SHALL be approval-required: neither the auto-approve level nor an allow rule SHALL admit it. Without an approval reviewer the gate SHALL ask the user and SHALL show the model's reason, and SHALL deny the request in a headless session. A deny rule that matches SHALL deny it without a prompt. The decision SHALL be written to the decision audit log.
 
 #### Scenario: Allow rule does not apply
 - **WHEN** an allow rule matches the command and the request is for an unsandboxed run
