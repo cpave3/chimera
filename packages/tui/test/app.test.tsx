@@ -52,12 +52,12 @@ describe('App', () => {
     unmount();
   });
 
-  it('renders the footer hints', () => {
+  it('points to the help panel instead of listing key hints permanently', () => {
     const { lastFrame, unmount } = render(
       <App client={stubClient()} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
     );
-    expect(lastFrame()).toContain('Ctrl+Z');
-    expect(lastFrame()).toContain('Ctrl+V');
+    expect(lastFrame()).toContain('? help');
+    expect(lastFrame()).not.toContain('Ctrl+Z');
     unmount();
   });
 
@@ -1892,7 +1892,7 @@ describe('App', () => {
       ],
     });
     await new Promise((r) => setTimeout(r, 50));
-    expect(lastFrame()!).toContain('[tasks 1/3: implement feature]');
+    expect(lastFrame()!).toContain('tasks 1/3');
 
     pushEvent!({
       type: 'task_list_updated',
@@ -1903,7 +1903,7 @@ describe('App', () => {
       ],
     });
     await new Promise((r) => setTimeout(r, 50));
-    expect(lastFrame()!).toContain('[tasks 3/3 done]');
+    expect(lastFrame()!).toContain('tasks 3/3');
 
     unmount();
   });

@@ -40,6 +40,8 @@ export interface KeyContext {
   setMenuDismissed: Dispatch<SetStateAction<boolean>>;
   lastCtrlC: number;
   setLastCtrlC: Dispatch<SetStateAction<number>>;
+  helpOpen: boolean;
+  setHelpOpen: Dispatch<SetStateAction<boolean>>;
   bufferRef: MutableRefObject<MultilineBuffer>;
   setBuffer: (next: MultilineBuffer | ((old: MultilineBuffer) => MultilineBuffer)) => void;
   setBufferText: (text: string) => void;
@@ -74,6 +76,8 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     setMenuDismissed,
     lastCtrlC,
     setLastCtrlC,
+    helpOpen,
+    setHelpOpen,
     bufferRef,
     setBuffer,
     setBufferText,
@@ -106,6 +110,13 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     }
     setLastCtrlC(now);
     scrollback.addInfo('press Ctrl+C again to exit');
+    return;
+  }
+  if (helpOpen) {
+    setHelpOpen(false);
+    if (key.escape || char === '?') return;
+  } else if (char === '?' && !key.ctrl && !key.meta && bufferRef.current.text === '') {
+    setHelpOpen(true);
     return;
   }
   if (key.escape && running && !menuOpen) {

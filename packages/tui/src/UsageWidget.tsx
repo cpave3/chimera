@@ -1,6 +1,6 @@
+import type { Usage } from '@chimera/core';
 import { Text } from 'ink';
 import React, { memo } from 'react';
-import type { Usage } from '@chimera/core';
 import { useTheme } from './theme/ThemeProvider';
 import type { Theme } from './theme/types';
 
@@ -44,23 +44,23 @@ export function sameUsage(a: Usage, b: Usage): boolean {
   );
 }
 
+/**
+ * How full the context window is, and how much of the last prompt the
+ * provider served from its cache. Absolute numbers are in `/context`.
+ */
 export const UsageWidget = memo(function UsageWidget(props: UsageWidgetProps): React.ReactElement {
   const theme = useTheme();
   const { usage, contextWindow, usedContextTokens, unknownWindow } = props;
   const pct = contextWindow > 0 ? Math.round((usedContextTokens / contextWindow) * 100) : null;
-  const color = pickUsageColor(pct, theme);
-
-  const used = formatTokens(usedContextTokens);
-  const window = formatTokens(contextWindow);
-  const delta = usage.lastStep ? `+${formatTokens(usage.lastStep.totalTokens)}` : '';
-  const pctStr = pct === null ? '' : ` (${pct}%)`;
-  const winStr = unknownWindow ? `${window}?` : window;
-  const cacheStr = formatCacheShare(usage.lastStep);
-  const text =
-    pct === null
-      ? `${used} / —${delta ? ` ${delta}` : ''}${cacheStr}`
-      : `${used} / ${winStr}${pctStr}${delta ? ` ${delta}` : ''}${cacheStr}`;
-  return <Text color={color}>{text}</Text>;
+  const context =
+    pct === null ? formatTokens(usedContextTokens) : `${pct}%${unknownWindow ? '?' : ''}`;
+  const cacheShare = formatCacheShare(usage.lastStep);
+  return (
+    <Text>
+      <Text color={pickUsageColor(pct, theme)}>{`ctx ${context}`}</Text>
+      {cacheShare && <Text color={theme.text.muted}>{` · ${cacheShare}`}</Text>}
+    </Text>
+  );
 }, arePropsEqual);
 
 function arePropsEqual(prev: UsageWidgetProps, next: UsageWidgetProps): boolean {
@@ -79,7 +79,7 @@ function formatCacheShare(lastStep: Usage['lastStep']): string {
     100,
     Math.round((lastStep.cachedInputTokens / lastStep.inputTokens) * 100),
   );
-  return ` · cache ${share}%`;
+  return `cache ${share}%`;
 }
 
 export function formatTokens(n: number): string {

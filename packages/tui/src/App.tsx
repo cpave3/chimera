@@ -20,6 +20,7 @@ import { BottomChrome } from './BottomChrome';
 import { runBangCommand } from './bang';
 import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
 import { Header } from './Header';
+import { HelpPanel } from './HelpPanel';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
 import { PasteRegistry } from './input/paste';
@@ -199,6 +200,7 @@ export function App(props: AppProps): React.ReactElement {
   const [visionRouteRef, setVisionRouteRef] = useState<string | null>(null);
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
@@ -501,6 +503,8 @@ export function App(props: AppProps): React.ReactElement {
       setMenuDismissed,
       lastCtrlC,
       setLastCtrlC,
+      helpOpen,
+      setHelpOpen,
       bufferRef,
       setBuffer,
       setBufferText,
@@ -967,6 +971,7 @@ export function App(props: AppProps): React.ReactElement {
             <Text color={theme.ui.accent}>{SPINNER_FRAMES[spinnerFrame]} compacting…</Text>
           </Box>
         )}
+        {helpOpen && <HelpPanel />}
         {queue.length > 0 && (
           <Box>
             <Text color={theme.text.muted}>
@@ -1143,14 +1148,12 @@ export function App(props: AppProps): React.ReactElement {
         </Box>
       </Box>
       <BottomChrome
-        cwd={props.cwd}
         sandboxMode={sandboxMode}
         modes={props.modes}
         activeModeName={activeModeName}
         pendingModeName={pendingModeName}
         currentModelRef={currentModelRef}
         visionRouteRef={visionRouteRef}
-        sessionId={activeSession.sessionId}
         forked={activeParentId !== null}
         tasks={tasks}
         usageState={usageState}

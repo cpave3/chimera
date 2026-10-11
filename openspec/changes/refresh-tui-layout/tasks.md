@@ -10,8 +10,8 @@
 
 ## 2. Chrome
 
-- [ ] 2.1 Test and implement the single status row
-- [ ] 2.2 Test and implement the `?` help panel; remove the hints row
+- [x] 2.1 Test and implement the single status row
+- [x] 2.2 Test and implement the `?` help panel; remove the hints row
 
 ## 3. Activity line
 

@@ -1,11 +1,11 @@
+import { emptyUsage, type Usage } from '@chimera/core';
 import { Box } from 'ink';
 import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it } from 'vitest';
-import { emptyUsage, type Usage } from '@chimera/core';
-import { formatTokens, pickUsageColor, sameUsage, UsageWidget } from '../src/UsageWidget';
-import { defaultTheme } from '../src/theme/tokens';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
+import { defaultTheme } from '../src/theme/tokens';
+import { formatTokens, pickUsageColor, sameUsage, UsageWidget } from '../src/UsageWidget';
 
 function frame(node: React.ReactNode): string {
   const { lastFrame, unmount } = render(
@@ -60,7 +60,7 @@ describe('pickUsageColor', () => {
 });
 
 describe('UsageWidget', () => {
-  it('renders <used> / <window> (<pct>%) +<delta> after the first event', () => {
+  it('renders the share of the context window in use', () => {
     const usage = usageWith({
       inputTokens: 41_200,
       outputTokens: 1_400,
@@ -76,10 +76,7 @@ describe('UsageWidget', () => {
     const out = frame(
       <UsageWidget usage={usage} contextWindow={200_000} usedContextTokens={41_200} />,
     );
-    expect(out).toContain('41.2k');
-    expect(out).toContain('200k');
-    expect(out).toContain('21%');
-    expect(out).toContain('+1.4k');
+    expect(out).toBe('ctx 21%');
   });
 
   it('renders amber color in the 80–95% band', () => {
@@ -106,7 +103,7 @@ describe('UsageWidget', () => {
     expect(out).toContain('98%');
   });
 
-  it('omits percentage and adds ? glyph when window is unknown', () => {
+  it('shows the token count when the window size is not known', () => {
     const usage = usageWith({
       lastStep: {
         inputTokens: 100,
@@ -118,17 +115,25 @@ describe('UsageWidget', () => {
     const out = frame(
       <UsageWidget usage={usage} contextWindow={0} usedContextTokens={5_000} unknownWindow />,
     );
-    expect(out).toContain('5k');
-    // Render uses an em-dash for an unknown window.
-    expect(out).toContain('—');
-    expect(out).not.toContain('%');
+    expect(out).toBe('ctx 5k');
   });
 
-  it('renders without delta when no step has finished yet', () => {
+  it('marks the percentage when the window size is an estimate', () => {
+    const out = frame(
+      <UsageWidget
+        usage={usageWith()}
+        contextWindow={128_000}
+        usedContextTokens={64_000}
+        unknownWindow
+      />,
+    );
+    expect(out).toBe('ctx 50%?');
+  });
+
+  it('renders zero use before the first step finishes', () => {
     const usage = usageWith();
     const out = frame(<UsageWidget usage={usage} contextWindow={200_000} usedContextTokens={0} />);
-    expect(out).toContain('0 / 200k');
-    expect(out).not.toContain('+');
+    expect(out).toBe('ctx 0%');
   });
 });
 
