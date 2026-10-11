@@ -386,4 +386,75 @@ describe('Agent loop', () => {
       ]);
     });
   });
+
+  describe('tool-call repair', () => {
+    /** Run one tool call with raw argument text and report what the tool received. */
+    async function callWith(
+      rawInput: string,
+      calledName = 'lookup',
+    ): Promise<{ received: unknown[]; events: AgentEvent[] }> {
+      const received: unknown[] = [];
+      const { model } = scriptedModel([
+        [
+          { type: 'stream-start', warnings: [] },
+          { type: 'tool-call', toolCallId: 'call-1', toolName: calledName, input: rawInput },
+          { type: 'finish', finishReason: finish('tool-calls'), usage: USAGE },
+        ],
+        textStep('done'),
+      ]);
+      const agent = buildAgent({
+        languageModel: model,
+        tools: {
+          lookup: tool({
+            description: 'looks something up',
+            inputSchema: z.object({
+              path: z.string(),
+              recursive: z.boolean().optional(),
+              limit: z.number().int().optional(),
+              tags: z.array(z.string()).optional(),
+            }),
+            execute: async (args) => {
+              received.push(args);
+              return { ok: true };
+            },
+          }),
+        } as ToolSet,
+      });
+      return { received, events: await collect(agent) };
+    }
+
+    it('turns string booleans and numbers into the types the schema asks for', async () => {
+      const { received } = await callWith('{"path":"src","recursive":"true","limit":"5"}');
+      expect(received).toEqual([{ path: 'src', recursive: true, limit: 5 }]);
+    });
+
+    it('decodes arguments that were sent as a JSON string', async () => {
+      const { received } = await callWith(JSON.stringify(JSON.stringify({ path: 'src' })));
+      expect(received).toEqual([{ path: 'src' }]);
+    });
+
+    it('strips a code fence around the arguments', async () => {
+      const { received } = await callWith('```json\n{"path":"src"}\n```');
+      expect(received).toEqual([{ path: 'src' }]);
+    });
+
+    it('drops null for an optional argument and decodes an array sent as text', async () => {
+      const { received } = await callWith('{"path":"src","limit":null,"tags":"[\\"a\\",\\"b\\"]"}');
+      expect(received).toEqual([{ path: 'src', tags: ['a', 'b'] }]);
+    });
+
+    it('maps a wrongly cased tool name to the registered tool', async () => {
+      const { received } = await callWith('{"path":"src"}', 'Lookup');
+      expect(received).toEqual([{ path: 'src' }]);
+    });
+
+    it('reports a call it cannot repair to the model and keeps the run going', async () => {
+      const { received, events } = await callWith('{"recursive":true}');
+
+      expect(received).toEqual([]);
+      const error = events.find((event) => event.type === 'tool_call_error');
+      expect(error?.type === 'tool_call_error' ? error.error : '').toContain('path');
+      expect(finishReason(events)).toBe('stop');
+    });
+  });
 });

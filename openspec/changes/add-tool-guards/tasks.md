@@ -7,8 +7,8 @@
 
 ## 2. Tool-call repair
 
-- [ ] 2.1 Test and implement argument repair (fence, JSON string, coercion, nulls)
-- [ ] 2.2 Test and implement tool-name repair
+- [x] 2.1 Test and implement argument repair (fence, JSON string, coercion, nulls)
+- [x] 2.2 Test and implement tool-name repair
 
 ## 3. Interceptors and guards
 

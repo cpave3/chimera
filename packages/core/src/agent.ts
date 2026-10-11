@@ -46,6 +46,7 @@ import {
   writeSessionMetadata,
 } from './persistence';
 import { classifyProviderError, describeProviderError } from './provider-errors';
+import { repairToolCall } from './tool-repair';
 import {
   type CompactionConfig,
   type CompactorApi,
@@ -1558,6 +1559,7 @@ export class Agent {
             // Errors arrive as `error` stream parts; the SDK's default handler
             // would also print each one to stderr, under the TUI.
             onError: () => {},
+            experimental_repairToolCall: repairToolCall,
             abortSignal: this.abortController.signal,
             temperature: this.activeModel().temperature,
             topP: this.activeModel().topP,
