@@ -6,6 +6,23 @@ export type SandboxMode = 'off' | 'bind' | 'overlay' | 'ephemeral';
 
 export type ExecutionTarget = 'sandbox' | 'host';
 
+export type ToolCallShape = 'chimera' | 'codex';
+/** `replace`: the exact-string `edit` tool. `patch`: the `apply_patch` tool. */
+export type EditFormat = 'replace' | 'patch';
+/** `guided` adds explicit working rules for models that need them. */
+export type PromptStyle = 'lean' | 'guided';
+
+/**
+ * What a model is given to work with: tool names, edit tool, prompt variant,
+ * and the size a single tool result may take in its context.
+ */
+export interface ModelProfile {
+  toolCallShape: ToolCallShape;
+  editFormat: EditFormat;
+  promptStyle: PromptStyle;
+  outputBudgetTokens: number;
+}
+
 export interface ModelConfig {
   settings?: ModelSettings;
   settingsDefaults?: ModelSettings;
@@ -40,7 +57,13 @@ export interface ModelConfig {
    * Optional compatibility mode for the tool surface exposed to this model.
    * Undefined means Chimera's native tool names and argument schemas.
    */
-  toolCallShape?: 'chimera' | 'codex';
+  toolCallShape?: ToolCallShape;
+  /**
+   * How this model edits files and how much guidance its prompt carries.
+   * Filled in by the factory from the resolved model profile.
+   */
+  editFormat?: EditFormat;
+  promptStyle?: PromptStyle;
   /**
    * Explicitly enable/disable parallel tool calls in the provider request.
    * When `true`, the factory forwards `{ parallelToolCalls: true }` under the
