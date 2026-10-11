@@ -39,9 +39,18 @@ Alternative considered: render the view with Ink on the alternate screen. Reject
 
 One selector maps existing state to the line: an open permission request wins, then compaction, then a pending provider retry, then the most recent in-flight tool, then streaming text, else thinking. Elapsed time counts from the start of the run; tokens are the run's output tokens from `usage_updated`.
 
-### Status row
+### Footer
 
-One `StatusBar` row: mode (colored), model, `ctx N%`, `cache N%`, sandbox when not `off`, goal or task count on the right. The header box keeps cwd and session id. The hints row is removed; `?` on an empty prompt toggles a help panel in the live region.
+The first version of this change cut the footer to one row and dropped the working directory, the session id, the token counts, the sandbox state and the key hints. Review feedback was that too much information was gone, so the footer is two rows, each with a left and a right group:
+
+- Row 1, what is running and how much room is left: mode, model, sandbox | gauge with percentage, used/window tokens, cached share.
+- Row 2, where and on what: working directory, session id, task count and the task in progress | key hints for the current state (idle or running).
+
+Each item carries a rank. When a row is wider than the terminal, the lowest-ranked items are dropped until it fits, so a narrow terminal loses the hints and the gauge before it loses the mode or the percentage. The start banner repeats the session facts once, with the number of loaded skills and commands.
+
+### Tool lines and the turn summary
+
+A tool line starts with a state glyph (`•` running, `✓` returned, `✗` failed or exited non-zero) and ends with the duration when the call took a second or more. When a run ends, the scrollback store adds one closing line with the run's duration, steps, tool calls, tokens and cached share; it counts these itself from the events it already receives.
 
 ### Syntax highlighting
 

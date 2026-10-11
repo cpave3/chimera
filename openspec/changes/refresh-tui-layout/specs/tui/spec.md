@@ -1,11 +1,48 @@
 ## ADDED Requirements
 
-### Requirement: Single status row
-The TUI SHALL show one status row below the prompt with the mode, the model, the context use as a percentage, the cached share when the provider reports one, and the sandbox mode when it is not `off`. The TUI SHALL NOT show a permanent row of key hints.
+### Requirement: Two-row footer
+The TUI SHALL show two rows below the prompt. The first row SHALL show the mode, the model and the sandbox mode on the left, and on the right the context use as a gauge with a percentage, the token counts as used/window, and the cached share when the provider reports one. The second row SHALL show the working directory, the session id and the task count with the task in progress on the left, and key hints for the current state on the right. When a row does not fit the terminal width, the TUI SHALL drop its least important items first and SHALL NOT wrap.
 
 #### Scenario: Idle session
 - **WHEN** the TUI is idle with a known context window
-- **THEN** the bottom of the screen has exactly one status row, and it names the mode and the model
+- **THEN** the first row names the mode, the model and the sandbox mode, and the second row names the working directory and the session id
+
+#### Scenario: Context use
+- **WHEN** the last step used 84,000 of 200,000 tokens and 81% of the prompt was cached
+- **THEN** the first row shows a gauge with `42%`, `84k/200k` and `cache 81%`
+
+#### Scenario: Hints follow the state
+- **WHEN** a run is active
+- **THEN** the second row shows the keys to steer and to interrupt, and not the idle hints
+
+#### Scenario: Narrow terminal
+- **WHEN** the terminal is 60 columns wide
+- **THEN** no footer row is longer than 60 columns, and the mode and the context percentage are still shown
+
+### Requirement: Start banner
+At the top of a session the TUI SHALL print a banner with the version, the model, the working directory, the session id, the mode and the sandbox mode, and the number of skills and commands when any were loaded.
+
+#### Scenario: Session start
+- **WHEN** a session starts with 12 skills loaded
+- **THEN** the banner names the model, the working directory, the session, the mode, the sandbox mode and `12 skills`
+
+### Requirement: Tool line state
+A tool line SHALL start with a glyph for its state: running, returned, or failed. A command that exited non-zero SHALL count as failed. A call that took one second or longer SHALL show its duration.
+
+#### Scenario: Slow failing command
+- **WHEN** a `bash` call returns exit code 1 after 8.2 seconds
+- **THEN** its line starts with the failed glyph and ends with `8.2s`
+
+### Requirement: Turn summary
+When a run ends after at least one model step or tool call, the transcript SHALL end the turn with one line that states the duration, the number of steps and tool calls, the input and output tokens of the run, and the cached share.
+
+#### Scenario: Run with tool calls
+- **WHEN** a run of 72 seconds with 2 steps and 2 tool calls ends
+- **THEN** the transcript shows a line with `1m 12s`, `2 steps` and `2 tool calls`
+
+#### Scenario: Run that never reached the model
+- **WHEN** a run ends with an error before any step
+- **THEN** no summary line is added
 
 ### Requirement: Help panel
 On an empty prompt, `?` SHALL toggle a panel that lists the key bindings. Any other key SHALL close it.
@@ -15,7 +52,7 @@ On an empty prompt, `?` SHALL toggle a panel that lists the key bindings. Any ot
 - **THEN** the panel with the key bindings appears, then disappears
 
 ### Requirement: Activity line
-While a run is active the TUI SHALL show one line that states what the agent is doing, the elapsed time of the run, and the key that interrupts it. The line SHALL name the running tool call when one is in flight, and SHALL say when the run waits for approval, compacts, or waits to retry a provider error.
+While a run is active the TUI SHALL show one line that states what the agent is doing, the elapsed time of the run, the model step in progress, and the key that interrupts it. The line SHALL name the running tool call when one is in flight, and SHALL say when the run waits for approval, compacts, or waits to retry a provider error.
 
 #### Scenario: Tool in flight
 - **WHEN** a `bash` call for `pnpm test` is in flight

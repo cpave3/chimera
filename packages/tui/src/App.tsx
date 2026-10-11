@@ -214,6 +214,7 @@ export function App(props: AppProps): React.ReactElement {
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [retry, setRetry] = useState<{ attempt: number; maxAttempts: number } | null>(null);
+  const [runSteps, setRunSteps] = useState(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
@@ -500,6 +501,7 @@ export function App(props: AppProps): React.ReactElement {
       setCompacting,
       setTasks,
       setRetry,
+      setRunSteps,
     });
   }
 
@@ -1008,6 +1010,10 @@ export function App(props: AppProps): React.ReactElement {
                   modelRef={props.modelRef}
                   cwd={props.cwd}
                   sessionId={props.sessionId}
+                  mode={props.initialMode ?? 'build'}
+                  sandboxMode={sandboxMode}
+                  skillCount={props.skills?.all().length ?? 0}
+                  commandCount={props.commands?.list().length ?? 0}
                 />
               </Box>
             );
@@ -1050,6 +1056,7 @@ export function App(props: AppProps): React.ReactElement {
             })}
             elapsedMs={Date.now() - (runStartedAtRef.current ?? Date.now())}
             tokens={(usageState?.usage.outputTokens ?? 0) - runStartOutputTokensRef.current}
+            step={running ? runSteps + 1 : 0}
             canInterrupt={running}
             width={columns}
           />
@@ -1231,6 +1238,10 @@ export function App(props: AppProps): React.ReactElement {
         </Box>
       </Box>
       <BottomChrome
+        width={columns}
+        cwd={props.cwd}
+        sessionId={activeSession.sessionId}
+        running={running}
         sandboxMode={sandboxMode}
         modes={props.modes}
         activeModeName={activeModeName}

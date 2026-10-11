@@ -1,21 +1,26 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { emptyUsage } from '@chimera/core';
 import { render } from 'ink-testing-library';
-import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { BottomChrome, type BottomChromeProps } from '../src/BottomChrome';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { defaultTheme } from '../src/theme/tokens';
 
-function statusRow(overrides: Partial<BottomChromeProps> = {}): string {
+function footer(overrides: Partial<BottomChromeProps> = {}): string[] {
   const { lastFrame, unmount } = render(
     <ThemeProvider theme={defaultTheme}>
       <BottomChrome
+        width={100}
+        cwd={join(homedir(), 'Projects', 'chimera')}
+        sessionId="01JABCDEFGH12345678"
         sandboxMode="off"
         activeModeName="build"
         pendingModeName={null}
         currentModelRef="anthropic/claude-opus-4-7"
         visionRouteRef={null}
         forked={false}
+        running={false}
         tasks={[]}
         usageState={null}
         {...overrides}
@@ -24,10 +29,10 @@ function statusRow(overrides: Partial<BottomChromeProps> = {}): string {
   );
   const frame = lastFrame() ?? '';
   unmount();
-  return frame;
+  return frame.split('\n');
 }
 
-function usage(inputTokens: number, cachedInputTokens: number) {
+function usage(inputTokens: number, cachedInputTokens: number, unknownWindow = false) {
   return {
     usage: {
       ...emptyUsage(),
@@ -40,61 +45,96 @@ function usage(inputTokens: number, cachedInputTokens: number) {
     },
     contextWindow: 200_000,
     usedContextTokens: inputTokens,
-    unknownWindow: false,
+    unknownWindow,
   };
 }
 
-describe('status row', () => {
-  it('is one row with the mode and the model, without brackets or key hints', () => {
-    const row = statusRow();
+const tasks = [
+  { content: 'write failing test', status: 'completed' },
+  { content: 'implement feature', status: 'in_progress' },
+  { content: 'refactor', status: 'pending' },
+];
 
-    expect(row.split('\n')).toHaveLength(1);
-    expect(row).toContain('build');
-    expect(row).toContain('anthropic/claude-opus-4-7');
-    expect(row).not.toMatch(/\[mode:|\[sandbox:/);
-    expect(row).not.toContain('Ctrl+G');
-    expect(row).toContain('? help');
+describe('footer', () => {
+  it('has two rows: what is running, and where', () => {
+    const [state, place, ...rest] = footer();
+
+    expect(rest).toEqual([]);
+    expect(state).toContain('build');
+    expect(state).toContain('anthropic/claude-opus-4-7');
+    expect(state).toContain('sandbox off');
+    expect(place).toContain('~/Projects/chimera');
+    expect(place).toContain('session 12345678');
   });
 
-  it('shows context use and the cached share', () => {
-    const row = statusRow({ usageState: usage(42_000, 33_600) });
+  it('shows the context window as a gauge, a percentage and token counts', () => {
+    const [state] = footer({ usageState: usage(84_000, 68_040) });
 
-    expect(row).toContain('ctx 21%');
-    expect(row).toContain('cache 80%');
+    expect(state).toContain('▰▰▰▰▱▱▱▱▱▱ 42%');
+    expect(state).toContain('84k/200k');
+    expect(state).toContain('cache 81%');
   });
 
-  it('marks an approximate context window', () => {
-    const row = statusRow({ usageState: { ...usage(42_000, 0), unknownWindow: true } });
+  it('marks a context window whose size is an estimate', () => {
+    const [state] = footer({ usageState: usage(84_000, 0, true) });
 
-    expect(row).toContain('ctx 21%?');
-    expect(row).not.toContain('cache');
+    expect(state).toContain('84k/200k?');
+    expect(state).not.toContain('cache');
   });
 
-  it('names the sandbox only when one is active', () => {
-    expect(statusRow()).not.toContain('sandbox');
-    expect(statusRow({ sandboxMode: 'overlay' })).toContain('sandbox overlay');
+  it('names the task in progress next to the working directory', () => {
+    const [, place] = footer({ tasks });
+
+    expect(place).toContain('tasks 1/3');
+    expect(place).toContain('◼ implement feature');
   });
 
-  it('shows a queued mode switch', () => {
-    expect(statusRow({ pendingModeName: 'plan' })).toContain('build → plan');
+  it('says so when every task is done', () => {
+    const done = tasks.map((task) => ({ ...task, status: 'completed' }));
+
+    expect(footer({ tasks: done })[1]).toContain('tasks 3/3 ✔');
   });
 
-  it('counts tasks on the right', () => {
-    const row = statusRow({
-      tasks: [
-        { content: 'one', status: 'completed' },
-        { content: 'two', status: 'in_progress' },
-        { content: 'three', status: 'pending' },
-      ],
+  it('shows the key hints that fit the moment', () => {
+    const idle = footer()[1]!;
+    const running = footer({ running: true })[1]!;
+
+    expect(idle).toContain('? help');
+    expect(idle).toContain('/ commands');
+    expect(running).toContain('esc interrupt');
+    expect(running).toContain('enter steer');
+    expect(running).not.toContain('/ commands');
+  });
+
+  it('shows a queued mode switch, a fork, and a vision-routed turn', () => {
+    const [state] = footer({
+      pendingModeName: 'plan',
+      forked: true,
+      visionRouteRef: 'manticore/kimi',
     });
 
-    expect(row).toContain('tasks 1/3');
+    expect(state).toContain('build → plan');
+    expect(state).toContain('forked');
+    expect(state).toContain('→ manticore/kimi (vision)');
   });
 
-  it('marks a forked session and a vision-routed turn', () => {
-    const row = statusRow({ forked: true, visionRouteRef: 'manticore/kimi' });
+  it('drops the least important items first on a narrow terminal', () => {
+    const rows = footer({ width: 60, usageState: usage(84_000, 68_040), tasks, running: true });
 
-    expect(row).toContain('forked');
-    expect(row).toContain('→ manticore/kimi (vision)');
+    for (const row of rows) expect(row.length).toBeLessThanOrEqual(60);
+    expect(rows[0]).toContain('build');
+    expect(rows[0]).toContain('42%');
+    expect(rows[0]).not.toContain('▰');
+    expect(rows[1]).toContain('session 12345678');
+  });
+
+  it('shortens a long working directory from the left', () => {
+    const [, place] = footer({
+      width: 70,
+      cwd: '/srv/workspaces/customer-portal/services/billing-reconciliation/worker',
+    });
+
+    expect(place).toContain('…');
+    expect(place).toContain('billing-reconciliation/worker');
   });
 });

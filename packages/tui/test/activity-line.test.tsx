@@ -46,6 +46,15 @@ describe('activity line', () => {
     expect(frame).toMatch(/\b0s\b/);
   });
 
+  it('counts the model step in progress', async () => {
+    const frame = await frameAfter([
+      { type: 'step_finished', stepNumber: 1, finishReason: 'tool-calls' },
+      bashStart,
+    ]);
+
+    expect(frame).toContain('· step 2 ·');
+  });
+
   it('says the run waits for approval while a permission request is open', async () => {
     const frame = await frameAfter([
       bashStart,
@@ -108,10 +117,11 @@ describe('task panel during a run', () => {
     expect(frame).not.toContain('write failing test');
   });
 
-  it('leaves only the count in the status row once the run has ended', async () => {
+  it('closes the panel when the run ends and keeps the current task in the footer', async () => {
     const frame = await frameAfter([tasks, bashStart, { type: 'run_finished', reason: 'stop' }]);
 
-    expect(frame).not.toContain('◼ implement feature');
+    expect(frame).not.toContain('◻ refactor');
     expect(frame).toContain('tasks 1/3');
+    expect(frame).toContain('◼ implement feature');
   });
 });

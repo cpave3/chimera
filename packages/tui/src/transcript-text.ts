@@ -103,6 +103,8 @@ export function formatTranscript(
       addTool(entry);
     } else if (entry.kind === 'explore') {
       for (const member of entry.members) addTool(member);
+    } else if (entry.kind === 'turn') {
+      blocks.push(paint(`─── ${entry.text}`, 'dim'));
     } else if (entry.kind === 'error') {
       blocks.push(paint(entry.text, 'red'));
     } else {

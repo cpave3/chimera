@@ -418,7 +418,8 @@ long sessions inside budget (full details in `docs/COMPACTION.md`):
 For multi-step work the model maintains a task list via the `task_list` tool
 (replace-whole-list semantics, statuses `pending` / `in_progress` /
 `completed`). During a run the task panel above the prompt shows the task in
-progress and what follows; the status row keeps the count (`tasks 2/5`). The
+progress and what follows; the footer keeps the count and the task in progress
+(`tasks 2/5 · ◼ implement feature`). The
 list is persisted in session
 metadata, so it survives resume, forks, and context compaction. The model
 sees the list through its latest `task_list` call; when compaction summarizes
@@ -486,38 +487,51 @@ chimera --no-subagents
 
   I will add backoff to the stream call. Then I will add a test.
 
-• explored: read 4 files · 2 searches
-  src/agent.ts, src/events.ts, test/agent.test.ts, src/usage.ts, retry, backoff
-• edit: packages/core/src/agent.ts (1 replacement)
-• bash: pnpm --filter @chimera/core test (exit 0)
+✓ explored: read 3 files · 1 search
+  src/agent.ts (2409 lines), src/events.ts (217 lines), retry (4 matches), …
+
+✓ edit: packages/core/src/agent.ts (1 replacement)
+  1481 -           const stream = streamText({
+  1481 +           const stream = this.startStep({
+
+✗ bash: pnpm --filter @chimera/core test (exit 1) · 8.2s
+
+─── 1m 12s · 6 steps · 7 tool calls · ↑ 114k ↓ 3.7k tokens · cache 78%
 
 tasks 2/4
 ◼ Add a test for mid-stream errors
 ◻ Update README
-
-⠹ running pnpm --filter @chimera/core test · 12s · 3.1k tokens · esc to interrupt
-╭──────────────────────────────────────────────────────────────────────────────╮
-│ > _                                                                          │
-╰──────────────────────────────────────────────────────────────────────────────╯
-build · anthropic/claude-opus-4-7 · ctx 42% · cache 81%          tasks 2/4 · ? help
+⠹ running pnpm --filter @chimera/core test · 12s · step 3 · 3.1k tokens · esc to interrupt
+────────────────────────────────────────────────────────────────────────────────
+> _
+build · anthropic/claude-opus-4-7 · sandbox off   ▰▰▰▰▱▱▱▱▱▱ 42% · 84k/200k · cache 81%
+~/Projects/chimera · session 12345678 · tasks 2/4 · ◼ Add a test…      enter steer
 ```
 
 - **Transcript.** A user message starts with `›`. A tool call starts with a
-  bullet coloured by its state (running, done, failed) and shows a one-line
-  summary instead of raw JSON args; when a sandbox is active the line also
-  says `[host]` or `[sandbox]`. Consecutive successful `read`, `glob`, `find`,
-  `ls` and `grep` calls collapse into one `explored:` line. Fenced code blocks
-  with a known language are syntax-highlighted.
+  glyph for its state (`•` running, `✓` returned, `✗` failed or exited
+  non-zero) and shows a one-line summary instead of raw JSON args, with the
+  duration when the call took a second or more. When a sandbox is active the
+  line also says `[host]` or `[sandbox]`. Consecutive successful `read`,
+  `glob`, `find`, `ls` and `grep` calls collapse into one `explored:` line.
+  Fenced code blocks with a known language are syntax-highlighted.
+- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
+  tokens in and out, and the cached share.
 - **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
   else `less`): every tool call on its own line, with its full output.
 - **Activity line.** While a run is active, one line says what the agent is
   doing (thinking, writing, running a tool, waiting for approval, compacting,
-  retrying a provider error), for how long, and how many tokens it has
-  produced.
+  retrying a provider error), for how long, on which step, and how many
+  tokens it has produced.
 - **Task panel.** During a run the task list shows above the prompt, from the
   task in progress onward, at most six lines.
-- **Status row.** Mode, model, context use, cached share of the last prompt,
-  the sandbox mode when one is active, and the task count.
+- **Footer.** Row 1: mode, model and sandbox on the left; a context gauge with
+  percentage, used/window tokens and the cached share of the last prompt on
+  the right. Row 2: working directory, session id, task count and the task in
+  progress on the left; the keys that matter in the current state on the
+  right. On a narrow terminal each row drops its least important items first.
+- **Start banner.** Version, model, working directory, session, mode, sandbox,
+  and the number of skills and commands loaded.
 - **Help.** `?` at an empty prompt lists the key bindings.
 - **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
   digit, or the letter shown next to each choice. `Esc` denies.
@@ -555,10 +569,11 @@ to recall input history.
 
 ## Token usage
 
-The status row shows how full the model's context window is after the latest
-step, as `ctx N%`, and the share of the last prompt the provider served from
-its cache, as `cache N%`. The numbers come from the AI SDK's `usage` payload —
-no estimation, no extra calls. `/context` has the absolute counts and a
+The first footer row shows how full the model's context window is after the
+latest step: a gauge with a percentage, and the tokens used over the window
+size (`84k/200k`). Next to it is the share of the last prompt the provider
+served from its cache (`cache 81%`). The numbers come from the AI SDK's
+`usage` payload — no estimation, no extra calls. `/context` has a
 per-category breakdown. Cumulative totals persist with the session, so
 resuming an old session shows the same figures on the next prompt.
 
@@ -567,8 +582,8 @@ Color escalates as the prompt fills the window: gray under 80%, amber from
 table for known Claude / GPT / o-series models. To override (or add a model
 we don't know about yet), set a `models` block in `~/.chimera/config.json` —
 see `PROVIDERS.md`. When the model isn't in the table and you haven't set
-an override, the window falls back to 128k and the widget shows a `?` after
-the percentage to flag the value as approximate.
+an override, the window falls back to 128k and the footer shows a `?` after
+the window size to flag the value as approximate.
 
 ## What's not here (yet)
 

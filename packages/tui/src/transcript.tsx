@@ -1,7 +1,8 @@
 import { Box, Text } from 'ink';
 import React from 'react';
+import { formatElapsed } from './activity';
 import { renderMarkdown } from './markdown';
-import type { ScrollbackEntry, SubagentEntry } from './scrollback';
+import type { ScrollbackEntry, SubagentEntry, ToolEntry } from './scrollback';
 import { renderToolBody } from './ToolBody';
 import type { Theme } from './theme/types';
 
@@ -74,6 +75,35 @@ export interface RenderEntryOptions {
 
 const USER_MARKER = '› ';
 const TOOL_BULLET = '• ';
+const TURN_RULE = '─── ';
+
+type ToolState = 'running' | 'done' | 'failed';
+
+const TOOL_STATE_GLYPH: Record<ToolState, string> = {
+  running: TOOL_BULLET,
+  done: '✓ ',
+  failed: '✗ ',
+};
+const TOOL_STATE_COLOR: Record<ToolState, (theme: Theme) => string> = {
+  running: (theme) => theme.ui.accent,
+  done: (theme) => theme.status.success,
+  failed: (theme) => theme.status.error,
+};
+
+/** A command that ran but exited non-zero failed as far as the reader cares. */
+function toolState(entry: ToolEntry): ToolState {
+  if (entry.toolError !== undefined) return 'failed';
+  if (entry.toolResult === undefined) return 'running';
+  const exitCode = (entry.toolResult as { exit_code?: unknown } | null)?.exit_code;
+  return typeof exitCode === 'number' && exitCode !== 0 ? 'failed' : 'done';
+}
+
+/** Tenths of a second below a minute, where they still matter; whole units above. */
+function formatDuration(milliseconds: number): string {
+  return milliseconds < 60_000
+    ? `${(milliseconds / 1000).toFixed(1)}s`
+    : formatElapsed(milliseconds);
+}
 
 export function renderEntryLines(
   entry: ScrollbackEntry,
@@ -133,17 +163,16 @@ export function renderEntryLines(
     const namePrefix = entry.displayName ?? entry.toolName;
     const title = namePrefix ? `${namePrefix}: ` : '';
     const prefixLen = TOOL_BULLET.length;
-    const textLines = wrapToLines(`${badge}${title}${entry.text}`, width, prefixLen);
-    const settled = entry.toolResult !== undefined || entry.toolError !== undefined;
-    const bulletColor = entry.toolError
-      ? theme.status.error
-      : settled
-        ? theme.text.muted
-        : theme.ui.accent;
+    const state = toolState(entry);
+    const duration =
+      entry.durationMs !== undefined && entry.durationMs >= 1000
+        ? ` · ${formatDuration(entry.durationMs)}`
+        : '';
+    const textLines = wrapToLines(`${badge}${title}${entry.text}${duration}`, width, prefixLen);
     const out: React.ReactElement[] = [
       <Box key={`${entry.id}:t`} flexDirection="column">
         <Text>
-          <Text color={bulletColor}>{TOOL_BULLET}</Text>
+          <Text color={TOOL_STATE_COLOR[state](theme)}>{TOOL_STATE_GLYPH[state]}</Text>
           <Text color={theme.accent.secondary}>{textLines[0] ?? ''}</Text>
         </Text>
         {textLines.slice(1).map((line, i) => (
@@ -219,7 +248,9 @@ export function renderEntryLines(
     return [
       <Box key={`${entry.id}:x`} flexDirection="column">
         <Text>
-          <Text color={entry.closed ? theme.text.muted : theme.ui.accent}>{TOOL_BULLET}</Text>
+          <Text color={entry.closed ? theme.status.success : theme.ui.accent}>
+            {entry.closed ? TOOL_STATE_GLYPH.done : TOOL_BULLET}
+          </Text>
           <Text color={theme.accent.secondary}>{`explored: ${entry.text}`}</Text>
         </Text>
         <Box paddingLeft={prefixLen}>
@@ -251,6 +282,13 @@ export function renderEntryLines(
           </Box>
         ))}
       </Box>,
+    ];
+  }
+  if (entry.kind === 'turn') {
+    return [
+      <Text key={`${entry.id}:turn`} color={theme.text.muted} wrap="truncate">
+        {`${TURN_RULE}${entry.text}`}
+      </Text>,
     ];
   }
   if (entry.kind === 'info' || entry.kind === 'mode_change') {

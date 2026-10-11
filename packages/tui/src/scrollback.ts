@@ -1,5 +1,7 @@
 import type { AgentEvent, CallId, Session, ToolCallRecord, ToolDisplay } from '@chimera/core';
 import { countImageParts } from '@chimera/core';
+import { formatElapsed } from './activity';
+import { formatTokens } from './usage-format';
 
 /**
  * Structural type matching `@chimera/tools`' `FormatScrollback<I, O>`. Defined
@@ -49,6 +51,8 @@ export interface ToolEntry extends BaseEntry {
   toolArgs?: unknown;
   toolResult?: unknown;
   toolError?: string;
+  /** How long the call ran; absent for calls restored from a saved session. */
+  durationMs?: number;
   /** Optional follow-on lines from a tool's formatScrollback hook. */
   detail?: string;
   /** Set when a `skill_activated` event follows a `read` tool call. */
@@ -104,16 +108,24 @@ export interface ExploreEntry extends BaseEntry {
   closed?: boolean;
 }
 
+/** The closing line of a run: how long it took and what it cost. */
+export interface TurnEntry extends BaseEntry {
+  kind: 'turn';
+}
+
 export type ScrollbackEntry =
   | UserEntry
   | AssistantEntry
   | ThinkingEntry
   | ToolEntry
   | ExploreEntry
+  | TurnEntry
   | InfoEntry
   | ErrorEntry
   | SubagentEntry
   | ModeChangeEntry;
+
+type RunUsage = { inputTokens: number; outputTokens: number; cachedInputTokens: number };
 
 const SEARCH_TOOLS = new Set(['grep']);
 const LISTING_TOOLS = new Set(['glob', 'find', 'ls']);
@@ -206,6 +218,14 @@ export class Scrollback {
   private assistantStream = newTextStream('assistant');
   private thinkingStream = newTextStream('thinking');
   private toolsByCallId = new Map<CallId, ToolEntry>();
+  /** Counters of the run in progress, for its closing summary line. */
+  private run: {
+    startedAt: number;
+    steps: number;
+    toolCalls: number;
+    usageAtStart: RunUsage;
+  } | null = null;
+  private latestUsage: RunUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   /** subagentId → parent (spawn_agent) entry id, for routing child rows. */
   private subagentParents = new Map<string, string>();
   /** subagentId → its own callId-keyed map of child tool entries. Lets us
@@ -325,6 +345,48 @@ export class Scrollback {
       if (entry.kind === 'explore') entry.closed = true;
       this.committedCount += 1;
     }
+  }
+
+  /** Count what a run did, from its first event to `run_finished`. */
+  private trackRun(ev: AgentEvent): void {
+    if (ev.type === 'usage_updated') {
+      this.latestUsage = {
+        inputTokens: ev.usage.inputTokens,
+        outputTokens: ev.usage.outputTokens,
+        cachedInputTokens: ev.usage.cachedInputTokens,
+      };
+    }
+    const active =
+      ev.type === 'user_message' ||
+      ev.type === 'assistant_text_delta' ||
+      ev.type === 'reasoning_text_delta' ||
+      ev.type === 'tool_call_start' ||
+      ev.type === 'step_finished';
+    if (active && !this.run) {
+      this.run = { startedAt: Date.now(), steps: 0, toolCalls: 0, usageAtStart: this.latestUsage };
+    }
+    if (!this.run) return;
+    if (ev.type === 'step_finished') this.run.steps += 1;
+    if (ev.type === 'tool_call_start') this.run.toolCalls += 1;
+  }
+
+  /** End the run in progress and describe it; undefined when it did nothing worth a line. */
+  private finishRun(): string | undefined {
+    const run = this.run;
+    this.run = null;
+    if (!run || (run.steps === 0 && run.toolCalls === 0)) return undefined;
+    const input = this.latestUsage.inputTokens - run.usageAtStart.inputTokens;
+    const output = this.latestUsage.outputTokens - run.usageAtStart.outputTokens;
+    const cached = this.latestUsage.cachedInputTokens - run.usageAtStart.cachedInputTokens;
+    return [
+      formatElapsed(Date.now() - run.startedAt),
+      plural(run.steps, 'step'),
+      run.toolCalls > 0 ? plural(run.toolCalls, 'tool call') : '',
+      input > 0 || output > 0 ? `↑ ${formatTokens(input)} ↓ ${formatTokens(output)} tokens` : '',
+      input > 0 && cached > 0 ? `cache ${Math.min(100, Math.round((cached / input) * 100))}%` : '',
+    ]
+      .filter((part) => part !== '')
+      .join(' · ');
   }
 
   /**
@@ -613,6 +675,7 @@ export class Scrollback {
 
   /** Wipe all visible entries and reset transient streaming state. */
   clear(): void {
+    this.run = null;
     this.entries = [];
     this.committedCount = 0;
     this.toolsByCallId.clear();
@@ -729,6 +792,7 @@ export class Scrollback {
 
   apply(ev: AgentEvent): void {
     let dirty = false;
+    this.trackRun(ev);
     try {
       if (ev.type === 'assistant_text_delta') {
         this.applyTextDelta(this.assistantStream, ev);
@@ -779,6 +843,7 @@ export class Scrollback {
         const entry = this.toolsByCallId.get(ev.callId);
         if (entry) {
           entry.toolResult = ev.result;
+          entry.durationMs = ev.durationMs;
           if (ev.display) {
             entry.text = ev.display.summary;
             entry.displayName = ev.display.label ?? entry.displayName;
@@ -971,6 +1036,8 @@ export class Scrollback {
           }
           if (entry.kind === 'explore') entry.closed = true;
         }
+        const summary = this.finishRun();
+        if (summary) this.entries.push({ id: this.newId(), kind: 'turn', text: summary });
         dirty = true;
         if (ev.reason === 'error' && ev.error) {
           this.addError(ev.error);

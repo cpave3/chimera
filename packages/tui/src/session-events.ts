@@ -39,6 +39,8 @@ export interface SessionEventContext {
   setTasks: Dispatch<SetStateAction<{ content: string; status: string }[]>>;
   /** The provider retry the run is waiting on, shown in the activity line. */
   setRetry: Dispatch<SetStateAction<{ attempt: number; maxAttempts: number } | null>>;
+  /** Model steps finished in the run in progress. */
+  setRunSteps: Dispatch<SetStateAction<number>>;
 }
 
 /**
@@ -64,6 +66,7 @@ export function applySessionEvent(
     setCompacting,
     setTasks,
     setRetry,
+    setRunSteps,
   } = context;
   if (process.env.CHIMERA_DEBUG_SUBAGENTS) {
     const compact: Record<string, unknown> = { type: ev.type };
@@ -114,6 +117,8 @@ export function applySessionEvent(
     // The step went through (or the run gave up): the retry wait is over.
     setRetry(null);
   }
+  if (ev.type === 'step_finished') setRunSteps((steps) => steps + 1);
+  if (ev.type === 'run_finished') setRunSteps(0);
   const all = scrollback.all();
   if (process.env.CHIMERA_DEBUG_SUBAGENTS && ev.type === 'tool_call_result') {
     const childCount = all.filter(

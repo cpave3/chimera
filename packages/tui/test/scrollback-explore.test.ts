@@ -97,7 +97,10 @@ describe('grouped exploration calls', () => {
       { type: 'run_finished', reason: 'stop' },
     ]);
 
-    expect(scrollback.splitSnapshot().committedCount).toBe(1);
+    // The group and the run's closing summary line are both committed.
+    const { entries, committedCount } = scrollback.splitSnapshot();
+    expect(kinds(entries)).toEqual(['explore', 'turn']);
+    expect(committedCount).toBe(2);
   });
 
   it('keeps a skill read visible as its own line', () => {

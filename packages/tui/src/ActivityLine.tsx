@@ -2,13 +2,15 @@ import { Text } from 'ink';
 import React from 'react';
 import { formatElapsed } from './activity';
 import { useTheme } from './theme/ThemeProvider';
-import { formatTokens } from './UsageWidget';
+import { formatTokens } from './usage-format';
 
 export interface ActivityLineProps {
   spinner: string;
   /** What the run is doing, from `describeActivity`. */
   label: string;
   elapsedMs: number;
+  /** The model step in progress, counted from 1; 0 leaves it out. */
+  step: number;
   /** Output tokens produced since the run started. */
   tokens: number;
   /** False while only a compaction is in flight: there is no run to interrupt. */
@@ -21,6 +23,7 @@ export function ActivityLine({
   spinner,
   label,
   elapsedMs,
+  step,
   tokens,
   canInterrupt,
   width,
@@ -28,6 +31,7 @@ export function ActivityLine({
   const theme = useTheme();
   const facts = [
     formatElapsed(elapsedMs),
+    ...(step > 0 ? [`step ${step}`] : []),
     ...(tokens > 0 ? [`${formatTokens(tokens)} tokens`] : []),
     ...(canInterrupt ? ['esc to interrupt'] : []),
   ];
