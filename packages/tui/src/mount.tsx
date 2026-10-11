@@ -11,10 +11,18 @@ import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { render } from 'ink';
 import { App, type OverlayHandlers } from './App';
+import type { Peer } from './ContextPanel';
+import { MOUSE_DISABLE, MOUSE_ENABLE, MouseBus } from './input/mouse';
 import { PasteRegistry } from './input/paste';
 import { createFilteredStdin } from './input/stdin-filter';
 import type { Formatter } from './scrollback';
-import { deepMerge, getDefaultThemePath, loadUserTheme, pickBaseTheme } from './theme/loader';
+import {
+  deepMerge,
+  getDefaultThemePath,
+  loadUserTheme,
+  pickBaseTheme,
+  type TuiLayout,
+} from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
 
 export interface MountOptions {
@@ -64,18 +72,48 @@ export interface MountOptions {
     password: Uint8Array;
     signal?: AbortSignal;
   }) => Promise<HostAuthenticationResult>;
+  /**
+   * `fullscreen` (the default) owns the alternate screen; `inline` prints
+   * into the terminal's own scrollback. A terminal that cannot show a
+   * fullscreen program gets `inline` whatever is asked for.
+   */
+  layout?: TuiLayout;
+  /** False leaves the mouse to the terminal; the wheel then does not scroll the transcript. */
+  mouse?: boolean;
+  /** The other live Chimera instances, for the fullscreen context panel. */
+  listPeers?: () => Promise<Peer[]>;
 }
 
 export interface TuiHandle {
   waitUntilExit(): Promise<void>;
   unmount(): void;
+  /** The layout in use, after the terminal had its say. */
+  layout: TuiLayout;
+  /** The session on screen now: `/new`, `/fork` and `/sessions` change it. */
+  activeSessionId(): SessionId;
 }
+
+/** The layout to use: fullscreen needs a terminal that can show one. */
+export function resolveLayout(
+  requested: TuiLayout | undefined,
+  terminal: { isTTY: boolean; term: string | undefined },
+): TuiLayout {
+  if (!terminal.isTTY || terminal.term === 'dumb') return 'inline';
+  return requested ?? 'fullscreen';
+}
+
+// Autowrap off while the TUI owns the screen, as Ink sets it on entry.
+const ENTER_ALTERNATE_SCREEN = '\x1b[?1049h\x1b[?7l';
+const LEAVE_ALTERNATE_SCREEN = '\x1b[?7h\x1b[?1049l';
 
 /**
  * Install handlers to exit raw mode on SIGTSTP and restore on SIGCONT.
  * Returns a cleanup function to remove the handlers.
  */
-function installSuspendHandlers(stdin: NodeJS.ReadStream): () => void {
+function installSuspendHandlers(
+  stdin: NodeJS.ReadStream,
+  screen: { leave(): void; enter(): void; repaint(): void },
+): () => void {
   let sigtstpHandler: (() => void) | undefined;
   let sigcontHandler: (() => void) | undefined;
 
@@ -86,6 +124,7 @@ function installSuspendHandlers(stdin: NodeJS.ReadStream): () => void {
       } catch {
         // Ignore errors if terminal is already closed/disconnected
       }
+      screen.leave();
       process.kill(process.pid, 'SIGTSTP');
     };
     process.once('SIGTSTP', sigtstpHandler);
@@ -100,6 +139,8 @@ function installSuspendHandlers(stdin: NodeJS.ReadStream): () => void {
       // Ignore errors if terminal is closed/disconnected
     }
     install();
+    screen.enter();
+    screen.repaint();
     // Emit a resize event to force Ink to redraw. Without this, the TUI
     // stays blank until the next keystroke because React does not know the
     // terminal state may have changed while we were suspended.
@@ -120,12 +161,32 @@ function installSuspendHandlers(stdin: NodeJS.ReadStream): () => void {
 }
 
 /**
- * Inline render: no alt-screen, no mouse tracking. Committed scrollback
- * entries are written to stdout via <Static>, so the terminal's native
- * scrollback + click-drag selection + wheel scroll all work normally.
+ * Mount the TUI on the terminal. The fullscreen layout takes the alternate
+ * screen and the mouse wheel; the inline layout takes neither, so the
+ * terminal's native scrollback, selection and wheel all work as usual.
  */
 export function mountTui(opts: MountOptions): TuiHandle {
-  const cleanupSuspendHandlers = installSuspendHandlers(process.stdin);
+  const { stdout } = process;
+  const layout = resolveLayout(opts.layout, {
+    isTTY: stdout.isTTY === true,
+    term: process.env.TERM,
+  });
+  const fullscreen = layout === 'fullscreen';
+  const captureMouse = fullscreen && opts.mouse !== false;
+  let instance: ReturnType<typeof render> | undefined;
+  const screen = {
+    leave() {
+      if (fullscreen) stdout.write(`${captureMouse ? MOUSE_DISABLE : ''}${LEAVE_ALTERNATE_SCREEN}`);
+    },
+    enter() {
+      if (fullscreen) stdout.write(`${ENTER_ALTERNATE_SCREEN}${captureMouse ? MOUSE_ENABLE : ''}`);
+    },
+    // What Ink remembers of the screen is stale once another program drew on it.
+    repaint() {
+      if (fullscreen) instance?.clear();
+    },
+  };
+  const cleanupSuspendHandlers = installSuspendHandlers(process.stdin, screen);
 
   // Disable terminal keyboard-protocol extensions that emit byte
   // sequences Ink's keypress parser doesn't understand. Without these,
@@ -138,10 +199,10 @@ export function mountTui(opts: MountOptions): TuiHandle {
   //   - `\x1b[<u`     — kitty keyboard protocol pop-all (disable)
   // After this, Shift+Enter falls back to plain Enter — the portable
   // `\<Enter>` form remains the documented newline trigger.
-  if (process.stdout.isTTY) {
-    process.stdout.write('\x1b[>4;0m\x1b[>4m\x1b[<u');
+  if (stdout.isTTY) {
+    stdout.write('\x1b[>4;0m\x1b[>4m\x1b[<u');
   }
-  const base = pickBaseTheme();
+  const base = pickBaseTheme(process.env, layout);
   const result = loadUserTheme(getDefaultThemePath());
   if (result.kind === 'error') {
     process.stderr.write(`theme: ${result.message}\n`);
@@ -151,10 +212,23 @@ export function mountTui(opts: MountOptions): TuiHandle {
   const activeName = result.kind === 'ok' ? result.activeName : undefined;
 
   const pasteRegistry = new PasteRegistry();
-  if (process.stdout.isTTY) process.stdout.write('\x1b[?2004h');
+  const mouse = new MouseBus();
+  if (stdout.isTTY) stdout.write('\x1b[?2004h');
+  let activeSessionId = opts.sessionId;
 
-  const instance = render(
-    <ThemeProvider theme={theme} isUserTheme={isUserTheme} activeName={activeName}>
+  let restored = false;
+  const restoreTerminal = () => {
+    if (restored) return;
+    restored = true;
+    cleanupSuspendHandlers();
+    if (!stdout.isTTY) return;
+    stdout.write(`${captureMouse ? MOUSE_DISABLE : ''}\x1b[?2004l`);
+  };
+  // A crash must not leave the user's shell with wheel reports turned on.
+  process.once('exit', restoreTerminal);
+
+  instance = render(
+    <ThemeProvider theme={theme} isUserTheme={isUserTheme} activeName={activeName} layout={layout}>
       <App
         client={opts.client}
         sessionId={opts.sessionId}
@@ -174,20 +248,37 @@ export function mountTui(opts: MountOptions): TuiHandle {
         checkSudo={opts.checkSudo}
         authenticateSudo={opts.authenticateSudo}
         pasteRegistry={pasteRegistry}
+        layout={layout}
+        mouse={mouse}
+        screen={screen}
+        listPeers={opts.listPeers}
+        onActiveSessionChange={(sessionId) => {
+          activeSessionId = sessionId;
+        }}
       />
     </ThemeProvider>,
     {
       exitOnCtrlC: false,
-      stdin: createFilteredStdin(process.stdin, pasteRegistry),
+      stdin: createFilteredStdin(process.stdin, pasteRegistry, (event) => mouse.emit(event)),
+      ...(fullscreen ? { alternateBuffer: true, incrementalRendering: true } : {}),
     },
   );
+  if (captureMouse) stdout.write(MOUSE_ENABLE);
+  const mounted = instance;
 
   return {
-    waitUntilExit: () => instance.waitUntilExit(),
+    layout,
+    activeSessionId: () => activeSessionId,
+    waitUntilExit: async () => {
+      try {
+        await mounted.waitUntilExit();
+      } finally {
+        restoreTerminal();
+      }
+    },
     unmount: () => {
-      cleanupSuspendHandlers();
-      if (process.stdout.isTTY) process.stdout.write('\x1b[?2004l');
-      instance.unmount();
+      mounted.unmount();
+      restoreTerminal();
     },
   };
 }

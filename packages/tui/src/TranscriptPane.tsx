@@ -174,14 +174,14 @@ export function TranscriptPane({
       scrollbarThumbColor={theme.text.dim ?? theme.text.muted}
     >
       {firstMounted > 0 && (
-        <Box flexShrink={0} backgroundColor={theme.base.background}>
+        <Box flexShrink={0} width={width} backgroundColor={theme.base.background}>
           <Text color={theme.text.dim ?? theme.text.muted}>
             {`… ${firstMounted} earlier ${firstMounted === 1 ? 'entry' : 'entries'} · scroll up for more`}
           </Text>
         </Box>
       )}
       {empty && (
-        <Box flexShrink={0}>
+        <Box flexShrink={0} width={width} backgroundColor={theme.base.background}>
           <Text color={theme.text.dim ?? theme.text.muted}>
             Describe a task to start. Press ? for the keys.
           </Text>

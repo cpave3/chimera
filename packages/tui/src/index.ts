@@ -9,3 +9,4 @@ export * from './StatusBar';
 export * from './scrollback';
 export * from './slash-commands';
 export * from './theme';
+export type { Peer } from './ContextPanel';
