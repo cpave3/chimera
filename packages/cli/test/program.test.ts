@@ -144,6 +144,24 @@ describe('chimera hooks list smoke', () => {
   });
 });
 
+describe('chimera --inline', () => {
+  it.each([
+    ['the default command', []],
+    ['resume', ['resume']],
+    ['continue', ['continue']],
+    ['attach', ['attach']],
+  ])('is advertised on %s', (_label, command) => {
+    const r = spawnSync('node', [BIN, ...command, '--help'], { encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/--inline\s+Print into the terminal's scrollback/);
+  });
+
+  it('is not offered where there is no TUI', () => {
+    const r = spawnSync('node', [BIN, 'run', '--help'], { encoding: 'utf8' });
+    expect(r.stdout).not.toMatch(/--inline/);
+  });
+});
+
 describe('chimera --mcp-config', () => {
   it.each([
     ['the default command', []],

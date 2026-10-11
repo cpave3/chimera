@@ -179,6 +179,20 @@ export interface ChimeraConfig {
     /** Entries older than this are garbage-collected. Default 30. */
     ttlDays?: number;
   };
+  /** How the interactive TUI uses the terminal. */
+  tui?: {
+    /**
+     * `fullscreen` (the default) takes the alternate screen and shows the
+     * context panel. `inline` prints into the terminal's own scrollback, which
+     * suits a slow link. `--inline` selects it for one invocation.
+     */
+    layout?: 'fullscreen' | 'inline';
+    /**
+     * Default true: the fullscreen layout takes the mouse wheel to scroll the
+     * transcript, and the terminal's own selection then needs Shift+drag.
+     */
+    mouse?: boolean;
+  };
 }
 
 export function configPath(home = homedir()): string {
@@ -190,6 +204,13 @@ const hostBashPolicySchema = z
     enabled: z.boolean().optional(),
     mode: z.enum(['balanced', 'strict']).optional(),
     autoAllowThrough: z.enum(['none', 'safe', 'caution', 'danger']).optional(),
+  })
+  .strict();
+
+const tuiSchema = z
+  .object({
+    layout: z.enum(['fullscreen', 'inline']).optional(),
+    mouse: z.boolean().optional(),
   })
   .strict();
 
@@ -315,6 +336,12 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   const result = hostBashPolicySchema.safeParse(config.commandPolicy?.hostBash ?? {});
   if (!result.success) {
     throw new Error(`Invalid commandPolicy.hostBash in ${path}: ${result.error.message}`);
+  }
+  const tui = tuiSchema.safeParse(config.tui ?? {});
+  if (!tui.success) {
+    throw new Error(
+      `Invalid ${path}: ${tui.error.issues.map((issue) => `tui.${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+    );
   }
   return config;
 }

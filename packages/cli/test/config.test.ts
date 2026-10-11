@@ -257,3 +257,22 @@ describe('resolveMcpServers (--mcp-config)', () => {
     expect(() => resolveMcpServers(global, value)).toThrow(message);
   });
 });
+
+describe('tui settings', () => {
+  async function homeWith(config: unknown): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-tui-config-'));
+    await mkdir(join(home, '.chimera'), { recursive: true });
+    await writeFile(join(home, '.chimera', 'config.json'), JSON.stringify(config));
+    return home;
+  }
+
+  it('reads the layout and the mouse setting', async () => {
+    const home = await homeWith({ tui: { layout: 'inline', mouse: false } });
+    expect(loadConfig(home).tui).toEqual({ layout: 'inline', mouse: false });
+  });
+
+  it('rejects a layout that does not exist, naming the key', async () => {
+    const home = await homeWith({ tui: { layout: 'wide' } });
+    expect(() => loadConfig(home)).toThrow(/config\.json.*tui\.layout/);
+  });
+});

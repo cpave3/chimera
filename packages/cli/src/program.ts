@@ -39,6 +39,11 @@ function applySubagentOptions(cmd: Command): Command {
     .option('--no-subagents', 'Disable the spawn_agent tool');
 }
 
+const INLINE_FLAG = [
+  '--inline',
+  "Print into the terminal's scrollback instead of taking the full screen (for slow links)",
+] as const;
+
 function applyModeOptions(cmd: Command): Command {
   return cmd
     .option('--mode <name>', 'Initial mode for the session (default: build)')
@@ -474,6 +479,7 @@ export function buildProgram(): Command {
                 .description(
                   'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
                 )
+                .option(...INLINE_FLAG)
                 .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
                 .option('--cwd <path>', 'Working directory', process.cwd())
                 .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
@@ -526,6 +532,7 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      inline: opts.inline,
     });
   });
 
@@ -539,6 +546,7 @@ export function buildProgram(): Command {
                 .command('continue')
                 .alias('c')
                 .description('Resume the most-recently-active session in the current directory.')
+                .option(...INLINE_FLAG)
                 .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
                 .option('--cwd <path>', 'Working directory', process.cwd())
                 .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
@@ -579,6 +587,7 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      inline: opts.inline,
     });
   });
 
@@ -594,8 +603,9 @@ export function buildProgram(): Command {
   program
     .command('attach <target>')
     .description('Attach to a running instance by id or URL.')
-    .action(async (target: string) => {
-      await runAttach({ target });
+    .option(...INLINE_FLAG)
+    .action(async (target: string, opts: { inline?: boolean }) => {
+      await runAttach({ target, inline: opts.inline });
     });
 
   // Default (no subcommand): interactive TUI session.
@@ -621,6 +631,7 @@ export function buildProgram(): Command {
                   ).choices(['resume', 'new', 'error']),
                 )
                 .option('--prompt <text>', 'Send an initial message on session start')
+                .option(...INLINE_FLAG)
                 .option(
                   '--resume [id]',
                   'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
@@ -712,6 +723,7 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      inline: opts.inline,
     });
   });
 

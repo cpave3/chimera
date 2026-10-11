@@ -25,6 +25,7 @@ import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
+import { listPeers } from '../peers';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
@@ -67,6 +68,13 @@ export interface InteractiveOptions {
    * `@<path>`. Merged over the global config by `resolveMcpServers`.
    */
   mcpConfig?: string;
+  /** From `--inline`: print into the terminal's scrollback for this invocation. */
+  inline?: boolean;
+}
+
+/** What a fullscreen session leaves on the terminal when it ends. */
+export function formatExitSummary(sessionId: string): string {
+  return `chimera session ${sessionId}\nresume with: chimera --session ${sessionId}\n`;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -254,6 +262,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const extensions = skills ? [() => skills.buildIndex() || null] : undefined;
 
   const handle = mountTui({
+    layout: opts.inline ? 'inline' : config.tui?.layout,
+    mouse: config.tui?.mouse,
+    listPeers: () => listPeers({ home: opts.home }),
     client,
     sessionId,
     modelRef: ref,
@@ -301,6 +312,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
   try {
     await handle.waitUntilExit();
+    // The alternate screen takes the session with it; say how to get back.
+    if (handle.layout === 'fullscreen') {
+      process.stdout.write(formatExitSummary(handle.activeSessionId()));
+    }
   } finally {
     removeLockfile(process.pid, opts.home);
     (commands as Partial<ReloadingCommandRegistry>).close?.();

@@ -4,11 +4,14 @@ import { composeSystemPrompt } from '@chimera/core';
 import { InMemoryModeRegistry } from '@chimera/modes';
 import { InMemorySkillRegistry } from '@chimera/skills';
 import { mountTui } from '@chimera/tui';
+import { loadConfig } from '../config';
 import { listLiveInstances } from '../lockfile';
 
 export interface AttachOptions {
   target: string;
   home?: string;
+  /** From `--inline`: print into the terminal's scrollback for this invocation. */
+  inline?: boolean;
 }
 
 export interface AttachTarget {
@@ -71,7 +74,10 @@ export async function runAttach(opts: AttachOptions): Promise<void> {
   // Get the current mode from the server.
   const currentMode = await client.getMode(sessionId);
 
+  const tui = loadConfig(opts.home).tui;
   const handle = mountTui({
+    layout: opts.inline ? 'inline' : tui?.layout,
+    mouse: tui?.mouse,
     client,
     sessionId,
     modelRef: session.userModelOverride ?? `${session.model.providerId}/${session.model.modelId}`,
