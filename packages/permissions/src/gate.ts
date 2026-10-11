@@ -1,6 +1,8 @@
 import type {
+  CommandPolicyAnalysis,
   CommandPolicyContext,
   CommandPolicyEvaluator,
+  CommandPolicyFinding,
   McpPermissionCall,
   McpPermissionGate,
   PermissionDecisionSource,
@@ -53,6 +55,49 @@ export interface GateOptions {
     resolution: PermissionResolution;
     source: PermissionDecisionSource;
   }) => void;
+}
+
+/**
+ * Adjust what the policy found to where the command will run.
+ *
+ * In the OS sandbox the kernel refuses a write outside the allowed
+ * directories and reads are allowed by design, so a path finding is no
+ * reason to ask the user. A request to leave the sandbox is the opposite: it
+ * is always the user's decision, so it gains a finding of its own.
+ */
+function forExecutionScope(
+  analysis: CommandPolicyAnalysis,
+  request: PermissionRequest,
+): CommandPolicyAnalysis {
+  if (request.osSandbox) {
+    const enforcedByKernel = (finding: CommandPolicyFinding) => finding.kind === 'path';
+    const findings = analysis.findings.filter((finding) => !enforcedByKernel(finding));
+    return {
+      ...analysis,
+      outcome: findings.length === 0 ? 'pass' : 'approval_required',
+      findings,
+      stages: analysis.stages.map((stage) => ({
+        ...stage,
+        findings: stage.findings.filter((finding) => !enforcedByKernel(finding)),
+      })),
+      grantProposal: undefined,
+    };
+  }
+  if (request.unsandboxed) {
+    const finding: CommandPolicyFinding = {
+      kind: 'elevation',
+      stageId: 'os_sandbox',
+      ruleId: 'unsandboxed',
+      message: `Runs outside the OS sandbox: ${request.reason ?? 'no reason given'}`,
+    };
+    return {
+      ...analysis,
+      outcome: 'approval_required',
+      findings: [...analysis.findings, finding],
+      stages: [...analysis.stages, { id: 'os_sandbox', status: 'findings', findings: [finding] }],
+    };
+  }
+  return analysis;
 }
 
 export class DefaultPermissionGate implements McpPermissionGate {
@@ -133,9 +178,14 @@ export class DefaultPermissionGate implements McpPermissionGate {
   async request(req: PermissionRequest): Promise<PermissionResolution> {
     if (req.mcp) throw new Error('Use requestMcp for MCP permissions');
     let evaluatedRequest = req;
-    if (req.tool === 'bash' && this.commandPolicy) {
-      const policyAnalysis = await this.commandPolicy.evaluator.evaluate(
-        this.commandPolicy.context(req),
+    // A request to leave the OS sandbox is decided by the user also when the
+    // command policy is turned off.
+    if (req.tool === 'bash' && (this.commandPolicy || req.unsandboxed)) {
+      const policyAnalysis = forExecutionScope(
+        this.commandPolicy
+          ? await this.commandPolicy.evaluator.evaluate(this.commandPolicy.context(req))
+          : { version: 1, outcome: 'pass', stages: [], findings: [] },
+        req,
       );
       evaluatedRequest = { ...req, policyAnalysis };
       if (policyAnalysis.findings.some((finding) => finding.kind === 'blocked')) {
