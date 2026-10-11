@@ -52,20 +52,31 @@ purpose, state, result, and the means to stop it. The child is not tied to
 the abort signal of the parent's run: interrupting the parent's run does not
 stop it. `agent_stop` and the end of the session do.
 
-When the child ends, the manager hands a message to the parent through
-`Agent.deliver`: during a run it is queued for the next step boundary (the
-existing injection path); when the parent is idle it starts a run with that
-message. The message names the child, its purpose and its end state, and
-holds its final answer.
+When the child ends, the manager hands a message to the parent. The server's
+`AgentRegistry` owns runs, so the delivery lives there (`deliver`): during a
+run the message is queued for the next step boundary (the existing injection
+path); when the session is idle it starts a run with that message; while a
+compaction or a rewind holds the session it waits. The registry gives the
+factory this function through an optional `setMessageDelivery` hook. The
+message has a fixed first line (`[background agent <id> ended: <state>]
+<purpose>`), says that it is not from the user, and holds the final answer.
 
-In-process children cannot run in the background: they share the parent's
-event loop and their permission prompts are denied. The call returns an error.
+A background child runs headless. Its events are dropped while the parent is
+idle, so an approval request from it would wait for a prompt that never
+opens; a command that needs approval is denied instead.
+
+`chimera run` ends with its run and cannot wait for a child. There the
+manager is absent, a `background: true` call runs in the foreground, and the
+result carries a note that says so.
 
 ### D5. Transcript
 
 `subagent_spawned` carries `background: true`. The TUI then shows no nested
-rows for that child (its parent tool line is already finished) and adds one
-line when the child ends.
+rows for that child: its spawn line is finished the moment the call returns,
+and rows under a finished line would break the commit order. The line for
+the end of the child comes from the delivered message, which the TUI reads
+back by its first line and shows as one event line instead of a user message.
+That path also works when the child's own events were dropped.
 
 ## Risks / Trade-offs
 

@@ -107,6 +107,34 @@ invariant is "in-process is observation-only." If you need interactive
 permission flow, drop `in_process: true` and use the default child-process
 spawn.
 
+## Background agents
+
+`spawn_agent` with `background: true` returns as soon as the child has
+started: `{ subagent_id, status: "running" }`. The parent goes on with its
+work.
+
+- **The answer comes as a message.** When the child ends, Chimera gives its
+  final answer to the parent. During a run it joins the run at the next step
+  boundary, the same way a message you type during a run does. When the
+  session is idle it starts a run. The message starts with
+  `[background agent <id> ended: <state>] <purpose>` and says that it is not
+  from the user.
+- **Not part of the run that started it.** `Esc` in the parent interrupts the
+  parent's run only. A background child stops when it is done, when the model
+  calls `agent_stop`, or when the session ends.
+- **No approvals.** A background child runs headless, like a child of a
+  parent with no TTY: a host command that needs approval is denied. Give a
+  background child read-only work, or grant what it needs with rules first.
+- **Looking after them.** `agent_status` lists the background children of the
+  session with their state (`running`, `done`, `failed`, `stopped`) and
+  running time; with an id it also returns that child's final answer.
+- **One-shot runs.** `chimera run` ends with its run and cannot wait for a
+  child, so there the call runs in the foreground and the result has a note
+  that says so.
+
+The built-in `explore` agent is the usual thing to run in the background: it
+only reads, and it runs on the `utilityModel` when one is configured.
+
 ## Debugging a running subagent
 
 The most common reason to debug a subagent is "what is it actually doing?".

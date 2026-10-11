@@ -480,6 +480,46 @@ chimera --max-subagent-depth 5
 chimera --no-subagents
 ```
 
+### The `explore` agent
+
+Chimera ships one agent definition, `explore`: a read-only search helper with
+`read`, `glob`, `grep`, `fetch` and `web_search`. The model is told to give it
+a wide search (many files, or a place it does not know yet) and to work from
+the findings, which carry `path:line` references. The file contents then stay
+out of the main context. To change it, put your own `explore.md` in
+`~/.chimera/agents/` or `<cwd>/.chimera/agents/`; yours replaces the built-in
+one.
+
+### A cheaper model for helper work
+
+```json
+{ "utilityModel": "anthropic/claude-haiku-4-5" }
+```
+
+`utilityModel` names one low-cost model for helper work. An agent definition
+selects it with `model: utility` in its frontmatter, as `explore` does.
+Compaction summaries use it too, unless `compaction.model` is set. Without
+the key, helper work runs on the session model. A reference that cannot be
+resolved gives one warning and is ignored.
+
+### Background agents
+
+`spawn_agent` normally waits for the child. With `background: true` the call
+returns at once with the child's id, and the model goes on working. When the
+child ends, Chimera puts its answer into the conversation: at the next step
+of a run in progress, or as the start of a new run when the session is idle.
+The transcript shows `background agent done: <purpose>` at that point.
+
+- `agent_status` lists the session's background agents (id, purpose, state,
+  running time) and, for one id, its final answer. `agent_stop` stops one.
+- A background agent goes on when the run that started it ends or is
+  interrupted. It stops when it is done, when the model stops it, or when the
+  session ends.
+- A background agent cannot ask you for approval. A command that needs
+  approval is denied, and the agent is told so.
+- `chimera run` ends with its run, so there a `background: true` call runs in
+  the foreground and the result says so.
+
 ## The TUI screen
 
 The TUI has two layouts. **Fullscreen** is the default: it takes the

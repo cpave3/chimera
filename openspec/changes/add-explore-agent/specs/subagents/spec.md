@@ -23,7 +23,7 @@ An agent definition with `model: utility` SHALL run on the model named by the `u
 - **THEN** the child runs on `manticore/gpt`
 
 ### Requirement: Background children
-`spawn_agent` SHALL accept `background: true`. The call SHALL return as soon as the child has started, with the child's id and the state `running`. The child SHALL continue when the parent's run ends or is interrupted. When the child ends, Chimera SHALL add a message to the parent conversation that names the child, its purpose and its end state and holds its final answer; when the parent has no run in progress, that message SHALL start one. An in-process child SHALL NOT run in the background.
+`spawn_agent` SHALL accept `background: true`. The call SHALL return as soon as the child has started, with the child's id and the state `running`. The child SHALL continue when the parent's run ends or is interrupted. When the child ends, Chimera SHALL add a message to the parent conversation that names the child, its purpose and its end state and holds its final answer; when the parent has no run in progress, that message SHALL start one. A background child SHALL NOT ask the user for approval: a command that needs approval SHALL be denied. In a one-shot run (`chimera run`), a `background: true` call SHALL run in the foreground and its result SHALL say so.
 
 #### Scenario: Call returns at once
 - **WHEN** the model calls `spawn_agent` with `background: true`
@@ -37,9 +37,13 @@ An agent definition with `model: utility` SHALL run on the model named by the `u
 - **WHEN** a background child ends while the parent has no run in progress
 - **THEN** a run starts with the child's answer as its message
 
-#### Scenario: In-process
-- **WHEN** the model calls `spawn_agent` with `background: true` and `in_process: true`
-- **THEN** the tool returns an error and starts no child
+#### Scenario: Parent run interrupted
+- **WHEN** the user interrupts the run that started a background child
+- **THEN** the child is still running
+
+#### Scenario: One-shot run
+- **WHEN** the model calls `spawn_agent` with `background: true` in `chimera run`
+- **THEN** the call waits for the child, and the result has the child's answer and a note that it ran in the foreground
 
 ### Requirement: Background child tools
 While a session can start background children, it SHALL register `agent_status` and `agent_stop`. `agent_status` SHALL list the session's background children with id, purpose, state and running time, and SHALL include the final answer of a finished child when asked for one id. `agent_stop` SHALL stop one running child. When the session ends, Chimera SHALL stop every background child that is still running.
