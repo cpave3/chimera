@@ -419,6 +419,14 @@ export function buildApp(opts: AppOptions): Hono {
     }
   });
 
+  // What a session is doing, small enough for another instance to poll.
+  app.get('/v1/sessions/:id/status', (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    const { status, mode, cwd, name } = entry.agent.session;
+    return c.json({ status, mode, cwd, ...(name ? { name } : {}) });
+  });
+
   app.get('/v1/sessions/:id/context', (c) => {
     const entry = registry.get(c.req.param('id'));
     if (!entry) return c.json({ error: 'not found' }, 404);

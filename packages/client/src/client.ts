@@ -16,6 +16,7 @@ import type {
   Session,
   SessionId,
   SessionInfo,
+  SessionStatus,
 } from '@chimera/core';
 import type { Mode } from '@chimera/modes';
 import type { Skill } from '@chimera/skills';
@@ -46,6 +47,14 @@ export interface InstanceInfo {
   version: string;
   sandboxMode: SandboxMode;
   parentId?: string;
+}
+
+/** What a session is doing, as `GET /v1/sessions/:id/status` answers it. */
+export interface SessionStatusInfo {
+  status: SessionStatus;
+  mode: string;
+  cwd: string;
+  name?: string;
 }
 
 export interface SubagentInfo {
@@ -160,6 +169,11 @@ export class ChimeraClient {
 
   async listCheckpoints(sessionId: SessionId): Promise<Checkpoint[]> {
     return this.json<Checkpoint[]>(`/v1/sessions/${sessionId}/checkpoints`);
+  }
+
+  /** What the session is doing, without its messages. */
+  async getSessionStatus(sessionId: SessionId): Promise<SessionStatusInfo> {
+    return this.json<SessionStatusInfo>(`/v1/sessions/${sessionId}/status`);
   }
 
   async getContextBreakdown(sessionId: SessionId): Promise<ContextBreakdown> {

@@ -658,6 +658,33 @@ describe('server app', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('GET /v1/sessions/:id/status answers what the session is doing, without its messages', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const { sessionId } = await (
+      await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off', name: 'api work' }),
+      })
+    ).json();
+
+    const statusResponse = await app.request(`/v1/sessions/${sessionId}/status`);
+    expect(statusResponse.status).toBe(200);
+    expect(await statusResponse.json()).toEqual({
+      status: 'idle',
+      mode: 'build',
+      cwd: '/tmp',
+      name: 'api work',
+    });
+
+    const missing = await app.request('/v1/sessions/01KSHWCXG17ZRTQY9G13J3AETZ/status');
+    expect(missing.status).toBe(404);
+  });
+
   it('GET /v1/sessions/:id reads compactionCount and lastCompactedAt from disk', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),
