@@ -61,9 +61,14 @@ import {
 } from '@chimera/providers';
 import { RecallStore } from '@chimera/recall';
 import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
-import type { AgentFactory, BuildResult, SessionInit } from '@chimera/server';
+import type { AgentFactory, BuildResult, MessageDelivery, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
-import { type AgentRegistry, buildSpawnAgentTool } from '@chimera/subagents';
+import {
+  type AgentRegistry,
+  BackgroundAgents,
+  buildBackgroundAgentTools,
+  buildSpawnAgentTool,
+} from '@chimera/subagents';
 import {
   BackgroundProcessManager,
   buildDiagnosticsRunner,
@@ -159,6 +164,12 @@ export interface CliAgentFactoryOptions {
     defaultModelRef?: string;
     /** Whether the parent process has a TTY. Defaults to `process.stdin.isTTY`. */
     parentHasTty?: boolean;
+    /**
+     * When false, `spawn_agent` runs a `background: true` call in the
+     * foreground and the two background tools are not registered. Set by
+     * `chimera run`, which ends with its run. Default true.
+     */
+    background?: boolean;
   };
   /** Compaction config and optional concrete compactor wired into every Agent built by this factory. */
   compaction?: CompactionConfig;
@@ -223,6 +234,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly mcpHeadlessAutoDeny: boolean;
   private readonly liveMcpClients = new Map<SessionId, McpClientManager>();
   private readonly liveBackgroundManagers = new Map<SessionId, BackgroundProcessManager>();
+  private readonly liveBackgroundAgents = new Map<SessionId, BackgroundAgents>();
+  private deliverMessage: MessageDelivery | undefined;
   private readonly compaction: CompactionConfig | undefined;
   private readonly diagnosticsConfig: DiagnosticsConfig | undefined;
   private readonly webSearchProvider: WebSearchProvider | undefined;
@@ -675,6 +688,28 @@ export class CliAgentFactory implements AgentFactory {
         defaultModelRef,
         ...Object.keys(this.modelsConfig).filter((ref) => ref !== defaultModelRef),
       ];
+      // A one-shot run ends with its run and cannot wait for a child.
+      const background =
+        this.subagents.background === false
+          ? undefined
+          : new BackgroundAgents({
+              deliver: (message) => this.deliverMessage?.(agent.session.id, message),
+            });
+      if (background) {
+        this.liveBackgroundAgents.set(agent.session.id, background);
+        const backgroundTools = buildBackgroundAgentTools(background);
+        extraTools.agent_status = backgroundTools.agent_status.tool;
+        extraTools.agent_stop = backgroundTools.agent_stop.tool;
+        if (backgroundTools.agent_status.formatScrollback) {
+          extraFormatters.agent_status = backgroundTools.agent_status.formatScrollback;
+        }
+        if (backgroundTools.agent_stop.formatScrollback) {
+          extraFormatters.agent_stop = backgroundTools.agent_stop.formatScrollback;
+        }
+        extraSnippets.agent_status =
+          'List the agents you started in the background and their state.';
+        extraSnippets.agent_stop = 'Stop an agent you started in the background.';
+      }
       const spawn = buildSpawnAgentTool({
         emit: (ev) => agent.pushEvent(ev),
         resolveCallId: (id) => agent.resolveCallId(id),
@@ -700,6 +735,7 @@ export class CliAgentFactory implements AgentFactory {
         chimeraBinArgs: invocation.preArgs,
         parentHasTty: this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
         agents: this.agents,
+        background,
         utilityModelRef: this.utilityModel,
         availableModels: advertisedModels,
         modelOptions: this.modelsConfig,
@@ -1200,17 +1236,26 @@ export class CliAgentFactory implements AgentFactory {
     return { absolute: resolved, added: !writeAlready };
   }
 
+  /** The registry hands this over so a background child's answer can reach its parent. */
+  setMessageDelivery(deliver: MessageDelivery): void {
+    this.deliverMessage = deliver;
+  }
+
   async disposeSession(sessionId: SessionId): Promise<void> {
+    const backgroundAgents = this.liveBackgroundAgents.get(sessionId);
+    this.liveBackgroundAgents.delete(sessionId);
     const manager = this.liveMcpClients.get(sessionId);
     this.liveMcpClients.delete(sessionId);
-    await manager?.close();
+    await Promise.all([backgroundAgents?.stopAll(), manager?.close()]);
   }
 
   /** Stop all running DockerExecutors and background processes. Safe to call multiple times. */
   async dispose(): Promise<void> {
-    const mcpStops = [...this.liveMcpClients.keys()].map((sessionId) =>
-      this.disposeSession(sessionId),
-    );
+    const sessionIds = new Set([
+      ...this.liveMcpClients.keys(),
+      ...this.liveBackgroundAgents.keys(),
+    ]);
+    const mcpStops = [...sessionIds].map((sessionId) => this.disposeSession(sessionId));
     for (const manager of this.liveBackgroundManagers.values()) {
       manager.killAll();
     }

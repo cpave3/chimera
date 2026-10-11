@@ -97,9 +97,11 @@ const STATUS_COLOR: Record<WorktreeFile['status'], (theme: Theme) => string> = {
 /** The shortest tail of each path that no other changed file shares. */
 function shortNames(files: WorktreeFile[]): string[] {
   return files.map((file) => {
-    const segments = file.path.split('/');
+    // Git names an untracked directory with a slash at its end.
+    const directory = file.path.endsWith('/');
+    const segments = (directory ? file.path.slice(0, -1) : file.path).split('/');
     for (let depth = 1; depth <= segments.length; depth += 1) {
-      const tail = segments.slice(-depth).join('/');
+      const tail = `${segments.slice(-depth).join('/')}${directory ? '/' : ''}`;
       const shared = files.some((other) => other !== file && other.path.endsWith(`/${tail}`));
       if (!shared) return tail;
     }

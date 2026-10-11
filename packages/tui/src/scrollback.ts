@@ -1,5 +1,5 @@
 import type { AgentEvent, CallId, Session, ToolCallRecord, ToolDisplay } from '@chimera/core';
-import { countImageParts } from '@chimera/core';
+import { countImageParts, parseBackgroundAgentMessage } from '@chimera/core';
 import { formatElapsed } from './activity';
 import { formatTokens } from './usage-format';
 
@@ -228,6 +228,8 @@ export class Scrollback {
   private latestUsage: RunUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   /** subagentId → parent (spawn_agent) entry id, for routing child rows. */
   private subagentParents = new Map<string, string>();
+  /** Children started with `background: true`; the transcript shows only their end. */
+  private backgroundSubagents = new Set<string>();
   /** subagentId → its own callId-keyed map of child tool entries. Lets us
    *  mutate a child row's text when the inner tool_call_result arrives. */
   private subagentToolsByCallId = new Map<string, Map<CallId, SubagentEntry>>();
@@ -680,6 +682,7 @@ export class Scrollback {
     this.committedCount = 0;
     this.toolsByCallId.clear();
     this.subagentParents.clear();
+    this.backgroundSubagents.clear();
     this.subagentToolsByCallId.clear();
     this.resetTextStream(this.assistantStream);
     this.resetTextStream(this.thinkingStream);
@@ -820,6 +823,15 @@ export class Scrollback {
           this.suppressUserContent = null;
           if (expected === ev.content) return;
         }
+        // A background subagent that ended reports through the user's place
+        // in the conversation; on screen it is an event, not a message.
+        const notice = parseBackgroundAgentMessage(ev.content);
+        if (notice) {
+          const text = `background agent ${notice.state}: ${notice.purpose}`;
+          if (notice.state === 'failed') this.addError(text);
+          else this.addInfo(text);
+          return;
+        }
         this.addUserMessage(ev.content, (ev as { imageCount?: number }).imageCount);
         return;
       }
@@ -873,6 +885,19 @@ export class Scrollback {
           read.skillSource = ev.source;
           dirty = true;
         }
+        return;
+      }
+      if (ev.type === 'subagent_spawned' && ev.background) {
+        // Its spawn line is finished the moment the call returns; rows under
+        // a finished line would break the commit order.
+        this.backgroundSubagents.add(ev.subagentId);
+        return;
+      }
+      if (
+        (ev.type === 'subagent_event' || ev.type === 'subagent_finished') &&
+        this.backgroundSubagents.has(ev.subagentId)
+      ) {
+        if (ev.type === 'subagent_finished') this.backgroundSubagents.delete(ev.subagentId);
         return;
       }
       if (ev.type === 'subagent_spawned') {

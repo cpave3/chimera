@@ -376,6 +376,31 @@ describe('CliAgentFactory', () => {
     expect(systemPrompt).toMatch(/spawn_agent.*agent "explore"/s);
   });
 
+  it('registers the background agent tools beside spawn_agent, unless the session cannot wait', async () => {
+    const toolNames = async (subagents: { background?: boolean }) => {
+      const factory = new CliAgentFactory({
+        providersConfig: anthropicOnly,
+        autoApprove: 'all',
+        home: cwd,
+        subagents,
+      });
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+      return Object.keys((agent as unknown as { opts: { tools: object } }).opts.tools);
+    };
+
+    expect(await toolNames({})).toEqual(
+      expect.arrayContaining(['spawn_agent', 'agent_status', 'agent_stop']),
+    );
+    const oneShot = await toolNames({ background: false });
+    expect(oneShot).toContain('spawn_agent');
+    expect(oneShot).not.toContain('agent_status');
+    expect(oneShot).not.toContain('agent_stop');
+  });
+
   it('says nothing of explore when no such agent exists', async () => {
     const factory = new CliAgentFactory({
       providersConfig: anthropicOnly,

@@ -174,6 +174,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       subagents: {
         enabled: opts.subagents !== false,
         maxDepth: opts.maxSubagentDepth,
+        // The process ends with the run, so it cannot wait for a child.
+        background: false,
       },
       models: config.models,
       defaultVisionModel: config.defaultVisionModel,

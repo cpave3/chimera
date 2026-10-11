@@ -110,6 +110,19 @@ describe('context panel', () => {
     expect(text).toContain('M cli/src/index.ts');
   });
 
+  it('names an untracked directory', async () => {
+    const text = await panel({
+      readWorktree: async () => ({
+        branch: 'main',
+        ahead: 0,
+        behind: 0,
+        files: [{ path: 'packages/new/', status: 'A' }],
+      }),
+    });
+
+    expect(text).toContain('A new/');
+  });
+
   it('leaves the working tree out when the directory is not a repository', async () => {
     const text = await panel({ readWorktree: async () => null });
     expect(text).not.toContain('WORKTREE');
