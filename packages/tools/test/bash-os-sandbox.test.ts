@@ -78,6 +78,45 @@ async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
   }
 }
 
+describe('bash tool description', () => {
+  const description = (over: Partial<ToolContext> = {}) => {
+    const executor = new LocalExecutor({ cwd });
+    return (
+      buildBashTool({
+        sandboxExecutor: executor,
+        hostExecutor: executor,
+        sandboxMode: 'off',
+        ...over,
+      }).tool as unknown as { description: string }
+    ).description;
+  };
+  const sandbox = (network: 'on' | 'off') =>
+    createOsSandbox('bwrap', {
+      cwd,
+      tmp: tmpdir(),
+      writablePaths: [],
+      readOnlyPaths: [],
+      network,
+    });
+
+  it('tells the model what the OS sandbox allows before a command fails in it', () => {
+    const active = description({ osSandbox: sandbox('on') });
+
+    expect(active).toMatch(/OS sandbox/);
+    expect(active).toMatch(/working directory/);
+    expect(active).toMatch(/unsandboxed: true/);
+    expect(active).not.toMatch(/network/);
+    expect(description({ osSandbox: sandbox('off') })).toMatch(/no network/);
+  });
+
+  it('does not speak of the OS sandbox when none is active', () => {
+    expect(description()).not.toMatch(/OS sandbox/);
+    expect(description({ osSandbox: sandbox('on'), sandboxMode: 'bind' })).not.toMatch(
+      /OS sandbox/,
+    );
+  });
+});
+
 describeBwrap('bash in the OS sandbox', () => {
   it('runs a host command in the sandbox and tells the gate so', async () => {
     const target = join(outside, 'escaped.txt');

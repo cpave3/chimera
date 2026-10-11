@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 /** What a sandboxed host command may do. Reads are allowed everywhere. */
 export interface OsSandboxSpec {
@@ -46,6 +47,45 @@ export function bwrapCommand(spec: OsSandboxSpec, command: string): string {
   if (spec.network === 'off') args.push('--unshare-net');
   args.push('--chdir', spec.cwd, '--', 'sh', '-c', command);
   return ['bwrap', ...args].map(shellQuote).join(' ');
+}
+
+/** Where a `.git` file points: the git directory of a linked worktree or a submodule. */
+function gitDirectoryOf(gitFile: string, worktree: string): string | null {
+  const pointer = readFileSync(gitFile, 'utf8')
+    .match(/^gitdir: (.+)$/m)?.[1]
+    ?.trim();
+  if (!pointer) return null;
+  const gitDirectory = isAbsolute(pointer) ? pointer : resolve(worktree, pointer);
+  try {
+    // A linked worktree keeps its objects and refs in the main working tree's git directory.
+    return resolve(gitDirectory, readFileSync(join(gitDirectory, 'commondir'), 'utf8').trim());
+  } catch {
+    return gitDirectory;
+  }
+}
+
+/**
+ * The git directory `git` must write for work in `cwd`, when it is not
+ * below `cwd` already: `cwd` is a linked worktree, a submodule, or a
+ * directory below the root of its repository. Without it a sandboxed
+ * `git commit` fails.
+ */
+export function gitWritePaths(cwd: string): string[] {
+  const start = resolve(cwd);
+  for (let directory = start; ; directory = dirname(directory)) {
+    const git = join(directory, '.git');
+    try {
+      const entry = statSync(git);
+      if (entry.isFile()) {
+        const gitDirectory = gitDirectoryOf(git, directory);
+        return gitDirectory ? [gitDirectory] : [];
+      }
+      if (entry.isDirectory()) return directory === start ? [] : [git];
+    } catch {
+      // no .git here
+    }
+    if (dirname(directory) === directory) return [];
+  }
 }
 
 function seatbeltString(path: string): string {

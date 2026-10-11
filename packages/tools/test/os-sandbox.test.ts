@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   bwrapCommand,
   detectOsSandbox,
+  gitWritePaths,
   type OsSandboxSpec,
   sandboxBlockNote,
   seatbeltProfile,
@@ -233,5 +234,54 @@ describe('sandboxBlockNote', () => {
   it('says nothing for a command that worked, or failed for its own reasons', () => {
     expect(sandboxBlockNote({ exitCode: 0, stderr: 'Read-only file system' }, spec())).toBeNull();
     expect(sandboxBlockNote(failed('error TS2345: bad type'), spec())).toBeNull();
+  });
+});
+
+describe('gitWritePaths', () => {
+  const git = (directory: string, ...args: string[]) =>
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', ...args],
+      { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+  const repository = () => {
+    git(outside, 'init', '--quiet');
+    git(outside, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+    return realpathSync(outside);
+  };
+
+  it('is empty when the working directory holds the git directory, or is in no repository', () => {
+    expect(gitWritePaths(cwd)).toEqual([]);
+    expect(gitWritePaths(repository())).toEqual([]);
+  });
+
+  it('is the git directory of the repository for a directory below its root', () => {
+    const root = repository();
+    mkdirSync(join(root, 'packages', 'app'), { recursive: true });
+
+    expect(gitWritePaths(join(root, 'packages', 'app'))).toEqual([join(root, '.git')]);
+  });
+
+  it('is the git directory of the main working tree for a linked worktree', () => {
+    const root = repository();
+    const worktree = join(cwd, 'linked');
+    git(root, 'worktree', 'add', '--quiet', worktree);
+
+    expect(gitWritePaths(worktree)).toEqual([join(root, '.git')]);
+  });
+
+  (hasBwrap ? it : it.skip)('lets a sandboxed git commit in a linked worktree', () => {
+    const root = repository();
+    const worktree = join(cwd, 'linked');
+    git(root, 'worktree', 'add', '--quiet', worktree);
+    const commit =
+      'git -c user.name=Test -c user.email=test@example.invalid commit --quiet --allow-empty -m second';
+
+    const refused = run(commit, spec({ cwd: worktree }));
+    const allowed = run(commit, spec({ cwd: worktree, writablePaths: gitWritePaths(worktree) }));
+
+    expect(refused.code).not.toBe(0);
+    expect(allowed).toMatchObject({ code: 0 });
+    expect(git(worktree, 'log', '--format=%s', '-1').trim()).toBe('second');
   });
 });

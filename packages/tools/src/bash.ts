@@ -50,12 +50,23 @@ type BashResult =
       message: string;
     };
 
+/** What the model must know of the OS sandbox before its first command, or nothing. */
+function osSandboxDescription(ctx: ToolContext): string {
+  if (!ctx.osSandbox || ctx.sandboxMode !== 'off') return '';
+  const limits =
+    ctx.osSandbox.spec.network === 'off'
+      ? 'it can read every file, can write only in the working directory and the temp directory, and has no network access'
+      : 'it can read every file and can write only in the working directory and the temp directory';
+  return ` A command runs in an OS sandbox: ${limits}. If a command must do more, set unsandboxed: true with a reason; the user is then asked to approve it.`;
+}
+
 export function buildBashTool(ctx: ToolContext) {
   return defineTool<BashArgs, BashResult>({
     description:
       'Execute a shell command and return its stdout, stderr, exit code, and whether it timed out. ' +
       'Use for builds, tests, git, inspecting the environment. ' +
-      "In sandbox mode, set target='host' (with a 'reason') to run on the host instead of the sandbox.",
+      "In sandbox mode, set target='host' (with a 'reason') to run on the host instead of the sandbox." +
+      osSandboxDescription(ctx),
     promptSnippet: 'Run a shell command: builds, tests, git, anything without a dedicated tool.',
     inputSchema: BASH_SCHEMA,
     execute: async (args, { abortSignal }) => {
