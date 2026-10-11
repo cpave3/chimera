@@ -20,23 +20,10 @@ import { BottomChrome } from './BottomChrome';
 import { runBangCommand } from './bang';
 import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
 import { Header } from './Header';
-import {
-  backspace,
-  endsWithUnescapedBackslashAtCursor,
-  insertChar,
-  insertNewline,
-  insertText,
-  type MultilineBuffer,
-  moveDown,
-  moveLeft,
-  moveLineEnd,
-  moveLineStart,
-  moveRight,
-  moveUp,
-  replaceAll,
-} from './input/buffer';
+import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
 import { PasteRegistry } from './input/paste';
+import { handleKey } from './key-handler';
 import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
 import {
@@ -497,193 +484,37 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   useInput((char, key) => {
-    if (pending) return; // handled by modal
-    if (overlayPicker) return; // handled by picker
-    if (sessionPicker) return; // handled by SessionPicker
-    if (rewindPicker) return; // handled by RewindPicker
-    if (editorOpenRef.current) return; // editor is mid-handoff
-
-    if (key.ctrl && char === 'c') {
-      if (running) {
-        interruptRun();
-        return;
-      }
-      const now = Date.now();
-      if (now - lastCtrlC < 2000) {
-        void cleanupAndExit();
-        return;
-      }
-      setLastCtrlC(now);
-      scrollback.addInfo('press Ctrl+C again to exit');
-      return;
-    }
-    if (key.escape && running && !menuOpen) {
-      interruptRun();
-      return;
-    }
-    if (key.ctrl && char === 'd') {
-      void cleanupAndExit();
-      return;
-    }
-    if (key.ctrl && char === 'z') {
-      if (process.platform === 'win32') {
-        // Windows doesn't support SIGTSTP; ignore the key.
-        return;
-      }
-      process.kill(process.pid, 'SIGTSTP');
-      return;
-    }
-
-    if (key.shift && key.tab) {
-      // When `cycleModes` isn't supplied, default to every discovered
-      // mode so user-authored files (e.g. ~/.chimera/modes/question.md)
-      // are picked up automatically — see add-modes design D9.
-      const all = props.modes?.all() ?? [];
-      const cycle = props.cycleModes ?? all.map((mode) => mode.name);
-      // Modes with cycle: false are excluded from Shift+Tab but remain
-      // selectable via /mode <name>.
-      const validCycle = cycle.filter((name) => {
-        const mode = all.find((m) => m.name === name);
-        return mode != null && mode.cycle !== false;
-      });
-      if (validCycle.length === 0) return;
-      const here = pendingModeName ?? activeModeName;
-      const idx = validCycle.indexOf(here);
-      const nextName = validCycle[(idx + 1) % validCycle.length] ?? validCycle[0]!;
-      void handleSlash(`/mode ${nextName}`);
-      return;
-    }
-
-    const latestBuffer = bufferRef.current;
-    const latestText = latestBuffer.text;
-
-    if (menuOpen) {
-      if (key.escape) {
-        setMenuDismissed(true);
-        return;
-      }
-      if (key.upArrow) {
-        setMenuHighlight((h) => Math.max(0, h - 1));
-        return;
-      }
-      if (key.downArrow) {
-        setMenuHighlight((h) => Math.min(menuItems.length - 1, h + 1));
-        return;
-      }
-      if (key.tab) {
-        const sel = menuItems[menuHighlight];
-        if (sel) setBufferText(`/${sel.name} `);
-        return;
-      }
-      if (key.return) {
-        const sel = menuItems[menuHighlight];
-        if (!sel || latestText === `/${sel.name}`) {
-          // fall through to submit below
-        } else {
-          setBufferText(`/${sel.name} `);
-          return;
-        }
-      }
-    }
-
-    if (key.ctrl && char === 'g') {
-      void runEditorHandoff();
-      return;
-    }
-    if (key.ctrl && char === 'v') {
-      void handlePasteImage();
-      return;
-    }
-
-    if (key.return) {
-      const insertNewlineKey =
-        key.shift || key.meta || endsWithUnescapedBackslashAtCursor(latestBuffer);
-      if (insertNewlineKey) {
-        setBuffer((b) => insertNewline(b));
-        stickyColRef.current = null;
-        return;
-      }
-      if (latestText.trim().length === 0) return;
-      const text = latestText;
-      setBufferText('');
-      historyRef.current.push(text);
-      historyIdxRef.current = historyRef.current.length;
-      void handleSubmit(text);
-      return;
-    }
-    if (key.upArrow) {
-      if (latestText.length === 0) {
-        if (historyRef.current.length === 0) return;
-        historyIdxRef.current = Math.max(0, historyIdxRef.current - 1);
-        setBufferText(historyRef.current[historyIdxRef.current] ?? '');
-        return;
-      }
-      const { buf, col } = moveUp(latestBuffer, stickyColRef.current);
-      stickyColRef.current = col;
-      setBuffer(buf);
-      return;
-    }
-    if (key.downArrow) {
-      if (latestText.length === 0) {
-        historyIdxRef.current = Math.min(historyRef.current.length, historyIdxRef.current + 1);
-        setBufferText(historyRef.current[historyIdxRef.current] ?? '');
-        return;
-      }
-      const { buf, col } = moveDown(latestBuffer, stickyColRef.current);
-      stickyColRef.current = col;
-      setBuffer(buf);
-      return;
-    }
-    if (key.leftArrow) {
-      stickyColRef.current = null;
-      setBuffer((b) => moveLeft(b));
-      return;
-    }
-    if (key.rightArrow) {
-      stickyColRef.current = null;
-      setBuffer((b) => moveRight(b));
-      return;
-    }
-    if (key.ctrl && char === 'a') {
-      stickyColRef.current = null;
-      setBuffer((b) => moveLineStart(b));
-      return;
-    }
-    if (key.ctrl && char === 'e') {
-      stickyColRef.current = null;
-      setBuffer((b) => moveLineEnd(b));
-      return;
-    }
-    if (key.tab && latestText.startsWith('/') && !latestText.includes('\n')) {
-      const match = BUILTIN_COMMANDS.find((c) => c.name.startsWith(latestText));
-      if (match) {
-        setBufferText(match.name);
-        return;
-      }
-      const userMatch = props.commands?.list().find((c) => `/${c.name}`.startsWith(latestText));
-      if (userMatch) {
-        setBufferText(`/${userMatch.name}`);
-        return;
-      }
-      const skillMatch = props.skills?.all().find((s) => `/${s.name}`.startsWith(latestText));
-      if (skillMatch) setBufferText(`/${skillMatch.name}`);
-      return;
-    }
-    if (key.backspace || key.delete) {
-      // Ink's keypress parser maps `\x7f` (the modern Backspace key) to
-      // `key.delete` and `\x08` (legacy / Ctrl+H) to `key.backspace`. The
-      // physical Delete key (`[3~`) also lands on `key.delete`, so we can't
-      // reliably distinguish it from Backspace — both behave as
-      // "delete the char before the cursor", matching the convention used
-      // elsewhere in the TUI (e.g. `PermissionModal`).
-      stickyColRef.current = null;
-      setBuffer((b) => backspace(b));
-      return;
-    }
-    if (char && !key.ctrl && !key.meta) {
-      stickyColRef.current = null;
-      setBuffer((b) => insertChar(b, char));
-    }
+    handleKey(char, key, {
+      props,
+      scrollback,
+      running,
+      pending,
+      activeModeName,
+      pendingModeName,
+      overlayPicker,
+      sessionPicker,
+      rewindPicker,
+      menuItems,
+      menuOpen,
+      menuHighlight,
+      setMenuHighlight,
+      setMenuDismissed,
+      lastCtrlC,
+      setLastCtrlC,
+      bufferRef,
+      setBuffer,
+      setBufferText,
+      stickyColRef,
+      historyRef,
+      historyIdxRef,
+      editorOpenRef,
+      interruptRun,
+      cleanupAndExit,
+      runEditorHandoff,
+      handleSubmit,
+      handleSlash,
+      handlePasteImage,
+    });
   });
 
   async function runEditorHandoff(): Promise<void> {

@@ -5,8 +5,8 @@
 - [x] 1.3 Move the status-bar widgets to `BottomChrome.tsx`
 - [x] 1.4 Move session event handling to `session-events.ts`
 - [x] 1.5 Move slash command dispatch to `slash-dispatch.ts`
-- [ ] 1.6 Move key handling to `key-handler.ts`
-- [ ] 1.7 Confirm the TUI tests pass with no assertion changed
+- [x] 1.6 Move key handling to `key-handler.ts`
+- [x] 1.7 Confirm the TUI tests pass with no assertion changed
 
 ## 2. Chrome
 
