@@ -58,10 +58,17 @@ export function translateModifiedKeys(chunk: string): string {
  * 3. `setRawMode`, `setEncoding`, `ref`, `unref`, `pause`, `resume` all
  *    delegate to `upstream`.
  */
+/** Where the reports the terminal sends on its own go, instead of into the key stream. */
+export interface TerminalReportHandlers {
+  onMouse?: (event: MouseEvent) => void;
+  /** True when the terminal gained focus, false when it lost it. */
+  onFocus?: (focused: boolean) => void;
+}
+
 export function createFilteredStdin(
   upstream: NodeJS.ReadStream,
   pasteRegistry?: PasteRegistry,
-  onMouse?: (event: MouseEvent) => void,
+  reports: TerminalReportHandlers = {},
 ): NodeJS.ReadStream {
   const wrapper = new EventEmitter() as EventEmitter & Partial<NodeJS.ReadStream>;
   const queue: string[] = [];
@@ -100,12 +107,13 @@ export function createFilteredStdin(
   }
 
   /**
-   * Queue typed input for Ink, with mouse reports taken out and sent to
-   * `onMouse`. Returns the start of a report the input ended inside.
+   * Queue typed input for Ink, with the terminal's own reports taken out and
+   * sent to their handlers. Returns the start of a report the input ended inside.
    */
   function queueKeys(input: string): string {
-    const { rest, events, incomplete } = extractMouseReports(input);
-    for (const event of events) onMouse?.(event);
+    const { rest, events, focus, incomplete } = extractMouseReports(input);
+    for (const event of events) reports.onMouse?.(event);
+    for (const focused of focus) reports.onFocus?.(focused);
     if (rest.length > 0) queue.push(translateModifiedKeys(rest));
     return incomplete;
   }

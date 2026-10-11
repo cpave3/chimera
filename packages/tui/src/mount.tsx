@@ -9,12 +9,22 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
+import { basename, resolve } from 'node:path';
 import { render } from 'ink';
 import { App, type OverlayHandlers } from './App';
 import type { Peer } from './ContextPanel';
 import { MOUSE_DISABLE, MOUSE_ENABLE, MouseBus } from './input/mouse';
 import { PasteRegistry } from './input/paste';
 import { createFilteredStdin } from './input/stdin-filter';
+import {
+  decideNotification,
+  FOCUS_REPORTS_DISABLE,
+  FOCUS_REPORTS_ENABLE,
+  FocusTracker,
+  type NotificationReason,
+  type NotificationSetting,
+  notificationSequence,
+} from './notify';
 import type { Formatter } from './scrollback';
 import {
   deepMerge,
@@ -82,6 +92,12 @@ export interface MountOptions {
   mouse?: boolean;
   /** The other live Chimera instances, for the fullscreen context panel. */
   listPeers?: () => Promise<Peer[]>;
+  /**
+   * How to ask for attention when a run ends, a permission request opens or
+   * the agent needs input. `auto` (the default) notifies through the
+   * terminal when it is not focused; `bell` always rings; `off` is silent.
+   */
+  notifications?: NotificationSetting;
 }
 
 export interface TuiHandle {
@@ -101,6 +117,12 @@ export function resolveLayout(
   if (!terminal.isTTY || terminal.term === 'dumb') return 'inline';
   return requested ?? 'fullscreen';
 }
+
+const ATTENTION_TEXT: Record<NotificationReason, string> = {
+  run_finished: 'run finished',
+  approval: 'approval needed',
+  input: 'input needed',
+};
 
 // Autowrap off while the TUI owns the screen, as Ink sets it on entry.
 const ENTER_ALTERNATE_SCREEN = '\x1b[?1049h\x1b[?7l';
@@ -173,13 +195,24 @@ export function mountTui(opts: MountOptions): TuiHandle {
   });
   const fullscreen = layout === 'fullscreen';
   const captureMouse = fullscreen && opts.mouse !== false;
+  const notifications = opts.notifications ?? 'auto';
+  // Only `auto` reads the focus; the other settings need no reports.
+  const reportFocus = notifications === 'auto' && stdout.isTTY === true;
+  const focusTracker = new FocusTracker();
+  // What the TUI turned on in the terminal, beyond what Ink manages itself.
+  const terminalModesOff = `${captureMouse ? MOUSE_DISABLE : ''}${reportFocus ? FOCUS_REPORTS_DISABLE : ''}`;
+  const terminalModesOn = `${captureMouse ? MOUSE_ENABLE : ''}${reportFocus ? FOCUS_REPORTS_ENABLE : ''}`;
   let instance: ReturnType<typeof render> | undefined;
+  // Around a program that takes the terminal over: it must not receive the
+  // reports the TUI asked for, nor draw on the TUI's screen.
   const screen = {
     leave() {
-      if (fullscreen) stdout.write(`${captureMouse ? MOUSE_DISABLE : ''}${LEAVE_ALTERNATE_SCREEN}`);
+      if (!stdout.isTTY) return;
+      stdout.write(`${terminalModesOff}${fullscreen ? LEAVE_ALTERNATE_SCREEN : ''}`);
     },
     enter() {
-      if (fullscreen) stdout.write(`${ENTER_ALTERNATE_SCREEN}${captureMouse ? MOUSE_ENABLE : ''}`);
+      if (!stdout.isTTY) return;
+      stdout.write(`${fullscreen ? ENTER_ALTERNATE_SCREEN : ''}${terminalModesOn}`);
     },
     // What Ink remembers of the screen is stale once another program drew on it.
     repaint() {
@@ -222,7 +255,18 @@ export function mountTui(opts: MountOptions): TuiHandle {
     restored = true;
     cleanupSuspendHandlers();
     if (!stdout.isTTY) return;
-    stdout.write(`${captureMouse ? MOUSE_DISABLE : ''}\x1b[?2004l`);
+    stdout.write(`${terminalModesOff}\x1b[?2004l`);
+  };
+  const title = `chimera · ${basename(resolve(opts.cwd))}`;
+  const notify = (reason: NotificationReason, detail: { runMs: number }) => {
+    if (!stdout.isTTY) return;
+    const kind = decideNotification({
+      setting: notifications,
+      reason,
+      focus: focusTracker.focus,
+      runMs: detail.runMs,
+    });
+    stdout.write(notificationSequence(kind, `${title}: ${ATTENTION_TEXT[reason]}`));
   };
   // A crash must not leave the user's shell with wheel reports turned on.
   process.once('exit', restoreTerminal);
@@ -252,6 +296,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         mouse={mouse}
         screen={screen}
         listPeers={opts.listPeers}
+        notify={notify}
         onActiveSessionChange={(sessionId) => {
           activeSessionId = sessionId;
         }}
@@ -259,11 +304,14 @@ export function mountTui(opts: MountOptions): TuiHandle {
     </ThemeProvider>,
     {
       exitOnCtrlC: false,
-      stdin: createFilteredStdin(process.stdin, pasteRegistry, (event) => mouse.emit(event)),
+      stdin: createFilteredStdin(process.stdin, pasteRegistry, {
+        onMouse: (event) => mouse.emit(event),
+        onFocus: (focused) => focusTracker.report(focused),
+      }),
       ...(fullscreen ? { alternateBuffer: true, incrementalRendering: true } : {}),
     },
   );
-  if (captureMouse) stdout.write(MOUSE_ENABLE);
+  if (stdout.isTTY) stdout.write(terminalModesOn);
   const mounted = instance;
 
   return {

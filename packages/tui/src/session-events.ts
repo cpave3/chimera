@@ -41,6 +41,8 @@ export interface SessionEventContext {
   setRetry: Dispatch<SetStateAction<{ attempt: number; maxAttempts: number } | null>>;
   /** Model steps finished in the run in progress. */
   setRunSteps: Dispatch<SetStateAction<number>>;
+  /** The agent stopped to ask the user something. */
+  onInputRequired?: () => void;
 }
 
 /**
@@ -169,6 +171,7 @@ export function applySessionEvent(
     }
   } else if (ev.type === 'user_input_required') {
     scrollback.addInfo(`Waiting for input: ${ev.request}`);
+    context.onInputRequired?.();
   } else if (ev.type === 'run_finished') {
     setRunning(false);
     setStreaming(false);

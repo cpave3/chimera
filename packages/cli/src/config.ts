@@ -192,6 +192,13 @@ export interface ChimeraConfig {
      * transcript, and the terminal's own selection then needs Shift+drag.
      */
     mouse?: boolean;
+    /**
+     * How the TUI asks for attention when a run ends, a permission request
+     * opens or the agent needs input. `auto` (the default) sends a terminal
+     * notification (bell and OSC 9) when the terminal is not focused; `bell`
+     * always rings the bell; `off` sends nothing.
+     */
+    notifications?: 'auto' | 'bell' | 'off';
   };
 }
 
@@ -211,6 +218,7 @@ const tuiSchema = z
   .object({
     layout: z.enum(['fullscreen', 'inline']).optional(),
     mouse: z.boolean().optional(),
+    notifications: z.enum(['auto', 'bell', 'off']).optional(),
   })
   .strict();
 

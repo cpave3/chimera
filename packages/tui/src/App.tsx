@@ -28,6 +28,7 @@ import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/
 import type { MouseBus } from './input/mouse';
 import { PasteRegistry } from './input/paste';
 import { handleKey } from './key-handler';
+import type { NotificationReason } from './notify';
 import type { OverlayDiffEntry } from './OverlayPicker';
 import {
   mergePermissionQueue,
@@ -158,11 +159,18 @@ export interface AppProps {
   mouse?: MouseBus;
   /**
    * Gives the terminal back before an editor or a pager runs, and takes it
-   * again after. The fullscreen layout needs it; the inline layout does not.
+   * again after: the alternate screen, and the reports the TUI asked the
+   * terminal for.
    */
   screen?: { leave(): void; enter(): void };
   /** Called with the session on screen, at start and after every switch. */
   onActiveSessionChange?: (sessionId: SessionId) => void;
+  /**
+   * Asks for the user's attention: a run ended, a permission request opened,
+   * or the agent needs input. `mountTui` turns this into a terminal
+   * notification according to the `tui.notifications` setting.
+   */
+  notify?: (reason: NotificationReason, detail: { runMs: number }) => void;
 }
 
 const FILE_MENU_ROWS = 6;
@@ -417,6 +425,12 @@ export function App(props: AppProps): React.ReactElement | null {
   // had by then, so the activity line can show this run's time and tokens.
   const runStartedAtRef = useRef<number | null>(null);
   const runStartOutputTokensRef = useRef(0);
+  // How long the run that just ended took, and whether the user ended it.
+  const runElapsedRef = useRef(0);
+  const interruptedRef = useRef(false);
+  if (running && runStartedAtRef.current !== null) {
+    runElapsedRef.current = Date.now() - runStartedAtRef.current;
+  }
   if (running || compacting) {
     if (runStartedAtRef.current === null) {
       runStartedAtRef.current = Date.now();
@@ -560,10 +574,27 @@ export function App(props: AppProps): React.ReactElement | null {
       setTasks,
       setRetry,
       setRunSteps,
+      onInputRequired: () => notify?.('input', { runMs: 0 }),
     });
   }
 
+  const { notify } = props;
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    // The user who stopped a run is looking at the terminal.
+    if (wasRunningRef.current && !running && !interruptedRef.current) {
+      notify?.('run_finished', { runMs: runElapsedRef.current });
+    }
+    if (!running) interruptedRef.current = false;
+    wasRunningRef.current = running;
+  }, [running, notify]);
+  const pendingRequestId = pending?.requestId ?? null;
+  useEffect(() => {
+    if (pendingRequestId !== null) notify?.('approval', { runMs: 0 });
+  }, [pendingRequestId, notify]);
+
   function interruptRun(): void {
+    interruptedRef.current = true;
     void activeSession.client.interrupt(activeSession.sessionId);
     scrollback.addInfo('interrupt sent');
   }
@@ -595,14 +626,13 @@ export function App(props: AppProps): React.ReactElement | null {
 
   /** Run a program that takes over the terminal, then take the screen back. */
   async function withScreenHandoff<T>(operation: () => Promise<T>): Promise<T> {
-    if (!fullscreen) return operation();
     props.screen?.leave();
     try {
       return await operation();
     } finally {
       props.screen?.enter();
       // The program drew over the screen; nothing Ink remembers of it is true now.
-      app.rerender();
+      if (fullscreen) app.rerender();
     }
   }
 

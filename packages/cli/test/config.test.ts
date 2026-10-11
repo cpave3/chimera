@@ -271,6 +271,16 @@ describe('tui settings', () => {
     expect(loadConfig(home).tui).toEqual({ layout: 'inline', mouse: false });
   });
 
+  it('reads the notification setting', async () => {
+    const home = await homeWith({ tui: { notifications: 'off' } });
+    expect(loadConfig(home).tui?.notifications).toBe('off');
+  });
+
+  it('rejects a notification setting that does not exist', async () => {
+    const home = await homeWith({ tui: { notifications: 'loud' } });
+    expect(() => loadConfig(home)).toThrow(/config\.json.*tui\.notifications/);
+  });
+
   it('rejects a layout that does not exist, naming the key', async () => {
     const home = await homeWith({ tui: { layout: 'wide' } });
     expect(() => loadConfig(home)).toThrow(/config\.json.*tui\.layout/);

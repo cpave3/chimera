@@ -264,6 +264,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const handle = mountTui({
     layout: opts.inline ? 'inline' : config.tui?.layout,
     mouse: config.tui?.mouse,
+    notifications: config.tui?.notifications,
     listPeers: () => listPeers({ home: opts.home }),
     client,
     sessionId,

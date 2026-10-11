@@ -12,11 +12,11 @@
 
 ## 3. Notifications
 
-- [ ] 3.1 Test and implement the notification policy
-- [ ] 3.2 Track terminal focus in the stdin filter
-- [ ] 3.3 Wire run end, approval and input requests; add `tui.notifications`
+- [x] 3.1 Test and implement the notification policy
+- [x] 3.2 Track terminal focus in the stdin filter
+- [x] 3.3 Wire run end, approval and input requests; add `tui.notifications`
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Update `README.md` and the help panel
-- [ ] 4.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+- [x] 4.1 Update `README.md` and the help panel
+- [x] 4.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`

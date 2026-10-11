@@ -647,6 +647,38 @@ line start and end. `Backspace` and `Delete` operate at the cursor and
 join lines when crossing a `\n`. With an empty buffer, `Up`/`Down` continue
 to recall input history.
 
+## Steering, queueing and attaching files
+
+- **Steer or queue.** During a run, `Enter` sends the message to the agent at
+  its next step. `Tab` holds it for the next turn instead; held messages show
+  above the prompt and go out together when the run ends. `Up` at an empty
+  prompt takes the newest held message back for editing.
+- **Attach a file.** `@path` attaches a file for the agent to read, `#path`
+  one it may write. Typing `@` or `#` at the start of a word opens a list of
+  matching files (what git tracks plus untracked files it does not ignore;
+  a directory walk outside a repository). `↑`/`↓` move, `Tab` or `Enter`
+  accepts, `Esc` closes the list.
+
+## Notifications
+
+Chimera asks for your attention through the terminal when a run ends, a
+permission request opens, or the agent needs input. Set `tui.notifications`
+in `~/.chimera/config.json`:
+
+| Value | Behaviour |
+| --- | --- |
+| `auto` (default) | A bell and an `OSC 9` desktop notification, only when the terminal is not focused. |
+| `bell` | A bell on every such event. |
+| `off` | Nothing. |
+
+iTerm2, kitty, WezTerm, Ghostty and Windows Terminal show `OSC 9` as a
+desktop notification; other terminals ignore it and you get the bell. Focus
+comes from the terminal's focus reports. A terminal that sends none gets a
+notification for approvals and input requests, and for a finished run only
+when the run took ten seconds or more. A run you interrupt yourself sends
+nothing. For anything else (a sound, a phone push), use a `Stop` hook; see
+[Lifecycle hooks](docs/hooks.md).
+
 ## Token usage
 
 The context panel (the first footer row in the inline layout) shows how full

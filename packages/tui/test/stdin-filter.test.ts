@@ -79,7 +79,9 @@ describe('createFilteredStdin', () => {
       unref() {},
     });
     const wheel: string[] = [];
-    const filtered = createFilteredStdin(upstream, undefined, (event) => wheel.push(event.kind));
+    const filtered = createFilteredStdin(upstream, undefined, {
+      onMouse: (event) => wheel.push(event.kind),
+    });
     const reads: unknown[] = [];
     filtered.on('readable', () => {
       while (true) {
@@ -92,6 +94,39 @@ describe('createFilteredStdin', () => {
 
     expect(reads).toEqual(['ab']);
     expect(wheel).toEqual(['wheel-up', 'wheel-down']);
+  });
+
+  it('takes focus reports out of the key stream', () => {
+    const queue: (string | null)[] = ['a\x1b[Ob', '\x1b[I', null];
+    const upstream = new EventEmitter() as unknown as NodeJS.ReadStream;
+    Object.assign(upstream, {
+      isTTY: true,
+      pause() {},
+      resume() {},
+      setRawMode() {},
+      setEncoding() {},
+      read() {
+        return queue.shift() ?? null;
+      },
+      ref() {},
+      unref() {},
+    });
+    const focus: boolean[] = [];
+    const filtered = createFilteredStdin(upstream, undefined, {
+      onFocus: (focused) => focus.push(focused),
+    });
+    const reads: unknown[] = [];
+    filtered.on('readable', () => {
+      while (true) {
+        const chunk: unknown = filtered.read();
+        if (chunk === null) break;
+        reads.push(chunk);
+      }
+    });
+    (upstream as unknown as EventEmitter).emit('readable');
+
+    expect(reads).toEqual(['ab']);
+    expect(focus).toEqual([false, true]);
   });
 
   it('stops pulling upstream bytes while paused for terminal handoff', () => {

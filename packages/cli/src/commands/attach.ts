@@ -78,6 +78,7 @@ export async function runAttach(opts: AttachOptions): Promise<void> {
   const handle = mountTui({
     layout: opts.inline ? 'inline' : tui?.layout,
     mouse: tui?.mouse,
+    notifications: tui?.notifications,
     client,
     sessionId,
     modelRef: session.userModelOverride ?? `${session.model.providerId}/${session.model.modelId}`,
