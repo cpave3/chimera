@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
 import { clip, stripCdPrefix } from './format';
+import { sandboxBlockNote } from './os-sandbox';
 
 const BASH_SCHEMA = z.object({
   command: z.string().describe('The shell command to run.'),
@@ -16,6 +17,14 @@ const BASH_SCHEMA = z.object({
     .optional()
     .describe(
       "Short justification for running on the host (required when sandbox is on and target='host').",
+    ),
+  unsandboxed: z
+    .boolean()
+    .optional()
+    .describe(
+      'Run the command outside the OS sandbox. Needs a reason and the approval of the user. ' +
+        'Use it only after the sandbox blocked a command that must write outside the working ' +
+        'directory or reach the network.',
     ),
   run_in_background: z
     .boolean()
@@ -33,6 +42,8 @@ type BashResult =
       stderr: string;
       exit_code: number;
       timed_out: boolean;
+      /** Present when the OS sandbox is why the command failed. */
+      sandbox?: string;
     }
   | {
       shell_id: string;
@@ -55,18 +66,22 @@ export function buildBashTool(ctx: ToolContext) {
 
       const target: 'sandbox' | 'host' =
         args.target ?? (ctx.sandboxMode === 'off' ? 'host' : 'sandbox');
+      const refuse = (stderr: string): BashResult => ({
+        stdout: '',
+        stderr,
+        exit_code: -1,
+        timed_out: false,
+      });
 
       const executor =
         target === 'host' ? (ctx.bashHostExecutor ?? ctx.hostExecutor) : ctx.sandboxExecutor;
 
       if (ctx.sandboxMode !== 'off' && target === 'host' && !args.reason) {
-        return {
-          stdout: '',
-          stderr: "refused by chimera: target='host' requires a 'reason'.",
-          exit_code: -1,
-          timed_out: false,
-        };
+        return refuse("refused by chimera: target='host' requires a 'reason'.");
       }
+      const scope = hostScope(ctx, args, target);
+      if ('refusal' in scope) return refuse(scope.refusal);
+      let sandboxed = scope.sandboxed;
       if (target === 'host' && ctx.permissionGate) {
         const requestId = newRequestId();
         const resolution = await ctx.permissionGate.request({
@@ -76,46 +91,38 @@ export function buildBashTool(ctx: ToolContext) {
           command,
           cwd: executor.cwd(),
           ...(args.reason ? { reason: args.reason } : {}),
+          ...scope.request,
         });
         if (resolution.decision === 'deny') {
-          return {
-            stdout: '',
-            stderr: permissionDenialMessage(resolution.denialSource),
-            exit_code: -1,
-            timed_out: false,
-          };
+          return refuse(permissionDenialMessage(resolution.denialSource));
         }
         if (resolution.authentication === 'sudo') {
           if (!ctx.hostAuthentication) {
-            return {
-              stdout: '',
-              stderr:
-                'sudo authentication is unavailable in this session; use an owner-local interactive foreground session.',
-              exit_code: -1,
-              timed_out: false,
-            };
+            return refuse(
+              'sudo authentication is unavailable in this session; use an owner-local interactive foreground session.',
+            );
           }
           if (!ctx.hostAuthentication.consumeSudoAuthentication(requestId)) {
-            return {
-              stdout: '',
-              stderr:
-                'sudo authentication was not completed by the owner-local TUI; the command was not executed.',
-              exit_code: -1,
-              timed_out: false,
-            };
+            return refuse(
+              'sudo authentication was not completed by the owner-local TUI; the command was not executed.',
+            );
           }
+          // setuid does not work inside the sandbox, and the user approved this command by name.
+          sandboxed = false;
         }
       }
 
-      const result = await executor.exec(command, {
-        timeoutMs: args.timeout_ms,
-        signal: abortSignal,
-      });
+      const result = await executor.exec(
+        sandboxed && ctx.osSandbox ? ctx.osSandbox.wrap(command) : command,
+        { timeoutMs: args.timeout_ms, signal: abortSignal },
+      );
+      const note = sandboxed && ctx.osSandbox ? sandboxBlockNote(result, ctx.osSandbox.spec) : null;
       return {
         stdout: result.stdout,
         stderr: result.stderr,
         exit_code: result.exitCode,
         timed_out: result.timedOut,
+        ...(note ? { sandbox: note } : {}),
       };
     },
     formatScrollback: (args, result) => {
@@ -126,6 +133,34 @@ export function buildBashTool(ctx: ToolContext) {
       return { summary: `${head} (exit ${result.exit_code})` };
     },
   });
+}
+
+/**
+ * Where a host command runs: in the OS sandbox, or outside it at the
+ * model's request. `request` is what the permission gate needs to know.
+ */
+function hostScope(
+  ctx: ToolContext,
+  args: BashArgs,
+  target: 'sandbox' | 'host',
+): { refusal: string } | { sandboxed: boolean; request: { osSandbox?: true; unsandboxed?: true } } {
+  if (target !== 'host') return { sandboxed: false, request: {} };
+  if (ctx.hostCommandsRefused) return { refusal: ctx.hostCommandsRefused };
+  // The Docker sandbox has its own rules for host commands.
+  if (!ctx.osSandbox || ctx.sandboxMode !== 'off') return { sandboxed: false, request: {} };
+  if (!args.unsandboxed) return { sandboxed: true, request: { osSandbox: true } };
+  if (!args.reason) {
+    return {
+      refusal:
+        "refused by chimera: unsandboxed requires a 'reason' that says why the command must run outside the OS sandbox.",
+    };
+  }
+  if (!ctx.permissionGate) {
+    return {
+      refusal: 'refused by chimera: nobody can approve an unsandboxed command in this session.',
+    };
+  }
+  return { sandboxed: false, request: { unsandboxed: true } };
 }
 
 async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashResult> {
@@ -145,6 +180,8 @@ async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashR
   if (!manager) {
     return refuse('refused by chimera: background execution is not available in this session.');
   }
+  const scope = hostScope(ctx, args, 'host');
+  if ('refusal' in scope) return refuse(scope.refusal);
   if (ctx.permissionGate) {
     const resolution = await ctx.permissionGate.request({
       requestId: newRequestId(),
@@ -153,12 +190,16 @@ async function launchBackground(ctx: ToolContext, args: BashArgs): Promise<BashR
       command: args.command,
       cwd: (ctx.bashHostExecutor ?? ctx.hostExecutor).cwd(),
       ...(args.reason ? { reason: args.reason } : {}),
+      ...scope.request,
     });
     if (resolution.decision === 'deny') {
       return refuse(permissionDenialMessage(resolution.denialSource));
     }
   }
-  const launched = manager.launch(args.command);
+  const launched = manager.launch(
+    args.command,
+    scope.sandboxed && ctx.osSandbox ? { shellCommand: ctx.osSandbox.wrap(args.command) } : {},
+  );
   return {
     shell_id: launched.id,
     message: `Started background process ${launched.id}. Poll with bash_output; stop with bash_kill.`,

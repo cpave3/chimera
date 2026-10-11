@@ -21,7 +21,7 @@ import type {
   Executor,
   StatResult,
 } from '@chimera/core';
-import { PathEscapeError } from './errors';
+import { PathEscapeError, ProtectedPathError } from './errors';
 
 /**
  * Canonicalize a directory path: `realpathSync` it so symlinked prefixes
@@ -61,6 +61,12 @@ export interface LocalExecutorOptions {
    */
   writeAllowDirs?: string[];
   /**
+   * Files and directories the file tools may read and never write, even
+   * inside the working directory: the agent's own rules and hooks. A
+   * directory protects everything under it.
+   */
+  writeDenyPaths?: string[];
+  /**
    * Per-stream byte cap for `exec()`. Once reached, further chunks are dropped
    * and the corresponding `stdoutTruncated`/`stderrTruncated` flag is set.
    * Guards against V8's ~512MB string-length limit when subprocesses emit huge
@@ -73,12 +79,14 @@ export class LocalExecutor implements Executor {
   private readonly rootCwd: string;
   private readonly readAllowDirs: string[];
   private readonly writeAllowDirs: string[];
+  private readonly writeDenyPaths: string[];
   private readonly maxOutputBytes: number;
 
   constructor(opts: LocalExecutorOptions) {
     this.rootCwd = canonicalizeDir(opts.cwd);
     this.readAllowDirs = (opts.readAllowDirs ?? []).map((d) => canonicalizeDir(d));
     this.writeAllowDirs = (opts.writeAllowDirs ?? []).map((d) => canonicalizeDir(d));
+    this.writeDenyPaths = (opts.writeDenyPaths ?? []).map((path) => resolve(path));
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
@@ -150,6 +158,15 @@ export class LocalExecutor implements Executor {
       throw e;
     });
     const effective = resolved ?? absolute;
+    for (const denied of this.writeDenyPaths) {
+      // Both the path as written and where a symlink leads are checked.
+      for (const candidate of [absolute, effective]) {
+        const fromDenied = relative(denied, candidate);
+        if (fromDenied === '' || (!fromDenied.startsWith('..') && !isAbsolute(fromDenied))) {
+          throw new ProtectedPathError(path);
+        }
+      }
+    }
     const rel = relative(this.rootCwd, effective);
     if (!rel.startsWith('..') && !isAbsolute(rel)) {
       return absolute;

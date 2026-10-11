@@ -79,6 +79,16 @@ export interface PermissionRequest {
   policyAnalysis?: CommandPolicyAnalysis;
   /** MCP identity and bounded, value-free argument shape. Never contains raw arguments. */
   mcp?: McpPermissionPreview;
+  /**
+   * The command will run in the OS sandbox, where the kernel refuses a
+   * write outside the allowed directories.
+   */
+  osSandbox?: boolean;
+  /**
+   * The model asks to run the command outside the OS sandbox, with `reason`.
+   * Always decided by the user.
+   */
+  unsandboxed?: boolean;
 }
 
 export type PermissionDecisionAction =

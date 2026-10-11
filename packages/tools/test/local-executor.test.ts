@@ -65,6 +65,49 @@ describe('LocalExecutor', () => {
     }
   });
 
+  describe('protected paths', () => {
+    const protect = (cwd: string) =>
+      new LocalExecutor({
+        cwd,
+        writeDenyPaths: [join(cwd, '.chimera', 'permissions.json'), join(cwd, '.chimera', 'hooks')],
+      });
+
+    it('refuses to write or remove a protected file, and anything under a protected directory', async () => {
+      const exec = protect(root);
+      await mkdir(join(root, '.chimera', 'hooks'), { recursive: true });
+      await writeFile(join(root, '.chimera', 'permissions.json'), '[]');
+
+      await expect(
+        exec.writeFile('.chimera/permissions.json', '[{"decision":"allow"}]'),
+      ).rejects.toThrow(/protected/);
+      await expect(exec.writeFile('.chimera/hooks/PreToolUse/x.sh', '#!/bin/sh')).rejects.toThrow(
+        /protected/,
+      );
+      await expect(exec.removeFile('.chimera/permissions.json')).rejects.toThrow(/protected/);
+
+      expect(await readFile(join(root, '.chimera', 'permissions.json'), 'utf8')).toBe('[]');
+    });
+
+    it('still reads a protected file and writes its neighbours', async () => {
+      const exec = protect(root);
+      await mkdir(join(root, '.chimera'), { recursive: true });
+      await writeFile(join(root, '.chimera', 'permissions.json'), '[]');
+
+      expect(await exec.readFile('.chimera/permissions.json')).toBe('[]');
+      await exec.writeFile('.chimera/commands/deploy.md', 'ok');
+      expect(await readFile(join(root, '.chimera', 'commands', 'deploy.md'), 'utf8')).toBe('ok');
+    });
+
+    it('is not fooled by a symlink that points at a protected file', async () => {
+      const exec = protect(root);
+      await mkdir(join(root, '.chimera'), { recursive: true });
+      await writeFile(join(root, '.chimera', 'permissions.json'), '[]');
+      await symlink(join(root, '.chimera', 'permissions.json'), join(root, 'innocent.json'));
+
+      await expect(exec.writeFile('innocent.json', '[1]')).rejects.toThrow(/protected/);
+    });
+  });
+
   it('stat returns null for missing files', async () => {
     const exec = new LocalExecutor({ cwd: root });
     expect(await exec.stat('missing.txt')).toBeNull();

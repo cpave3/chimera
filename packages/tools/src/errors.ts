@@ -8,3 +8,15 @@ export class PathEscapeError extends Error {
     this.cwd = cwd;
   }
 }
+
+/** A write to a path the agent may read and never change: its own rules and hooks. */
+export class ProtectedPathError extends Error {
+  readonly path: string;
+  constructor(path: string) {
+    super(
+      `Path '${path}' is protected: it holds the agent's own permission rules or hooks, which only the user changes`,
+    );
+    this.name = 'ProtectedPathError';
+    this.path = path;
+  }
+}

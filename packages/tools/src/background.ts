@@ -63,9 +63,16 @@ export class BackgroundProcessManager {
     this.onExit = opts.onExit;
   }
 
-  launch(command: string, opts: { env?: Record<string, string> } = {}): BackgroundProcess {
+  /**
+   * Start `command` in the background. `shellCommand` is what runs when it
+   * differs from what the record should show: the command in its sandbox.
+   */
+  launch(
+    command: string,
+    opts: { env?: Record<string, string>; shellCommand?: string } = {},
+  ): BackgroundProcess {
     const id = `shell_${this.nextId++}`;
-    const child = spawn('sh', ['-c', command], {
+    const child = spawn('sh', ['-c', opts.shellCommand ?? command], {
       cwd: this.cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
       stdio: ['ignore', 'pipe', 'pipe'],

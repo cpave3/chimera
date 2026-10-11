@@ -9,6 +9,7 @@ import type {
 } from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
 import type { DiagnosticsRunner } from './diagnostics';
+import type { OsSandbox } from './os-sandbox';
 import type { RecallStoreApi } from './recall';
 import type { UserInputRequest } from './request-user-input';
 import type { TaskListStore } from './task-list';
@@ -53,6 +54,13 @@ export interface ToolContext {
   recall?: RecallStoreApi;
   /** When present, the request_user_input tool is registered. */
   requestUserInput?: (request: UserInputRequest) => Promise<void>;
+  /** When present, host bash commands run inside the operating system's sandbox. */
+  osSandbox?: OsSandbox;
+  /**
+   * Set when the OS sandbox is required and not available: every host bash
+   * command is refused with this message.
+   */
+  hostCommandsRefused?: string;
   /**
    * When present, the ask_question tool is registered. `ask` puts the
    * questions to the user; without it the tool answers that no user is

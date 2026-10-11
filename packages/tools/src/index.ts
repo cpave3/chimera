@@ -15,6 +15,7 @@ export * from './guards';
 export * from './intercept';
 export * from './local-executor';
 export * from './nested-instructions';
+export * from './os-sandbox';
 export { buildReadTool } from './read';
 export { buildRecallTool, type RecallStoreApi } from './recall';
 export * from './request-user-input';
