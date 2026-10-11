@@ -26,6 +26,7 @@ export function buildFetchTool(ctx: ToolContext) {
     description:
       'Fetch a URL and return its content as readable text (HTML is converted to a ' +
       'markdown-ish plain form). Use for documentation, READMEs, issues, and error lookups.',
+    promptSnippet: 'Fetch a URL as readable text.',
     inputSchema: FETCH_SCHEMA,
     execute: async (args, { abortSignal }) => {
       let parsed: URL;

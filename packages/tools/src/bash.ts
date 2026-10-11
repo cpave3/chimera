@@ -45,6 +45,7 @@ export function buildBashTool(ctx: ToolContext) {
       'Execute a shell command and return its stdout, stderr, exit code, and whether it timed out. ' +
       'Use for builds, tests, git, inspecting the environment. ' +
       "In sandbox mode, set target='host' (with a 'reason') to run on the host instead of the sandbox.",
+    promptSnippet: 'Run a shell command: builds, tests, git, anything without a dedicated tool.',
     inputSchema: BASH_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const command = args.command;

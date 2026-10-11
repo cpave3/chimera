@@ -56,6 +56,7 @@ export function buildTaskListTool(ctx: ToolContext) {
       'as pending tasks, mark exactly one in_progress while working on it, and mark ' +
       'tasks completed as soon as they are done. The list survives context compaction, ' +
       'so keep it accurate — it is your durable record of where the work stands.',
+    promptSnippet: 'Keep the task list for work with three or more steps.',
     inputSchema: TASK_SCHEMA,
     execute: async (args) => {
       const store = ctx.taskList;

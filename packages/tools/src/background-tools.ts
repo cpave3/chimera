@@ -23,6 +23,7 @@ export function buildBashOutputTool(ctx: ToolContext) {
       'Read output from a background process started by bash with run_in_background. ' +
       'Returns only output produced since the previous read, plus the process status ' +
       'and exit code once it has finished.',
+    promptSnippet: 'Read new output from a background process.',
     inputSchema: OUTPUT_SCHEMA,
     execute: async (args) => {
       const read = ctx.backgroundProcesses?.readOutput(args.shell_id);
@@ -59,6 +60,7 @@ export function buildBashKillTool(ctx: ToolContext) {
     description:
       'Terminate a background process started by bash with run_in_background. ' +
       'Sends SIGTERM to the process group, escalating to SIGKILL after a grace period.',
+    promptSnippet: 'Stop a background process.',
     inputSchema: KILL_SCHEMA,
     execute: async (args) => {
       const manager = ctx.backgroundProcesses;

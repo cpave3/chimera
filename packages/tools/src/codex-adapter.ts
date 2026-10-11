@@ -7,6 +7,26 @@ const CODEX_BASH_SCHEMA = z.object({
   timeout: z.number().positive().optional().describe('Timeout in seconds.'),
 });
 
+const CODEX_BACKGROUND_BASH_SCHEMA = CODEX_BASH_SCHEMA.extend({
+  run_in_background: z
+    .boolean()
+    .optional()
+    .describe(
+      'Run the command as a background process and return a shell_id immediately. ' +
+        'Poll output with bash_output; terminate with bash_kill.',
+    ),
+});
+
+type CodexBashArgs = { command: string; timeout?: number; run_in_background?: boolean };
+
+function toNativeBashArgs(args: CodexBashArgs) {
+  return {
+    command: args.command,
+    ...(args.timeout !== undefined ? { timeout_ms: Math.ceil(args.timeout * 1000) } : {}),
+    ...(args.run_in_background ? { run_in_background: true } : {}),
+  };
+}
+
 const CODEX_GREP_SCHEMA = z.object({
   pattern: z.string().describe('Search pattern.'),
   path: z.string().optional().describe('Directory or file to search. Defaults to cwd.'),
@@ -34,6 +54,12 @@ function executable(def: ChimeraToolDef<any, any>): ExecutableTool {
   return def.tool as unknown as ExecutableTool;
 }
 
+/**
+ * Re-key the native tool definitions for models that expect Codex-style tool
+ * names and argument schemas. Only `bash`, `grep` and `glob` (as `find`) are
+ * reshaped, and `ls` is added; every other native tool passes through
+ * unchanged, so a codex-shape session has the same capabilities.
+ */
 export function buildCodexToolDefs(
   nativeDefs: Record<string, ChimeraToolDef<any, any>>,
 ): Record<string, ChimeraToolDef<any, any>> {
@@ -41,41 +67,27 @@ export function buildCodexToolDefs(
   const grep = executable(nativeDefs.grep);
   const glob = executable(nativeDefs.glob);
   const read = executable(nativeDefs.read);
+  const { glob: _glob, ...passThrough } = nativeDefs;
 
   return {
-    read: nativeDefs.read,
-    ...(nativeDefs.request_user_input ? { request_user_input: nativeDefs.request_user_input } : {}),
+    ...passThrough,
     bash: defineTool({
       description:
         'Execute a bash command and return stdout, stderr, exit code, and timeout status.',
-      inputSchema: CODEX_BASH_SCHEMA,
-      execute: async (args: { command: string; timeout?: number }, opts) => {
-        return bash.execute(
-          {
-            command: args.command,
-            ...(args.timeout !== undefined ? { timeout_ms: Math.ceil(args.timeout * 1000) } : {}),
-          },
-          opts,
-        );
-      },
+      promptSnippet: nativeDefs.bash.promptSnippet,
+      inputSchema: nativeDefs.bash_output ? CODEX_BACKGROUND_BASH_SCHEMA : CODEX_BASH_SCHEMA,
+      execute: async (args: CodexBashArgs, opts) => bash.execute(toNativeBashArgs(args), opts),
       formatScrollback: nativeDefs.bash.formatScrollback
-        ? (args: { command: string; timeout?: number }, result?: unknown) =>
-            nativeDefs.bash.formatScrollback?.(
-              {
-                command: args.command,
-                ...(args.timeout !== undefined
-                  ? { timeout_ms: Math.ceil(args.timeout * 1000) }
-                  : {}),
-              },
-              result,
-            ) ?? { summary: args.command }
+        ? (args: CodexBashArgs, result?: unknown) =>
+            nativeDefs.bash.formatScrollback?.(toNativeBashArgs(args), result) ?? {
+              summary: args.command,
+            }
         : undefined,
     }),
-    edit: nativeDefs.edit,
-    write: nativeDefs.write,
     grep: defineTool({
       description:
         'Search file contents for a pattern. Returns matching lines with file paths and line numbers.',
+      promptSnippet: nativeDefs.grep.promptSnippet,
       inputSchema: CODEX_GREP_SCHEMA,
       execute: async (
         args: {
@@ -119,6 +131,7 @@ export function buildCodexToolDefs(
     }),
     find: defineTool({
       description: 'Search for files by glob pattern. Returns matching file paths.',
+      promptSnippet: nativeDefs.glob.promptSnippet,
       inputSchema: CODEX_FIND_SCHEMA,
       execute: async (args: { pattern: string; path?: string; limit?: number }, opts) => {
         const result = (await glob.execute({ pattern: args.pattern, path: args.path }, opts)) as {
@@ -141,6 +154,7 @@ export function buildCodexToolDefs(
     ls: defineTool({
       description:
         'List directory contents. Returns entries sorted alphabetically with / suffixes for directories.',
+      promptSnippet: 'List a directory.',
       inputSchema: CODEX_LS_SCHEMA,
       execute: async (args: { path?: string; limit?: number }, opts) => {
         const result = (await read.execute({ path: args.path ?? '.' }, opts)) as {

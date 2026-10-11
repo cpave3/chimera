@@ -62,6 +62,7 @@ describe('buildTools', () => {
     expect(Object.keys(toolset).sort()).toEqual([
       'bash',
       'edit',
+      'fetch',
       'find',
       'grep',
       'ls',

@@ -114,6 +114,7 @@ export function buildWebSearchTool(ctx: ToolContext) {
     description:
       'Search the web and return result titles, URLs, and snippets. ' +
       'Follow up with the fetch tool to read a promising result.',
+    promptSnippet: 'Search the web; open a result with fetch.',
     inputSchema: SEARCH_SCHEMA,
     execute: async (args) => {
       const provider = ctx.webSearch;

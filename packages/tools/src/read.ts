@@ -58,6 +58,7 @@ export function buildReadTool(ctx: ToolContext) {
       'Limited to 2000 lines or 100 KB (whichever is smaller); specify start_line/end_line to read a slice. ' +
       'When the path is a directory, returns its entries instead — use `glob` for recursive discovery. ' +
       'Image files (.png, .jpg, .jpeg, .gif, .webp, .bmp) are returned as base64 data URIs suitable for vision models.',
+    promptSnippet: 'Read a file with line numbers, list a directory, or view an image.',
     inputSchema: READ_SCHEMA,
     execute: async (args) => {
       const stat = await ctx.sandboxExecutor.stat(args.path);

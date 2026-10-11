@@ -34,6 +34,7 @@ export function buildGlobTool(ctx: ToolContext) {
     description:
       'List files matching a glob pattern, gitignore-aware. Use this to discover paths before reading files. ' +
       'Backed by ripgrep. Capped at 1000 files; refine the pattern if truncated.',
+    promptSnippet: 'Find files by name pattern.',
     inputSchema: GLOB_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const searchPath = args.path && args.path.length > 0 ? args.path : '.';

@@ -31,6 +31,7 @@ export function buildEditTool(ctx: ToolContext) {
     description:
       'Exact-string replace in a file under the working directory or /tmp. Errors if old_string is not found, or is found more than once without replace_all=true. ' +
       'No regex — old_string and new_string are literal.',
+    promptSnippet: 'Replace an exact string in a file.',
     inputSchema: EDIT_SCHEMA,
     execute: async (args) => {
       const content = await ctx.sandboxExecutor.readFile(args.path);

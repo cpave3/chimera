@@ -23,10 +23,12 @@ export type FormatScrollback<I, O> = (args: I, result?: O) => ToolDisplay;
 
 /**
  * The Chimera-level tool definition produced by `defineTool`. `tool` is the
- * vanilla AI SDK tool consumed by `streamText`; `formatScrollback` is an
- * optional cosmetic enhancement.
+ * vanilla AI SDK tool consumed by `streamText`; `promptSnippet` is its line
+ * in the system prompt's tools section; `formatScrollback` is an optional
+ * cosmetic enhancement.
  */
 export interface ChimeraToolDef<I = unknown, O = unknown> {
   tool: AiTool;
+  promptSnippet?: string;
   formatScrollback?: FormatScrollback<I, O>;
 }

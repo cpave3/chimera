@@ -46,6 +46,7 @@ export function buildRecallTool(ctx: ToolContext) {
       'results appear in the conversation as "[Result archived — retrieve with: ' +
       'recall({ id: ... })]". Use start_line/end_line or search to fetch just the ' +
       'part you need instead of the whole output.',
+    promptSnippet: 'Retrieve an archived tool result by its id.',
     inputSchema: RECALL_SCHEMA,
     execute: async (args) => {
       const entry = await ctx.recall?.get(args.id);

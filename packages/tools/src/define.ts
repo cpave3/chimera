@@ -3,6 +3,11 @@ import type { ChimeraToolDef, FormatScrollback } from './types';
 
 export interface DefineToolOptions<I, O> {
   description: string;
+  /**
+   * One line for the generated tools section of the system prompt: what the
+   * tool is for, not how to call it (the schema covers that).
+   */
+  promptSnippet?: string;
   // Whatever Zod schema (or other AI SDK FlexibleSchema) the caller wants to
   // hand to `tool()`. We don't constrain it here — the I/O generics on
   // `defineTool` are what the formatter and execute see.
@@ -25,6 +30,7 @@ export function defineTool<I, O>(opts: DefineToolOptions<I, O>): ChimeraToolDef<
   });
   return {
     tool: aiSdkTool as ChimeraToolDef<I, O>['tool'],
+    promptSnippet: opts.promptSnippet,
     formatScrollback: opts.formatScrollback,
   };
 }

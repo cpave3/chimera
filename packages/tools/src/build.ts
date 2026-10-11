@@ -18,6 +18,8 @@ import { buildWriteTool } from './write';
 export interface BuildToolsResult {
   tools: ToolSet;
   formatters: Record<string, FormatScrollback<any, any>>;
+  /** Tool name → its line in the system prompt's tools section. */
+  snippets: Record<string, string>;
 }
 
 export function buildTools(ctx: ToolContext): BuildToolsResult {
@@ -54,16 +56,19 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
 
 /**
  * Split a Chimera tool-def map into the AI SDK `ToolSet` consumed by
- * `streamText` and the parallel `formatters` map keyed by tool name.
+ * `streamText` and the parallel `formatters` and `snippets` maps keyed by
+ * tool name.
  * Exported so the CLI factory can fold in dynamically-added tools
  * (e.g. `spawn_agent`) before handing both halves to the agent.
  */
 export function splitDefs(defs: Record<string, ChimeraToolDef<any, any>>): BuildToolsResult {
   const tools: ToolSet = {};
   const formatters: Record<string, FormatScrollback<any, any>> = {};
+  const snippets: Record<string, string> = {};
   for (const [name, def] of Object.entries(defs)) {
     tools[name] = def.tool;
     if (def.formatScrollback) formatters[name] = def.formatScrollback;
+    if (def.promptSnippet) snippets[name] = def.promptSnippet;
   }
-  return { tools, formatters };
+  return { tools, formatters, snippets };
 }

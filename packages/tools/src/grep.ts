@@ -55,6 +55,7 @@ export function buildGrepTool(ctx: ToolContext) {
     description:
       'Search file contents with a regex, gitignore-aware. Returns matched lines (default) or just file paths ' +
       '(set files_with_matches=true). Backed by ripgrep. Cap results with max_count to avoid context blowups.',
+    promptSnippet: 'Search file contents with a regex.',
     inputSchema: GREP_SCHEMA,
     execute: async (args, { abortSignal }) => {
       const limit = Math.min(args.max_count ?? DEFAULT_MAX_MATCHES, HARD_MAX_MATCHES);

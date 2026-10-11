@@ -22,6 +22,8 @@ export function buildRequestUserInputTool(ctx: Pick<ToolContext, 'requestUserInp
       'Request human assistance when progress genuinely requires user information or action. ' +
       'Calling this ends the current run after all tool calls already emitted in this step finish. ' +
       'Make the request specific and actionable; the user responds with their next message.',
+    promptSnippet:
+      'End the run and ask the user for information or an action only they can provide.',
     inputSchema: requestUserInputSchema,
     execute: async (args) => {
       const request = requestUserInputSchema.parse(args);
