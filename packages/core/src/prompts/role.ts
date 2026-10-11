@@ -10,6 +10,8 @@ const ROLE_INTRO = `You are Chimera, a terminal-native AI coding agent. You oper
 
 const FILE_ACCESS_WITH_SHELL = `All file paths are relative to the session's working directory; the file tools reject anything outside it except /tmp, which can be read and written directly. To read or modify a file outside cwd or /tmp (the user's home dir, system config, a sibling project), use bash with an absolute path — and when sandboxed, set \`target='host'\` with a short \`reason\` so the command runs against the real filesystem instead of the container.`;
 
+const FILE_ACCESS_IN_OS_SANDBOX = `All file paths are relative to the session's working directory; the file tools reject anything outside it except /tmp, which can be read and written directly. To read a file outside cwd or /tmp (the user's home dir, system config, a sibling project), use bash with an absolute path. To change a file outside cwd or /tmp, the bash command must leave the OS sandbox: set \`unsandboxed: true\` with a short \`reason\`.`;
+
 const FILE_ACCESS_WITHOUT_SHELL = `All file paths are relative to the session's working directory; the file tools reject anything outside it except /tmp.`;
 
 const WEB_SEARCH_RULE = `Do not invent, assume, or guess URLs. When you need an external URL that the user or trusted context has not already provided, use web_search first, then pass the exact URL returned by web_search to fetch.`;
@@ -78,7 +80,10 @@ Follow these rules on every task:
  * The `## Tools` section: generated from what the session actually registers,
  * so the prompt can never name a tool the model cannot call.
  */
-export function renderToolsSection(tools: PromptTool[] | undefined): string {
+export function renderToolsSection(
+  tools: PromptTool[] | undefined,
+  options: { osSandbox?: boolean } = {},
+): string {
   const lines: string[] = ['## Tools', ''];
   if (tools && tools.length > 0) {
     lines.push(
@@ -89,7 +94,13 @@ export function renderToolsSection(tools: PromptTool[] | undefined): string {
     );
   }
   const hasShell = !tools || tools.some((tool) => tool.name === 'bash');
-  lines.push(hasShell ? FILE_ACCESS_WITH_SHELL : FILE_ACCESS_WITHOUT_SHELL);
+  lines.push(
+    !hasShell
+      ? FILE_ACCESS_WITHOUT_SHELL
+      : options.osSandbox
+        ? FILE_ACCESS_IN_OS_SANDBOX
+        : FILE_ACCESS_WITH_SHELL,
+  );
   if (tools?.some((tool) => tool.name === 'web_search')) {
     lines.push('', WEB_SEARCH_RULE);
   }
@@ -99,8 +110,14 @@ export function renderToolsSection(tools: PromptTool[] | undefined): string {
 export function composeRolePrompt(opts: {
   tools?: PromptTool[];
   promptStyle?: PromptStyle;
+  /** Host bash commands run in the OS sandbox. */
+  osSandbox?: boolean;
 }): string {
-  const parts = [ROLE_INTRO, renderToolsSection(opts.tools), ROLE_BODY];
+  const parts = [
+    ROLE_INTRO,
+    renderToolsSection(opts.tools, { osSandbox: opts.osSandbox }),
+    ROLE_BODY,
+  ];
   if (opts.promptStyle === 'guided') parts.push(GUIDED_METHOD);
   return parts.join('\n\n');
 }

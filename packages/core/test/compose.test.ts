@@ -308,6 +308,58 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toContain('/apply');
   });
 
+  describe('with the OS sandbox', () => {
+    const sessionLine = (prompt: string) =>
+      prompt.split('\n').find((line) => line.startsWith('- sandbox:')) ?? '';
+
+    it('says what a bash command may do, and how to ask for more', () => {
+      const line = sessionLine(
+        composeSystemPrompt({ cwd: home, home, sandboxMode: 'off', osSandbox: { network: 'on' } }),
+      );
+
+      expect(line).toMatch(/^- sandbox: os — /);
+      expect(line).not.toMatch(/no sandbox/);
+      expect(line).toMatch(/write only in the working directory and the temp directory/);
+      expect(line).toMatch(/unsandboxed: true/);
+      expect(line).not.toMatch(/network/);
+    });
+
+    it('says that there is no network when the network is off', () => {
+      const line = sessionLine(
+        composeSystemPrompt({ cwd: home, home, sandboxMode: 'off', osSandbox: { network: 'off' } }),
+      );
+
+      expect(line).toMatch(/no network access/);
+    });
+
+    it('tells the model that a change outside the project needs an unsandboxed run', () => {
+      const withSandbox = composeSystemPrompt({
+        cwd: home,
+        home,
+        sandboxMode: 'off',
+        osSandbox: { network: 'on' },
+      });
+      const without = composeSystemPrompt({ cwd: home, home, sandboxMode: 'off' });
+
+      expect(withSandbox).toMatch(/To change a file outside[^.]*unsandboxed: true/);
+      expect(withSandbox).not.toMatch(/To read or modify a file outside cwd/);
+      expect(without).toMatch(/To read or modify a file outside cwd/);
+      expect(sessionLine(without)).toMatch(/^- sandbox: off — no sandbox/);
+    });
+
+    it('leaves a Docker sandbox its own text', () => {
+      const prompt = composeSystemPrompt({
+        cwd: home,
+        home,
+        sandboxMode: 'bind',
+        osSandbox: { network: 'on' },
+      });
+
+      expect(sessionLine(prompt)).toMatch(/^- sandbox: bind — /);
+      expect(prompt).toMatch(/To read or modify a file outside cwd/);
+    });
+  });
+
   it('includes ephemeral hint for sandboxMode=ephemeral', () => {
     const prompt = composeSystemPrompt({ cwd: home, home, sandboxMode: 'ephemeral' });
     expect(prompt).toMatch(/^- sandbox: ephemeral — /m);

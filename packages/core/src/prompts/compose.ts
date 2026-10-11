@@ -9,6 +9,11 @@ export interface ComposeOptions {
   home?: string;
   model?: Pick<ModelConfig, 'providerId' | 'modelId'>;
   sandboxMode?: SandboxMode;
+  /**
+   * Set when host bash commands run in the operating system's sandbox. It
+   * applies only without a Docker sandbox.
+   */
+  osSandbox?: { network: 'on' | 'off' };
   extensions?: ((ctx: { cwd: string }) => string | null)[];
   /**
    * Active mode block, appended last. Composers pass `{ name, body }` from the
@@ -34,6 +39,19 @@ const SANDBOX_HINTS: Record<SandboxMode, string> = {
     "file tools and bash (default target='sandbox') run inside a Docker container with a tmpfs upperdir; all writes are discarded at session end.",
 };
 
+function osSandboxHint(network: 'on' | 'off'): string {
+  const limits =
+    network === 'off'
+      ? 'they read every file, write only in the working directory and the temp directory, and have no network access'
+      : 'they read every file and write only in the working directory and the temp directory';
+  return `tools run on the host, and bash commands run in an OS sandbox: ${limits}. For a command that must do more, set unsandboxed: true with a short reason; that call needs approval. 'target' defaults to 'host' and may be omitted on bash calls.`;
+}
+
+/** The session's OS sandbox, which a Docker sandbox replaces. */
+function activeOsSandbox(opts: ComposeOptions): ComposeOptions['osSandbox'] {
+  return opts.sandboxMode === 'off' ? opts.osSandbox : undefined;
+}
+
 /**
  * Build the `# Chimera Session` block. The header is deliberately distinct
  * from `# Environment` (which the model tends to attribute to one of the
@@ -56,7 +74,10 @@ function buildEnvironmentBlock(opts: ComposeOptions): string {
   if (opts.model) {
     lines.push(`- model: ${opts.model.providerId}/${opts.model.modelId}`);
   }
-  if (opts.sandboxMode) {
+  const osSandbox = activeOsSandbox(opts);
+  if (osSandbox) {
+    lines.push(`- sandbox: os — ${osSandboxHint(osSandbox.network)}`);
+  } else if (opts.sandboxMode) {
     lines.push(`- sandbox: ${opts.sandboxMode} — ${SANDBOX_HINTS[opts.sandboxMode]}`);
   }
   return lines.join('\n');
@@ -190,7 +211,11 @@ export function composeSystemPrompt(opts: ComposeOptions): string {
   // files (user-authored) → extensions. The session block goes BEFORE AGENTS.md
   // so the model can't mistake it for one of them.
   const parts: string[] = [
-    composeRolePrompt({ tools: opts.tools, promptStyle: opts.promptStyle }),
+    composeRolePrompt({
+      tools: opts.tools,
+      promptStyle: opts.promptStyle,
+      osSandbox: activeOsSandbox(opts) !== undefined,
+    }),
     `\n\n${buildEnvironmentBlock(opts)}`,
   ];
 
