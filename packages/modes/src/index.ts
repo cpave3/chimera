@@ -1,9 +1,14 @@
-export * from './types';
+export { colorFor, hslToHex, isValidHex } from './color';
+export { parseFrontmatter } from './frontmatter';
 export { loadModes } from './load';
 export { InMemoryModeRegistry } from './registry';
-export { parseFrontmatter } from './frontmatter';
-export { colorFor, hslToHex, isValidHex } from './color';
-export { renderModeBlock, computeAllowlist, applyAllowlist } from './system-prompt';
+export {
+  applyAllowlist,
+  computeAllowlist,
+  expandAllowlist,
+  renderModeBlock,
+} from './system-prompt';
+export * from './types';
 
 /** Default mode name shipped as a builtin. New sessions start in this mode. */
 export const DEFAULT_MODE_NAME = 'build';
