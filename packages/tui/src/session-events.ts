@@ -157,6 +157,7 @@ export function applySessionEvent(
             requestId: inner.requestId,
             command: inner.command,
             reason: inner.reason,
+            reviewerReason: inner.reviewerReason,
             policyAnalysis: inner.policyAnalysis,
             mcp: inner.mcp,
             subagent: {

@@ -4,6 +4,8 @@ export interface PendingPermission {
   requestId: string;
   command: string;
   reason?: string;
+  /** Why the approval reviewer sent the request to the user. */
+  reviewerReason?: string;
   policyAnalysis?: Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
   mcp?: PermissionRequest['mcp'];
   /**
@@ -46,6 +48,7 @@ export function mergePermissionQueue(
       requestId: request.requestId,
       command: request.command,
       reason: request.reason,
+      reviewerReason: request.reviewerReason,
       policyAnalysis: request.policyAnalysis,
       mcp: request.mcp,
       ...('subagent' in request ? { subagent: request.subagent } : {}),

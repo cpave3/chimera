@@ -1,13 +1,15 @@
-import { useFrame } from './frame';
 import type { AgentEvent, PermissionDecisionAction, PermissionRequest } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
+import { useFrame } from './frame';
 import { useTheme } from './theme/ThemeProvider';
 
 type PolicyAnalysis = Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
 export interface PermissionModalProps {
   command: string;
   reason?: string;
+  /** Why the approval reviewer sent the request to the user. */
+  reviewerReason?: string;
   target: 'host';
   policyAnalysis?: PolicyAnalysis;
   mcp?: PermissionRequest['mcp'];
@@ -194,6 +196,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
         </>
       )}
       {props.reason && <Text color={muted}>Reason: {props.reason}</Text>}
+      {props.reviewerReason && <Text color={muted}>Reviewer: {props.reviewerReason}</Text>}
       {props.policyAnalysis?.stages.map((stage) => (
         <Text key={stage.id} color={muted}>
           Stage {stage.id}: {stage.status}

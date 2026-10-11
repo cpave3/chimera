@@ -226,7 +226,12 @@ export function renderEntryLines(
       entry.durationMs !== undefined && entry.durationMs >= 1000
         ? ` · ${formatDuration(entry.durationMs)}`
         : '';
-    const textLines = wrapToLines(`${badge}${title}${entry.text}${duration}`, width, prefixLen);
+    const reviewer = entry.reviewerApproved ? ' · approved by reviewer' : '';
+    const textLines = wrapToLines(
+      `${badge}${title}${entry.text}${duration}${reviewer}`,
+      width,
+      prefixLen,
+    );
     const out: React.ReactElement[] = [
       <Box key={`${entry.id}:t`} flexDirection="column">
         <Text>

@@ -53,6 +53,8 @@ export interface ToolEntry extends BaseEntry {
   toolError?: string;
   /** How long the call ran; absent for calls restored from a saved session. */
   durationMs?: number;
+  /** The approval reviewer allowed this call; the user was not asked. */
+  reviewerApproved?: boolean;
   /** Optional follow-on lines from a tool's formatScrollback hook. */
   detail?: string;
   /** Set when a `skill_activated` event follows a `read` tool call. */
@@ -873,6 +875,20 @@ export class Scrollback {
           dirty = true;
         } else {
           this.addError(`tool error: ${ev.error}`);
+        }
+        return;
+      }
+      if (ev.type === 'approval_reviewed') {
+        const entry = ev.callId ? this.toolsByCallId.get(ev.callId) : undefined;
+        if (entry && ev.decision === 'allow') {
+          entry.reviewerApproved = true;
+          dirty = true;
+        }
+        if (ev.stopped) {
+          const limit = ev.stopped === 'consecutive' ? '3 escalations in a row' : '10 escalations';
+          this.addInfo(
+            `approval reviewer stopped for this session (${limit}); requests come to you again`,
+          );
         }
         return;
       }

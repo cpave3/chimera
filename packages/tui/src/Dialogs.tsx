@@ -23,6 +23,7 @@ export function Dialogs({ view }: { view: AppView }): React.ReactElement {
         <PermissionModal
           command={pending.command}
           reason={pending.reason}
+          reviewerReason={pending.reviewerReason}
           target="host"
           policyAnalysis={pending.policyAnalysis}
           mcp={pending.mcp}
