@@ -631,11 +631,13 @@ export function App(props: AppProps): React.ReactElement {
         const statusMsg =
           ev.reason === 'max_steps'
             ? "run ended: max steps reached; type 'continue' to resume"
-            : ev.reason === 'interrupted'
-              ? 'run interrupted'
-              : ev.reason === 'timeout'
-                ? 'run timed out'
-                : `run error: ${ev.error ?? 'unknown'}`;
+            : ev.reason === 'output_limit'
+              ? "run ended: the answer kept hitting the model's output limit; type 'continue' to resume"
+              : ev.reason === 'interrupted'
+                ? 'run interrupted'
+                : ev.reason === 'timeout'
+                  ? 'run timed out'
+                  : `run error: ${ev.error ?? 'unknown'}`;
         scrollback.addInfo(statusMsg);
       }
     } else if (ev.type === 'usage_updated') {
@@ -660,7 +662,21 @@ export function App(props: AppProps): React.ReactElement {
       scrollback.addInfo(`vision: turn finished, back on ${ev.restored}`);
     } else if (ev.type === 'vision_route_unavailable') {
       scrollback.addError(`vision: ${ev.reason}`);
+    } else if (ev.type === 'provider_retry') {
+      const seconds = Math.max(1, Math.round(ev.delayMs / 1000));
+      scrollback.addInfo(
+        `provider error: ${ev.error} — retry ${ev.attempt}/${ev.maxAttempts} in ${seconds}s`,
+      );
+    } else if (ev.type === 'model_fallback') {
+      scrollback.addInfo(`${ev.from} is unavailable; finishing this run on ${ev.to}`);
+    } else if (ev.type === 'output_continued') {
+      scrollback.addInfo(
+        `output limit reached; asking the model to continue (${ev.attempt}/${ev.maxAttempts})`,
+      );
     } else if (ev.type === 'compaction_started') {
+      if (ev.reason === 'overflow') {
+        scrollback.addInfo('the provider rejected the prompt as too long; compacting');
+      }
       setCompacting(true);
     } else if (ev.type === 'compaction_finished') {
       setCompacting(false);
