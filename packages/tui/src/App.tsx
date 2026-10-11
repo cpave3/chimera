@@ -18,11 +18,14 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import { parseAttachTokens, readForAttach } from './attach-paths';
 import { runBangCommand } from './bang';
 import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
+import type { Peer } from './ContextPanel';
 import { completionContext, listProjectFiles, rankFiles } from './file-completion';
+import { FullscreenView } from './FullscreenView';
 import { InlineView } from './InlineView';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
 import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
+import type { MouseBus } from './input/mouse';
 import { PasteRegistry } from './input/paste';
 import { handleKey } from './key-handler';
 import type { OverlayDiffEntry } from './OverlayPicker';
@@ -44,6 +47,7 @@ import { dispatchSlash } from './slash-dispatch';
 import { useThemeContext } from './theme/ThemeProvider';
 import { formatTranscript } from './transcript-text';
 import type { AppView, SudoAuthenticationState, TranscriptScroller } from './view';
+import type { WorktreeStatus } from './worktree';
 
 function sessionHasActiveRun(status: SessionStatus): boolean {
   return status === 'running' || status === 'waiting_for_permission';
@@ -136,13 +140,32 @@ export interface AppProps {
    * the alternate screen. Defaults to `inline`; `mountTui` picks the real one.
    */
   layout?: 'fullscreen' | 'inline';
+  /** Injection point for tests: the size to lay out for, in place of the terminal's. */
+  terminalSize?: { columns: number; rows: number };
+  /**
+   * Reads the working tree for the context panel. Defaults to git in the
+   * working directory.
+   */
+  readWorktree?: (cwd: string) => Promise<WorktreeStatus | null>;
+  /** The other live Chimera instances, for the context panel. */
+  listPeers?: () => Promise<Peer[]>;
+  /** Wheel events, which the terminal input filter takes out of the key stream. */
+  mouse?: MouseBus;
+  /**
+   * Gives the terminal back before an editor or a pager runs, and takes it
+   * again after. The fullscreen layout needs it; the inline layout does not.
+   */
+  screen?: { leave(): void; enter(): void };
+  /** Called with the session on screen, at start and after every switch. */
+  onActiveSessionChange?: (sessionId: SessionId) => void;
 }
 
 const FILE_MENU_ROWS = 6;
 const FILE_LIST_MAX_AGE_MS = 5_000;
+const WHEEL_LINES = 3;
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-export function App(props: AppProps): React.ReactElement {
+export function App(props: AppProps): React.ReactElement | null {
   const themeCtx = useThemeContext();
   const fullscreen = props.layout === 'fullscreen';
   const app = useApp();
@@ -177,8 +200,21 @@ export function App(props: AppProps): React.ReactElement {
   useEffect(() => {
     activeSessionRef.current = activeSession;
   }, [activeSession]);
+  const { onActiveSessionChange } = props;
+  useEffect(() => {
+    onActiveSessionChange?.(activeSession.sessionId);
+  }, [activeSession.sessionId, onActiveSessionChange]);
+  // Ink copies the last frame to the main screen when it leaves the
+  // alternate screen. An empty last frame leaves the user's terminal as it
+  // was before the session, so the fullscreen layout draws nothing first.
+  const [exiting, setExiting] = useState(false);
   const cleanupAndExit = async () => {
-    app.exit();
+    if (!fullscreen) {
+      app.exit();
+      return;
+    }
+    setExiting(true);
+    setTimeout(() => app.exit(), 0);
   };
   const [overlayPicker, setOverlayPicker] = useState<OverlayDiffEntry[] | null>(null);
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null);
@@ -195,8 +231,10 @@ export function App(props: AppProps): React.ReactElement {
   const [currentModelRef, setCurrentModelRef] = useState<string>(props.modelRef);
   /** Vision model the in-flight turn is routed to; null when not routed. */
   const [visionRouteRef, setVisionRouteRef] = useState<string | null>(null);
-  const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
-  const [rows, setRows] = useState<number>(stdout?.rows ?? 24);
+  const [terminalColumns, setColumns] = useState<number>(stdout?.columns ?? 80);
+  const [terminalRows, setRows] = useState<number>(stdout?.rows ?? 24);
+  const columns = props.terminalSize?.columns ?? terminalColumns;
+  const rows = props.terminalSize?.rows ?? terminalRows;
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [helpOpen, setHelpOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -352,7 +390,6 @@ export function App(props: AppProps): React.ReactElement {
     projectFilesLoadedAtRef.current = Date.now();
     void (props.listFiles ?? listProjectFiles)(props.cwd).then(setProjectFiles, () => {});
   }, [fileWordStart, props.cwd, props.listFiles]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new query starts at the best match
   useEffect(() => {
     setFileMenuHighlight(0);
   }, [fileQuery]);
@@ -543,6 +580,27 @@ export function App(props: AppProps): React.ReactElement {
     setShowHeader(false);
   }
 
+  const { mouse } = props;
+  useEffect(() => {
+    if (!fullscreen || !mouse) return;
+    return mouse.subscribe((event) => {
+      scrollerRef.current?.scrollBy(event.kind === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES);
+    });
+  }, [fullscreen, mouse]);
+
+  /** Run a program that takes over the terminal, then take the screen back. */
+  async function withScreenHandoff<T>(operation: () => Promise<T>): Promise<T> {
+    if (!fullscreen) return operation();
+    props.screen?.leave();
+    try {
+      return await operation();
+    } finally {
+      props.screen?.enter();
+      // The program drew over the screen; nothing Ink remembers of it is true now.
+      app.rerender();
+    }
+  }
+
   useInput((char, key) => {
     handleKey(char, key, {
       props,
@@ -604,7 +662,9 @@ export function App(props: AppProps): React.ReactElement {
             stdout: process.stdout,
             stdin: process.stdin,
           }));
-      const result = await handler({ initialText: bufferRef.current.text });
+      const result = await withScreenHandoff(() =>
+        handler({ initialText: bufferRef.current.text }),
+      );
       if (result.ok) {
         setBuffer((b) => replaceAll(b, result.text));
         stickyColRef.current = null;
@@ -628,7 +688,7 @@ export function App(props: AppProps): React.ReactElement {
         ((args: { text: string }) =>
           openInPagerImpl({ text: args.text, stdout: process.stdout, stdin: process.stdin }));
       const text = formatTranscript(scrollback.all(), { color: props.openInPager === undefined });
-      const result = await handler({ text });
+      const result = await withScreenHandoff(() => handler({ text }));
       if (!result.ok) scrollback.addInfo(`transcript: ${result.reason}`);
     } finally {
       editorOpenRef.current = false;
@@ -637,6 +697,7 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   async function handleSubmit(text: string): Promise<void> {
+    scrollerRef.current?.toEnd();
     const expandedText = props.pasteRegistry?.expand(text) ?? text;
     props.pasteRegistry?.clear();
     if (expandedText.startsWith('!')) {
@@ -1145,7 +1206,8 @@ export function App(props: AppProps): React.ReactElement {
     scrollerRef,
   };
 
-  return <InlineView view={view} />;
+  if (exiting) return null;
+  return fullscreen ? <FullscreenView view={view} /> : <InlineView view={view} />;
 }
 
 /**

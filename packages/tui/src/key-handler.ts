@@ -116,7 +116,16 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     fileMenuHighlight,
     setFileMenuHighlight,
     setFileMenuDismissedAt,
+    fullscreen,
+    scrollerRef,
+    setPanelOpen,
   } = context;
+  // The transcript scrolls under a dialog too: the user may want to read
+  // what led to a permission request before answering it.
+  if (fullscreen && (key.pageUp || key.pageDown)) {
+    scrollerRef.current?.scrollPages(key.pageUp ? -1 : 1);
+    return;
+  }
   if (pending) return; // handled by modal
   if (overlayPicker) return; // handled by picker
   if (sessionPicker) return; // handled by SessionPicker
@@ -235,6 +244,10 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
 
   if (key.ctrl && char === 't') {
     void runTranscriptView();
+    return;
+  }
+  if (fullscreen && key.ctrl && char === 'b') {
+    setPanelOpen((open) => !open);
     return;
   }
   if (key.ctrl && char === 'g') {

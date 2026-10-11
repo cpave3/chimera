@@ -7,18 +7,43 @@ export function previewLine(text: string): string {
   return oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine;
 }
 
+export interface PromptStyle {
+  /** Leads the first line of a message. */
+  marker: string;
+  /** Leads the first line of a `!` shell command. */
+  bangMarker: string;
+  /** Shown while the buffer is empty, under the cursor. */
+  placeholder?: string;
+  placeholderColor?: string;
+}
+
+const INLINE_PROMPT_STYLE: PromptStyle = { marker: '> ', bangMarker: 'bash > ' };
+
 export function renderPromptLines(
   buffer: MultilineBuffer,
   accentColor: string,
   bangColor: string,
   editorOpen: boolean,
   isBang: boolean,
+  style: PromptStyle = INLINE_PROMPT_STYLE,
 ): React.ReactElement[] {
   const allLines = buffer.text.split('\n');
   const { line: cursorLine, col: cursorCol } = cursorLineCol(buffer);
+  if (buffer.text === '' && style.placeholder && !editorOpen) {
+    // The cursor sits on the placeholder's first letter, so the text does
+    // not jump a column when the first key replaces it.
+    return [
+      <Box key={0}>
+        <Text color={accentColor}>{style.marker}</Text>
+        <Text color={style.placeholderColor}>
+          {`\x1b[7m${style.placeholder[0]}\x1b[27m${style.placeholder.slice(1)}`}
+        </Text>
+      </Box>,
+    ];
+  }
   return allLines.map((lineText, idx) => {
     const isFirst = idx === 0;
-    const prefix = isFirst ? (isBang ? 'bash > ' : '> ') : '  ';
+    const prefix = isFirst ? (isBang ? style.bangMarker : style.marker) : '  ';
     const color = isBang ? bangColor : accentColor;
     const showCursor = idx === cursorLine && !editorOpen;
     if (!showCursor) {
