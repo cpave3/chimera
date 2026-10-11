@@ -1,0 +1,23 @@
+## 1. Explore agent
+
+- [ ] 1.1 Test and implement discovery of built-in agent definitions
+- [ ] 1.2 Write `builtin/explore.md`; ship it in the package
+- [ ] 1.3 Test and implement the `utility` model alias in `spawn_agent`
+
+## 2. Utility model
+
+- [ ] 2.1 Test and add the `utilityModel` config key and the compaction fallback
+- [ ] 2.2 Wire the key into the factory; warn when it cannot be resolved
+- [ ] 2.3 Test and add the explore guidance to the prompt's tool list
+
+## 3. Background children
+
+- [ ] 3.1 Test and implement `Agent.deliver` (queue during a run, start a run when idle)
+- [ ] 3.2 Test and implement the background manager and `background: true`
+- [ ] 3.3 Test and implement `agent_status` and `agent_stop`; stop children at session end
+- [ ] 3.4 Test and implement the transcript lines
+
+## 4. Wrap-up
+
+- [ ] 4.1 Update `README.md` and `docs/`
+- [ ] 4.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`; subagent E2E with `CHIMERA_TEST_E2E=1`
