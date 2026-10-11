@@ -43,6 +43,7 @@ import {
   persistSession,
   writeSessionMetadata,
 } from './persistence';
+import { classifyProviderError, describeProviderError } from './provider-errors';
 import {
   type CompactionConfig,
   type CompactorApi,
@@ -168,8 +169,9 @@ export interface AgentOptions {
   /** Awaited after permission state changes and before the suspended tool resumes. */
   permissionResolvedHook?: PermissionResolvedHook;
   /**
-   * Per-step wall-clock timeout for LLM `streamText` calls (ms).
-   * A value of `0` disables the timeout. Defaults to 120000.
+   * Idle timeout for a model step (ms): how long the model may produce no
+   * stream output. Tool execution time does not count. A value of `0`
+   * disables the timeout. Defaults to 120000.
    */
   responseTimeoutMs?: number;
   /**
@@ -222,6 +224,8 @@ export class Agent {
   ) => Promise<ModelResolution>;
   private defaultModelRef?: string | (() => string);
   private static readonly MAX_STOP_RETRIES = 5;
+  private static readonly MAX_PROVIDER_RETRIES = 4;
+  private static readonly MAX_OUTPUT_CONTINUATIONS = 2;
   private toolFormatters: Record<string, ToolFormatter> = {};
   /**
    * Maps the AI SDK's per-call `toolCallId` (a short string the SDK generates)
@@ -323,19 +327,26 @@ export class Agent {
    */
   private visionModelResolver?: () => VisionModelResolution;
   /**
-   * Run-scoped model override engaged while a vision-routed turn is in
-   * flight. Layered over `opts` via the `active*()` accessors and cleared at
-   * the end of every run (plus defensively at run start), so interrupted or
-   * errored runs revert for free and `session.model` /
-   * `session.userModelOverride` are never touched.
+   * Resolver for the model a run moves to when the active model stays
+   * unavailable after every retry. Returns the same resolution shape as the
+   * vision route, since both swap the model for the rest of one run.
    */
-  private visionOverride: {
+  private fallbackModelResolver?: () => VisionModelResolution;
+  /**
+   * Run-scoped model override: engaged while a vision-routed turn is in
+   * flight, or after a run fell back because its model stayed unavailable.
+   * Layered over `opts` via the `active*()` accessors and cleared at the end
+   * of every run (plus defensively at run start), so interrupted or errored
+   * runs revert for free and `session.model` / `session.userModelOverride`
+   * are never touched.
+   */
+  private modelOverride: {
     model: ModelConfig;
     languageModel: LanguageModel;
     contextWindow: number;
     contextWindowIsApproximate: boolean;
     providerOptions?: ProviderOptions;
-    trigger: 'user_images' | 'tool_image';
+    trigger: 'user_images' | 'tool_image' | 'fallback';
   } | null = null;
   /** Once-per-run latch for `vision_route_unavailable`. */
   private visionUnavailableEmitted = false;
@@ -738,6 +749,14 @@ export class Agent {
   }
 
   /**
+   * Register the resolver for `fallbackModel`. Invoked at most once per run,
+   * after a step has used all of its retries on a temporary provider error.
+   */
+  setFallbackModelResolver(resolver: () => VisionModelResolution): void {
+    this.fallbackModelResolver = resolver;
+  }
+
+  /**
    * Set (or clear) the user model override. On an idle agent, this resolves
    * the new model via the registered `modelChangeResolver`, swaps the
    * session's model and languageModel, persists metadata, and returns `applied`.
@@ -1043,7 +1062,7 @@ export class Agent {
     // Fresh abort controller per run.
     this.abortController = new AbortController();
     // Defensive: a crashed run must not leak its vision override into this one.
-    this.visionOverride = null;
+    this.modelOverride = null;
     this.visionUnavailableEmitted = false;
 
     const queue = new EventQueue<AgentEvent>();
@@ -1066,26 +1085,41 @@ export class Agent {
    * Evaluated per step, so mid-run task updates are visible on the next step.
    */
   /** The model config in effect for the current step (vision override aware). */
+  /** Resolves after `delayMs`, or as soon as the current run is aborted. */
+  private waitUnlessInterrupted(delayMs: number): Promise<void> {
+    const { signal } = this.abortController;
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, delayMs);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
   private activeModel(): ModelConfig {
-    return this.visionOverride?.model ?? this.opts.model;
+    return this.modelOverride?.model ?? this.opts.model;
   }
 
   private activeLanguageModel(): LanguageModel {
-    return this.visionOverride?.languageModel ?? this.opts.languageModel;
+    return this.modelOverride?.languageModel ?? this.opts.languageModel;
   }
 
   private activeContextWindow(): number {
-    return this.visionOverride?.contextWindow ?? this.opts.contextWindow;
+    return this.modelOverride?.contextWindow ?? this.opts.contextWindow;
   }
 
   private activeContextWindowIsApproximate(): boolean {
-    return (
-      this.visionOverride?.contextWindowIsApproximate ?? !!this.opts.contextWindowIsApproximate
-    );
+    return this.modelOverride?.contextWindowIsApproximate ?? !!this.opts.contextWindowIsApproximate;
   }
 
   private activeProviderOptions(): ProviderOptions | undefined {
-    return this.visionOverride ? this.visionOverride.providerOptions : this.opts.providerOptions;
+    return this.modelOverride ? this.modelOverride.providerOptions : this.opts.providerOptions;
   }
 
   private composeSystemPrompt(planHandoff: boolean): string | undefined {
@@ -1105,7 +1139,7 @@ export class Agent {
           'plan before recording anything.',
       );
     }
-    if (this.visionOverride) {
+    if (this.modelOverride && this.modelOverride.trigger !== 'fallback') {
       parts.push(
         '# Vision turn\n\n' +
           "This turn is routed to you because it contains images the session's " +
@@ -1154,18 +1188,28 @@ export class Agent {
   }
 
   /**
-   * Run a threshold compaction (at run start or between steps), emitting the
-   * event pair and persisting a snapshot so a crash before the next step
-   * cannot resurrect the pre-compaction history. Failure emits
+   * Run a compaction inside a run, emitting the event pair and persisting a
+   * snapshot so a crash before the next step cannot resurrect the
+   * pre-compaction history. `threshold` runs at run start or between steps;
+   * `overflow` runs after the provider rejected the prompt for its length,
+   * which means the size estimate was wrong, so it forces the summarizing
+   * pass instead of letting a prune-only pass count as enough. Failure emits
    * `compaction_failed` and latches further attempts off for this turn —
-   * a degraded run beats a dead one.
+   * a degraded run beats a dead one. Returns true when the conversation
+   * got smaller.
    */
-  private async runThresholdCompaction(queue: EventQueue<AgentEvent>): Promise<void> {
+  private async runCompaction(
+    queue: EventQueue<AgentEvent>,
+    trigger: 'threshold' | 'overflow',
+  ): Promise<boolean> {
     const compactor = this.opts.compactor;
-    if (!compactor) return;
-    queue.push({ type: 'compaction_started', reason: 'threshold' });
+    if (!compactor) return false;
+    queue.push({ type: 'compaction_started', reason: trigger });
     try {
-      const result = await compactor.compact(this.session, 'threshold');
+      const result = await compactor.compact(
+        this.session,
+        trigger === 'overflow' ? 'manual' : 'threshold',
+      );
       queue.push({
         type: 'compaction_finished',
         summary: result.summary,
@@ -1195,10 +1239,12 @@ export class Agent {
       } catch {
         // Persistence errors must not crash the run.
       }
+      return result.tokensAfter < result.tokensBefore;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       queue.push({ type: 'compaction_failed', error: message });
       this.compactionIneffective = true;
+      return false;
     }
   }
 
@@ -1313,7 +1359,7 @@ export class Agent {
         reason: 'no vision model resolver registered',
       };
       if (resolution.status === 'ok') {
-        this.visionOverride = {
+        this.modelOverride = {
           model: { ...resolution.model, maxSteps: this.session.model.maxSteps },
           languageModel: resolution.languageModel,
           contextWindow: resolution.contextWindow,
@@ -1366,12 +1412,12 @@ export class Agent {
 
     queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
 
-    if (this.visionOverride) {
+    if (this.modelOverride && this.modelOverride.trigger !== 'fallback') {
       queue.push({
         type: 'vision_route_started',
         from: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
-        to: `${this.visionOverride.model.providerId}/${this.visionOverride.model.modelId}`,
-        trigger: this.visionOverride.trigger,
+        to: `${this.modelOverride.model.providerId}/${this.modelOverride.model.modelId}`,
+        trigger: this.modelOverride.trigger,
       });
     }
 
@@ -1379,7 +1425,7 @@ export class Agent {
     // same projection-based trigger used between steps runs once up front.
     this.compactionIneffective = false;
     if (this.overCompactionThreshold()) {
-      await this.runThresholdCompaction(queue);
+      await this.runCompaction(queue, 'threshold');
     }
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
@@ -1415,9 +1461,16 @@ export class Agent {
       | 'error'
       | 'interrupted'
       | 'timeout'
-      | 'waiting_for_input' = 'stop';
+      | 'waiting_for_input'
+      | 'output_limit' = 'stop';
     let errorMessage: string | undefined;
     let stopRetryCount = 0;
+    // Retries already spent on the step currently being attempted; reset each
+    // time a step completes.
+    let providerRetries = 0;
+    let overflowCompactionTried = false;
+    let fallbackUsed = false;
+    let outputContinuations = 0;
     // Lazy once-per-run probe of the vision fallback, used to word image
     // placeholders when a text-only model receives history with images.
     let visionFallbackProbe: { configured: boolean; ref?: string } | null = null;
@@ -1482,6 +1535,7 @@ export class Agent {
             visionFallbackProbe =
               probe?.status === 'ok' ? { configured: true, ref: probe.ref } : { configured: false };
           }
+          let stepError: unknown;
           const stream = streamText({
             model: this.activeLanguageModel(),
             messages: await prepareMessagesForModel(this.session.messages, {
@@ -1492,6 +1546,12 @@ export class Agent {
             tools: this.opts.tools,
             system: this.composeSystemPrompt(planHandoff),
             stopWhen: stepCountIs(1),
+            // The loop below owns retries so that request failures and
+            // mid-stream failures follow one policy.
+            maxRetries: 0,
+            // Errors arrive as `error` stream parts; the SDK's default handler
+            // would also print each one to stderr, under the TUI.
+            onError: () => {},
             abortSignal: this.abortController.signal,
             temperature: this.activeModel().temperature,
             topP: this.activeModel().topP,
@@ -1914,8 +1974,8 @@ export class Agent {
               }
               case 'error': {
                 terminalReason = 'error';
-                errorMessage =
-                  part.error instanceof Error ? part.error.message : String(part.error);
+                errorMessage = describeProviderError(part.error);
+                stepError = part.error;
                 break;
               }
               default:
@@ -1926,6 +1986,83 @@ export class Agent {
 
           if (timeoutHandle) clearTimeout(timeoutHandle);
           timeoutHandle = undefined;
+
+          // A step that failed before any tool call started has had no side
+          // effects, so it is safe to send again.
+          if (terminalReason === 'error' && !stepHadToolCalls) {
+            const failure = classifyProviderError(stepError);
+            if (
+              failure.kind === 'overflow' &&
+              !overflowCompactionTried &&
+              this.opts.compaction?.enabled
+            ) {
+              overflowCompactionTried = true;
+              if (await this.runCompaction(queue, 'overflow')) {
+                terminalReason = 'stop';
+                errorMessage = undefined;
+                continue;
+              }
+            }
+            if (failure.kind === 'temporary' && providerRetries < Agent.MAX_PROVIDER_RETRIES) {
+              providerRetries += 1;
+              const delayMs = failure.retryAfterMs ?? 1000 * 2 ** (providerRetries - 1);
+              queue.push({
+                type: 'provider_retry',
+                attempt: providerRetries,
+                maxAttempts: Agent.MAX_PROVIDER_RETRIES,
+                delayMs,
+                error: failure.message,
+              });
+              await this.waitUnlessInterrupted(delayMs);
+              if (this.abortController.signal.aborted) {
+                terminalReason = 'interrupted';
+                break;
+              }
+              terminalReason = 'stop';
+              errorMessage = undefined;
+              continue;
+            }
+            const activeModel = this.activeModel();
+            const activeRef = `${activeModel.providerId}/${activeModel.modelId}`;
+            const fallback =
+              failure.kind === 'temporary' && !fallbackUsed
+                ? this.fallbackModelResolver?.()
+                : undefined;
+            if (fallback?.status === 'ok' && fallback.ref !== activeRef) {
+              fallbackUsed = true;
+              providerRetries = 0;
+              if (this.modelOverride && this.modelOverride.trigger !== 'fallback') {
+                queue.push({
+                  type: 'vision_route_ended',
+                  restored: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
+                });
+              }
+              this.modelOverride = {
+                model: { ...fallback.model, maxSteps: this.session.model.maxSteps },
+                languageModel: fallback.languageModel,
+                contextWindow: fallback.contextWindow,
+                contextWindowIsApproximate: fallback.contextWindowIsApproximate,
+                providerOptions: fallback.providerOptions,
+                trigger: 'fallback',
+              };
+              queue.push({
+                type: 'model_fallback',
+                from: activeRef,
+                to: fallback.ref,
+                error: failure.message,
+              });
+              terminalReason = 'stop';
+              errorMessage = undefined;
+              continue;
+            }
+          }
+          if (terminalReason === 'error') {
+            // `stream.response` rejects with a generic "No output generated"
+            // for a failed step, which would replace the provider's message.
+            break;
+          }
+          providerRetries = 0;
+          overflowCompactionTried = false;
 
           // After the stream finishes, attach response messages.
           const response = await stream.response;
@@ -1959,7 +2096,7 @@ export class Agent {
                 reason: 'no vision model resolver registered',
               };
               if (resolution.status === 'ok') {
-                this.visionOverride = {
+                this.modelOverride = {
                   model: { ...resolution.model, maxSteps: this.session.model.maxSteps },
                   languageModel: resolution.languageModel,
                   contextWindow: resolution.contextWindow,
@@ -2054,7 +2191,7 @@ export class Agent {
               !this.compactionIneffective &&
               this.overCompactionThreshold()
             ) {
-              await this.runThresholdCompaction(queue);
+              await this.runCompaction(queue, 'threshold');
             }
             continue;
           }
@@ -2062,12 +2199,24 @@ export class Agent {
           // Terminal step
           terminalStepCount += 1;
 
-          if (finishReason === 'length') {
-            terminalReason = 'max_steps';
-          }
-
           if (terminalStepCount > maxTerminalSteps) {
             terminalReason = 'max_steps';
+          } else if (finishReason === 'length') {
+            // The model hit its output limit mid-answer. The partial answer
+            // is already in the conversation, so ask for the rest.
+            if (outputContinuations < Agent.MAX_OUTPUT_CONTINUATIONS) {
+              outputContinuations += 1;
+              this.session.messages.push({ role: 'user', content: OUTPUT_CONTINUATION_NOTE });
+              queue.push({
+                type: 'output_continued',
+                attempt: outputContinuations,
+                maxAttempts: Agent.MAX_OUTPUT_CONTINUATIONS,
+              });
+              this.abortController = new AbortController();
+              hitSafetyCap = false;
+              continue;
+            }
+            terminalReason = 'output_limit';
           }
 
           // If user messages were injected this step, loop back so the model
@@ -2182,12 +2331,14 @@ export class Agent {
       // ignore
     }
 
-    if (this.visionOverride) {
-      queue.push({
-        type: 'vision_route_ended',
-        restored: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
-      });
-      this.visionOverride = null;
+    if (this.modelOverride) {
+      if (this.modelOverride.trigger !== 'fallback') {
+        queue.push({
+          type: 'vision_route_ended',
+          restored: `${this.opts.model.providerId}/${this.opts.model.modelId}`,
+        });
+      }
+      this.modelOverride = null;
     }
 
     queue.push({
@@ -2197,6 +2348,10 @@ export class Agent {
     });
   }
 }
+
+const OUTPUT_CONTINUATION_NOTE =
+  'Your previous message was cut off by the output limit. Continue from exactly ' +
+  'where it stopped. Do not repeat text you already wrote.';
 
 interface ReadImageResult {
   data: string;

@@ -16,6 +16,19 @@ export type ToolDisplay = {
   detail?: string;
 };
 
+/**
+ * Why a run ended. `output_limit`: the model's answer was cut off by its
+ * output limit and still was after the agent asked it to continue.
+ */
+export type RunFinishedReason =
+  | 'stop'
+  | 'max_steps'
+  | 'error'
+  | 'interrupted'
+  | 'timeout'
+  | 'waiting_for_input'
+  | 'output_limit';
+
 export type AgentEvent =
   | { type: 'session_started'; sessionId: SessionId }
   | { type: 'user_message'; content: string; imageCount?: number }
@@ -131,6 +144,27 @@ export type AgentEvent =
       kind?: 'information' | 'action';
     }
   | { type: 'step_finished'; stepNumber: number; finishReason: string }
+  /**
+   * The model's answer was cut off by its output limit and the agent asked
+   * it to continue. `attempt` counts from 1.
+   */
+  | { type: 'output_continued'; attempt: number; maxAttempts: number }
+  /**
+   * The active model stayed unavailable after every retry; the rest of this
+   * run uses the configured fallback model. The session model is unchanged.
+   */
+  | { type: 'model_fallback'; from: string; to: string; error: string }
+  /**
+   * A model step failed with a temporary provider error and will be sent
+   * again after `delayMs`. `attempt` counts from 1.
+   */
+  | {
+      type: 'provider_retry';
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      error: string;
+    }
   | {
       type: 'usage_updated';
       usage: Usage;
@@ -140,12 +174,13 @@ export type AgentEvent =
     }
   | {
       type: 'run_finished';
-      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' | 'waiting_for_input';
+      reason: RunFinishedReason;
       error?: string;
     }
   | {
       type: 'compaction_started';
-      reason: 'threshold' | 'manual';
+      /** `overflow`: the provider rejected the prompt for its length. */
+      reason: 'threshold' | 'manual' | 'overflow';
     }
   | {
       type: 'compaction_finished';
@@ -200,7 +235,7 @@ export type PersistedEvent =
     }
   | {
       type: 'run_finished';
-      reason: 'stop' | 'max_steps' | 'error' | 'interrupted' | 'timeout' | 'waiting_for_input';
+      reason: RunFinishedReason;
       error?: string;
     }
   | {

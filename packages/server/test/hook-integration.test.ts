@@ -287,7 +287,7 @@ exit 1
             timeoutMs: 5_000,
             log: () => {},
           }),
-        failingModel('terminated'),
+        failingModel('invalid api key'),
       ),
       instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
     });
@@ -305,12 +305,12 @@ exit 1
     await entry.activeRun;
 
     expect(hookCompletedBeforeTerminalEvent).toBe(true);
-    expect(terminalEvent).toMatchObject({ reason: 'error', error: 'terminated' });
+    expect(terminalEvent).toMatchObject({ reason: 'error', error: 'invalid api key' });
     expect(JSON.parse(await readFile(captured, 'utf8'))).toMatchObject({
       event: 'OnError',
       session_id: sessionId,
       cwd,
-      error: 'terminated',
+      error: 'invalid api key',
     });
     expect((await readFile(counter, 'utf8')).trim().split('\n')).toEqual(['OnError']);
   });
