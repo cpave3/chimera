@@ -37,6 +37,8 @@ export interface SessionEventContext {
   setCurrentModelRef: Dispatch<SetStateAction<string>>;
   setCompacting: Dispatch<SetStateAction<boolean>>;
   setTasks: Dispatch<SetStateAction<{ content: string; status: string }[]>>;
+  /** The provider retry the run is waiting on, shown in the activity line. */
+  setRetry: Dispatch<SetStateAction<{ attempt: number; maxAttempts: number } | null>>;
 }
 
 /**
@@ -61,6 +63,7 @@ export function applySessionEvent(
     setCurrentModelRef,
     setCompacting,
     setTasks,
+    setRetry,
   } = context;
   if (process.env.CHIMERA_DEBUG_SUBAGENTS) {
     const compact: Record<string, unknown> = { type: ev.type };
@@ -100,6 +103,16 @@ export function applySessionEvent(
     ev.type === 'permission_resolved'
   ) {
     setRunning(true);
+  }
+  if (
+    ev.type === 'assistant_text_delta' ||
+    ev.type === 'reasoning_text_delta' ||
+    ev.type === 'tool_call_start' ||
+    ev.type === 'model_fallback' ||
+    ev.type === 'run_finished'
+  ) {
+    // The step went through (or the run gave up): the retry wait is over.
+    setRetry(null);
   }
   const all = scrollback.all();
   if (process.env.CHIMERA_DEBUG_SUBAGENTS && ev.type === 'tool_call_result') {
@@ -191,6 +204,7 @@ export function applySessionEvent(
   } else if (ev.type === 'vision_route_unavailable') {
     scrollback.addError(`vision: ${ev.reason}`);
   } else if (ev.type === 'provider_retry') {
+    setRetry({ attempt: ev.attempt, maxAttempts: ev.maxAttempts });
     const seconds = Math.max(1, Math.round(ev.delayMs / 1000));
     scrollback.addInfo(
       `provider error: ${ev.error} — retry ${ev.attempt}/${ev.maxAttempts} in ${seconds}s`,

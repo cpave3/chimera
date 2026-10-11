@@ -15,7 +15,7 @@
 
 ## 3. Activity line
 
-- [ ] 3.1 Test and implement the activity selector and line (tool, approval, compaction, retry, elapsed time)
+- [x] 3.1 Test and implement the activity selector and line (tool, approval, compaction, retry, elapsed time)
 
 ## 4. Transcript
 

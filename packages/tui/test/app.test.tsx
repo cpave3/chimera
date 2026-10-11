@@ -1542,8 +1542,8 @@ describe('App', () => {
 
     await new Promise((r) => setTimeout(r, 30));
     expect(sends).toEqual(['bootstrap task']);
-    // Frame shows spinner because the run is pending with no events yet.
-    expect(lastFrame()).toContain('waiting');
+    // Frame shows the activity line because the run is pending with no events yet.
+    expect(lastFrame()).toContain('thinking');
     unmount();
   });
 

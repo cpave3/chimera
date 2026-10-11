@@ -15,6 +15,8 @@ import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ActivityLine } from './ActivityLine';
+import { describeActivity } from './activity';
 import { parseAttachTokens, readForAttach } from './attach-paths';
 import { BottomChrome } from './BottomChrome';
 import { runBangCommand } from './bang';
@@ -201,6 +203,7 @@ export function App(props: AppProps): React.ReactElement {
   const [columns, setColumns] = useState<number>(stdout?.columns ?? 80);
   const [lastCtrlC, setLastCtrlC] = useState<number>(0);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [retry, setRetry] = useState<{ attempt: number; maxAttempts: number } | null>(null);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
@@ -340,6 +343,19 @@ export function App(props: AppProps): React.ReactElement {
     if (!buffer.text.startsWith('/')) setMenuDismissed(false);
   }, [buffer.text]);
 
+  // When the current activity began and how many output tokens the session
+  // had by then, so the activity line can show this run's time and tokens.
+  const runStartedAtRef = useRef<number | null>(null);
+  const runStartOutputTokensRef = useRef(0);
+  if (running || compacting) {
+    if (runStartedAtRef.current === null) {
+      runStartedAtRef.current = Date.now();
+      runStartOutputTokensRef.current = usageState?.usage.outputTokens ?? 0;
+    }
+  } else {
+    runStartedAtRef.current = null;
+  }
+
   // Tick the spinner while waiting for a response or compacting.
   useEffect(() => {
     if (!running && !compacting) return;
@@ -472,6 +488,7 @@ export function App(props: AppProps): React.ReactElement {
       setCurrentModelRef,
       setCompacting,
       setTasks,
+      setRetry,
     });
   }
 
@@ -895,6 +912,16 @@ export function App(props: AppProps): React.ReactElement {
     return { committedEntries: committed, inFlightEntries: inFlight, childrenByParent };
   }, [entries, committedCount]);
 
+  const inFlightTool = useMemo(() => {
+    for (let index = inFlightEntries.length - 1; index >= 0; index -= 1) {
+      const entry = inFlightEntries[index]!;
+      if (entry.kind === 'tool' && entry.toolResult === undefined && !entry.toolError) {
+        return { name: entry.toolName, label: entry.displayName, summary: entry.text };
+      }
+    }
+    return null;
+  }, [inFlightEntries]);
+
   const staticItems = useMemo<StaticItem[]>(() => {
     const entryItems: StaticItem[] = committedEntries.map((e) => ({
       kind: 'entry',
@@ -959,17 +986,21 @@ export function App(props: AppProps): React.ReactElement {
             )}
           </Box>
         ))}
-        {running && (
-          <Box>
-            <Text color={theme.ui.accent}>
-              {SPINNER_FRAMES[spinnerFrame]} {streaming ? 'streaming…' : 'waiting…'}
-            </Text>
-          </Box>
-        )}
-        {compacting && (
-          <Box>
-            <Text color={theme.ui.accent}>{SPINNER_FRAMES[spinnerFrame]} compacting…</Text>
-          </Box>
+        {(running || compacting) && (
+          <ActivityLine
+            spinner={SPINNER_FRAMES[spinnerFrame]!}
+            label={describeActivity({
+              awaitingApproval: pending !== null,
+              compacting,
+              retry,
+              inFlightTool,
+              streaming,
+            })}
+            elapsedMs={Date.now() - (runStartedAtRef.current ?? Date.now())}
+            tokens={(usageState?.usage.outputTokens ?? 0) - runStartOutputTokensRef.current}
+            canInterrupt={running}
+            width={columns}
+          />
         )}
         {helpOpen && <HelpPanel />}
         {queue.length > 0 && (
