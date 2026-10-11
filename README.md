@@ -1,995 +1,431 @@
 # Chimera
 
-Chimera is a terminal-native AI coding agent:
+Chimera is an AI coding agent for the terminal. You give it a task in your
+project. It reads the code, runs commands, edits files, and tells you what it
+did. It works with any OpenAI-compatible or Anthropic-compatible model, from a
+large hosted model to a small local one.
 
-See [model generation settings](docs/model-settings.md) for provider capabilities, thinking, effort, session controls, and Manticore setup.
+- **A TUI for interactive work.** A fullscreen layout with a transcript and a
+  context panel, or an inline layout for slow links.
+- **Any model.** Chimera adapts its tools and its prompt to the model, and
+  repairs the common mistakes that small models make in tool calls.
+- **Safe by default.** Host commands run in an OS sandbox. A command policy
+  and approval prompts control what leaves it.
+- **Long sessions.** Automatic compaction, an archive for large tool outputs,
+  and a memory for each project.
+- **Work without supervision.** Goals that are checked at each stop, an
+  optional approval reviewer, and subagents that run in the background.
+- **Open to extension.** MCP tools, lifecycle hooks, skills, your own slash
+  commands, modes, agent definitions and themes.
+- **Scriptable.** `chimera run` for one prompt, `chimera serve` for a server,
+  and a typed client. The TUI uses the same HTTP interface.
 
-- **TUI-first** for interactive use (Ink-based).
-- **SDK-first**: every consumer — the TUI, future Slack harnesses, future subagents — talks to the same `ChimeraClient` over HTTP + SSE, so there is no "side channel" behavior.
-- **Permission-aware**: every shell call that would leave the agent's controlled scope is gated. Rules can be remembered for a session, project, or globally.
-- **Human handoffs**: agents can call `request_user_input` to end a run with an actionable request and notify integrations through a lifecycle hook.
-- **Shape-based providers**: any OpenAI-compatible or Anthropic-compatible endpoint works via `baseUrl` + `apiKey`.
+## Contents
 
-MCP tools (local stdio and remote Streamable HTTP with OAuth), Docker sandbox, skills, user-defined slash commands, and subagents (`spawn_agent`) are supported. See [MCP tools](docs/mcp.md) for setup and host-execution risks.
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Daily use](#daily-use)
+- [Models](#models)
+- [Tools](#tools)
+- [Safety](#safety)
+- [Context and memory](#context-and-memory)
+- [Goals, questions and subagents](#goals-questions-and-subagents)
+- [Extend Chimera](#extend-chimera)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Limits](#limits)
 
 ## Install
 
-### Prerequisites
-
-- Node.js >=20
-
-Enable corepack so the pinned `pnpm` version is used automatically:
+Chimera needs Node.js 20 or later. `corepack` selects the pinned `pnpm`
+version.
 
 ```bash
 corepack enable
-```
-
-### Build
-
-```bash
 pnpm install
 pnpm -r build
-```
-
-### Make `chimera` available globally
-
-Link the repo so the `chimera` binary is on your PATH:
-
-```bash
-pnpm link --global
-```
-
-Verify:
-
-```bash
+pnpm link --global      # puts `chimera` on your PATH
 chimera --version
 ```
 
-To remove the global link later:
+`pnpm unlink --global` removes the link. Without a link, run
+`node packages/cli/dist/bin.js <args>`.
 
-```bash
-pnpm unlink --global
-```
+On Linux, install `bubblewrap` to get the [OS sandbox](#safety). Without it
+Chimera shows one warning and runs commands unsandboxed.
 
-### Development fallback
+## Quick start
 
-If you prefer not to link globally, run the CLI directly:
+1. Create `~/.chimera/config.json` with one provider and a default model:
 
-```bash
-node packages/cli/dist/bin.js <args>
-```
+   ```json
+   {
+     "providers": {
+       "anthropic": {
+         "shape": "anthropic",
+         "baseUrl": "https://api.anthropic.com",
+         "apiKey": "env:ANTHROPIC_API_KEY"
+       }
+     },
+     "defaultModel": "anthropic/claude-opus-4-7"
+   }
+   ```
 
-## Configure a provider
+   [`PROVIDERS.md`](PROVIDERS.md) has examples for OpenAI-compatible
+   endpoints, OpenRouter, local servers and proxies.
 
-Create `~/.chimera/config.json`:
+2. Start Chimera in your project:
 
-```json
-{
-  "providers": {
-    "anthropic": {
-      "shape": "anthropic",
-      "baseUrl": "https://api.anthropic.com",
-      "apiKey": "env:ANTHROPIC_API_KEY"
-    }
-  },
-  "defaultModel": "anthropic/claude-opus-4-7"
-}
-```
+   ```bash
+   cd my-project
+   chimera
+   ```
 
-See `PROVIDERS.md` for known-good combinations including OpenRouter, local vLLM/Ollama, and Bedrock/Vertex proxies. Host bash risk and filesystem approval policy is documented in [`docs/bash-command-policy.md`](docs/bash-command-policy.md).
+3. Type a task and press `Enter`. Then try:
 
-## MCP tools
+   | Try | To |
+   | --- | --- |
+   | `?` at an empty prompt | See the keys |
+   | `/help` | See the commands |
+   | `Shift+Tab` | Switch between `build` and `plan` mode |
+   | `@src/file.ts` in a message | Attach a file |
+   | `Esc` | Stop the agent |
 
-Add local and remote tool servers to `~/.chimera/config.json` with the CLI:
+## Daily use
 
-```bash
-chimera mcp add local --transport stdio -- node /path/to/server.js
-chimera mcp add burnlite --transport http https://burnlite.dev/api/llm/mcp
-chimera mcp login burnlite
-chimera mcp list
-chimera mcp tools burnlite
-chimera mcp call burnlite list_projects --args '{}'
-```
-
-The HTTP add offers login and a connection test in a terminal; headless add
-prints the login command instead. `mcp logout <server>` clears local OAuth
-credentials; `mcp remove <server>` also removes its configuration. MCP calls
-run on the **host**, even with `--sandbox`, and need separate approval.
-Headless use requires an explicit per-server `trustedTools` entry or allow
-rule; host auto-approval does not apply. For config examples, OAuth details,
-permissions, supported content, and troubleshooting, see [MCP tools](docs/mcp.md).
-
-When the tool schemas of all servers together would take more than 10% of
-the model's context window, Chimera holds them back and registers
-`tool_search` instead: the agent searches for the tool it needs and the
-matches are registered for the rest of the session. With a large window
-nothing changes.
-
-## Run
-
-Interactive:
+### The TUI
 
 ```
-chimera
+chimera                  # fullscreen layout
+chimera --inline         # print into the terminal's scrollback
+chimera -m provider/model
+chimera --mode plan
 ```
 
-One-shot:
-
-```
-chimera run "run the test suite and fix any failures"
-chimera run --json "list the top-level files" > events.ndjson
-```
-
-When progress requires a person, the agent can use `request_user_input`. Chimera emits a machine-readable handoff and ends that run without another model step; see [Requesting user input](docs/request-user-input.md).
-
-For a choice it can act on at once, the agent uses `ask_question` instead: one to four multiple-choice questions in a dialog, and the run goes on in the same step with your answers. Where no person watches the session (`chimera run`, `chimera serve`, a subagent) the tool does not wait; the agent states its assumption and continues.
-
-Start just the server (useful for attaching from another terminal):
-
-```
-chimera serve
-chimera ls                     # show running instances
-chimera attach <pid-or-url>    # future: mount TUI against a running instance
-```
-
-Session management:
-
-```
-chimera sessions
-chimera sessions rm <session-id>
-```
-
-## Sandbox
-
-Chimera has two sandboxes. The OS sandbox is on by default and confines the
-writes of host commands. The Docker sandbox is opt-in and moves the tools into
-a container.
-
-### OS sandbox
-
-Without `--sandbox`, each host `bash` command runs in the sandbox of the
-operating system (`bubblewrap` on Linux, `sandbox-exec` on macOS) when the
-machine has one. The command can read every file. It can write only in the
-working directory, the temp directory, the session's write paths and the git
-directory of the repository. It cannot write `.chimera/`, where the permission
-rules and hooks are.
-
-When the sandbox blocks a command, the model can ask to run it outside the
-sandbox. Chimera always asks you first. The context panel shows `sandbox os`
-while the OS sandbox is active.
-
-```json
-{
-  "commandPolicy": {
-    "hostBash": {
-      "osSandbox": "auto",
-      "network": "on",
-      "sandboxWritePaths": ["~/.cache/pnpm"]
-    }
-  }
-}
-```
-
-`osSandbox` is `auto` (default), `required` or `off`. `network: "off"` removes
-network access from sandboxed commands. See
-[Host bash command policy](docs/bash-command-policy.md#os-sandbox) for the
-rules and the limits. The macOS profile was not run on a Mac.
-
-### Approval reviewer
-
-```json
-{ "approvalReviewer": { "enabled": true } }
-```
-
-The approval reviewer is off by default. When it is on, a host command or an
-MCP call that needs your approval goes to the `utilityModel` first. The
-reviewer reads the call, the policy findings, your messages and the project
-instructions. It answers `allow` or `escalate`.
-
-- `allow` runs the call. The tool line shows `approved by reviewer`.
-- `escalate` opens the usual prompt, which shows the reviewer's reason.
-- In a session that has nobody to ask, `escalate` is a denial. The model gets
-  the reason.
-
-Sudo commands and commands with a `danger` or `critical` finding always go to
-you. See
-[Host bash command policy](docs/bash-command-policy.md#approval-reviewer) for
-the rules, the limits and the audit record.
-
-### Docker sandbox
-
-Tool calls can be routed through a Docker container instead of running directly
-on the host. Three modes are available:
-
-- `bind` (default with `--sandbox`) — bind-mounts the cwd read-write into the
-  container; writes land on the host immediately.
-- `overlay` — bind-mounts the cwd read-only and stacks an overlayfs upperdir
-  at `~/.chimera/overlays/<sessionId>/`. Writes go to the upperdir, then the
-  user reviews and applies them at session end.
-- `ephemeral` — like overlay but with a tmpfs upperdir. Nothing persists.
-
-Examples:
-
-```
-# Run a one-shot prompt inside a bind-mount sandbox.
-chimera run --sandbox "fix the failing tests"
-
-# Apply changes from an overlay run iff the agent finished cleanly.
-chimera run --sandbox --sandbox-mode overlay --apply-on-success "refactor X"
-
-# Disable network access and tighten resources.
-chimera run --sandbox --sandbox-network none --sandbox-memory 1g --sandbox-cpus 1 "..."
-
-# Refuse to silently fall back to bind when overlay isn't supported.
-chimera --sandbox --sandbox-mode overlay --sandbox-strict
-```
-
-In overlay mode, the TUI exposes `/overlay` (list pending changes), `/apply`
-(interactive picker → rsync), and `/discard`.
-
-The default image is `chimera-sandbox:dev`, built locally from
-`packages/sandbox/docker/`. Pre-build it with `pnpm sandbox:build` (or
-`chimera sandbox build`); otherwise the first `--sandbox` invocation
-auto-builds it once. Pass `--sandbox-image <ref>` to use a different image
-— there's no auto-build for non-default tags, so a typo errors immediately.
-
-Overlay/ephemeral modes need `CAP_SYS_ADMIN` and `--security-opt
-apparmor=unconfined` on `docker run`. See `SECURITY.md`.
-
-## Filesystem layout
-
-Chimera writes to:
-
-- `~/.chimera/config.json` — read on startup; also holds MCP server definitions under `mcpServers` (not tokens).
-- `~/.chimera/mcp-auth/` — owner-only MCP OAuth registration and credentials, keyed by server and exact resource URL.
-- `~/.chimera/sessions/<sessionId>/session.json` — per-session metadata (id, parentId, children, cwd, model, sandbox mode, usage). Atomic tmp+rename on every update.
-- `~/.chimera/sessions/<sessionId>/events.jsonl` — append-only event log. One JSON object per line. Only `step_finished`, `permission_resolved`, `run_finished`, and `forked_from` events are persisted; transient events (text deltas, tool starts, etc.) are not.
-- `~/.chimera/logs/<date>.log` — structured JSON-line activity log. API keys are never written.
-- `~/.chimera/projects/<project-id>/memory/` — the project's memory: `MEMORY.md` and one file per fact. See [Project memory](#project-memory).
-- `~/.chimera/instances/<pid>.json` — lockfile for each running server process. Cleaned up on shutdown (and by `chimera ls` on next run).
-- `./.chimera/permissions.json` — per-project permission rules (when the user picks "remember for project" in the modal).
-
-> **Breaking change**: prior versions wrote sessions as flat `~/.chimera/sessions/<sessionId>.json` files. Those files are ignored by the current version — they are not migrated and not listed. To recover their contents, open the file directly.
-
-> **Concurrent access**: there is no inter-process locking on a session. If two clients hold the same session id, writes are last-write-wins for `session.json` and atomic-per-line for `events.jsonl` appends. Practically: don't open the same session twice.
-
-See `docs/gitignore-template.md` for recommended `.gitignore` entries.
-
-## Sessions, resume, fork
-
-The TUI exposes three session-management commands:
-
-- `/new` — create a fresh root session and switch to it. The previous session is persisted and remains listable.
-- `/sessions` — open an interactive picker (↑/↓ to navigate, Enter to switch, Esc to cancel). Sessions are shown as a tree, with forks indented under their parents.
-  - `/sessions tree` prints a static tree to scrollback.
-  - `/sessions <id>` prints details for one session: full id, cwd, model, parent, child count, and ancestry chain.
-- `/fork [purpose]` — create a child session inheriting the current session's conversation state. The parent is unchanged. In `overlay` sandbox mode the parent's filesystem upperdir is snapshotted into a new upperdir for the child, so the child's filesystem changes do not affect the parent.
-- `/rewind` — open an interactive picker showing every user message in the session with a summary of the tool calls that followed it. Enter rewinds in-place, truncating the event log and preloading the selected message into the input buffer. Shift+Enter forks from the checkpoint into a new child session, preserving the original branch. Escape cancels. In-place rewind is destructive (history after the checkpoint is removed); use Shift+Enter if you want to keep the original branch.
-
-  In-place rewind also restores the **working tree**: before each user message
-  runs, Chimera snapshots the session cwd into a shadow git repo
-  (`~/.chimera/sessions/<id>/workspace.git` — your project's own `.git` is
-  never touched, and the project `.gitignore` is respected). Rewinding checks
-  out the snapshot taken just before the selected message, removing files the
-  agent created after it. The pre-rewind tree is committed to the shadow repo
-  first, so a rewind is itself recoverable with plain git commands against
-  the shadow repo. The TUI reports whether the tree was restored or the
-  rewind was conversation-only. Disable with `"workspaceCheckpoints": false`
-  in `~/.chimera/config.json`.
-
-Resume across server restarts:
-
-```
-chimera resume <id>     # subcommand, by id
-chimera resume          # subcommand, no id → stdin picker scoped to cwd
-chimera continue        # subcommand: resume the most-recently-active session in cwd
-chimera c               # subcommand alias of `continue`
-chimera --resume <id>   # flag on the default interactive command
-chimera --resume        # flag, no value → same stdin picker
-chimera --continue      # flag on the default interactive command
-chimera -c              # short flag alias of `--continue`
-```
-
-`chimera c` (subcommand) and `chimera -c` (flag on the default command) are
-two different entry points but behave identically; same for `--continue` and
-the `continue` subcommand. All resume/continue paths are scoped to the
-working directory by default — you only see and continue sessions that were
-started in the current `cwd`. Inside the TUI, `/sessions` is similarly
-scoped; use `/sessions all` to see every session across all directories.
-
-CLI session management:
-
-```
-chimera sessions           # list sessions in the current directory
-chimera sessions --all     # list every persisted session
-chimera sessions rm <id>   # delete a session (rejected if the session has children)
-```
-
-## Exit codes for `chimera run`
-
-| Reason         | Code |
-| -------------- | ---- |
-| stop           | 0    |
-| error          | 1    |
-| max_steps      | 2    |
-| output_limit   | 2    |
-| interrupted    | 130  |
-
-With `--goal` the code also says how the goal ended:
-
-| Goal                                   | Code |
-| -------------------------------------- | ---- |
-| met                                    | 0    |
-| the check failed                       | 1    |
-| not met at the continuation limit      | 2    |
-| not possible                           | 3    |
-
-See [Goals](#goals).
-
-## Provider errors, retries, and the response timeout
-
-A model step can fail for reasons that have nothing to do with the task. The
-agent loop handles three of them without ending the run:
-
-- **Temporary provider errors** (HTTP 408, 409, 429, 5xx, overload, a dropped
-  connection). The step is sent again after a wait, up to four times. The wait
-  follows the provider's `retry-after` header (capped at 60 seconds) and
-  otherwise doubles from one second. The TUI prints
-  `provider error: … — retry 2/4 in 2s`. A step is only retried when none of
-  its tool calls had started, so a retry never repeats a side effect.
-- **Context overflow.** When the provider rejects a prompt for its length, the
-  agent runs one summarizing compaction and sends the step again.
-- **Output cutoff.** When an answer stops at the model's output limit, the
-  agent asks the model to continue, at most twice per run. If the answer is
-  still cut off, the run ends with the reason `output_limit`.
-
-Set `fallbackModel` in `~/.chimera/config.json` to finish a run on a second
-model when the first stays unavailable after its retries:
-
-```json
-{ "fallbackModel": "anthropic/claude-haiku-4-5" }
-```
-
-The fallback applies to the rest of that run only. The next run starts on the
-session model again.
-
-`responseTimeoutMs` (default 120000, `0` disables) is an **idle** timeout: it
-measures how long the model produces no output. It restarts on every stream
-event and is suspended while a tool call is executing, so a long build, test
-run, or subagent never trips it. A model that goes silent for the whole
-period ends the run with the reason `timeout`.
-
-## Bash timeouts and interruption
-
-Foreground host commands have a 120-second default timeout. On timeout or
-interruption, Chimera sends SIGTERM to the command's process group. If cleanup
-remains incomplete after two seconds, Chimera sends SIGKILL and allows up to
-250 ms for output pipes to close. It then returns the collected output rather
-than waiting indefinitely for a child process. Scheduling delays can extend
-this cleanup period.
-
-Timeouts return `timed_out: true` and a nonzero exit code. Interruption ends the
-agent run; it does not undo command effects. The TUI's `interrupt sent` message
-confirms a request, not completed termination.
-
-Detached or elevated children can escape termination. Signal failures and
-incomplete pipe cleanup appear in stderr; these commands may still be running.
-This bounded cleanup applies to host execution, not Docker sandbox commands.
-Use the explicit background tools below for persistent servers and watchers.
-
-## Background processes
-
-The bash tool accepts `run_in_background: true`, which starts the command as a
-detached host process and returns a `shell_id` immediately — useful for dev
-servers, watchers, and long builds. Two companion tools manage running
-processes:
-
-- `bash_output { shell_id }` — returns output produced since the previous
-  read, plus the process status and exit code once it has finished.
-- `bash_kill { shell_id }` — SIGTERMs the process group, escalating to
-  SIGKILL after a grace period.
-
-Background launches go through the same permission gate as foreground host
-commands. When a process exits, a `background_process_exited` event is pushed
-onto the session's event stream and the TUI prints an info line. All
-background processes for a session are killed when the server shuts down.
-Background commands always run on the host — `target: 'sandbox'` is refused.
-
-## Model profiles
-
-Chimera adapts its tool names, edit tool and system prompt to the model.
-GPT and Codex models edit with `apply_patch`; other models use the
-exact-string `edit` tool. Claude, GPT and Codex models get a lean prompt;
-any other model gets the same prompt plus a short section of explicit
-working rules. The tools section of the prompt is generated from the tools
-the session registers. Every default can be set per model under `models` in
-`~/.chimera/config.json` — see [model profiles](PROVIDERS.md#model-profiles).
-
-## Tool-call guards
-
-Four guards remove failures that have nothing to do with the task. They
-apply to every model.
-
-- **Whitespace-tolerant `edit`.** When `old_string` has no exact match, `edit`
-  matches it against whole lines, first ignoring trailing whitespace and then
-  indentation, and applies the change when exactly one place matches. If the
-  indentation was wrong, the replacement is re-indented to the file. The
-  scrollback line says `matched ignoring whitespace`. When nothing matches,
-  the error shows the closest block of the file with line numbers.
-- **Tool-call repair.** Arguments sent as a JSON string, wrapped in a code
-  fence, with `"true"` or `"5"` where the schema wants a boolean or a number,
-  or with `null` for an optional field are corrected before validation. So
-  is a tool name in the wrong case or under a common alias (`shell`,
-  `read_file`). A call that is still invalid goes back to the model as an
-  error.
-- **Repeat note.** When the model sends the same call three times in a row
-  and gets the same outcome, the result carries a note that tells it to
-  change approach.
-- **Output budget.** One tool result may take 8% of the model's context
-  window (at least 2,000 and at most 25,000 tokens). A larger result keeps its
-  shape, but each oversized text field is cut to its beginning and end and
-  each oversized list to its first items. The full content goes to the recall
-  store, and the model can page through it with `recall({ id, start_line,
-  end_line })` or `recall({ id, search })`. The scrollback shows
-  `output shortened (12k tokens); full text archived as pr_…`. Images and
-  `recall` results are never shortened.
-
-## Post-edit diagnostics
-
-After every successful `edit`/`write`, Chimera can run fast project checks
-against the changed file and feed failures back to the model **inside the tool
-result** — so type errors and lint breakage get fixed in the same step that
-caused them instead of surfacing steps later.
-
-Checks are auto-detected from project config files:
-
-- **biome** — when `biome.json`/`biome.jsonc` and the local
-  `node_modules/@biomejs/biome` binary exist, changed JS/TS/JSON/CSS files are
-  checked with `biome check <file>`.
-- **cerberus** — when `.cerberus/config.yaml` exists, `cerberus run quick`
-  runs after each change.
-
-Add or override checks in `~/.chimera/config.json` (`{file}` expands to the
-shell-quoted changed path; exit 0 means clean, anything else feeds the
-command's output to the model, clipped to 4 kB):
-
-```json
-{
-  "diagnostics": {
-    "checks": [
-      { "name": "tsc", "command": "node ./node_modules/typescript/bin/tsc --noEmit", "match": "\\.tsx?$" }
-    ]
-  }
-}
-```
-
-Set `"diagnostics": { "enabled": false }` to turn the feature off, or
-`"autoDetect": false` to keep only your explicit checks. Heavy checks (tsc,
-test suites) are deliberately not auto-detected — they run on every edit, so
-opt in only where the project is small enough.
-
-## Context management
-
-Chimera is geared for models with 100–250k context windows. Three layers keep
-long sessions inside budget (full details in `docs/COMPACTION.md`):
-
-- **Mid-run auto-compaction.** The agent projects the next prompt from the
-  provider's *actual* reported token usage (falling back to a char/4 estimate
-  before the first step) and compacts when it crosses
-  `min(window × thresholdPercent, window − reserve)` — checked at run start
-  **and between steps**, so long tool loops never die on a window overflow.
-  Configure with `compaction.thresholdPercent` (default 85).
-- **Tiered compaction.** Phase 1 archives old large tool outputs to the
-  recall store and leaves `recall({ id: "pr_..." })` stubs in place — no LLM
-  call, and the conversation skeleton survives. Only if that isn't enough
-  does phase 2 summarize the oldest messages. The `recall` tool fetches
-  archived outputs back (with `start_line`/`end_line`/`search` slicing);
-  entries live under `~/.chimera/recall/<sessionId>/` and expire after
-  `recall.ttlDays` (default 30). Disable with `"recall": { "enabled": false }`.
-- **`/context`.** Shows the window, the actual last-prompt size, the current
-  estimate, the auto-compact trigger, and a per-category breakdown (system
-  prompt, summary, user/assistant messages, tool results, archived stubs).
-
-## Project instructions
-
-Chimera puts `AGENTS.md` (or `CLAUDE.md` where there is no `AGENTS.md`) and
-`AGENTS.local.md` into the system prompt, from the working directory up to
-the git root. You do not have to tell the agent to read them.
-
-- **Subdirectories.** A package deeper in the tree can have its own
-  instruction file. The first time the agent reads, edits or writes a file in
-  such a directory, the tool result carries that file (and those of the
-  directories between it and the working directory), once a session. The
-  system prompt does not change, so the provider's cache stays valid.
-- **Size limit.** An instruction file adds at most 32 KiB to the context. A
-  larger file is cut at a line boundary with a note for the model, and the
-  TUI tells you at start. Keep the file short and point to longer documents
-  the agent can read when it needs them.
-- **Skills.** The skill index takes at most 2% of the model's context
-  window. A library too large for that is listed by name per skills
-  directory, without descriptions; the agent can still open any skill.
-- **`/reload`** composes the system prompt again from disk for the session on
-  screen: instruction files, skills, mode and tool list as they are now.
-
-## Project memory
-
-Chimera keeps a small memory for each project, so a preference you stated or
-a correction you made is there in the next session.
-
-- **Where.** `~/.chimera/projects/<project-id>/memory/`: a `MEMORY.md` index
-  and one Markdown file for each fact. The project is the repository that
-  holds the working directory, and every git worktree of that repository
-  shares the same memory. The project id is the repository's path with dashes
-  for separators.
-- **What a session loads.** The first 200 lines of `MEMORY.md` go into the
-  system prompt at session start, with the directory's path. The agent reads
-  a topic file when its index line is relevant. A memory saved during a
-  session does not change that session's prompt; `/reload` loads it.
-- **When the agent saves.** A model with the `lean` prompt style saves when
-  you state a lasting preference, correct its approach, or tell it a fact
-  about the project that the repository does not record. A model with the
-  `guided` style saves only when you ask it to remember something. Neither
-  saves what the code, the git history or the instruction files already say.
-- **`/memory`** opens the index in `$VISUAL` / `$EDITOR`. The files are plain
-  Markdown; edit or delete them as you like.
-- **Access.** A top-level session reads and writes the memory with the
-  ordinary file tools. A subagent can read it and cannot write it. In a
-  Docker sandbox the file tools cannot reach the directory, so the agent has
-  the index only.
-- **Off switch.** `"memory": { "enabled": false }` in `~/.chimera/config.json`.
-
-## Task list
-
-For multi-step work the model maintains a task list via the `task_list` tool
-(replace-whole-list semantics, statuses `pending` / `in_progress` /
-`completed`). During a run the task panel above the prompt shows the task in
-progress and what follows; the footer keeps the count and the task in progress
-(`tasks 2/5 · ◼ implement feature`). The
-list is persisted in session
-metadata, so it survives resume, forks, and context compaction. The model
-sees the list through its latest `task_list` call; when compaction summarizes
-that call away, the summary ends with a `<tasks>` block that restates every
-task and status. The list is deliberately not part of the system prompt, so a
-task update does not invalidate the provider's prompt cache. Scrollback
-renders each update as a compact progress line (`2/5 done → current task`).
-
-Plan mode hands off into this: the model presents its plan as a numbered
-markdown list, and when you accept it (switch out of plan mode), a one-shot
-system note on the next run tells it to record the plan via `task_list` and
-execute against it.
-
-## Goals
-
-A goal is a completion condition that you state once. Chimera checks it each
-time the agent stops, and the agent continues until the goal is met.
-
-```
-/goal pnpm test passes in packages/api and the changelog has an entry
-/goal            # show the goal
-/goal clear      # remove the goal
-```
-
-```
-chimera run --goal "pnpm test passes in packages/api" "fix the failing tests"
-```
-
-- **The check.** When a run stops cleanly and the session has a goal, the
-  `utilityModel` (the session model when none is set) reads the goal, the
-  agent's last message, the task list and the last 15 tool calls with their
-  results. It needs evidence from tool results. The agent's statement that
-  the work is done is not evidence.
-- **Three answers.** `met` ends the run and removes the goal. `not_met` gives
-  the agent the reason, and the run continues. `impossible` ends the run and
-  removes the goal.
-- **Stop hooks first.** Your `Stop` hooks run before the check. When a hook
-  blocks the stop, the run continues and the check waits for the next stop.
-- **The limit.** One run continues at most `goal.maxContinuations` times
-  (default 20). At the limit the run ends with the reason `max_steps`. The
-  goal stays set, and your next message starts a new count.
-- **A check that fails.** If the checker model fails, is late (60 seconds) or
-  gives no readable answer, the run ends and the goal stays set.
-- **On screen.** The context panel has a `GOAL` section (the footer in the
-  inline layout). Each check adds one line to the transcript, for example
-  `goal not met (1 of 20): the tests were not run`.
-- **Subagents** have no goal check.
-
-```json
-{ "goal": { "maxContinuations": 20 } }
-```
-
-Clients get a `goal_updated` event for each change:
-`{ condition, change, reason?, continuation?, maxContinuations? }`, where
-`change` is `set`, `cleared`, `met`, `not_met`, `impossible`, `limit` or
-`unchecked`. `PUT /v1/sessions/:id/goal` with `{ "condition": "<text>" }` or
-`{ "condition": null }` sets or clears the goal.
-
-## Web access
-
-Two tools give the agent eyes outside the working tree:
-
-- **`fetch`** — always registered. GETs an http(s) URL, converts HTML to
-  readable markdown-ish text (dependency-free converter), follows redirects,
-  clips to 50k chars by default. Every call goes through the permission gate
-  (`tool: fetch`, command = URL), so the usual remember-for-session /
-  remember-for-project rules apply to domains you trust.
-- **`web_search`** — registered only when a search backend is configured in
-  `~/.chimera/config.json`:
-
-  ```json
-  {
-    "webSearch": {
-      "provider": "searxng",
-      "baseUrl": "http://localhost:8080/"
-    }
-  }
-  ```
-
-  Supported providers: `searxng`, `tavily`, `brave`. SearXNG instances must
-  enable JSON output. For Tavily and Brave, use `apiKey` instead of `baseUrl`;
-  `env:VAR_NAME` values resolve from the environment at call time.
-
-  The configured provider is the session's only search backend; Chimera does
-  not fall back to another provider on failure. Results come back as
-  title/URL/snippet triples. When `web_search` is active, the model is told not
-  to guess URLs: it should search first, then pass an exact returned URL to
-  `fetch`. Existing URLs supplied by the user or trusted context can be fetched
-  directly.
-
-## Subagents
-
-The `spawn_agent` tool lets a parent agent delegate a focused task to a fresh
-Chimera instance. By default subagents run as a separate `chimera serve`
-process so they show up in `chimera ls` and are observable from another
-terminal — see [SUBAGENTS.md](./SUBAGENTS.md) for the full debugging workflow.
-
-```
-# Cap nesting at 5 levels (default 3).
-chimera --max-subagent-depth 5
-
-# Disable the spawn_agent tool entirely for a session.
-chimera --no-subagents
-```
-
-### The `explore` agent
-
-Chimera ships one agent definition, `explore`: a read-only search helper with
-`read`, `glob`, `grep`, `fetch` and `web_search`. The model is told to give it
-a wide search (many files, or a place it does not know yet) and to work from
-the findings, which carry `path:line` references. The file contents then stay
-out of the main context. To change it, put your own `explore.md` in
-`~/.chimera/agents/` or `<cwd>/.chimera/agents/`; yours replaces the built-in
-one.
-
-### A cheaper model for helper work
-
-```json
-{ "utilityModel": "anthropic/claude-haiku-4-5" }
-```
-
-`utilityModel` names one low-cost model for helper work. An agent definition
-selects it with `model: utility` in its frontmatter, as `explore` does.
-Compaction summaries use it too, unless `compaction.model` is set. The
-approval reviewer uses it. Without the key, helper work runs on the session
-model. A reference that cannot be resolved gives one warning and is ignored.
-
-### Background agents
-
-`spawn_agent` normally waits for the child. With `background: true` the call
-returns at once with the child's id, and the model goes on working. When the
-child ends, Chimera puts its answer into the conversation: at the next step
-of a run in progress, or as the start of a new run when the session is idle.
-The transcript shows `background agent done: <purpose>` at that point.
-
-- `agent_status` lists the session's background agents (id, purpose, state,
-  running time) and, for one id, its final answer. `agent_stop` stops one.
-- A background agent goes on when the run that started it ends or is
-  interrupted. It stops when it is done, when the model stops it, or when the
-  session ends.
-- A background agent cannot ask you for approval. A command that needs
-  approval is denied, and the agent is told so.
-- `chimera run` ends with its run, so there a `background: true` call runs in
-  the foreground and the result says so.
-
-## The TUI screen
-
-The TUI has two layouts. **Fullscreen** is the default: it takes the
-terminal's alternate screen and keeps a context panel beside the transcript.
-**Inline** prints into the terminal's own scrollback and repaints only a few
-rows under it; use it on a slow link (for example SSH with high latency) or
-when you want the session to stay in your scrollback.
-
-```
-chimera              # fullscreen
-chimera --inline     # inline, for this invocation
-```
-
-```json
-{ "tui": { "layout": "inline", "mouse": true } }
-```
-
-`tui.layout` in `~/.chimera/config.json` sets the default (`fullscreen` or
-`inline`); the flag wins. Without a TTY on stdout, or with `TERM=dumb`,
-Chimera uses the inline layout whatever is set. `resume`, `continue` and
-`attach` take `--inline` too.
-
-### Fullscreen layout
-
-```
-  › add a --json flag to yg list and cover it with a test          ◆ chimera v0.1.0
-                                                                    model        manticore/gpt
-  ● read 1 file · 1 search                                          session           8AWWBRGC
-    src/yg/commands/list.ts (120 lines), "formatWorktree" · 3 …     cwd     ~/Projects/yggdrasil
-  ● edit src/yg/commands/list.ts (1 replacement)                    sandbox                off
-    ╭──────────────────────────────────────────────────────────╮    loaded  60 skills · 9 cmds
-    │ 44 +   if (opts.json) return print(JSON.stringify(trees… │
-    │ 45     const rows = trees.map(formatWorktree)            │    CONTEXT · 76k / 200k   38%
-    ╰──────────────────────────────────────────────────────────╯    ▄▄▄▄▄▄▄▄▄▄▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
-  ● bash pnpm vitest run yg/list (exit 0) · 4.2s                    ■ system ■ skills ■ history
-    ✓ 14 passed
-                                                                    PLAN · 2/4
-  ◆ Added --json to yg list. Writing a snapshot test next.          ✓ locate list command
-                                                                    ✓ add --json option
-  ○ write src/yg/commands/list.test.ts                              ▸ snapshot test for JSON shape
-                                                                    ○ update README usage
-
-                                                                    WORKTREE
-                                                                    yg/json-flag            ↑1
-  ⠹ write src/yg/commands/list.test.ts · 12s · step 6 · esc to …    M list.ts           +18 −3
-                                                                    A list.test.ts
-
-                                                                    PEERS
-                                                                    ● api          plan · idle
-                                                                    total                 3.8k
-    › message chimera                                               in      3.2k  out      640
-   BUILD   enter steer · tab queue · esc interrupt                  cache                  81%
-```
-
-- **Transcript pane.** It follows the newest output. `PgUp`, `PgDn` and the
-  mouse wheel scroll it; while you are scrolled away, new output does not
-  move what you read. `PgDn` to the end, or sending a message, follows the
-  newest output again. A long session mounts the newest entries only and
-  loads earlier ones when you scroll up from the top.
-- **Context panel.** Model, session, working directory, sandbox (`os` when host
-  commands run in the OS sandbox, a Docker mode, or `off`), and what was
-  loaded; context use as a bar split into system prompt, skills index and
-  history (the split is an estimate; the total is the provider's count); the
-  goal, when one is set (see [Goals](#goals)); the
-  plan (the model's task list); the working tree (branch, commits ahead and
-  behind, changed files with lines added and removed); other live Chimera
-  instances on this machine with their mode and state; and the session's
-  tokens: the total, then `in` and `out` side by side, then the cached share
-  of the last prompt. `Ctrl+B` hides and
-  shows the panel. Under 100 columns the panel is dropped, and the hints row
-  shows the model and the context percentage instead.
-- **Prompt box and hints row.** The row under the prompt shows the mode as a
-  badge and the keys that matter in the current state.
-- **Mouse.** The wheel scrolls the transcript. Drag with the left button to
-  select text: the selection is copied to the clipboard when you release the
-  button, and the hints row says how much was copied. A selection stays in
-  the column it starts in, so a copy from the transcript never takes the
-  panel along, and code keeps its shape (later lines lose the indent the
-  first line starts at). The copy goes through the system clipboard tool
-  (`wl-copy`, `xclip`, `xsel`, `pbcopy`) and through the terminal's own
-  clipboard sequence (OSC 52), which is what reaches your machine over SSH.
-  In tmux, OSC 52 needs `set -g set-clipboard on`; the system tool needs
-  nothing. A selection covers what is on screen; for more, scroll and copy
-  again, or open the transcript with `Ctrl+T`. `Shift`+drag still gives you
-  the terminal's own selection (`Option` in iTerm2). Set `tui.mouse` to
-  `false` to leave the mouse to the terminal entirely; the wheel then does
-  not scroll.
-- **Exit.** The alternate screen takes the session with it, so Chimera prints
-  the session id and the `chimera --session <id>` command that resumes it.
-  `Ctrl+T` opens the full transcript in a pager at any time.
-
-### Inline layout
-
-```
-› add retry logic to the provider client
-
-◆ I will add backoff to the stream call. Then I will add a test.
-
-● read 3 files · 1 search
-  src/agent.ts (2409 lines), src/events.ts (217 lines), retry (4 matches), …
-● edit packages/core/src/agent.ts (1 replacement)
-  ╭──────────────────────────────────────────────────────────────────────────╮
-  │ 1481 -           const stream = streamText({                             │
-  │ 1481 +           const stream = this.startStep({                         │
-  ╰──────────────────────────────────────────────────────────────────────────╯
-✗ bash pnpm --filter @chimera/core test (exit 1) · 8.2s
-
-─── 1m 12s · 6 steps · 7 tool calls · ↑ 114k ↓ 3.7k tokens · cache 78%
-
-tasks 2/4
-◼ Add a test for mid-stream errors
-◻ Update README
-⠹ running pnpm --filter @chimera/core test · 12s · step 3 · 3.1k tokens · esc to interrupt
-────────────────────────────────────────────────────────────────────────────────
-> _
-build · anthropic/claude-opus-4-7 · sandbox off   ▰▰▰▰▱▱▱▱▱▱ 42% · 84k/200k · cache 81%
-~/Projects/chimera · session 12345678 · tasks 2/4 · ◼ Add a test…      enter steer
-```
-
-- **Task panel.** During a run the task list shows above the prompt, from the
-  task in progress onward, at most six lines.
-- **Footer.** Row 1: mode, model and sandbox on the left; a context gauge with
-  percentage, used/window tokens and the cached share of the last prompt on
-  the right. Row 2: working directory, session id, task count and the task in
-  progress on the left; the keys that matter in the current state on the
-  right. On a narrow terminal each row drops its least important items first.
-- **Start banner.** Version, model, working directory, session, mode, sandbox,
-  and the number of skills and commands loaded.
-
-### In both layouts
-
-- **Transcript lines.** A user message starts with `›` and assistant text
-  with `◆`. A tool call starts with a glyph for its state (`○` running, `●`
-  returned, `✗` failed or exited non-zero) and shows a one-line summary
-  instead of raw JSON args, with the duration when the call took a second or
-  more. Tool calls that follow each other sit together. When a sandbox is
-  active the line also says `[host]` or `[sandbox]`. Consecutive successful
-  `read`, `glob`, `find`, `ls` and `grep` calls collapse into one line. An
-  edit, a patch or a written file is drawn in a border. Fenced code blocks
-  with a known language are syntax-highlighted.
-- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
-  tokens in and out, and the cached share.
-- **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
-  else `less`): every tool call on its own line, with its full output.
-- **Activity line.** While a run is active, one line says what the agent is
-  doing (thinking, writing, running a tool, waiting for approval, compacting,
-  retrying a provider error), for how long, on which step, and how many
-  tokens it has produced.
-- **Help.** `?` at an empty prompt lists the key bindings.
-- **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
-  digit, or the letter shown next to each choice. `Esc` denies.
-
-Each built-in tool ships with a `formatScrollback` hook in its definition
-that produces an args-only summary at call start and a result-aware summary
-once the tool returns. Plugin tools authored via `defineTool` from
-`@chimera/tools` opt in by passing `formatScrollback`; tools without one
-fall back to a `<name> <truncated-JSON>` rendering.
-
-## Multi-line prompt composition
-
-The TUI prompt is multi-line. Three triggers insert a newline at the cursor
-without submitting:
-
-- **`\<Enter>`** — type a backslash, then press Enter. The trailing `\` is
-  consumed and replaced with a newline. This works on every terminal and is
-  the documented portable form.
-- **`Shift+Enter`** / **`Alt+Enter`** — best-effort. Works wherever the
-  terminal emits a distinguishable byte sequence (kitty keyboard protocol,
-  iTerm2, modern xterm with `modifyOtherKeys`). On terminals that don't, the
-  keystroke is reported as plain Enter and submits — fall back to
-  `\<Enter>`.
-
-For longer drafts, **`Ctrl+G`** opens `$VISUAL` / `$EDITOR` (falling back to
-`vi`) on the current buffer. On save and clean exit the buffer is replaced
-with the file's contents; non-zero exits leave the buffer alone and write a
-single info line to scrollback.
-
-Within a multi-line buffer, arrow keys move the cursor by char (Left/Right)
-or by logical line (Up/Down); `Home`/`Ctrl+A` and `End`/`Ctrl+E` jump to
-line start and end. `Backspace` and `Delete` operate at the cursor and
-join lines when crossing a `\n`. With an empty buffer, `Up`/`Down` continue
-to recall input history.
-
-## Steering, queueing and attaching files
-
-- **Steer or queue.** During a run, `Enter` sends the message to the agent at
-  its next step. `Tab` holds it for the next turn instead; held messages show
-  above the prompt and go out together when the run ends. `Up` at an empty
-  prompt takes the newest held message back for editing.
-- **Attach a file.** `@path` attaches a file for the agent to read, `#path`
-  one it may write. Typing `@` or `#` at the start of a word opens a list of
-  matching files (what git tracks plus untracked files it does not ignore;
-  a directory walk outside a repository). `↑`/`↓` move, `Tab` or `Enter`
-  accepts, `Esc` closes the list.
-
-## Notifications
-
-Chimera asks for your attention through the terminal when a run ends, a
-permission request opens, or the agent needs input. Set `tui.notifications`
-in `~/.chimera/config.json`:
-
-| Value | Behaviour |
+The fullscreen layout shows the transcript beside a context panel: model,
+session, sandbox, context use, goal, plan, working tree, other running
+instances and token totals.
+
+| Key | Action |
 | --- | --- |
-| `auto` (default) | A bell and an `OSC 9` desktop notification, only when the terminal is not focused. |
-| `bell` | A bell on every such event. |
-| `off` | Nothing. |
+| `Enter` | Send. During a run: steer the agent. |
+| `Tab` | During a run: hold the message for the next turn. |
+| `Esc` | Interrupt the run. |
+| `Shift+Tab` | Cycle the mode. |
+| `Ctrl+T` | Open the full transcript in a pager. |
+| `Ctrl+B` | Show or hide the context panel. |
+| `Ctrl+G` | Edit the prompt in `$EDITOR`. |
+| `Ctrl+V` | Paste an image. |
+| `@path`, `#path` | Attach a file to read, or a file to write. |
+| `!command` | Run a shell command yourself and put the output into the conversation. |
+| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript. |
+| Mouse drag | Select text; it is copied when you release the button. |
 
-iTerm2, kitty, WezTerm, Ghostty and Windows Terminal show `OSC 9` as a
-desktop notification; other terminals ignore it and you get the bell. Focus
-comes from the terminal's focus reports. A terminal that sends none gets a
-notification for approvals and input requests, and for a finished run only
-when the run took ten seconds or more. A run you interrupt yourself sends
-nothing. For anything else (a sound, a phone push), use a `Stop` hook; see
-[Lifecycle hooks](docs/hooks.md).
+The most used commands are `/new`, `/sessions`, `/rewind`, `/model`, `/mode`,
+`/goal`, `/context`, `/compact` and `/memory`. [The TUI](docs/tui.md) has the
+complete key and command lists, the two layouts, notifications and themes.
 
-## Token usage
+### Modes
 
-The context panel (the first footer row in the inline layout) shows how full
-the model's context window is after the latest step: a gauge with a
-percentage, and the tokens used over the window size (`84k/200k`). With it
-is the share of the last prompt the provider served from its cache
-(`cache 81%`). The numbers come from the AI SDK's
-`usage` payload — no estimation, no extra calls. `/context` has a
-per-category breakdown. Cumulative totals persist with the session, so
-resuming an old session shows the same figures on the next prompt.
+A mode sets the tools and the instructions of the agent. Two modes are built
+in:
 
-Color escalates as the prompt fills the window: gray under 80%, amber from
-80–95%, red at 95% or above. The window itself is resolved from a built-in
-table for known Claude / GPT / o-series models. To override (or add a model
-we don't know about yet), set a `models` block in `~/.chimera/config.json` —
-see `PROVIDERS.md`. When the model isn't in the table and you haven't set
-an override, the window falls back to 128k and a `?` after the window size
-flags the value as approximate.
+- **`build`** (default): all tools.
+- **`plan`**: read-only. The agent reads the project, searches the web and
+  can give a wide search to the `explore` subagent. It cannot edit a file or
+  run a command. It ends with a numbered plan. When you switch back to
+  `build`, the agent records the plan in its task list and works through it.
 
-## What's not here (yet)
+`Shift+Tab` or `/mode <name>` switches. You can write your own modes; see
+[Modes](docs/MODES.md).
 
-- No MCP resources, prompts, or legacy SSE transport (MCP tools only).
-- No bearer-token auth on the HTTP server. Bind is `127.0.0.1` only by default.
+### One prompt
 
-## Theme Customization
-
-The TUI loads a user theme from `~/.chimera/theme.json`, alongside the rest of Chimera's user state (sessions, config, logs). Create the file to override any subset of the default colour tokens:
-
-```json
-{
-  "accent": {
-    "primary": "green",
-    "secondary": "cyanBright"
-  },
-  "status": {
-    "error": "redBright"
-  },
-  "text": {
-    "muted": "gray"
-  }
-}
+```bash
+chimera run "run the test suite and fix the failures"
+chimera run --json "list the top-level files" > events.ndjson
+chimera run --goal "pnpm test passes" "fix the failing tests"
 ```
 
-Only specify the tokens you want to override; the rest inherit from the default theme. Available token groups:
+The exit code says how the run ended. See [Headless use](docs/headless.md)
+for the codes, the approval rules of a one-shot run, the server
+(`chimera serve`, `chimera ls`, `chimera attach`) and the HTTP API.
 
-- `base` — `foreground`, `background`
-- `accent` — `primary`, `secondary`, `tertiary`
-- `status` — `success`, `warning`, `error`, `info`, `successBg`, `errorBg` (diff rows)
-- `text` — `primary`, `secondary`, `muted`, `dim`
-- `ui` — `badge`, `accent`
-- `syntax` — `keyword`, `string`, `comment`, `number`, `function`, `type` (fenced code blocks)
-- `surface` — `panel`, `raised`, `sunken`, `border` (fills and lines of the fullscreen layout)
+### Sessions
 
-The two layouts start from different defaults. The fullscreen layout paints its own background, so its default theme is a set of explicit colours (background `#1f1d27`, accent `#b79cf7`) with fills for the panel and the prompt box. The inline layout sits on your terminal's background, so its default theme uses ANSI colour names and no fills. Your `theme.json` merges over whichever applies. A surface with no colour is drawn without a fill; set `base.background` and the `surface` colours together when you re-skin the fullscreen layout. `NO_COLOR` gives both layouts a plain theme with no fills.
+Chimera saves each session. You can continue one, fork it, or go back to an
+earlier message.
 
-JSON has no native comments, so the loader strips unknown top-level keys — you can leave a `_comment` field in the file as a note. If the JSON is malformed, the TUI prints `theme: ...` on stderr at startup and falls back to the default theme.
-
-See `docs/theme.json.example` for an annotated partial-override sample, or `docs/theme-dracula.json` for a full re-skin.
-
-### Switching between themes
-
-The TUI ships a few bundled presets: `default`, `tokyo-night-moon`, and `cyberpunk`. From inside the TUI:
-
-- `/theme` — list available themes; the active one is marked with a leading `*`.
-- `/theme <name>` — write the chosen preset into `~/.chimera/theme.json` (with a `_themeName` marker so `/theme` can show which is active) and live-reload without restarting.
-
-Drop additional partial themes into `~/.chimera/themes/<name>.json` to extend the list; user files shadow bundled presets of the same name. Hand-edits to `~/.chimera/theme.json` always take effect on next start, but running `/theme <name>` overwrites them.
-
-## Lifecycle hooks
-
-Drop an executable file in `~/.chimera/hooks/<EventName>/` (global) or `<cwd>/.chimera/hooks/<EventName>/` (project) and Chimera fires it on the matching event. Events include `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop` and `SessionEnd`. A `PreToolUse` hook that exits 2 blocks the tool call, and the agent gets the hook's stderr as the reason. `chimera hooks list` prints what's installed. See [`docs/hooks.md`](docs/hooks.md) for the payload schema, exit-code semantics, and a Legato integration recipe.
-
-## Packages
-
-```
-packages/core          — agent loop, events, session persistence
-packages/providers     — OpenAI/Anthropic-compat provider factories
-packages/tools         — Executor, LocalExecutor, bash/read/write/edit
-packages/permissions   — rule store, GatedExecutor, auto-approve tiers
-packages/hooks         — lifecycle hook discovery + execution
-packages/sandbox       — DockerExecutor, overlay diff/apply, sandbox image
-packages/server        — Hono HTTP + SSE surface
-packages/client        — typed TypeScript SDK (ChimeraClient)
-packages/tui           — Ink-based interactive UI
-packages/cli           — chimera binary
+```bash
+chimera -c               # continue the newest session of this directory
+chimera --resume         # pick a session of this directory
+chimera sessions list    # list the saved sessions
 ```
 
-Dependency DAG is strict: `cli → tui, server, client, permissions, hooks, sandbox, tools, providers, core`. No back edges.
+In the TUI, `/sessions` switches, `/fork` makes a child session, and
+`/rewind` goes back to an earlier message and restores the working tree to
+that point. See [Sessions and files](docs/sessions.md).
+
+## Models
+
+- **Providers.** A provider is a `baseUrl`, an `apiKey` and a `shape`
+  (`anthropic` or `openai`). A model reference is `provider/model`. See
+  [`PROVIDERS.md`](PROVIDERS.md).
+- **Model profiles.** Chimera selects the edit tool, the tool names and the
+  prompt style for each model. GPT and Codex models edit with `apply_patch`.
+  Other models use the exact-string `edit` tool. Models other than Claude,
+  GPT and Codex get a short list of explicit working rules. You can set each
+  of these for a model. See
+  [model profiles](PROVIDERS.md#model-profiles).
+- **Generation settings.** Thinking, effort and other settings are in
+  [Model generation settings](docs/model-settings.md). `/model` changes the
+  model and its settings in a session.
+- **Helper models.**
+
+  | Key | Use |
+  | --- | --- |
+  | `utilityModel` | One low-cost model for helper work: the `explore` subagent, the approval reviewer, the goal check and compaction summaries. |
+  | `fallbackModel` | Finishes a run when the session model stays unavailable after its retries. |
+  | `defaultVisionModel` | Takes a turn that has an image when the session model cannot read images. |
+
+- **Failures that are not your task.** Chimera retries temporary provider
+  errors, compacts and tries again when a prompt is too long, and asks the
+  model to continue when an answer is cut off. The response timeout measures
+  model silence only, so a long build does not trip it. See
+  [Errors, retries and the response timeout](PROVIDERS.md#errors-retries-and-the-response-timeout).
+- **Prompt caching.** The system prompt does not change during a session, and
+  Anthropic-shape providers get cache markers. The TUI shows the cached share
+  of each prompt. See [Prompt caching](PROVIDERS.md#prompt-caching).
+
+## Tools
+
+The agent has these tools: `bash`, `read`, `write`, `edit` or `apply_patch`,
+`glob`, `grep`, `fetch`, `web_search` (when a search provider is configured),
+`task_list`, `recall`, `ask_question`, `request_user_input`, `spawn_agent`,
+tools for background processes and background subagents, and the tools of
+your MCP servers.
+
+Four guards apply to every model:
+
+- **Whitespace-tolerant edit.** An edit that differs from the file only in
+  whitespace is applied when exactly one place matches.
+- **Tool-call repair.** Arguments with a wrong type or in a code fence, and
+  tool names under a common alias, are corrected.
+- **Repeat note.** After three identical calls with the same result, the
+  agent is told to change its approach.
+- **Output budget.** A large tool result is shortened. The full text goes to
+  an archive that the agent reads with `recall`.
+
+After each edit, Chimera can run fast project checks (for example `biome`)
+and give the failures to the model in the same step.
+
+See [Tools](docs/tools.md) for the tool table, the guards, post-edit
+diagnostics, bash timeouts, background processes and web access.
+
+## Safety
+
+Chimera has three layers between the model and your machine.
+
+1. **The OS sandbox.** Each host `bash` command runs in the sandbox of the
+   operating system (`bubblewrap` on Linux, `sandbox-exec` on macOS). The
+   command can read every file. It can write only in the project, the temp
+   directory, the paths that you granted and the repository's git directory.
+   It cannot write `.chimera/`, where the rules and hooks are. When the
+   sandbox blocks a command, the agent can ask to run it unsandboxed, and
+   that request needs approval. The macOS profile was not run on a Mac.
+2. **The command policy.** Chimera analyzes each host command before it runs.
+   Sudo and dangerous commands need your approval. Without the OS sandbox, a
+   write outside the allowed directories also needs it. Some commands are
+   always blocked. You can remember a decision for the session, the project
+   or all projects. Each decision is in an audit log.
+3. **Approval prompts.** The prompt shows the command and the findings. With
+   `"approvalReviewer": { "enabled": true }`, the `utilityModel` examines a
+   request first: it allows what is plainly part of your task and sends the
+   rest to you. Sudo and dangerous commands always go to you.
+
+For more isolation, `--sandbox` moves the tools into a Docker container, with
+`bind`, `overlay` (review the changes before they reach your files) and
+`ephemeral` modes.
+
+`--auto-approve none|sandbox|host|all` sets what runs without a prompt. The
+default is `host`: a host command that the policy accepts runs at once.
+
+- [Sandboxes](docs/sandbox.md): the OS sandbox and the Docker sandbox.
+- [Host bash command policy](docs/bash-command-policy.md): the rules, sudo,
+  the approval reviewer and the audit log.
+- [`SECURITY.md`](SECURITY.md): the threat model.
+
+## Context and memory
+
+- **Project instructions.** Chimera loads `AGENTS.md` (or `CLAUDE.md`) and
+  `AGENTS.local.md` from the working directory up to the git root. An
+  instruction file in a subdirectory is loaded when the agent first works
+  there.
+- **Project memory.** The agent keeps a small memory for each project in
+  `~/.chimera/projects/<id>/memory/`: your preferences and corrections. Each
+  session loads the index. `/memory` opens it in your editor.
+- **Compaction.** Before the context window is full, Chimera first archives
+  old large tool outputs and then summarizes the oldest messages. This
+  happens between steps, so a long tool loop does not fail on a full window.
+  `/context` shows where the tokens are, and `/compact` compacts now.
+- **Task list.** For work with several steps the agent keeps a task list. The
+  TUI shows it, and it stays through compaction, resume and fork.
+
+See [Instructions, memory and context](docs/context.md) and
+[Context compaction](docs/COMPACTION.md).
+
+## Goals, questions and subagents
+
+- **Goals.** `/goal <condition>` or `chimera run --goal` states when the work
+  is done, for example `pnpm test passes`. At each stop, a checker model
+  examines the goal against the tool results. If the goal is not met, the
+  agent gets the reason and continues, up to a limit. See
+  [Goals](docs/goals.md).
+- **Questions.** The agent can ask you one to four multiple-choice questions
+  in a dialog and continue with your answers. When it cannot continue without
+  you, it ends the run with a request. See
+  [Requesting user input](docs/request-user-input.md).
+- **Subagents.** The agent can give a focused task to a child agent with its
+  own context. The built-in `explore` agent does wide read-only searches, so
+  the file contents stay out of the main context. A subagent can run in the
+  background while the agent continues. See [Subagents](SUBAGENTS.md).
+
+## Extend Chimera
+
+| Extension | What it is | Where it goes | Docs |
+| --- | --- | --- | --- |
+| MCP servers | Tools from local and remote servers, with OAuth | `chimera mcp add …` | [MCP tools](docs/mcp.md) |
+| Hooks | Executables that run on events such as `PreToolUse`, `Stop` and `SessionEnd`; some can block | `.chimera/hooks/<Event>/` | [Lifecycle hooks](docs/hooks.md) |
+| Skills | Instructions with files that the agent loads when a task needs them | `.chimera/skills/<name>/SKILL.md` | [Skills](SKILLS.md) |
+| Commands | Your own slash commands: prompt templates with arguments | `.chimera/commands/<name>.md` | [User commands](docs/COMMANDS.md) |
+| Modes | A tool list and instructions that you switch to | `.chimera/modes/<name>.md` | [Modes](docs/MODES.md) |
+| Agents | Definitions for subagents: prompt, tools and model | `.chimera/agents/<name>.md` | [Subagents](SUBAGENTS.md) |
+| Themes | Colours of the TUI | `~/.chimera/theme.json` | [The TUI](docs/tui.md#themes) |
+
+Each directory can be in the project (`<cwd>/.chimera/`) or in your home
+directory (`~/.chimera/`). Chimera also reads skills, commands, modes and
+agent definitions from `.claude/`, so files written for Claude Code work.
+`--no-claude-compat` turns that off.
+
+`chimera skills`, `chimera commands`, `chimera agents` and
+`chimera hooks list` show what Chimera found in the current directory.
+
+## Configuration
+
+All configuration is in `~/.chimera/config.json`. Chimera reads it at start,
+so restart a session after a change.
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `providers` | — | Your model providers. [`PROVIDERS.md`](PROVIDERS.md) |
+| `defaultModel` | — | The model of a new session (`provider/model`). |
+| `models` | — | Options for each model: context window, profile, settings. [`PROVIDERS.md`](PROVIDERS.md#per-model-overrides) |
+| `utilityModel` | session model | Low-cost model for helper work. [Subagents](SUBAGENTS.md#a-cheaper-model-for-helper-work) |
+| `fallbackModel` | none | Second model when the first stays unavailable. |
+| `defaultVisionModel` | none | Model for turns with images. [Model settings](docs/model-settings.md#image-input-and-vision-routing) |
+| `responseTimeoutMs` | `120000` | How long the model can be silent. `0` turns the timeout off. |
+| `defaultMode`, `cycleModes` | `build`, all modes | The first mode, and the modes that `Shift+Tab` cycles. |
+| `commandPolicy.hostBash` | see docs | Command policy and OS sandbox: `mode`, `autoAllowThrough`, `osSandbox`, `network`, `sandboxWritePaths`. [Policy](docs/bash-command-policy.md) |
+| `approvalReviewer.enabled` | `false` | A model examines approval requests first. |
+| `goal.maxContinuations` | `20` | Continuations of one run for a goal that is not met. |
+| `compaction` | on | `enabled`, `thresholdPercent`, `reserveTokens`, `keepRecentTokens`, `model`. [Compaction](docs/COMPACTION.md) |
+| `recall` | on | Archive for large tool outputs: `enabled`, `archiveThresholdTokens`, `ttlDays`. |
+| `memory.enabled` | `true` | Project memory. |
+| `diagnostics` | auto-detect | Checks that run after each edit. [Tools](docs/tools.md#post-edit-diagnostics) |
+| `webSearch` | none | Search provider for `web_search`: `searxng`, `tavily` or `brave`. |
+| `workspaceCheckpoints` | `true` | Working tree snapshots for `/rewind`. |
+| `mcpServers` | — | MCP servers; `chimera mcp` writes this. |
+| `skills`, `commands`, `agents`, `modes` | on | Each has `enabled` and `claudeCompat`. |
+| `tui` | — | `layout` (`fullscreen` or `inline`), `mouse`, `notifications` (`auto`, `bell`, `off`). |
+
+A value of the form `env:NAME` in an API key is read from the environment.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `chimera` | Start the TUI. `--resume [id]`, `-c`, `--mode`, `-m`, `--inline`, `--sandbox`. |
+| `chimera run <prompt>` | Run one prompt without the TUI. `--json`, `--stdin`, `--goal`, `--command`. |
+| `chimera resume [id]`, `chimera continue` (`c`) | Resume a saved session. |
+| `chimera sessions list\|rm\|review-bash` | Manage saved sessions. |
+| `chimera serve` | Start only the server. |
+| `chimera ls` | List the running instances. |
+| `chimera attach <target>` | Open the TUI on a running instance. |
+| `chimera mcp add\|list\|remove\|tools\|call\|login\|logout` | Manage MCP servers. |
+| `chimera skills`, `commands`, `agents` | List what Chimera found in this directory. |
+| `chimera hooks list` | List the hooks. |
+| `chimera sandbox build` | Build the Docker sandbox image. |
+
+`chimera <command> --help` shows each flag.
+
+## Documentation
+
+| Topic | Page |
+| --- | --- |
+| Keys, commands, layouts, notifications, themes | [docs/tui.md](docs/tui.md) |
+| Sessions, resume, fork, rewind, files on disk | [docs/sessions.md](docs/sessions.md) |
+| One-shot runs, the server, the HTTP API | [docs/headless.md](docs/headless.md) |
+| Providers, model profiles, prompt caching, retries | [PROVIDERS.md](PROVIDERS.md) |
+| Thinking, effort, vision | [docs/model-settings.md](docs/model-settings.md) |
+| Tools, guards, diagnostics, background processes, web | [docs/tools.md](docs/tools.md) |
+| OS sandbox, Docker sandbox | [docs/sandbox.md](docs/sandbox.md) |
+| Command policy, sudo, approval reviewer, audit | [docs/bash-command-policy.md](docs/bash-command-policy.md) |
+| Threat model | [SECURITY.md](SECURITY.md) |
+| Instructions, project memory, task list | [docs/context.md](docs/context.md) |
+| Compaction | [docs/COMPACTION.md](docs/COMPACTION.md) |
+| Goals | [docs/goals.md](docs/goals.md) |
+| Questions and handoffs to the user | [docs/request-user-input.md](docs/request-user-input.md) |
+| Subagents, `explore`, background agents | [SUBAGENTS.md](SUBAGENTS.md) |
+| Modes | [docs/MODES.md](docs/MODES.md) |
+| Skills | [SKILLS.md](SKILLS.md) |
+| User commands | [docs/COMMANDS.md](docs/COMMANDS.md) |
+| MCP | [docs/mcp.md](docs/mcp.md) |
+| Hooks | [docs/hooks.md](docs/hooks.md) |
+
+## Development
+
+```bash
+pnpm -r build                          # build every package
+pnpm -r test                           # run every test suite
+pnpm --filter @chimera/<pkg> test      # one package
+pnpm biome:lint                        # lint
+```
+
+Packages use each other's built `dist/`, so build a package before you test
+one that depends on it. [`AGENTS.md`](AGENTS.md) has the notes for
+contributors and for agents that work on this repository.
+
+```
+packages/core          agent loop, events, sessions, prompts, goals
+packages/providers     provider factories, model profiles, context windows
+packages/tools         the built-in tools, guards, executors, OS sandbox
+packages/permissions   command policy, permission gate, approval reviewer, audit
+packages/hooks         lifecycle hook discovery and execution
+packages/sandbox       Docker executor, overlay diff and apply
+packages/compaction    context compaction
+packages/recall        archive for large tool outputs
+packages/modes         mode discovery and the built-in modes
+packages/skills        skill discovery and index
+packages/commands      user command discovery and expansion
+packages/subagents     spawn_agent, agent definitions, background agents
+packages/server        HTTP and SSE server
+packages/client        typed client (ChimeraClient)
+packages/tui           the terminal UI
+packages/cli           the chimera binary, configuration, MCP
+```
+
+The dependencies have one direction: `cli` depends on the other packages, and
+`core` depends on none of them.
+
+## Limits
+
+- The HTTP server has no authentication. It binds `127.0.0.1` by default.
+- MCP: tools only. No resources, prompts, legacy SSE transport or manual
+  bearer tokens.
+- The OS sandbox limits writes and, on request, the network. It does not
+  limit reads. It is not available on Windows.
+- A one-shot run cannot show an approval prompt. See
+  [Headless use](docs/headless.md#approvals-in-a-one-shot-run).
+- Two clients that write to one session at the same time are not coordinated.

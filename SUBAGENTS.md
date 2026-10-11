@@ -107,6 +107,29 @@ invariant is "in-process is observation-only." If you need interactive
 permission flow, drop `in_process: true` and use the default child-process
 spawn.
 
+## The `explore` agent
+
+Chimera ships one agent definition, `explore`: a read-only search helper with
+`read`, `glob`, `grep`, `fetch` and `web_search`. The model is told to give it
+a wide search (many files, or a place it does not know yet) and to work from
+the findings, which carry `path:line` references. The file contents then stay
+out of the main context. To change it, put your own `explore.md` in
+`~/.chimera/agents/` or `<cwd>/.chimera/agents/`; yours replaces the built-in
+one.
+
+## A cheaper model for helper work
+
+```json
+{ "utilityModel": "anthropic/claude-haiku-4-5" }
+```
+
+`utilityModel` names one low-cost model for helper work. An agent definition
+selects it with `model: utility` in its frontmatter, as `explore` does.
+Compaction summaries use it too, unless `compaction.model` is set. The
+approval reviewer and the goal check use it. Without the key, helper work
+runs on the session model. A reference that cannot be resolved gives one
+warning and is ignored.
+
 ## Background agents
 
 `spawn_agent` with `background: true` returns as soon as the child has
@@ -118,7 +141,8 @@ work.
   boundary, the same way a message you type during a run does. When the
   session is idle it starts a run. The message starts with
   `[background agent <id> ended: <state>] <purpose>` and says that it is not
-  from the user.
+  from the user. The TUI shows it as one line, for example
+  `background agent done: <purpose>`.
 - **Not part of the run that started it.** `Esc` in the parent interrupts the
   parent's run only. A background child stops when it is done, when the model
   calls `agent_stop`, or when the session ends.

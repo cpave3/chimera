@@ -107,7 +107,7 @@ All keys live under `compaction` in `~/.chimera/config.json`:
 | `keepRecentTokens` | number | `20000` | Budget for the trailing verbatim tail. |
 | `model` | string | *(session model)* | Model used to generate summaries, in `providerId/modelId` format. |
 
-The prune tier is configured under `recall` (see the README): `enabled`
+The prune tier is configured under `recall` (see [Context management](context.md#context-management)): `enabled`
 (default true), `archiveThresholdTokens` (default 500 — tool results above
 this estimated size are archived), and `ttlDays` (default 30).
 
