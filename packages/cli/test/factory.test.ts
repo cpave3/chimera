@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { projectMemoryDir } from '@chimera/core';
 import { InMemoryModeRegistry, loadModes } from '@chimera/modes';
 import { InMemorySkillRegistry } from '@chimera/skills';
 import { loadAgents } from '@chimera/subagents';
@@ -537,6 +538,114 @@ describe('CliAgentFactory', () => {
     expect(warnings).toEqual([
       'mode "careful" limits "bash", which takes no limit; the limit is ignored',
     ]);
+  });
+
+  describe('project memory', () => {
+    // A home apart from the working directory, as on a real machine: the
+    // file tools reach everything under the working directory anyway.
+    // The file tools also reach the system temp directory, where test
+    // directories live, so the session gets a temp directory of its own.
+    let memoryHome: string;
+    let systemTmp: string | undefined;
+    beforeEach(async () => {
+      memoryHome = await mkdtemp(join(tmpdir(), 'chimera-memory-home-'));
+      systemTmp = process.env.TMPDIR;
+      process.env.TMPDIR = await mkdtemp(join(tmpdir(), 'chimera-session-tmp-'));
+    });
+    afterEach(async () => {
+      await rm(process.env.TMPDIR!, { recursive: true, force: true });
+      if (systemTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = systemTmp;
+      await rm(memoryHome, { recursive: true, force: true });
+    });
+    const memoryDirectory = () => projectMemoryDir(cwd, memoryHome);
+
+    async function build(options: Partial<ConstructorParameters<typeof CliAgentFactory>[0]> = {}) {
+      const factory = new CliAgentFactory({
+        providersConfig: anthropicOnly,
+        autoApprove: 'all',
+        home: memoryHome,
+        subagents: { enabled: false },
+        ...options,
+      });
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+      const opts = (
+        agent as unknown as {
+          opts: {
+            systemPrompt: string;
+            tools: Record<string, { execute: (args: object, options: object) => Promise<unknown> }>;
+          };
+        }
+      ).opts;
+      return { factory, agent, prompt: opts.systemPrompt, tools: opts.tools };
+    }
+
+    it('loads the index into the system prompt and lets the file tools write the directory', async () => {
+      await mkdir(memoryDirectory(), { recursive: true });
+      await writeFile(join(memoryDirectory(), 'MEMORY.md'), '- [Tests](tests.md) — use vitest\n');
+
+      const { prompt, tools } = await build();
+      await tools.write!.execute(
+        { path: join(memoryDirectory(), 'style.md'), content: 'No emojis.' },
+        { toolCallId: 't', messages: [] },
+      );
+
+      expect(prompt).toContain('# Project memory');
+      expect(prompt).toContain(memoryDirectory());
+      expect(prompt).toContain('- [Tests](tests.md) — use vitest');
+      expect(await readFile(join(memoryDirectory(), 'style.md'), 'utf8')).toBe('No emojis.');
+    });
+
+    it('lets a subagent read the memory and not write it', async () => {
+      await mkdir(memoryDirectory(), { recursive: true });
+      await writeFile(join(memoryDirectory(), 'tests.md'), 'Use vitest.');
+
+      const { prompt, tools } = await build({ subagents: { enabled: false, currentDepth: 1 } });
+      const read = await tools.read!.execute(
+        { path: join(memoryDirectory(), 'tests.md') },
+        { toolCallId: 't', messages: [] },
+      );
+
+      expect(JSON.stringify(read)).toContain('Use vitest.');
+      expect(prompt).toMatch(/read-only for you/);
+      await expect(
+        tools.write!.execute(
+          { path: join(memoryDirectory(), 'new.md'), content: 'x' },
+          { toolCallId: 't', messages: [] },
+        ),
+      ).rejects.toThrow();
+    });
+
+    it('is absent when memory is turned off', async () => {
+      await mkdir(memoryDirectory(), { recursive: true });
+      await writeFile(join(memoryDirectory(), 'tests.md'), 'Use vitest.');
+
+      const { prompt, tools } = await build({ memory: { enabled: false } });
+
+      expect(prompt).not.toContain('# Project memory');
+      expect(prompt).not.toContain(memoryDirectory());
+      await expect(
+        tools.read!.execute(
+          { path: join(memoryDirectory(), 'tests.md') },
+          { toolCallId: 't', messages: [] },
+        ),
+      ).rejects.toThrow();
+    });
+
+    it('comes back with a reload after the user edits the index', async () => {
+      const { factory, agent, prompt } = await build();
+      expect(prompt).toContain('Nothing is saved yet.');
+      await mkdir(memoryDirectory(), { recursive: true });
+      await writeFile(join(memoryDirectory(), 'MEMORY.md'), '- [Style](style.md) — no emojis\n');
+
+      expect(factory.composeSystemPromptFor(agent.session.id)).toContain(
+        '- [Style](style.md) — no emojis',
+      );
+    });
   });
 
   it('says nothing of explore when no such agent exists', async () => {

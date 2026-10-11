@@ -14,6 +14,7 @@ export * from './message-parts';
 export * from './model-settings';
 export * from './permission';
 export * from './persistence';
+export * from './project-memory';
 export * from './prompts/compose';
 export { type PromptTool, renderToolsSection } from './prompts/role';
 export * from './types';

@@ -94,6 +94,8 @@ export interface MountOptions {
   listPeers?: () => Promise<Peer[]>;
   /** Lines to show at the top of the transcript when the TUI starts. */
   startupNotices?: string[];
+  /** The project's `MEMORY.md`, which `/memory` opens. */
+  memoryIndexPath?: string;
   /**
    * How to ask for attention when a run ends, a permission request opens or
    * the agent needs input. `auto` (the default) notifies through the
@@ -299,6 +301,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         screen={screen}
         listPeers={opts.listPeers}
         startupNotices={opts.startupNotices}
+        memoryIndexPath={opts.memoryIndexPath}
         notify={notify}
         onActiveSessionChange={(sessionId) => {
           activeSessionId = sessionId;

@@ -19,6 +19,9 @@ import {
   type InterruptHook,
   loadSession,
   newSessionId,
+  projectMemoryDir,
+  readMemoryIndex,
+  renderMemorySection,
   renderToolsSection,
   type StopHook,
   type TimeoutHook,
@@ -214,6 +217,8 @@ export interface CliAgentFactoryOptions {
    * with one warning.
    */
   utilityModel?: string;
+  /** Project memory; on unless `enabled` is false. */
+  memory?: { enabled?: boolean };
   /** Present only for the owner-local interactive TUI. */
   hostAuthentication?: HostAuthenticationCapability;
 }
@@ -254,6 +259,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly defaultVisionModel: string | undefined;
   private readonly fallbackModel: string | undefined;
   private readonly utilityModel: string | undefined;
+  private readonly memoryEnabled: boolean;
   private readonly hostAuthentication: HostAuthenticationCapability | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
@@ -292,6 +298,7 @@ export class CliAgentFactory implements AgentFactory {
     this.defaultVisionModel = opts.defaultVisionModel;
     this.fallbackModel = opts.fallbackModel;
     this.utilityModel = this.resolvableModel('utilityModel', opts.utilityModel);
+    this.memoryEnabled = opts.memory?.enabled !== false;
     for (const mode of this.modes?.all() ?? []) {
       for (const tool of Object.keys(mode.toolLimits ?? {})) {
         if (!TOOLS_WITH_LIMITS.has(tool)) {
@@ -454,8 +461,20 @@ export class CliAgentFactory implements AgentFactory {
     // Merge persisted paths (on resume) with any newly-supplied CLI paths.
     const sessionReadPaths = session?.additionalReadPaths ?? [];
     const sessionWritePaths = session?.additionalWritePaths ?? [];
+    // The project's memory: a top-level session writes it, a subagent only
+    // reads it, and a sandbox's file tools do not reach it at all.
+    const memoryDirectory = this.memoryEnabled ? projectMemoryDir(init.cwd, this.home) : undefined;
+    const memoryAccess: 'write' | 'read' | 'none' =
+      init.sandboxMode !== 'off'
+        ? 'none'
+        : (this.subagents.currentDepth ?? 0) > 0
+          ? 'read'
+          : 'write';
+    const memoryReadDirs = memoryDirectory && memoryAccess !== 'none' ? [memoryDirectory] : [];
+    const memoryWriteDirs = memoryDirectory && memoryAccess === 'write' ? [memoryDirectory] : [];
     const readAllowDirs = [
       ...skillDirs,
+      ...memoryReadDirs,
       tmpDir,
       join(userHome, '.claude'),
       join(userHome, '.agents'),
@@ -467,7 +486,12 @@ export class CliAgentFactory implements AgentFactory {
     const local = new LocalExecutor({
       cwd: init.cwd,
       readAllowDirs,
-      writeAllowDirs: [tmpDir, ...sessionWritePaths, ...(init.additionalWritePaths ?? [])],
+      writeAllowDirs: [
+        tmpDir,
+        ...memoryWriteDirs,
+        ...sessionWritePaths,
+        ...(init.additionalWritePaths ?? []),
+      ],
     });
     this.liveExecutors.set(sessionId, local);
 
@@ -903,7 +927,20 @@ export class CliAgentFactory implements AgentFactory {
         cwd: init.cwd,
         model: promptModel,
         sandboxMode: init.sandboxMode,
-        extensions: skillIndexFor(contextWindow),
+        extensions: [
+          ...(skillIndexFor(contextWindow) ?? []),
+          ...(memoryDirectory
+            ? [
+                () =>
+                  renderMemorySection({
+                    directory: memoryDirectory,
+                    index: readMemoryIndex(memoryDirectory),
+                    access: memoryAccess,
+                    promptStyle: promptModel.promptStyle ?? 'lean',
+                  }),
+              ]
+            : []),
+        ],
         mode: mode ? { name: mode.name, body: mode.body } : undefined,
         tools: promptTools,
         promptStyle: promptModel.promptStyle,

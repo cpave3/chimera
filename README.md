@@ -180,6 +180,7 @@ Chimera writes to:
 - `~/.chimera/sessions/<sessionId>/session.json` — per-session metadata (id, parentId, children, cwd, model, sandbox mode, usage). Atomic tmp+rename on every update.
 - `~/.chimera/sessions/<sessionId>/events.jsonl` — append-only event log. One JSON object per line. Only `step_finished`, `permission_resolved`, `run_finished`, and `forked_from` events are persisted; transient events (text deltas, tool starts, etc.) are not.
 - `~/.chimera/logs/<date>.log` — structured JSON-line activity log. API keys are never written.
+- `~/.chimera/projects/<project-id>/memory/` — the project's memory: `MEMORY.md` and one file per fact. See [Project memory](#project-memory).
 - `~/.chimera/instances/<pid>.json` — lockfile for each running server process. Cleaned up on shutdown (and by `chimera ls` on next run).
 - `./.chimera/permissions.json` — per-project permission rules (when the user picks "remember for project" in the modal).
 
@@ -433,6 +434,33 @@ the git root. You do not have to tell the agent to read them.
   directory, without descriptions; the agent can still open any skill.
 - **`/reload`** composes the system prompt again from disk for the session on
   screen: instruction files, skills, mode and tool list as they are now.
+
+## Project memory
+
+Chimera keeps a small memory for each project, so a preference you stated or
+a correction you made is there in the next session.
+
+- **Where.** `~/.chimera/projects/<project-id>/memory/`: a `MEMORY.md` index
+  and one Markdown file for each fact. The project is the repository that
+  holds the working directory, and every git worktree of that repository
+  shares the same memory. The project id is the repository's path with dashes
+  for separators.
+- **What a session loads.** The first 200 lines of `MEMORY.md` go into the
+  system prompt at session start, with the directory's path. The agent reads
+  a topic file when its index line is relevant. A memory saved during a
+  session does not change that session's prompt; `/reload` loads it.
+- **When the agent saves.** A model with the `lean` prompt style saves when
+  you state a lasting preference, correct its approach, or tell it a fact
+  about the project that the repository does not record. A model with the
+  `guided` style saves only when you ask it to remember something. Neither
+  saves what the code, the git history or the instruction files already say.
+- **`/memory`** opens the index in `$VISUAL` / `$EDITOR`. The files are plain
+  Markdown; edit or delete them as you like.
+- **Access.** A top-level session reads and writes the memory with the
+  ordinary file tools. A subagent can read it and cannot write it. In a
+  Docker sandbox the file tools cannot reach the directory, so the agent has
+  the index only.
+- **Off switch.** `"memory": { "enabled": false }` in `~/.chimera/config.json`.
 
 ## Task list
 

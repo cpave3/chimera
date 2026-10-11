@@ -40,6 +40,8 @@ export interface SlashContext {
   setRewindPicker: Dispatch<SetStateAction<Checkpoint[] | null>>;
   /** Throw the transcript away, on screen and in the store. */
   resetTranscript: () => void;
+  /** Open the project's memory index in the user's editor. */
+  openMemoryIndex: () => Promise<void>;
   sendUserMessage: (text: string) => Promise<void>;
   injectMidRun: (text: string) => Promise<void>;
   cleanupAndExit: () => Promise<void>;
@@ -74,6 +76,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     setSessionPicker,
     setRewindPicker,
     resetTranscript,
+    openMemoryIndex,
     sendUserMessage,
     injectMidRun,
     cleanupAndExit,
@@ -379,6 +382,9 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
       setStreaming(false);
       return;
     }
+    case '/memory':
+      void openMemoryIndex();
+      return;
     case '/context': {
       void (async () => {
         try {

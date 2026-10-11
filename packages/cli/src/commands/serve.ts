@@ -185,6 +185,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     defaultVisionModel: config.defaultVisionModel,
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
+    memory: config.memory,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,

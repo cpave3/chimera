@@ -1,9 +1,12 @@
+import { join } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
 import { Compactor } from '@chimera/compaction';
 import {
   INSTRUCTION_FILE_LIMIT_BYTES,
+  MEMORY_INDEX_FILE,
   oversizedInstructionFiles,
+  projectMemoryDir,
   type SandboxMode,
 } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
@@ -188,6 +191,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     defaultVisionModel: config.defaultVisionModel,
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
+    memory: config.memory,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,
@@ -274,6 +278,11 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
 
   const handle = mountTui({
     startupNotices: instructionFileNotices(opts.cwd, opts.home),
+    // A sandbox's file tools cannot reach the memory, but the user's editor can.
+    memoryIndexPath:
+      config.memory?.enabled === false
+        ? undefined
+        : join(projectMemoryDir(opts.cwd, opts.home), MEMORY_INDEX_FILE),
     layout: opts.inline ? 'inline' : config.tui?.layout,
     mouse: config.tui?.mouse,
     notifications: config.tui?.notifications,

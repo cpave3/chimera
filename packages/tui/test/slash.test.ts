@@ -16,6 +16,7 @@ describe('slash commands', () => {
         '/exit',
         '/fork',
         '/help',
+        '/memory',
         '/mode',
         '/model',
         '/new',

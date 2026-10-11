@@ -186,6 +186,12 @@ export interface ChimeraConfig {
     /** Entries older than this are garbage-collected. Default 30. */
     ttlDays?: number;
   };
+  /**
+   * Project memory: facts from earlier sessions, kept under
+   * `~/.chimera/projects/<project-id>/memory/` and indexed in the system
+   * prompt. Default true.
+   */
+  memory?: { enabled?: boolean };
   /** How the interactive TUI uses the terminal. */
   tui?: {
     /**

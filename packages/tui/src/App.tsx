@@ -13,6 +13,8 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { parseAttachTokens, readForAttach } from './attach-paths';
@@ -23,7 +25,12 @@ import { completionContext, listProjectFiles, rankFiles } from './file-completio
 import { FullscreenView } from './FullscreenView';
 import { InlineView } from './InlineView';
 import { insertText, type MultilineBuffer, replaceAll } from './input/buffer';
-import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
+import {
+  type OpenFileInEditorResult,
+  type OpenInEditorResult,
+  openFileInEditor as openFileInEditorImpl,
+  openInEditor as openInEditorImpl,
+} from './input/external-editor';
 import { type OpenInPagerResult, openInPager as openInPagerImpl } from './input/pager';
 import type { MouseBus } from './input/mouse';
 import { PasteRegistry } from './input/paste';
@@ -163,6 +170,13 @@ export interface AppProps {
    * terminal for.
    */
   screen?: { leave(): void; enter(): void };
+  /**
+   * The project's `MEMORY.md`, which `/memory` opens. Absent when project
+   * memory is off or the session is attached from elsewhere.
+   */
+  memoryIndexPath?: string;
+  /** Injection point for `/memory`. Defaults to `$VISUAL`/`$EDITOR` on the real terminal. */
+  openFileInEditor?: (args: { path: string }) => Promise<OpenFileInEditorResult>;
   /** Lines to show at the top of the transcript when the TUI starts. */
   startupNotices?: string[];
   /** Called with the session on screen, at start and after every switch. */
@@ -716,6 +730,39 @@ export function App(props: AppProps): React.ReactElement | null {
     }
   }
 
+  async function openMemoryIndex(): Promise<void> {
+    const path = props.memoryIndexPath;
+    if (!path) {
+      scrollback.addInfo(
+        'project memory is not available in this session (memory.enabled is false, or the session is attached).',
+      );
+      return;
+    }
+    if (editorOpenRef.current) return;
+    editorOpenRef.current = true;
+    setEditorOpen(true);
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      // `wx`: an index that exists is left as it is.
+      await writeFile(path, '# Memory index\n\n', { flag: 'wx' }).catch(() => {});
+      const handler =
+        props.openFileInEditor ??
+        ((args: { path: string }) =>
+          openFileInEditorImpl({ path: args.path, stdout: process.stdout, stdin: process.stdin }));
+      const result = await withScreenHandoff(() => handler({ path }));
+      scrollback.addInfo(
+        result.ok
+          ? `memory index saved: ${path} · /reload brings it into this session`
+          : `memory: ${result.reason}`,
+      );
+    } catch (err) {
+      scrollback.addError(`memory: ${(err as Error).message}`);
+    } finally {
+      editorOpenRef.current = false;
+      setEditorOpen(false);
+    }
+  }
+
   async function runTranscriptView(): Promise<void> {
     if (editorOpenRef.current) return;
     editorOpenRef.current = true;
@@ -915,6 +962,7 @@ export function App(props: AppProps): React.ReactElement | null {
       setSessionPicker,
       setRewindPicker,
       resetTranscript,
+      openMemoryIndex,
       sendUserMessage,
       injectMidRun,
       cleanupAndExit,

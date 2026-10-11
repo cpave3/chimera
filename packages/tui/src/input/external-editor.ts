@@ -82,3 +82,31 @@ export async function openInEditor(args: OpenInEditorArgs): Promise<OpenInEditor
     }
   }
 }
+
+export type OpenFileInEditorResult = { ok: true } | { ok: false; reason: string };
+
+/** Hand the terminal to the user's editor on a file that stays where it is. */
+export async function openFileInEditor(args: {
+  path: string;
+  stdout: NodeJS.WriteStream;
+  stdin: NodeJS.ReadStream;
+}): Promise<OpenFileInEditorResult> {
+  const { command, args: editorArgs } = resolveEditorCommand();
+  try {
+    const exitCode = await withTerminalHandoff(
+      { stdin: args.stdin, stdout: args.stdout },
+      () =>
+        new Promise<number | null>((resolve, reject) => {
+          const child = spawn(command, [...editorArgs, args.path], { stdio: 'inherit' });
+          child.once('error', reject);
+          child.once('exit', (code) => resolve(code));
+        }),
+      { requireTty: false },
+    );
+    return exitCode === 0
+      ? { ok: true }
+      : { ok: false, reason: `editor exited with status ${exitCode}` };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+}
