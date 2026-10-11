@@ -85,40 +85,70 @@ describe('App', () => {
     unmount();
   });
 
-  it.each([
-    ['sandbox', '[sandbox]'],
-    ['host', '[host]'],
-  ] as const)('renders %s tool calls with the %s badge', async (target, badge) => {
-    const events = [
-      {
-        type: 'tool_call_start' as const,
-        callId: 'c1',
-        name: 'bash',
-        args: { command: 'echo hi' },
-        target,
-      },
-    ];
-    const client = stubClient({
-      subscribe: async function* () {
-        for (const ev of events) yield ev;
-        // Stay open so the App can keep rendering.
-        await new Promise(() => undefined);
-      } as unknown as ChimeraClient['subscribe'],
+  describe('transcript markers', () => {
+    async function frameWithToolCall(
+      target: 'sandbox' | 'host',
+      sandboxMode: 'off' | 'bind',
+    ): Promise<string> {
+      const client = stubClient({
+        subscribe: async function* () {
+          yield {
+            type: 'tool_call_start' as const,
+            callId: 'c1',
+            name: 'bash',
+            args: { command: 'echo hi' },
+            target,
+            display: { summary: 'echo hi' },
+          };
+          // Stay open so the App can keep rendering.
+          await new Promise(() => undefined);
+        } as unknown as ChimeraClient['subscribe'],
+      });
+      const { lastFrame, unmount } = render(
+        <App
+          client={client}
+          sessionId="01ABCDEFGH"
+          modelRef="m/m"
+          cwd="/tmp"
+          sandboxMode={sandboxMode}
+        />,
+      );
+      // Wait one tick so the subscribe generator yields and React flushes.
+      await new Promise((r) => setTimeout(r, 30));
+      const frame = lastFrame() ?? '';
+      unmount();
+      return frame;
+    }
+
+    it('marks a tool call with a bullet and no target badge when no sandbox is active', async () => {
+      const frame = await frameWithToolCall('host', 'off');
+      expect(frame).toContain('• bash: echo hi');
+      expect(frame).not.toContain('[host]');
     });
 
-    const { lastFrame, unmount } = render(
-      <App
-        client={client}
-        sessionId="01ABCDEFGH"
-        modelRef="m/m"
-        cwd="/tmp"
-        sandboxMode={target === 'sandbox' ? 'bind' : 'off'}
-      />,
-    );
-    // Wait one tick so the subscribe generator yields and React flushes.
-    await new Promise((r) => setTimeout(r, 30));
-    expect(lastFrame()).toContain(badge);
-    unmount();
+    it.each([
+      ['sandbox', '[sandbox]'],
+      ['host', '[host]'],
+    ] as const)('says where a %s tool call runs when a sandbox is active', async (target, badge) => {
+      const frame = await frameWithToolCall(target, 'bind');
+      expect(frame).toContain(`• ${badge} bash: echo hi`);
+    });
+
+    it('marks a user message with a glyph instead of "you:"', async () => {
+      const client = stubClient({
+        subscribe: async function* () {
+          yield { type: 'user_message' as const, content: 'fix the test' };
+          await new Promise(() => undefined);
+        } as unknown as ChimeraClient['subscribe'],
+      });
+      const { lastFrame, unmount } = render(
+        <App client={client} sessionId="01ABCDEFGH" modelRef="m/m" cwd="/tmp" />,
+      );
+      await new Promise((r) => setTimeout(r, 30));
+      expect(lastFrame()).toContain('› fix the test');
+      expect(lastFrame()).not.toContain('you:');
+      unmount();
+    });
   });
 
   it('shows a pasted-text placeholder but sends its expanded content and attachment paths', async () => {

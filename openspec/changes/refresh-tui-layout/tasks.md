@@ -19,7 +19,7 @@
 
 ## 4. Transcript
 
-- [ ] 4.1 Test and implement the markers for user messages and tool lines
+- [x] 4.1 Test and implement the markers for user messages and tool lines
 - [ ] 4.2 Test and implement grouped exploration calls in the scrollback store
 - [ ] 4.3 Test and implement the `Ctrl+T` transcript view
 

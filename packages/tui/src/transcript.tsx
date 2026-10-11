@@ -8,8 +8,8 @@ import type { Theme } from './theme/types';
 /**
  * Hard-wrap `text` into one string per visual line. Splits on explicit `\n`
  * first, then breaks each segment at `width` characters. The first segment's
- * available width is reduced by `firstOffset` to leave room for a prefix
- * like `you: ` or `[host] `.
+ * available width is reduced by `firstOffset` to leave room for a marker
+ * like `› ` or `• `.
  */
 export function wrapToLines(text: string, width: number, firstOffset: number): string[] {
   if (text.length === 0) return [''];
@@ -64,34 +64,43 @@ export function clampInFlightChildren(
   ];
 }
 
+export interface RenderEntryOptions {
+  /**
+   * True when tool calls can run in two places. Only then does a tool line
+   * say which one; without a sandbox every call runs on the host.
+   */
+  sandboxActive?: boolean;
+}
+
+const USER_MARKER = '› ';
+const TOOL_BULLET = '• ';
+
 export function renderEntryLines(
   entry: ScrollbackEntry,
   columns: number,
   theme: Theme,
   children: SubagentEntry[] = [],
+  options: RenderEntryOptions = {},
 ): React.ReactElement[] {
   const width = Math.max(10, columns);
 
   if (entry.kind === 'user') {
-    const prefix = 'you: ';
     const imageLabels =
       entry.imageCount && entry.imageCount > 0
         ? Array.from({ length: entry.imageCount }, (_, i) => `[Image #${i + 1}]`).join(' ')
         : '';
     const displayText = imageLabels ? `${entry.text} ${imageLabels}` : entry.text;
-    const lines = wrapToLines(displayText, width, prefix.length);
+    const lines = wrapToLines(displayText, width, USER_MARKER.length);
     return [
       <Box key={`${entry.id}:u`} flexDirection="column">
-        <Text>
-          <Text color={theme.ui.accent} bold>
-            you
-          </Text>
-          {`: ${lines[0] ?? ''}`}
+        <Text bold>
+          <Text color={theme.ui.accent}>{USER_MARKER}</Text>
+          {lines[0] ?? ''}
         </Text>
         {lines.slice(1).map((line, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-          <Box key={i} paddingLeft={prefix.length}>
-            <Text>{line}</Text>
+          <Box key={i} paddingLeft={USER_MARKER.length}>
+            <Text bold>{line}</Text>
           </Box>
         ))}
       </Box>,
@@ -118,15 +127,23 @@ export function renderEntryLines(
     ];
   }
   if (entry.kind === 'tool') {
-    const badge = entry.toolTarget === 'host' ? '[host]' : '[sandbox]';
+    const badge = options.sandboxActive
+      ? `${entry.toolTarget === 'host' ? '[host]' : '[sandbox]'} `
+      : '';
     const namePrefix = entry.displayName ?? entry.toolName;
     const title = namePrefix ? `${namePrefix}: ` : '';
-    const prefixLen = badge.length + 1;
-    const textLines = wrapToLines(`${title}${entry.text}`, width, prefixLen);
+    const prefixLen = TOOL_BULLET.length;
+    const textLines = wrapToLines(`${badge}${title}${entry.text}`, width, prefixLen);
+    const settled = entry.toolResult !== undefined || entry.toolError !== undefined;
+    const bulletColor = entry.toolError
+      ? theme.status.error
+      : settled
+        ? theme.text.muted
+        : theme.ui.accent;
     const out: React.ReactElement[] = [
       <Box key={`${entry.id}:t`} flexDirection="column">
         <Text>
-          <Text color={theme.ui.badge}>{badge}</Text>{' '}
+          <Text color={bulletColor}>{TOOL_BULLET}</Text>
           <Text color={theme.accent.secondary}>{textLines[0] ?? ''}</Text>
         </Text>
         {textLines.slice(1).map((line, i) => (

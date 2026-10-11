@@ -970,7 +970,9 @@ export function App(props: AppProps): React.ReactElement {
           }
           return (
             <Box key={item.id} flexDirection="column" marginTop={1}>
-              {renderEntryLines(item.entry, columns, theme, item.children)}
+              {renderEntryLines(item.entry, columns, theme, item.children, {
+                sandboxActive: sandboxMode !== 'off',
+              })}
             </Box>
           );
         }}
@@ -983,6 +985,7 @@ export function App(props: AppProps): React.ReactElement {
               columns,
               theme,
               clampInFlightChildren(e.id, childrenByParent.get(e.id) ?? []),
+              { sandboxActive: sandboxMode !== 'off' },
             )}
           </Box>
         ))}
