@@ -175,7 +175,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
-    hostBashPolicy: resolveHostBashPolicy(config),
+    hostBashPolicy: resolveHostBashPolicy(config, opts.home),
     mcpServers,
     home: opts.home,
     skills,
@@ -307,6 +307,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     cycleModes: config.cycleModes ?? modes.all().map((mode) => mode.name),
     initialMode,
     sandboxMode,
+    osSandbox: factory.osSandboxOf(sessionId) !== undefined,
     overlay,
     // The factory composes the prompt the same way it did at session start:
     // instruction files, skills, mode and tool list as they are now.

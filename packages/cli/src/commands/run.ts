@@ -162,7 +162,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     cliFactory = new CliAgentFactory({
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
-      hostBashPolicy: resolveHostBashPolicy(config),
+      hostBashPolicy: resolveHostBashPolicy(config, opts.home),
       mcpServers,
       mcpHeadlessAutoDeny: true,
       home: opts.home,

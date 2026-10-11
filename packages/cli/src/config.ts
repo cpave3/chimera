@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type {
   CompactionConfig,
   EditFormat,
@@ -70,6 +70,15 @@ export interface HostBashPolicyConfig {
   enabled: boolean;
   mode: 'balanced' | 'strict';
   autoAllowThrough: 'none' | 'safe' | 'caution' | 'danger';
+  /**
+   * Run host commands in the operating system's sandbox: `auto` when the
+   * machine has one, `required` refuses host commands when it has none.
+   */
+  osSandbox: 'off' | 'auto' | 'required';
+  /** Whether a sandboxed command reaches the network. */
+  network: 'on' | 'off';
+  /** Directories outside the project a sandboxed command may write. */
+  sandboxWritePaths: string[];
 }
 
 export type McpServerConfig =
@@ -224,6 +233,9 @@ const hostBashPolicySchema = z
     enabled: z.boolean().optional(),
     mode: z.enum(['balanced', 'strict']).optional(),
     autoAllowThrough: z.enum(['none', 'safe', 'caution', 'danger']).optional(),
+    osSandbox: z.enum(['off', 'auto', 'required']).optional(),
+    network: z.enum(['on', 'off']).optional(),
+    sandboxWritePaths: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -367,11 +379,20 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   return config;
 }
 
-export function resolveHostBashPolicy(config: ChimeraConfig): HostBashPolicyConfig {
+export function resolveHostBashPolicy(
+  config: ChimeraConfig,
+  home = homedir(),
+): HostBashPolicyConfig {
+  const hostBash = config.commandPolicy?.hostBash;
   return {
-    enabled: config.commandPolicy?.hostBash?.enabled ?? true,
-    mode: config.commandPolicy?.hostBash?.mode ?? 'balanced',
-    autoAllowThrough: config.commandPolicy?.hostBash?.autoAllowThrough ?? 'caution',
+    enabled: hostBash?.enabled ?? true,
+    mode: hostBash?.mode ?? 'balanced',
+    autoAllowThrough: hostBash?.autoAllowThrough ?? 'caution',
+    osSandbox: hostBash?.osSandbox ?? 'auto',
+    network: hostBash?.network ?? 'on',
+    sandboxWritePaths: (hostBash?.sandboxWritePaths ?? []).map((path) =>
+      path === '~' || path.startsWith('~/') ? join(home, path.slice(2)) : resolve(path),
+    ),
   };
 }
 

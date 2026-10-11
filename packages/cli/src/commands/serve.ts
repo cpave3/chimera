@@ -164,7 +164,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const factory = new CliAgentFactory({
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
-    hostBashPolicy: resolveHostBashPolicy(config),
+    hostBashPolicy: resolveHostBashPolicy(config, opts.home),
     mcpServers,
     mcpHeadlessAutoDeny: opts.headlessPermissionAutoDeny || !process.stdin.isTTY,
     home: opts.home,

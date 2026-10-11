@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -76,12 +77,17 @@ import {
   BackgroundProcessManager,
   buildDiagnosticsRunner,
   buildTools,
+  createOsSandbox,
   createWebSearchProvider,
   type DiagnosticsConfig,
+  detectOsSandbox,
   type FormatScrollback,
+  gitWritePaths,
   interceptTools,
   LocalExecutor,
   nestedInstructions,
+  type OsSandbox,
+  type OsSandboxKind,
   outputBudget,
   repeatNote,
   TaskListStore,
@@ -141,6 +147,8 @@ export interface CliAgentFactoryOptions {
   initialMode?: string;
   /** When set, sandbox-target tools route through a DockerExecutor. */
   sandbox?: CliSandboxOptions;
+  /** Finds the OS sandbox this machine can run. Tests replace it. */
+  detectOsSandbox?: () => OsSandboxKind | null;
   /**
    * Optional agent-definition registry. When present, `spawn_agent` resolves
    * its `agent` arg against this registry and surfaces available agents in
@@ -247,6 +255,10 @@ export class CliAgentFactory implements AgentFactory {
   private readonly modelsConfig: Record<string, ModelOptions>;
   private readonly liveSandboxes = new Map<SessionId, DockerExecutor>();
   private readonly liveExecutors = new Map<SessionId, LocalExecutor>();
+  private readonly liveOsSandboxes = new Map<SessionId, OsSandbox>();
+  private readonly detectOsSandbox: () => OsSandboxKind | null;
+  /** The OS sandbox of this machine; undefined until the first session looks for it. */
+  private osSandboxKind: OsSandboxKind | null | undefined;
   private readonly liveAgents = new Map<SessionId, Agent>();
   private readonly mcpServers: Record<string, McpServerConfig>;
   private readonly mcpHeadlessAutoDeny: boolean;
@@ -280,11 +292,18 @@ export class CliAgentFactory implements AgentFactory {
   constructor(opts: CliAgentFactoryOptions) {
     this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
     this.autoApprove = opts.autoApprove;
+    // The CLI commands pass the policy of the user's config, where the OS
+    // sandbox is on by default. A factory built without one does not start
+    // a sandbox nobody asked for.
     this.hostBashPolicy = opts.hostBashPolicy ?? {
       enabled: true,
       mode: 'balanced',
       autoAllowThrough: 'caution',
+      osSandbox: 'off',
+      network: 'on',
+      sandboxWritePaths: [],
     };
+    this.detectOsSandbox = opts.detectOsSandbox ?? detectOsSandbox;
     this.home = opts.home;
     this.skills = opts.skills;
     this.agents = opts.agents;
@@ -491,6 +510,15 @@ export class CliAgentFactory implements AgentFactory {
       ...(init.additionalReadPaths ?? []),
       ...(init.additionalWritePaths ?? []),
     ];
+    // The Docker sandbox has its own rules for host commands.
+    const hostCommands =
+      init.sandboxMode === 'off'
+        ? this.hostCommandScope(init.cwd, [
+            ...sessionWritePaths,
+            ...(init.additionalWritePaths ?? []),
+          ])
+        : {};
+    const projectState = join(init.cwd, '.chimera');
     const local = new LocalExecutor({
       cwd: init.cwd,
       readAllowDirs,
@@ -500,8 +528,14 @@ export class CliAgentFactory implements AgentFactory {
         ...sessionWritePaths,
         ...(init.additionalWritePaths ?? []),
       ],
+      // The file tools run outside the OS sandbox, so they get the rule
+      // that keeps a sandboxed command from widening its own sandbox.
+      writeDenyPaths: hostCommands.osSandbox
+        ? [join(projectState, 'permissions.json'), join(projectState, 'hooks')]
+        : [],
     });
     this.liveExecutors.set(sessionId, local);
+    if (hostCommands.osSandbox) this.liveOsSandboxes.set(sessionId, hostCommands.osSandbox);
 
     const modesReg = this.modes;
     const requestedMode = session?.mode ?? this.initialMode ?? DEFAULT_MODE_NAME;
@@ -882,6 +916,7 @@ export class CliAgentFactory implements AgentFactory {
         sandboxExecutor,
         hostExecutor,
         bashHostExecutor: local,
+        ...hostCommands,
         permissionGate: gate,
         hostAuthentication: this.hostAuthentication,
         commandRequiresSudo,
@@ -1302,9 +1337,58 @@ export class CliAgentFactory implements AgentFactory {
     };
   }
 
+  /**
+   * How a session's host commands run: in the OS sandbox, refused because
+   * the sandbox is required and this machine has none, or as they are.
+   */
+  private hostCommandScope(
+    cwd: string,
+    grantedWritePaths: string[],
+  ): { osSandbox?: OsSandbox; hostCommandsRefused?: string } {
+    const { osSandbox: setting, network, sandboxWritePaths } = this.hostBashPolicy;
+    if (setting === 'off') return {};
+    if (this.osSandboxKind === undefined) {
+      this.osSandboxKind = this.detectOsSandbox();
+      if (this.osSandboxKind === null && setting === 'auto') {
+        this.warn(
+          'chimera: this machine has no OS sandbox (bubblewrap on Linux, sandbox-exec on macOS); ' +
+            'host commands run without one. Set commandPolicy.hostBash.osSandbox to "off" to ' +
+            'stop this warning.',
+        );
+      }
+    }
+    if (this.osSandboxKind === null) {
+      return setting === 'required'
+        ? {
+            hostCommandsRefused:
+              'refused by chimera: commandPolicy.hostBash.osSandbox is "required" and this ' +
+              'machine has no OS sandbox (bubblewrap on Linux, sandbox-exec on macOS).',
+          }
+        : {};
+    }
+    // A path that does not exist cannot be made read-only, and a sandboxed
+    // command that could create it could give itself hooks.
+    const projectState = join(cwd, '.chimera');
+    mkdirSync(projectState, { recursive: true });
+    return {
+      osSandbox: createOsSandbox(this.osSandboxKind, {
+        cwd,
+        tmp: tmpdir(),
+        writablePaths: [...gitWritePaths(cwd), ...sandboxWritePaths, ...grantedWritePaths],
+        readOnlyPaths: [projectState, join(this.home ?? homedir(), '.chimera')],
+        network,
+      }),
+    };
+  }
+
   /** Live DockerExecutor for a session, if sandbox is on. */
   getSandbox(sessionId: SessionId): DockerExecutor | undefined {
     return this.liveSandboxes.get(sessionId);
+  }
+
+  /** The OS sandbox a live session's host commands run in, if any. */
+  osSandboxOf(sessionId: SessionId): OsSandboxKind | undefined {
+    return this.liveOsSandboxes.get(sessionId)?.kind;
   }
 
   /** Live LocalExecutor for a session. Used by runtime mutators. */
@@ -1354,9 +1438,11 @@ export class CliAgentFactory implements AgentFactory {
       executor.addReadAllowDir(resolved);
       agent.session.additionalReadPaths.push(resolved);
     }
+    const sandboxPaths = this.liveOsSandboxes.get(sessionId)?.spec.writablePaths;
     if (!writeAlready) {
       executor.addWriteAllowDir(resolved);
       agent.session.additionalWritePaths.push(resolved);
+      sandboxPaths?.push(resolved);
     }
 
     try {
@@ -1369,6 +1455,7 @@ export class CliAgentFactory implements AgentFactory {
       if (!writeAlready) {
         executor.removeWriteAllowDir(resolved);
         agent.session.additionalWritePaths.pop();
+        sandboxPaths?.pop();
       }
       throw error;
     }
@@ -1415,6 +1502,7 @@ export class CliAgentFactory implements AgentFactory {
     );
     this.liveSandboxes.clear();
     this.liveExecutors.clear();
+    this.liveOsSandboxes.clear();
     this.liveAgents.clear();
     await Promise.all([...stops, ...mcpStops]);
   }

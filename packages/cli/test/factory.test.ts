@@ -1,12 +1,15 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { projectMemoryDir } from '@chimera/core';
+import { projectMemoryDir, type SandboxMode } from '@chimera/core';
 import { InMemoryModeRegistry, loadModes } from '@chimera/modes';
 import { InMemorySkillRegistry } from '@chimera/skills';
 import { loadAgents } from '@chimera/subagents';
+import { detectOsSandbox } from '@chimera/tools';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { HostBashPolicyConfig } from '../src/config';
 import { CliAgentFactory } from '../src/factory';
 
 describe('CliAgentFactory', () => {
@@ -981,6 +984,186 @@ describe('CliAgentFactory', () => {
     expect(systemPrompt).toContain('- find — Find files by name pattern.');
     expect(systemPrompt).toContain('- ls — List a directory.');
     expect(systemPrompt).not.toContain('- glob —');
+  });
+
+  describe('OS sandbox', () => {
+    const describeBwrap = detectOsSandbox() === 'bwrap' ? describe : describe.skip;
+    // The session writes the temp directory, and test directories live in
+    // the system one. With a temp directory of its own, the home made here
+    // is outside everything the sandbox lets a command write.
+    let sandboxHome: string;
+    let systemTmp: string | undefined;
+    beforeEach(async () => {
+      sandboxHome = await mkdtemp(join(tmpdir(), 'chimera-sandbox-home-'));
+      systemTmp = process.env.TMPDIR;
+      process.env.TMPDIR = await mkdtemp(join(tmpdir(), 'chimera-session-tmp-'));
+    });
+    afterEach(async () => {
+      await rm(process.env.TMPDIR!, { recursive: true, force: true });
+      if (systemTmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = systemTmp;
+      await rm(sandboxHome, { recursive: true, force: true });
+    });
+
+    type Tools = Record<string, { execute: (args: object, options: object) => Promise<any> }>;
+    const policy = (over: Partial<HostBashPolicyConfig> = {}): HostBashPolicyConfig => ({
+      enabled: true,
+      mode: 'balanced',
+      autoAllowThrough: 'caution',
+      osSandbox: 'auto',
+      network: 'on',
+      sandboxWritePaths: [],
+      ...over,
+    });
+
+    // With the command policy off, nothing asks about a write outside the
+    // project, so the write shows whether a sandbox was in the way.
+    const unchecked = (over: Partial<HostBashPolicyConfig> = {}) =>
+      policy({ enabled: false, ...over });
+
+    function factoryWith(options: Partial<ConstructorParameters<typeof CliAgentFactory>[0]>) {
+      return new CliAgentFactory({
+        providersConfig: anthropicOnly,
+        autoApprove: 'all',
+        home: sandboxHome,
+        subagents: { enabled: false },
+        hostBashPolicy: policy(),
+        ...options,
+      });
+    }
+
+    async function session(factory: CliAgentFactory, sandboxMode: SandboxMode = 'off') {
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+        sandboxMode,
+      });
+      const tools = (agent as unknown as { opts: { tools: Tools } }).opts.tools;
+      const bash = (command: string) =>
+        tools.bash!.execute({ command }, { toolCallId: 't', messages: [] });
+      return { agent, tools, bash };
+    }
+
+    describeBwrap('with bubblewrap', () => {
+      it('lets a host command write the project and not the home, and explains the refusal', async () => {
+        const factory = factoryWith({});
+        const { agent, bash } = await session(factory);
+
+        const inside = await bash('echo in > in.txt');
+        const outside = await bash(`echo out > ${join(sandboxHome, 'out.txt')}`);
+
+        expect(inside.exit_code).toBe(0);
+        expect(await readFile(join(cwd, 'in.txt'), 'utf8')).toBe('in\n');
+        expect(outside.exit_code).not.toBe(0);
+        expect(outside.sandbox).toMatch(/unsandboxed: true/);
+        expect(existsSync(join(sandboxHome, 'out.txt'))).toBe(false);
+        expect(factory.osSandboxOf(agent.session.id)).toBe('bwrap');
+      });
+
+      it('keeps the project rules and hooks from a sandboxed command and from the file tools', async () => {
+        const { bash, tools } = await session(factoryWith({}));
+
+        const hook = await bash(
+          'mkdir -p .chimera/hooks/PreToolUse && echo "exit 0" > .chimera/hooks/PreToolUse/x.sh',
+        );
+
+        expect(hook.exit_code).not.toBe(0);
+        expect(existsSync(join(cwd, '.chimera', 'hooks'))).toBe(false);
+        await expect(
+          tools.write!.execute(
+            { path: '.chimera/permissions.json', content: '{"rules":[]}' },
+            { toolCallId: 't', messages: [] },
+          ),
+        ).rejects.toThrow(/permissions\.json/);
+        expect(existsSync(join(cwd, '.chimera', 'permissions.json'))).toBe(false);
+      });
+
+      it('lets a command write the configured write paths and a path granted in the session', async () => {
+        const configured = await mkdtemp(join(sandboxHome, 'cache-'));
+        const granted = await mkdtemp(join(sandboxHome, 'granted-'));
+        const factory = factoryWith({
+          hostBashPolicy: policy({ sandboxWritePaths: [configured] }),
+        });
+        const { agent, bash } = await session(factory);
+
+        const beforeGrant = await bash(`echo x > ${join(granted, 'file')}`);
+        await factory.addSessionPath(agent.session.id, 'write', granted);
+        const afterGrant = await bash(`echo x > ${join(granted, 'file')}`);
+        const inConfigured = await bash(`echo x > ${join(configured, 'file')}`);
+
+        expect(beforeGrant.exit_code).not.toBe(0);
+        expect(afterGrant.exit_code).toBe(0);
+        expect(inConfigured.exit_code).toBe(0);
+      });
+
+      it('gives a sandboxed command no network when the network setting is off', async () => {
+        const listener = createServer((_request, response) => response.end('ok'));
+        await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
+        const { port } = listener.address() as { port: number };
+        const connect = `${process.execPath} -e "require('net').connect(${port}, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(7))"`;
+        try {
+          const online = await session(factoryWith({ hostBashPolicy: unchecked() }));
+          const offline = await session(
+            factoryWith({ hostBashPolicy: unchecked({ network: 'off' }) }),
+          );
+
+          expect((await online.bash(connect)).exit_code).toBe(0);
+          expect((await offline.bash(connect)).exit_code).toBe(7);
+        } finally {
+          listener.close();
+        }
+      });
+    });
+
+    it('warns once and runs host commands as before on a machine with no sandbox', async () => {
+      const warn = vi.fn();
+      const factory = factoryWith({
+        warn,
+        hostBashPolicy: unchecked(),
+        detectOsSandbox: () => null,
+      });
+
+      const { agent, bash } = await session(factory);
+      await session(factory);
+      const outside = await bash(`echo out > ${join(sandboxHome, 'out.txt')}`);
+
+      expect(factory.osSandboxOf(agent.session.id)).toBeUndefined();
+
+      expect(warn.mock.calls.filter(([message]) => /OS sandbox/.test(message))).toHaveLength(1);
+      expect(outside.exit_code).toBe(0);
+      expect(await readFile(join(sandboxHome, 'out.txt'), 'utf8')).toBe('out\n');
+    });
+
+    it('refuses host commands when the sandbox is required and the machine has none', async () => {
+      const factory = factoryWith({
+        hostBashPolicy: policy({ osSandbox: 'required' }),
+        detectOsSandbox: () => null,
+      });
+      const { bash } = await session(factory);
+
+      const result = await bash('echo in > in.txt');
+
+      expect(result.exit_code).not.toBe(0);
+      expect(result.stderr).toContain('commandPolicy.hostBash.osSandbox');
+      expect(existsSync(join(cwd, 'in.txt'))).toBe(false);
+    });
+
+    it('does not look for a sandbox when the setting is off or the Docker sandbox is on', async () => {
+      const detect = vi.fn(() => null);
+
+      const off = await session(
+        factoryWith({ hostBashPolicy: unchecked({ osSandbox: 'off' }), detectOsSandbox: detect }),
+      );
+      await session(
+        factoryWith({ hostBashPolicy: policy({ osSandbox: 'required' }), detectOsSandbox: detect }),
+        'bind',
+      );
+      const outside = await off.bash(`echo out > ${join(sandboxHome, 'out.txt')}`);
+
+      expect(detect).not.toHaveBeenCalled();
+      expect(outside.exit_code).toBe(0);
+      expect(existsSync(join(cwd, '.chimera'))).toBe(false);
+    });
   });
 
   describe('vision model resolver', () => {

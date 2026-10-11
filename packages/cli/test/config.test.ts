@@ -86,6 +86,45 @@ it('surfaces malformed and invalid host bash policy config', async () => {
     enabled: true,
     mode: 'balanced',
     autoAllowThrough: 'caution',
+    osSandbox: 'auto',
+    network: 'on',
+    sandboxWritePaths: [],
+  });
+});
+
+describe('OS sandbox settings', () => {
+  async function homeWith(hostBash: object): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-config-'));
+    await mkdir(join(home, '.chimera'), { recursive: true });
+    await writeFile(
+      join(home, '.chimera', 'config.json'),
+      JSON.stringify({ commandPolicy: { hostBash } }),
+    );
+    return home;
+  }
+
+  it('reads the sandbox mode, the network setting and the write paths', async () => {
+    const home = await homeWith({
+      osSandbox: 'required',
+      network: 'off',
+      sandboxWritePaths: ['~/.cache/pnpm', '/var/cache/build'],
+    });
+
+    expect(resolveHostBashPolicy(loadConfig(home), home)).toMatchObject({
+      osSandbox: 'required',
+      network: 'off',
+      sandboxWritePaths: [join(home, '.cache/pnpm'), '/var/cache/build'],
+    });
+  });
+
+  it('refuses a sandbox mode or a network setting it does not know', async () => {
+    const unknownMode = await homeWith({ osSandbox: 'on' });
+    const unknownNetwork = await homeWith({ network: 'offline' });
+    const pathsNotAList = await homeWith({ sandboxWritePaths: 'x' });
+
+    expect(() => loadConfig(unknownMode)).toThrow(/osSandbox/);
+    expect(() => loadConfig(unknownNetwork)).toThrow(/network/);
+    expect(() => loadConfig(pathsNotAList)).toThrow(/sandboxWritePaths/);
   });
 });
 
