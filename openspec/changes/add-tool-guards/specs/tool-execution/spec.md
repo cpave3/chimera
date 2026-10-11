@@ -45,11 +45,15 @@ When the model sends the same tool call three or more times in a row and each ca
 - **THEN** no result contains the note
 
 ### Requirement: Output budget
-When a tool result is larger than the active model's output budget, the system SHALL store the full result in the recall store, shorten each oversized text field to its beginning and end, and add the archive id to the result. Image results and results of the `recall` tool SHALL be exempt.
+When a tool result is larger than the active model's output budget, the system SHALL shorten each oversized text field to its beginning and end and each oversized list to its first items, store the full content of every shortened field in the recall store, and list the shortened fields with their archive ids under `output_archived`. The result SHALL keep its other fields. Image results and results of the `recall` tool SHALL be exempt.
 
 #### Scenario: Oversized command output
 - **WHEN** a `bash` call returns output larger than the output budget
-- **THEN** the result keeps `exit_code`, `stdout` holds the first and last lines around a marker, and `output_archived.id` names an entry whose content is the full output
+- **THEN** the result keeps `exit_code`, `stdout` holds the first and last lines around a marker, and `output_archived` lists `stdout` with the id of an entry whose content is the full output
+
+#### Scenario: Oversized list
+- **WHEN** a search returns more matches than fit in the output budget
+- **THEN** the result holds the first matches and `output_archived` lists the field with the number of omitted items
 
 #### Scenario: Result within budget
 - **WHEN** a tool result is smaller than the output budget

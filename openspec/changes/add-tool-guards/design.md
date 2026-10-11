@@ -36,7 +36,7 @@ For a miss, each candidate window is scored by the mean bigram similarity of its
 `interceptTools(tools, interceptors)` returns a tool set whose `execute` runs each interceptor's `before` (which may answer the call without running the tool) and `after` (which may replace the result or the thrown error). The factory wraps every tool surface once.
 
 - **Repeat note.** Keeps the signature of the last call (name and canonical arguments) and of its outcome. On the third consecutive identical call with an identical outcome it adds a `note` to the result, or to the error message.
-- **Output budget.** Reads the budget from the active model (`ModelConfig.outputBudgetTokens`, filled from the profile). When the serialized result exceeds it, the full text goes to the recall store and every oversized string field is cut to a head and a tail around a marker line. The result keeps its shape, so scrollback formatters and agent logic that read fields keep working, and gains `output_archived: { id, tokens, note }`. Image results and the `recall` tool are exempt.
+- **Output budget.** Reads the budget from the active model (`ModelConfig.outputBudgetTokens`, filled from the profile). When the serialized result exceeds it, the largest text fields are cut to a head and a tail around a marker line, then the largest lists to their first items, until the result fits. Each shortened field is archived on its own (a text as is, a list one item per line), so `recall` line ranges line up with the original output. The result keeps its shape, so scrollback formatters and agent logic that read fields keep working, and gains `output_archived: [{ field, id, tokens, omitted_items? }]`. Image results and the `recall` tool are exempt.
 
 ## Risks / Trade-offs
 

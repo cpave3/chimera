@@ -328,6 +328,35 @@ working rules. The tools section of the prompt is generated from the tools
 the session registers. Every default can be set per model under `models` in
 `~/.chimera/config.json` — see [model profiles](PROVIDERS.md#model-profiles).
 
+## Tool-call guards
+
+Four guards remove failures that have nothing to do with the task. They
+apply to every model.
+
+- **Whitespace-tolerant `edit`.** When `old_string` has no exact match, `edit`
+  matches it against whole lines, first ignoring trailing whitespace and then
+  indentation, and applies the change when exactly one place matches. If the
+  indentation was wrong, the replacement is re-indented to the file. The
+  scrollback line says `matched ignoring whitespace`. When nothing matches,
+  the error shows the closest block of the file with line numbers.
+- **Tool-call repair.** Arguments sent as a JSON string, wrapped in a code
+  fence, with `"true"` or `"5"` where the schema wants a boolean or a number,
+  or with `null` for an optional field are corrected before validation. So
+  is a tool name in the wrong case or under a common alias (`shell`,
+  `read_file`). A call that is still invalid goes back to the model as an
+  error.
+- **Repeat note.** When the model sends the same call three times in a row
+  and gets the same outcome, the result carries a note that tells it to
+  change approach.
+- **Output budget.** One tool result may take 8% of the model's context
+  window (at least 2,000 and at most 25,000 tokens). A larger result keeps its
+  shape, but each oversized text field is cut to its beginning and end and
+  each oversized list to its first items. The full content goes to the recall
+  store, and the model can page through it with `recall({ id, start_line,
+  end_line })` or `recall({ id, search })`. The scrollback shows
+  `output shortened (12k tokens); full text archived as pr_…`. Images and
+  `recall` results are never shortened.
+
 ## Post-edit diagnostics
 
 After every successful `edit`/`write`, Chimera can run fast project checks

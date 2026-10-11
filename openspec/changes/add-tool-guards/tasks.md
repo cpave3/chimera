@@ -12,13 +12,13 @@
 
 ## 3. Interceptors and guards
 
-- [ ] 3.1 Test and implement `interceptTools`
-- [ ] 3.2 Test and implement the repeat note
-- [ ] 3.3 Test and implement the output budget with recall archiving
-- [ ] 3.4 Wrap every tool surface in the CLI factory; add `outputBudgetTokens` to `ModelConfig`
+- [x] 3.1 Test and implement `interceptTools`
+- [x] 3.2 Test and implement the repeat note
+- [x] 3.3 Test and implement the output budget with recall archiving
+- [x] 3.4 Wrap every tool surface in the CLI factory; add `outputBudgetTokens` to `ModelConfig`
 
 ## 4. Wrap-up
 
-- [ ] 4.1 Show the match level and archive id in the TUI tool line
-- [ ] 4.2 Update `README.md`
-- [ ] 4.3 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+- [x] 4.1 Show the match level and archive id in the TUI tool line
+- [x] 4.2 Update `README.md`
+- [x] 4.3 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
