@@ -16,6 +16,7 @@ export * from './permission';
 export * from './persistence';
 export * from './project-memory';
 export * from './prompts/compose';
+export * from './questions';
 export { type PromptTool, renderToolsSection } from './prompts/role';
 export * from './types';
 export * from './workspace-checkpoints';

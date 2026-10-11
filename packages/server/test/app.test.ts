@@ -685,6 +685,74 @@ describe('server app', () => {
     expect(missing.status).toBe(404);
   });
 
+  describe('questions to the user', () => {
+    const question = {
+      question: 'Which test runner?',
+      options: [{ label: 'vitest' }, { label: 'jest' }],
+    };
+
+    async function sessionWithQuestion() {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const { sessionId } = await (
+        await app.request('/v1/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+        })
+      ).json();
+      const agent = registry.get(sessionId)!.agent;
+      const answer = agent.askQuestions({ requestId: 'q-1', questions: [question] });
+      const post = (requestId: string, body: unknown) =>
+        app.request(`/v1/sessions/${sessionId}/questions/${requestId}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      return { app, sessionId, answer, post };
+    }
+
+    it('are in the session snapshot while they wait, for a client that connects later', async () => {
+      const { app, sessionId, post } = await sessionWithQuestion();
+
+      const snapshot = await (await app.request(`/v1/sessions/${sessionId}`)).json();
+
+      expect(snapshot.pendingQuestions).toEqual([{ requestId: 'q-1', questions: [question] }]);
+      await post('q-1', { status: 'cancelled' });
+    });
+
+    it('are settled by the answers a client posts', async () => {
+      const { app, sessionId, answer, post } = await sessionWithQuestion();
+      const answers = [{ question: 'Which test runner?', answer: 'vitest', custom: false }];
+
+      const response = await post('q-1', { status: 'answered', answers });
+
+      expect(response.status).toBe(204);
+      expect(await answer).toEqual({ status: 'answered', answers });
+      const snapshot = await (await app.request(`/v1/sessions/${sessionId}`)).json();
+      expect(snapshot.pendingQuestions).toEqual([]);
+    });
+
+    it('can be cancelled', async () => {
+      const { answer, post } = await sessionWithQuestion();
+
+      expect((await post('q-1', { status: 'cancelled' })).status).toBe(204);
+      expect(await answer).toEqual({ status: 'cancelled' });
+    });
+
+    it('answer 409 for a question that is not pending, and 400 for a malformed answer', async () => {
+      const { post } = await sessionWithQuestion();
+
+      expect((await post('q-1', { status: 'answered' })).status).toBe(400);
+      expect((await post('nope', { status: 'cancelled' })).status).toBe(409);
+      await post('q-1', { status: 'cancelled' });
+      expect((await post('q-1', { status: 'cancelled' })).status).toBe(409);
+    });
+  });
+
   it('GET /v1/sessions/:id reads compactionCount and lastCompactedAt from disk', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),

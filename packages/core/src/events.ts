@@ -2,6 +2,7 @@ import type { ModelMessage } from 'ai';
 import type { CommandPolicyAnalysis } from './command-policy';
 import type { CallId, SessionId } from './ids';
 import type { PermissionRequest } from './interfaces';
+import type { Question } from './questions';
 import type { ExecutionTarget, TaskItem, ToolCallRecord, Usage } from './types';
 
 /**
@@ -71,6 +72,9 @@ export type AgentEvent =
       remembered: boolean;
     }
   | { type: 'permission_timeout'; requestId: string }
+  /** The model put questions to the user; the tool call waits for `question_resolved`. */
+  | { type: 'question_request'; requestId: string; questions: Question[] }
+  | { type: 'question_resolved'; requestId: string; status: 'answered' | 'cancelled' }
   | {
       type: 'skill_activated';
       skillName: string;

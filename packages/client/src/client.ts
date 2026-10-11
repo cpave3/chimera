@@ -11,6 +11,8 @@ import type {
   PermissionDecisionAction,
   PermissionRequest,
   PermissionRule,
+  QuestionRequest,
+  QuestionResolution,
   RememberScope,
   SandboxMode,
   Session,
@@ -25,6 +27,8 @@ import { parseSSE } from './sse';
 
 export interface SessionWithCompaction extends Session {
   pendingPermissions: PermissionRequest[];
+  /** Questions an `ask_question` call is waiting on. Absent from a server on an older build. */
+  pendingQuestions?: QuestionRequest[];
   compactionCount: number;
   lastCompactedAt: number | null;
 }
@@ -169,6 +173,25 @@ export class ChimeraClient {
 
   async listCheckpoints(sessionId: SessionId): Promise<Checkpoint[]> {
     return this.json<Checkpoint[]>(`/v1/sessions/${sessionId}/checkpoints`);
+  }
+
+  /** Answer the questions of one `ask_question` call, or decline to (`status: 'cancelled'`). */
+  async answerQuestion(
+    sessionId: SessionId,
+    requestId: string,
+    resolution: QuestionResolution,
+  ): Promise<void> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/sessions/${sessionId}/questions/${requestId}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(resolution),
+      },
+    );
+    if (!response.ok) {
+      throw new ChimeraHttpError(response.status, await safeBody(response));
+    }
   }
 
   /** What the session is doing, without its messages. */

@@ -1,4 +1,5 @@
 export { buildApplyPatchTool } from './apply-patch';
+export * from './ask-question';
 export * from './background';
 export { buildBashKillTool, buildBashOutputTool } from './background-tools';
 export { buildBashTool } from './bash';

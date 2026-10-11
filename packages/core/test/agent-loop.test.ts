@@ -485,4 +485,107 @@ describe('Agent loop', () => {
       });
     });
   });
+
+  describe('questions to the user', () => {
+    const request = {
+      requestId: 'q-1',
+      questions: [
+        { question: 'Which test runner?', options: [{ label: 'vitest' }, { label: 'jest' }] },
+      ],
+    };
+
+    /** An agent whose one tool asks the user and returns what came back. */
+    function askingAgent() {
+      const { model } = scriptedModel([toolCallStep('ask'), textStep('thanks')]);
+      const agent: Agent = buildAgent({
+        languageModel: model,
+        tools: {
+          ask: tool({
+            inputSchema: z.object({}),
+            execute: async () => agent.askQuestions(request),
+          }),
+        } as ToolSet,
+      });
+      return agent;
+    }
+
+    /** Run the agent and call `onQuestion` when the question reaches the client. */
+    async function runAnswering(agent: Agent, onQuestion: () => void): Promise<AgentEvent[]> {
+      const events: AgentEvent[] = [];
+      for await (const event of agent.run('go')) {
+        events.push(event);
+        if (event.type === 'question_request') onQuestion();
+      }
+      return events;
+    }
+
+    it('wait for the answer and go on in the same run', async () => {
+      const agent = askingAgent();
+      let pendingWhileWaiting: unknown;
+
+      const events = await runAnswering(agent, () => {
+        pendingWhileWaiting = agent.pendingQuestionRequests();
+        agent.resolveQuestion('q-1', {
+          status: 'answered',
+          answers: [{ question: 'Which test runner?', answer: 'vitest', custom: false }],
+        });
+      });
+
+      expect(pendingWhileWaiting).toEqual([request]);
+      expect(events.find((event) => event.type === 'question_request')).toEqual({
+        type: 'question_request',
+        ...request,
+      });
+      expect(events).toContainEqual({
+        type: 'question_resolved',
+        requestId: 'q-1',
+        status: 'answered',
+      });
+      const result = events.find((event) => event.type === 'tool_call_result');
+      expect(result).toMatchObject({
+        result: { status: 'answered', answers: [{ answer: 'vitest', custom: false }] },
+      });
+      expect(finishReason(events)).toBe('stop');
+      expect(agent.pendingQuestionRequests()).toEqual([]);
+    });
+
+    it('go on when the user declines to answer', async () => {
+      const agent = askingAgent();
+
+      const events = await runAnswering(agent, () =>
+        agent.resolveQuestion('q-1', { status: 'cancelled' }),
+      );
+
+      expect(events.find((event) => event.type === 'tool_call_result')).toMatchObject({
+        result: { status: 'cancelled' },
+      });
+      expect(finishReason(events)).toBe('stop');
+    });
+
+    it('are cancelled when the run is interrupted, so the run can end', async () => {
+      const agent = askingAgent();
+
+      const events = await runAnswering(agent, () => agent.interrupt());
+
+      expect(finishReason(events)).toBe('interrupted');
+      expect(agent.pendingQuestionRequests()).toEqual([]);
+    });
+
+    it('cannot be answered twice', async () => {
+      const agent = askingAgent();
+      let second: unknown;
+
+      await runAnswering(agent, () => {
+        agent.resolveQuestion('q-1', { status: 'cancelled' });
+        try {
+          agent.resolveQuestion('q-1', { status: 'cancelled' });
+        } catch (error) {
+          second = error;
+        }
+      });
+
+      expect(agent.hasPendingQuestion('q-1')).toBe(false);
+      expect(String(second)).toMatch(/No pending question: q-1/);
+    });
+  });
 });

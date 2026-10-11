@@ -9,6 +9,7 @@ import { buildGlobTool } from './glob';
 import { buildGrepTool } from './grep';
 import { buildReadTool } from './read';
 import { buildRecallTool } from './recall';
+import { buildAskQuestionTool } from './ask-question';
 import { buildRequestUserInputTool } from './request-user-input';
 import { buildTaskListTool } from './task-list';
 import type { ChimeraToolDef, FormatScrollback } from './types';
@@ -46,6 +47,9 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
   }
   if (ctx.requestUserInput) {
     defs.request_user_input = buildRequestUserInputTool(ctx);
+  }
+  if (ctx.questions) {
+    defs.ask_question = buildAskQuestionTool({ askQuestions: ctx.questions.ask });
   }
   if (ctx.backgroundProcesses) {
     defs.bash_output = buildBashOutputTool(ctx);

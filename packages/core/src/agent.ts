@@ -10,6 +10,7 @@ import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } fr
 import { readImageDimensions } from './image-header';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
 import { elideImageToolResults } from './message-parts';
+import type { QuestionRequest, QuestionResolution } from './questions';
 import {
   type ModelSettings,
   type ModelSettingsPatch,
@@ -209,6 +210,10 @@ export class Agent {
   readonly session: Session;
   private opts: AgentOptions;
   private abortController: AbortController;
+  private pendingQuestions = new Map<
+    string,
+    { resolve: (resolution: QuestionResolution) => void; request: QuestionRequest }
+  >();
   private pendingPermissions = new Map<
     string,
     {
@@ -447,6 +452,52 @@ export class Agent {
         mcp: req.mcp,
       });
     });
+  }
+
+  /**
+   * Put questions to the user and wait for the answer. The tool call that
+   * asks stays open; `resolveQuestion` settles it. An interrupt of the run
+   * cancels the questions, so the call ends and the run can stop.
+   */
+  askQuestions(request: QuestionRequest): Promise<QuestionResolution> {
+    return new Promise<QuestionResolution>((resolve) => {
+      const { signal } = this.abortController;
+      const onInterrupt = () => {
+        if (this.pendingQuestions.has(request.requestId)) {
+          this.resolveQuestion(request.requestId, { status: 'cancelled' });
+        }
+      };
+      this.pendingQuestions.set(request.requestId, {
+        request,
+        resolve: (resolution) => {
+          signal.removeEventListener('abort', onInterrupt);
+          resolve(resolution);
+        },
+      });
+      signal.addEventListener('abort', onInterrupt, { once: true });
+      this.currentQueue?.push({
+        type: 'question_request',
+        requestId: request.requestId,
+        questions: request.questions,
+      });
+    });
+  }
+
+  pendingQuestionRequests(): QuestionRequest[] {
+    return [...this.pendingQuestions.values()].map(({ request }) => structuredClone(request));
+  }
+
+  hasPendingQuestion(requestId: string): boolean {
+    return this.pendingQuestions.has(requestId);
+  }
+
+  /** Settle a pending question with the user's answers, or with their refusal to answer. */
+  resolveQuestion(requestId: string, resolution: QuestionResolution): void {
+    const pending = this.pendingQuestions.get(requestId);
+    if (!pending) throw new Error(`No pending question: ${requestId}`);
+    this.pendingQuestions.delete(requestId);
+    this.currentQueue?.push({ type: 'question_resolved', requestId, status: resolution.status });
+    pending.resolve(resolution);
   }
 
   requestUserInput(request: UserInputRequest): void {

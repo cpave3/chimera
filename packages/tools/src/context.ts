@@ -3,6 +3,8 @@ import type {
   Executor,
   HostAuthenticationCapability,
   PermissionGate,
+  QuestionRequest,
+  QuestionResolution,
   SandboxMode,
 } from '@chimera/core';
 import type { BackgroundProcessManager } from './background';
@@ -51,4 +53,10 @@ export interface ToolContext {
   recall?: RecallStoreApi;
   /** When present, the request_user_input tool is registered. */
   requestUserInput?: (request: UserInputRequest) => Promise<void>;
+  /**
+   * When present, the ask_question tool is registered. `ask` puts the
+   * questions to the user; without it the tool answers that no user is
+   * available.
+   */
+  questions?: { ask?: (request: QuestionRequest) => Promise<QuestionResolution> };
 }

@@ -138,6 +138,15 @@ const rememberSchema = z.union([
     patternKind: z.enum(['exact', 'glob']),
   }),
 ]);
+const questionResolutionSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('answered'),
+    answers: z
+      .array(z.object({ question: z.string(), answer: z.string(), custom: z.boolean() }))
+      .min(1),
+  }),
+  z.object({ status: z.literal('cancelled') }),
+]);
 const permissionResolveSchema = z.discriminatedUnion('decision', [
   z.object({ decision: z.literal('allow'), remember: rememberSchema.optional() }),
   z.object({
@@ -241,6 +250,7 @@ export function buildApp(opts: AppOptions): Hono {
     return c.json({
       ...entry.agent.session,
       pendingPermissions: entry.agent.pendingPermissionRequests(),
+      pendingQuestions: entry.agent.pendingQuestionRequests(),
       compactionActive: entry.compactionActive,
       compactionCount,
       lastCompactedAt,
@@ -702,6 +712,28 @@ export function buildApp(opts: AppOptions): Hono {
     const rules = entry.gate.listRules();
     if (idx < 0 || idx >= rules.length) return c.json({ error: 'out of range' }, 404);
     entry.gate.removeRule(idx);
+    return c.body(null, 204);
+  });
+
+  // Answer, or decline to answer, the questions of one `ask_question` call.
+  app.post('/v1/sessions/:id/questions/:requestId', async (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = questionResolutionSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    const requestId = c.req.param('requestId');
+    if (!entry.agent.hasPendingQuestion(requestId)) {
+      return c.json({ error: 'already resolved' }, 409);
+    }
+    entry.agent.resolveQuestion(requestId, parseResult.data);
     return c.body(null, 204);
   });
 
