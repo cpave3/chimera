@@ -31,6 +31,28 @@ Add providers to `~/.chimera/config.json`:
 
 `apiKey` may be either `env:VAR_NAME` (resolved at use time) or a plain string (not recommended; a warning is logged).
 
+## Prompt caching
+
+Chimera keeps the head of every request stable — tool definitions, system
+prompt, then the conversation in order — so providers can serve it from their
+prompt cache.
+
+- **`shape: "anthropic"`**: caching is opt-in per request, so Chimera marks the
+  end of the system prompt and the end of the conversation with
+  `cache_control` breakpoints. If a proxy rejects those fields, turn them off
+  for that provider:
+
+  ```json
+  { "providers": { "my-proxy": { "shape": "anthropic", "baseUrl": "…", "apiKey": "…", "promptCaching": false } } }
+  ```
+
+- **`shape: "openai"`**: no markers are sent. Endpoints that cache do it
+  automatically on a stable prefix.
+
+The TUI usage widget shows the cached share of the last prompt as
+`cache N%` when the provider reports cached input tokens. A mode change,
+`/reload`, or a `/model` switch changes the prefix and starts the cache again.
+
 ## Known-good combos
 
 | Provider | Shape | Notes |

@@ -19,19 +19,19 @@
 
 ## 4. Provider error recovery
 
-- [ ] 4.1 Test and implement retry with backoff and the `provider_retry` event
-- [ ] 4.2 Test and implement "no retry after a tool call started"
-- [ ] 4.3 Test and implement overflow compaction and resend
-- [ ] 4.4 Test and implement the fallback model override and `model_fallback` event
-- [ ] 4.5 Wire `fallbackModel` config through the CLI factory
+- [x] 4.1 Test and implement retry with backoff and the `provider_retry` event
+- [x] 4.2 Test and implement "no retry after a tool call started"
+- [x] 4.3 Test and implement overflow compaction and resend
+- [x] 4.4 Test and implement the fallback model override and `model_fallback` event
+- [x] 4.5 Wire `fallbackModel` config through the CLI factory
 
 ## 5. Output cutoff
 
-- [ ] 5.1 Test and implement the continuation note (maximum 2 per run)
-- [ ] 5.2 Add the `output_limit` terminal reason to events, subagent types, CLI exit codes, and the TUI
+- [x] 5.1 Test and implement the continuation note (maximum 2 per run)
+- [x] 5.2 Add the `output_limit` terminal reason to events, subagent types, CLI exit codes, and the TUI
 
 ## 6. Wrap-up
 
-- [ ] 6.1 Show `provider_retry` and `model_fallback` in the TUI scrollback
-- [ ] 6.2 Update `README.md`, `docs/COMPACTION.md`, and `PROVIDERS.md`
+- [x] 6.1 Show `provider_retry` and `model_fallback` in the TUI scrollback
+- [x] 6.2 Update `README.md`, `docs/COMPACTION.md`, and `PROVIDERS.md`
 - [ ] 6.3 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`

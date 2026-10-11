@@ -246,7 +246,41 @@ chimera sessions rm <id>   # delete a session (rejected if the session has child
 | stop           | 0    |
 | error          | 1    |
 | max_steps      | 2    |
+| output_limit   | 2    |
 | interrupted    | 130  |
+
+## Provider errors, retries, and the response timeout
+
+A model step can fail for reasons that have nothing to do with the task. The
+agent loop handles three of them without ending the run:
+
+- **Temporary provider errors** (HTTP 408, 409, 429, 5xx, overload, a dropped
+  connection). The step is sent again after a wait, up to four times. The wait
+  follows the provider's `retry-after` header (capped at 60 seconds) and
+  otherwise doubles from one second. The TUI prints
+  `provider error: … — retry 2/4 in 2s`. A step is only retried when none of
+  its tool calls had started, so a retry never repeats a side effect.
+- **Context overflow.** When the provider rejects a prompt for its length, the
+  agent runs one summarizing compaction and sends the step again.
+- **Output cutoff.** When an answer stops at the model's output limit, the
+  agent asks the model to continue, at most twice per run. If the answer is
+  still cut off, the run ends with the reason `output_limit`.
+
+Set `fallbackModel` in `~/.chimera/config.json` to finish a run on a second
+model when the first stays unavailable after its retries:
+
+```json
+{ "fallbackModel": "anthropic/claude-haiku-4-5" }
+```
+
+The fallback applies to the rest of that run only. The next run starts on the
+session model again.
+
+`responseTimeoutMs` (default 120000, `0` disables) is an **idle** timeout: it
+measures how long the model produces no output. It restarts on every stream
+event and is suspended while a tool call is executing, so a long build, test
+run, or subagent never trips it. A model that goes silent for the whole
+period ends the run with the reason `timeout`.
 
 ## Bash timeouts and interruption
 
@@ -346,11 +380,12 @@ For multi-step work the model maintains a task list via the `task_list` tool
 (replace-whole-list semantics, statuses `pending` / `in_progress` /
 `completed`). The status bar shows live progress —
 `[tasks 2/5: implement feature]` — and the list is persisted in session
-metadata, so it survives resume, forks, and context compaction. The current
-list is also injected into the system prompt on every step, so the model
-always sees the authoritative state even after a compact summarizes away the
-tool calls that built it. Scrollback renders each update as a compact
-progress line (`2/5 done → current task`).
+metadata, so it survives resume, forks, and context compaction. The model
+sees the list through its latest `task_list` call; when compaction summarizes
+that call away, the summary ends with a `<tasks>` block that restates every
+task and status. The list is deliberately not part of the system prompt, so a
+task update does not invalidate the provider's prompt cache. Scrollback
+renders each update as a compact progress line (`2/5 done → current task`).
 
 Plan mode hands off into this: the model presents its plan as a numbered
 markdown list, and when you accept it (switch out of plan mode), a one-shot

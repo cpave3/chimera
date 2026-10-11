@@ -20,11 +20,12 @@ before the context window overflows. It runs in two tiers:
 |---------|-----|
 | **Threshold** (automatic) | The agent projects the next prompt size as the provider's last reported `inputTokens` plus a char/4 estimate of messages appended since (pure estimate before the first usage report). When the projection crosses `min(contextWindow × thresholdPercent, contextWindow − reserve)` — where the reserve covers `maxOutputTokens` plus a growth margin — compaction runs. The check happens **at run start and between steps inside tool loops**, so a long agentic run compacts mid-run instead of dying on a window overflow. |
 | **Manual** | Type `/compact` in the TUI (or call `POST /v1/sessions/:id/compact`). Manual compactions always run the full prune + summarize pipeline. |
+| **Overflow** (automatic) | The provider rejected a step because the prompt exceeds the context window — the size estimate or the configured window was wrong. The agent runs the full prune + summarize pipeline once and sends the step again. `compaction_started` carries `reason: "overflow"`. |
 
 A failed threshold compaction emits `compaction_failed` and the run continues
 (degraded beats dead); further attempts are latched off until the next user
 turn. If compaction is disabled via config or `--no-compaction`, an oversized
-prompt will surface a provider error as usual.
+prompt surfaces the provider's error and ends the run.
 
 ## Summary format
 
@@ -58,6 +59,20 @@ can parse the previous summary idempotently.
 
 The `<files>` block is generated from the session's tracked file operations,
 not by re-parsing tool history.
+
+When the session has a task list and the summarized messages contained the
+last `task_list` call, the summary also ends with a `<tasks>` block:
+
+```
+<tasks>
+  <task status="completed">write failing test</task>
+  <task status="in_progress">implement feature</task>
+</tasks>
+```
+
+The block is generated from session state, like `<files>`. It is left out
+when a `task_list` call survives in the kept tail, because that call already
+shows the model the current list.
 
 ## Tail preservation
 
