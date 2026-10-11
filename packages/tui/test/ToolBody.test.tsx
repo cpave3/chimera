@@ -504,3 +504,45 @@ describe('renderToolBody', () => {
     });
   });
 });
+
+describe('renderToolBody apply_patch', () => {
+  const input = [
+    '*** Begin Patch',
+    '*** Update File: src/greet.ts',
+    '@@ export function greet() {',
+    '-  return "hi";',
+    '+  return "hello";',
+    ' }',
+    '*** Add File: docs/new.md',
+    '+# Title',
+    '*** End Patch',
+  ].join('\n');
+
+  it('shows each file and its changed lines, without the envelope markers', () => {
+    const out = frame(makeEntry({ toolName: 'apply_patch', toolArgs: { input }, toolResult: {} }));
+
+    expect(out).toContain('src/greet.ts');
+    expect(out).toContain('-   return "hi";');
+    expect(out).toContain('+   return "hello";');
+    expect(out).toContain('docs/new.md (new)');
+    expect(out).toContain('+ # Title');
+    expect(out).not.toContain('*** Begin Patch');
+    expect(out).not.toContain('*** End Patch');
+  });
+
+  it('caps a long patch and says how many lines were left out', () => {
+    const longInput = [
+      '*** Begin Patch',
+      '*** Add File: big.txt',
+      ...Array.from({ length: TOOL_BODY_LIMITS.editDiffLines + 5 }, (_, i) => `+line ${i}`),
+      '*** End Patch',
+    ].join('\n');
+
+    const out = frame(
+      makeEntry({ toolName: 'apply_patch', toolArgs: { input: longInput }, toolResult: {} }),
+    );
+
+    expect(out).toContain('more lines');
+    expect(out).not.toContain(`line ${TOOL_BODY_LIMITS.editDiffLines + 4}`);
+  });
+});

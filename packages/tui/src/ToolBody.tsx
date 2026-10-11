@@ -23,6 +23,8 @@ export function renderToolBody(entry: ScrollbackEntry, ctx: ToolBodyProps): Reac
   switch (entry.toolName) {
     case 'edit':
       return renderEditBody(entry, ctx);
+    case 'apply_patch':
+      return renderPatchBody(entry, ctx);
     case 'write':
       return renderWriteBody(entry, ctx);
     case 'bash':
@@ -147,6 +149,62 @@ function renderEditBodyLegacy(
   }
   if (total > cap) {
     rows.push(moreLinesRow(`d${key++}`, total - cap, prefixLen, theme));
+  }
+  return rows;
+}
+
+const PATCH_FILE_HEADERS: Array<{ marker: string; label: (path: string) => string }> = [
+  { marker: '*** Add File: ', label: (path) => `${path} (new)` },
+  { marker: '*** Update File: ', label: (path) => path },
+  { marker: '*** Delete File: ', label: (path) => `${path} (deleted)` },
+  { marker: '*** Move to: ', label: (path) => `→ ${path}` },
+];
+
+/**
+ * A patch is already a diff: show it file by file, colouring added and
+ * removed lines and dropping the envelope markers that carry no content.
+ */
+function renderPatchBody(
+  entry: ToolEntry,
+  { width, prefixLen, theme }: ToolBodyProps,
+): React.ReactElement[] {
+  const args = entry.toolArgs as { input?: string } | undefined;
+  if (!args || typeof args.input !== 'string') return [];
+  const innerWidth = bodyInnerWidth(width, prefixLen, 2);
+  const cap = TOOL_BODY_LIMITS.editDiffLines;
+  const lines = stripTrailingNewline(args.input)
+    .split('\n')
+    .filter(
+      (line) => !['*** Begin Patch', '*** End Patch', '*** End of File'].includes(line.trim()),
+    );
+
+  const rows: React.ReactElement[] = [];
+  lines.slice(0, cap).forEach((line, index) => {
+    const key = `p${index}`;
+    const header = PATCH_FILE_HEADERS.find(({ marker }) => line.startsWith(marker));
+    if (header) {
+      rows.push(
+        <Box key={key} paddingLeft={prefixLen}>
+          <Text bold>
+            {clip(header.label(line.slice(header.marker.length).trim()), innerWidth)}
+          </Text>
+        </Box>,
+      );
+    } else if (line.startsWith('+')) {
+      rows.push(diffRow(key, '+ ', line.slice(1), theme.status.success, innerWidth, prefixLen));
+    } else if (line.startsWith('-')) {
+      rows.push(diffRow(key, '- ', line.slice(1), theme.status.error, innerWidth, prefixLen));
+    } else {
+      const text = line.startsWith(' ') ? line.slice(1) : line;
+      rows.push(
+        <Box key={key} paddingLeft={prefixLen}>
+          <Text color={theme.text.muted}>{`  ${clip(text, innerWidth)}`}</Text>
+        </Box>,
+      );
+    }
+  });
+  if (lines.length > cap) {
+    rows.push(moreLinesRow('pmore', lines.length - cap, prefixLen, theme));
   }
   return rows;
 }
