@@ -99,6 +99,12 @@ Headless use requires an explicit per-server `trustedTools` entry or allow
 rule; host auto-approval does not apply. For config examples, OAuth details,
 permissions, supported content, and troubleshooting, see [MCP tools](docs/mcp.md).
 
+When the tool schemas of all servers together would take more than 10% of
+the model's context window, Chimera holds them back and registers
+`tool_search` instead: the agent searches for the tool it needs and the
+matches are registered for the rest of the session. With a large window
+nothing changes.
+
 ## Run
 
 Interactive:
@@ -838,7 +844,7 @@ Drop additional partial themes into `~/.chimera/themes/<name>.json` to extend th
 
 ## Lifecycle hooks
 
-Drop an executable file in `~/.chimera/hooks/<EventName>/` (global) or `<cwd>/.chimera/hooks/<EventName>/` (project) and Chimera fires it on the matching event. Events: `UserPromptSubmit`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`. `chimera hooks list` prints what's installed. See [`docs/hooks.md`](docs/hooks.md) for the payload schema, exit-code semantics, and a Legato integration recipe.
+Drop an executable file in `~/.chimera/hooks/<EventName>/` (global) or `<cwd>/.chimera/hooks/<EventName>/` (project) and Chimera fires it on the matching event. Events include `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop` and `SessionEnd`. A `PreToolUse` hook that exits 2 blocks the tool call, and the agent gets the hook's stderr as the reason. `chimera hooks list` prints what's installed. See [`docs/hooks.md`](docs/hooks.md) for the payload schema, exit-code semantics, and a Legato integration recipe.
 
 ## Packages
 

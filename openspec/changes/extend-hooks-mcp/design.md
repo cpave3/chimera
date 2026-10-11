@@ -45,8 +45,9 @@ session start, for the model the session starts on.
 ### D3. `tool_search`
 
 `tool_search({ query, limit })` scores each deferred tool by the query's
-words in its name (weight 3), server name (2) and description (1), and
-returns the best matches with their descriptions. The tools it returns are
+words: a whole word of the tool's name counts most, then a part of the name,
+then the server's name, then a word of the description. It returns the best
+matches with their descriptions. The tools it returns are
 registered on the agent at once; the tool result says they can be called
 from the next step. An empty query lists servers with their tool counts,
 without registering anything. A tool stays registered for the session, also
@@ -55,10 +56,13 @@ tool surface, and a mode allowlist still filters it).
 
 ### D4. Adding a tool during a run
 
-The agent reads its tool set at the start of each step. `Agent.addTools`
-merges new tools into the set; the step in progress finishes with the old
-set and the next step sees the new one. The system prompt's tool list is not
-recomposed: MCP tools were never listed there.
+The agent reads its tool set at the start of each step, so `Agent.setTools`
+is enough: the step in progress finishes with the old set and the next step
+sees the new one. The factory adds a found tool to every tool surface built
+so far and to the extras that later surfaces start from, through the same
+interceptors as every other tool, and then sets the agent's tools for the
+current mode. The system prompt's tool list is not recomposed: MCP tools
+were never listed there.
 
 ## Risks / Trade-offs
 

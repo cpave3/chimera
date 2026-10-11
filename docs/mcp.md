@@ -175,3 +175,29 @@ secrets.
   and reduce the requested output. Tool discovery, calls, schema sizes, tool
   counts, and results have limits; failures are reported rather than treated
   as empty success.
+
+## Many tools, small context
+
+Every registered MCP tool adds its name, description and input schema to each
+request. At session start Chimera estimates that size (four characters a
+token) for all servers together:
+
+- **Up to 10% of the model's context window:** every tool is registered, as
+  described above.
+- **Over 10%:** no MCP tool is registered. The agent gets `tool_search`
+  instead. Its description names the servers and their tool counts. The agent
+  calls it with a few words (`create issue`); the best matches come back with
+  their descriptions and are registered for the rest of the session, so the
+  agent can call them from its next step. An empty query lists the servers.
+
+A tool that `tool_search` registered stays registered across mode and model
+changes; a mode's `tools` allowlist still applies to it, and to `tool_search`
+itself. Each search that registers something changes the tool list, so the
+provider's prompt cache starts again once for that step. Approval works the
+same either way: `trustedTools` and the permission prompt apply when the tool
+is called, not when it is found.
+
+The decision is made once, for the model the session starts on. A large
+model with a large window usually stays under the limit; the same servers
+with a small local model usually go over it.
+

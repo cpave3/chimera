@@ -97,7 +97,7 @@ import type {
 } from './config';
 import { McpAuth } from './mcp/auth';
 import { McpClientManager } from './mcp/client';
-import { registerMcpTools } from './mcp/tools';
+import { type McpToolEntry, registerMcpTools } from './mcp/tools';
 import { preToolUseHook } from './pre-tool-use';
 import type { CliSandboxOptions } from './sandbox-config';
 
@@ -806,6 +806,8 @@ export class CliAgentFactory implements AgentFactory {
         : 'Delegate a focused task to a fresh agent and get its answer.';
     }
 
+    // Set once the tool surfaces exist; `tool_search` calls it at run time.
+    let activateMcpTools: (entries: McpToolEntry[]) => void = () => {};
     if (Object.keys(this.mcpServers).length > 0) {
       if (init.sandboxMode !== 'off') {
         this.warn('MCP tools run on the host, outside the Docker sandbox');
@@ -822,7 +824,7 @@ export class CliAgentFactory implements AgentFactory {
           }),
       );
       this.liveMcpClients.set(agent.session.id, manager);
-      await registerMcpTools({
+      const { deferred } = await registerMcpTools({
         manager,
         servers: this.mcpServers,
         tools: extraTools,
@@ -830,7 +832,12 @@ export class CliAgentFactory implements AgentFactory {
         gate,
         cwd: init.cwd,
         warn: this.warn,
+        contextWindow: resolvedWindow.value,
+        activate: (entries) => activateMcpTools(entries),
       });
+      if (deferred) {
+        extraSnippets.tool_search = 'Find and enable tools of the connected MCP servers.';
+      }
     }
 
     this.liveAgents.set(agent.session.id, agent);
@@ -912,6 +919,27 @@ export class CliAgentFactory implements AgentFactory {
         filtered.request_user_input = surface.tools.request_user_input;
       }
       return filtered;
+    };
+
+    // An MCP tool that `tool_search` returned joins the session: every tool
+    // surface built so far, the ones built later, and the agent's tool set
+    // from its next step. The mode's allowlist still applies.
+    activateMcpTools = (entries) => {
+      const added: ToolSet = {};
+      for (const entry of entries) {
+        added[entry.id] = entry.tool;
+        extraFormatters[entry.id] = entry.formatter;
+        formatters[entry.id] = entry.formatter;
+      }
+      Object.assign(extraTools, added);
+      const allowed = this.toolsAllowlist
+        ? applyAllowlist(added, new Set(this.toolsAllowlist))
+        : added;
+      const intercepted = interceptTools(allowed, toolInterceptors);
+      for (const surface of surfaces.values()) Object.assign(surface.tools, intercepted);
+      agent.setToolFormatters(formatters);
+      const mode = modesReg ? modesReg.find(agent.session.mode) : undefined;
+      agent.setTools(toolsInMode(surfaceFor(agent.session.model), mode));
     };
 
     const promptFor = (

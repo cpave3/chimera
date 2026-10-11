@@ -23,6 +23,7 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 |--------------------|--------------------------------------------------------------------------------|-------|
 | `SessionCreated`   | A fresh session is registered; it does not fire when resuming a session.        | post  |
 | `UserPromptSubmit` | A user message is accepted, before the model is invoked.                       | post  |
+| `PreToolUse`       | A tool call is about to run, before the permission gate.                       | pre   |
 | `PostToolUse`      | A tool call completes (success or error).                                      | post  |
 | `PermissionRequest`| The permission gate would otherwise prompt the user.                           | pre   |
 | `PermissionResolved`| An interactive permission is resolved, before the suspended tool resumes.      | post  |
@@ -56,6 +57,10 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
 
 // UserPromptSubmit
 { "event": "UserPromptSubmit", "session_id": "...", "cwd": "...", "user_message": "..." }
+
+// PreToolUse
+{ "event": "PreToolUse", "session_id": "...", "cwd": "...",
+  "tool_name": "write", "tool_input": { "path": "migrations/1.sql", "content": "..." } }
 
 // PostToolUse  (success)
 { "event": "PostToolUse", "session_id": "...", "cwd": "...",
@@ -117,12 +122,26 @@ The hook's working directory at exec time is the session's `cwd`. The parent pro
 
 ## Exit codes and outcomes
 
-Events are classified as **pre** or **post**. Today only `PermissionRequest` is pre.
+Events are classified as **pre** or **post**. `PreToolUse` and `PermissionRequest` are pre.
 
 | Class | Exit 0  | Exit 2                                                                   | Other non-zero | Timeout (>30s) | Spawn failure |
 |-------|---------|--------------------------------------------------------------------------|----------------|----------------|---------------|
 | pre   | allow   | **block**: the call is denied without prompting; tool result is `denied by hook` | warning, allow | warning, allow | warning, allow |
 | post  | ok      | warning                                                                   | warning        | warning        | warning        |
+
+A blocked `PreToolUse` call does not run. The model gets the tool error `blocked by PreToolUse hook: <reason>`, where the reason is the script's stderr, or the `reason` of a JSON `{"decision": "block"}` on stdout. `PreToolUse` runs for every tool (built-in, MCP, `spawn_agent`) and comes before the permission gate, so a blocked call opens no prompt. The hook sees the tool's input and cannot change it.
+
+```sh
+#!/bin/sh
+# .chimera/hooks/PreToolUse/no-migrations.sh — keep the agent out of migrations/.
+payload=$(cat)
+case "$payload" in
+  *'"tool_name":"write"'*migrations/* | *'"tool_name":"edit"'*migrations/*)
+    echo "migrations/ is frozen; write a new migration by hand" >&2
+    exit 2 ;;
+esac
+exit 0
+```
 
 Pre-hooks **fail open** — a crashing or timing-out hook never blocks the agent. If you want strict denial on internal error, exit 2 explicitly inside your script.
 

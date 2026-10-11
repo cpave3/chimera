@@ -6,11 +6,11 @@
 
 ## 2. Deferred MCP tools
 
-- [ ] 2.1 Test and implement the schema size estimate and the 10% decision
-- [ ] 2.2 Test and implement `tool_search` (ranking, overview, activation)
-- [ ] 2.3 Test and implement `Agent.addTools`; wire deferral into MCP registration
+- [x] 2.1 Test and implement the schema size estimate and the 10% decision
+- [x] 2.2 Test and implement `tool_search` (ranking, overview, activation)
+- [x] 2.3 Wire deferral into MCP registration; register found tools with `Agent.setTools`
 
 ## 3. Wrap-up
 
-- [ ] 3.1 Update `docs/hooks.md`, `docs/mcp.md` and `README.md`
-- [ ] 3.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+- [x] 3.1 Update `docs/hooks.md`, `docs/mcp.md` and `README.md`
+- [x] 3.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
