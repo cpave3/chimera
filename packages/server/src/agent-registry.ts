@@ -99,9 +99,21 @@ export interface InstanceInfo {
   parentId?: string;
 }
 
+/** Gives a session a message: into its run in progress, or as the start of a new run. */
+export type MessageDelivery = (
+  sessionId: SessionId,
+  content: string,
+) => Promise<'injected' | 'started' | 'missing' | 'busy'>;
+
 export interface AgentFactory {
   build(init: SessionInit): Promise<BuildResult>;
   disposeSession?(sessionId: SessionId): Promise<void>;
+  /**
+   * Optional: the registry calls this once with a function that gives a
+   * session a message from something other than its user, for example a
+   * background subagent that ended.
+   */
+  setMessageDelivery?(deliver: MessageDelivery): void;
   /**
    * Optional: add a read or write directory for a live session.
    * Returns the absolute resolved path and whether it was newly added.
@@ -153,6 +165,9 @@ export interface AgentRegistryOptions {
 }
 
 const DEFAULT_DELETE_TIMEOUT_MS = 10_000;
+// A compaction usually ends within a minute; a delivery waits that long for it.
+const DELIVERY_ATTEMPTS = 120;
+const DELIVERY_RETRY_MS = 500;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -199,6 +214,7 @@ export class AgentRegistry {
     this.loadModels = opts.loadModels;
     this.home = opts.home;
     this.workspaceCheckpoints = opts.workspaceCheckpoints ?? false;
+    this.factory.setMessageDelivery?.((sessionId, content) => this.deliver(sessionId, content));
   }
 
   /**
@@ -384,6 +400,32 @@ export class AgentRegistry {
       }
     })();
     return 'queued';
+  }
+
+  /**
+   * Give a session a message that did not come from its user. During a run
+   * the message joins the run at its next step boundary. Otherwise it starts
+   * a run, so the agent acts on it without waiting for the user. A
+   * compaction or a rewind holds the session for a moment; the delivery
+   * waits for it and answers `'busy'` only when the wait runs out.
+   */
+  async deliver(
+    id: SessionId,
+    content: string,
+  ): Promise<'injected' | 'started' | 'missing' | 'busy'> {
+    for (let attempt = 0; attempt < DELIVERY_ATTEMPTS; attempt += 1) {
+      const entry = this.entries.get(id);
+      if (!entry) return 'missing';
+      if (entry.runActive) {
+        entry.agent.injectRunMessage(content);
+        return 'injected';
+      }
+      const started = await this.run(id, content);
+      if (started === 'queued') return 'started';
+      if (started === 'missing') return 'missing';
+      await new Promise((resolve) => setTimeout(resolve, DELIVERY_RETRY_MS));
+    }
+    return 'busy';
   }
 
   /**

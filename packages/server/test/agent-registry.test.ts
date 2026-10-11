@@ -332,6 +332,91 @@ describe('AgentRegistry mid-run injectMessage', () => {
     expect(events).toContain('run_finished');
   });
 
+  it('delivers a message into the run in progress', async () => {
+    let gateFired = () => {};
+    const gatePromise = new Promise<void>((r) => {
+      gateFired = r;
+    });
+    const { registry, release } = makeGatedRegistry({ resolve: gateFired });
+    const { sessionId } = await registry.create({ cwd: '/tmp', model, sandboxMode: 'off' });
+    const entry = registry.get(sessionId)!;
+    const messages: string[] = [];
+    entry.bus.subscribe((env) => {
+      if (env.type === 'user_message') messages.push(env.content);
+    });
+    await registry.run(sessionId, 'start');
+    await gatePromise;
+
+    const state = await registry.deliver(sessionId, 'the child found it');
+    release();
+    await entry.activeRun;
+
+    expect(state).toBe('injected');
+    expect(messages).toEqual(['start', 'the child found it']);
+  });
+
+  it('starts a run with the delivered message when the session is idle', async () => {
+    const registry = new AgentRegistry({
+      factory: {
+        build: async (init) => ({
+          agent: new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('noted'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          }),
+        }),
+      },
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId } = await registry.create({ cwd: '/tmp', model, sandboxMode: 'off' });
+    const entry = registry.get(sessionId)!;
+    const seen: string[] = [];
+    entry.bus.subscribe((env) => {
+      if (env.type === 'user_message') seen.push(`user:${env.content}`);
+      if (env.type === 'assistant_text_done') seen.push(`assistant:${env.text}`);
+      if (env.type === 'run_finished') seen.push('finished');
+    });
+
+    const state = await registry.deliver(sessionId, 'the child found it');
+    await entry.activeRun;
+
+    expect(state).toBe('started');
+    expect(seen).toEqual(['user:the child found it', 'assistant:noted', 'finished']);
+  });
+
+  it('hands the factory the means to deliver, when the factory asks for it', async () => {
+    let deliver: ((sessionId: string, content: string) => Promise<unknown>) | undefined;
+    const registry = new AgentRegistry({
+      factory: {
+        setMessageDelivery: (handler) => {
+          deliver = handler;
+        },
+        build: async (init) => ({
+          agent: new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: textOnlyModel('noted'),
+            tools: {} as ToolSet,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          }),
+        }),
+      },
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId } = await registry.create({ cwd: '/tmp', model, sandboxMode: 'off' });
+
+    await deliver?.(sessionId, 'from a child');
+    await registry.get(sessionId)!.activeRun;
+
+    expect(registry.get(sessionId)!.agent.session.messages[0]).toMatchObject({ role: 'user' });
+  });
+
   it('returns already-running when a compaction is active', async () => {
     const compactor: CompactorApi = {
       maybeCompact: async () => ({ ran: false }),
