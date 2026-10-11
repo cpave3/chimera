@@ -130,6 +130,10 @@ export function buildProgram(): Command {
                   ).choices(['resume', 'new', 'error']),
                 )
                 .option('--stdin', 'Read prompt from stdin', false)
+                .option(
+                  '--goal <condition>',
+                  'Completion condition; a checker model examines it at each stop (exit 0 met, 2 limit, 3 not possible)',
+                )
                 .option('--command <name>', 'Run a user command template by name')
                 .option('--args <args>', 'Arguments for --command (quoted string)')
                 .option(
@@ -175,6 +179,7 @@ export function buildProgram(): Command {
       sessionExists: opts.sessionExists,
       command: opts.command,
       commandArgs: opts.args,
+      goal: opts.goal,
       claudeCompat: opts.claudeCompat,
       skills: opts.skills,
       modes: opts.modes,

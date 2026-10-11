@@ -9,6 +9,7 @@ import type {
   PromptStyle,
   SettingCapability,
 } from '@chimera/core';
+import { DEFAULT_GOAL_MAX_CONTINUATIONS } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
 import type { ProviderSpec, ProvidersConfig } from '@chimera/providers';
 import type { DiagnosticsConfig } from '@chimera/tools';
@@ -120,6 +121,8 @@ export interface ChimeraConfig {
    * approval before the user is asked. Off by default.
    */
   approvalReviewer?: { enabled?: boolean };
+  /** Limits for a session goal (`/goal`, `chimera run --goal`). */
+  goal?: { maxContinuations?: number };
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
   commandPolicy?: {
@@ -245,6 +248,8 @@ const hostBashPolicySchema = z
   .strict();
 
 const approvalReviewerSchema = z.object({ enabled: z.boolean().optional() }).strict();
+
+const goalSchema = z.object({ maxContinuations: z.number().int().positive().optional() }).strict();
 
 const tuiSchema = z
   .object({
@@ -381,6 +386,10 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   if (!reviewer.success) {
     throw new Error(`Invalid approvalReviewer in ${path}: ${reviewer.error.message}`);
   }
+  const goal = goalSchema.safeParse(config.goal ?? {});
+  if (!goal.success) {
+    throw new Error(`Invalid goal in ${path}: ${goal.error.message}`);
+  }
   const tui = tuiSchema.safeParse(config.tui ?? {});
   if (!tui.success) {
     throw new Error(
@@ -392,6 +401,11 @@ export function loadConfig(home = homedir()): ChimeraConfig {
 
 export function approvalReviewerEnabled(config: ChimeraConfig): boolean {
   return config.approvalReviewer?.enabled === true;
+}
+
+/** How many times one run may continue for a goal that is not met. */
+export function goalMaxContinuations(config: ChimeraConfig): number {
+  return config.goal?.maxContinuations ?? DEFAULT_GOAL_MAX_CONTINUATIONS;
 }
 
 export function resolveHostBashPolicy(

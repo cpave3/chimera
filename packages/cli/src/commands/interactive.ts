@@ -29,6 +29,7 @@ import {
 } from '../compaction';
 import {
   approvalReviewerEnabled,
+  goalMaxContinuations,
   loadConfig,
   resolveHostBashPolicy,
   resolveMcpServers,
@@ -198,6 +199,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
     approvalReviewer: approvalReviewerEnabled(config),
+    goal: { maxContinuations: goalMaxContinuations(config) },
     memory: config.memory,
     userCanAnswer: true,
     compaction: compactionConfig,

@@ -14,6 +14,7 @@ import {
 } from '../compaction';
 import {
   approvalReviewerEnabled,
+  goalMaxContinuations,
   loadConfig,
   resolveHostBashPolicy,
   resolveMcpServers,
@@ -192,6 +193,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
     approvalReviewer: approvalReviewerEnabled(config),
+    goal: { maxContinuations: goalMaxContinuations(config) },
     memory: config.memory,
     compaction: compactionConfig,
     compactor,

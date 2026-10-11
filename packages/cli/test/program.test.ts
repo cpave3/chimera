@@ -28,6 +28,12 @@ describe('chimera CLI smoke', () => {
     expect(r.stdout).toMatch(/--no-subagents/);
   });
 
+  it('--help of run offers --goal', () => {
+    const r = spawnSync('node', [BIN, 'run', '--help'], { encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/--goal <condition>/);
+  });
+
   it('removes an exact missing session idempotently with structured output', () => {
     const home = `/tmp/chimera-rm-empty-${Date.now()}`;
     const result = spawnSync(

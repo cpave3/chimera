@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   approvalReviewerEnabled,
+  goalMaxContinuations,
   loadConfig,
   resolveHostBashPolicy,
   resolveMcpServers,
@@ -155,6 +156,32 @@ describe('approval reviewer setting', () => {
     const home = await homeWith({ approvalReviewer: { enabled: true, model: 'x/y' } });
 
     expect(() => loadConfig(home)).toThrow(/approvalReviewer/);
+  });
+});
+
+describe('goal setting', () => {
+  async function homeWith(config: object): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-config-'));
+    await mkdir(join(home, '.chimera'), { recursive: true });
+    await writeFile(join(home, '.chimera', 'config.json'), JSON.stringify(config));
+    return home;
+  }
+
+  it('limits a run to 20 continuations unless the config says another number', async () => {
+    const custom = await homeWith({ goal: { maxContinuations: 5 } });
+
+    expect(goalMaxContinuations({})).toBe(20);
+    expect(goalMaxContinuations(loadConfig(custom))).toBe(5);
+  });
+
+  it('refuses a limit that is not a positive whole number, and a key it does not know', async () => {
+    const zero = await homeWith({ goal: { maxContinuations: 0 } });
+    const fraction = await homeWith({ goal: { maxContinuations: 2.5 } });
+    const unknown = await homeWith({ goal: { limit: 3 } });
+
+    expect(() => loadConfig(zero)).toThrow(/goal/);
+    expect(() => loadConfig(fraction)).toThrow(/goal/);
+    expect(() => loadConfig(unknown)).toThrow(/goal/);
   });
 });
 

@@ -1,6 +1,12 @@
 import { ChimeraClient } from '@chimera/client';
 import { Compactor } from '@chimera/compaction';
-import type { ModelConfig, RunFinishedReason, SandboxMode } from '@chimera/core';
+import type {
+  AgentEvent,
+  GoalChange,
+  ModelConfig,
+  RunFinishedReason,
+  SandboxMode,
+} from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import {
@@ -20,6 +26,7 @@ import {
 } from '../compaction';
 import {
   approvalReviewerEnabled,
+  goalMaxContinuations,
   loadConfig,
   resolveHostBashPolicy,
   resolveMcpServers,
@@ -57,6 +64,11 @@ export interface RunOptions {
   modes?: boolean;
   /** Initial mode for the session. Falls back to config.defaultMode then "build". */
   mode?: string;
+  /**
+   * A completion condition for the session (`--goal`). A checker model
+   * examines it at each clean stop, and the exit code says how it ended.
+   */
+  goal?: string;
   /** Test hook: bypass provider loading and supply a pre-built factory. */
   factoryOverride?: AgentFactory;
   /** Test hook: override model config when `factoryOverride` is supplied. */
@@ -188,6 +200,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       fallbackModel: config.fallbackModel,
       utilityModel: config.utilityModel,
       approvalReviewer: approvalReviewerEnabled(config),
+      goal: { maxContinuations: goalMaxContinuations(config) },
       memory: config.memory,
       compaction: compactionConfig,
       compactor,
@@ -265,9 +278,12 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     );
     sessionId = sessionResult.sessionId;
 
+    if (opts.goal) await client.setGoal(sessionId, opts.goal);
+
     let finalText = '';
     let exitReason: RunFinishedReason = 'stop';
     let errorMessage: string | undefined;
+    let goalChange: GoalChange | undefined;
 
     const activeSessionId = sessionId;
     const sigintHandler = () => {
@@ -288,6 +304,10 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         process.stderr.write(`[tool error] ${ev.error}\n`);
       } else if (ev.type === 'user_input_required') {
         process.stderr.write(`[waiting for input] ${ev.request}\n`);
+      }
+      if (ev.type === 'goal_updated') {
+        goalChange = ev.change;
+        if (!opts.json) process.stderr.write(`${goalLine(ev)}\n`);
       }
       if (ev.type === 'run_finished') {
         exitReason = ev.reason;
@@ -318,7 +338,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       }
     }
 
-    return { exitCode: exitCodeFor(exitReason) };
+    return { exitCode: exitCodeFor(exitReason, opts.goal ? goalChange : undefined) };
   } finally {
     // Best-effort delete the session so SessionEnd hooks fire.
     if (sessionId) await client.deleteSession(sessionId).catch(() => {});
@@ -348,7 +368,29 @@ export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void
   await discardOverlay(input.sessionId);
 }
 
-function exitCodeFor(reason: RunFinishedReason): number {
+/** What a `goal_updated` event says, as one line for the terminal. */
+function goalLine(event: Extract<AgentEvent, { type: 'goal_updated' }>): string {
+  const why = event.reason ? `: ${event.reason}` : '';
+  if (event.change === 'set') return `[goal] ${event.condition}`;
+  if (event.change === 'not_met') {
+    return `[goal] not met (${event.continuation} of ${event.maxContinuations})${why}`;
+  }
+  if (event.change === 'limit') {
+    return `[goal] limit of ${event.maxContinuations} continuations reached${why}`;
+  }
+  if (event.change === 'impossible') return `[goal] not possible${why}`;
+  if (event.change === 'unchecked') return `[goal] not checked${why}`;
+  return `[goal] ${event.change}${why}`;
+}
+
+/**
+ * The exit code of a run. `goalChange` is the last word on the run's goal,
+ * for a run that was given one.
+ */
+function exitCodeFor(reason: RunFinishedReason, goalChange?: GoalChange): number {
+  if (reason === 'stop' && goalChange === 'impossible') return 3;
+  // The run ended cleanly, but nothing says that the goal is met.
+  if (reason === 'stop' && goalChange === 'unchecked') return 1;
   if (reason === 'stop' || reason === 'waiting_for_input') return 0;
   if (reason === 'max_steps' || reason === 'output_limit') return 2;
   if (reason === 'interrupted') return 130;

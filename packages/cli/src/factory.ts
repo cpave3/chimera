@@ -52,7 +52,6 @@ import {
   PathAuthorizationStage,
   PermissionDecisionAudit,
   PiSafeShellAdapter,
-  type ReviewPrompt,
   RiskStage,
   ScaryCommandStage,
   ShellEffectsStage,
@@ -159,6 +158,8 @@ export interface CliAgentFactoryOptions {
    * user is asked. Default: false.
    */
   approvalReviewer?: boolean;
+  /** Limits for the check of a session goal. */
+  goal?: { maxContinuations?: number };
   /**
    * Optional agent-definition registry. When present, `spawn_agent` resolves
    * its `agent` arg against this registry and surfaces available agents in
@@ -268,6 +269,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveOsSandboxes = new Map<SessionId, OsSandbox>();
   private readonly detectOsSandbox: () => OsSandboxKind | null;
   private readonly approvalReviewer: boolean;
+  private readonly goalMaxContinuations: number | undefined;
   /** The OS sandbox of this machine; undefined until the first session looks for it. */
   private osSandboxKind: OsSandboxKind | null | undefined;
   private readonly liveAgents = new Map<SessionId, Agent>();
@@ -316,6 +318,7 @@ export class CliAgentFactory implements AgentFactory {
     };
     this.detectOsSandbox = opts.detectOsSandbox ?? detectOsSandbox;
     this.approvalReviewer = opts.approvalReviewer === true;
+    this.goalMaxContinuations = opts.goal?.maxContinuations;
     this.home = opts.home;
     this.skills = opts.skills;
     this.agents = opts.agents;
@@ -615,7 +618,7 @@ export class CliAgentFactory implements AgentFactory {
       },
     };
 
-    const agent = new Agent({
+    const agent: Agent = new Agent({
       cwd: init.cwd,
       model: init.model,
       languageModel,
@@ -634,6 +637,16 @@ export class CliAgentFactory implements AgentFactory {
       compaction: this.compaction,
       compactor: this.compactor,
       stopHook,
+      // A subagent serves its parent's request; a goal is the user's.
+      ...((this.subagents.currentDepth ?? 0) === 0
+        ? {
+            goalCheck: {
+              ask: (prompt: { system: string; prompt: string }, signal: AbortSignal) =>
+                this.askHelperModel(agent, prompt, signal),
+              maxContinuations: this.goalMaxContinuations,
+            },
+          }
+        : {}),
       timeoutHook,
       interruptHook,
       userInputRequiredHook,
@@ -717,7 +730,7 @@ export class CliAgentFactory implements AgentFactory {
       ...(this.approvalReviewer
         ? {
             reviewer: createSessionReviewer({
-              judge: (prompt, signal) => this.askReviewerModel(agent, prompt, signal),
+              judge: (prompt, signal) => this.askHelperModel(agent, prompt, signal),
               context: () =>
                 reviewContext({
                   messages: agent.session.messages,
@@ -1382,12 +1395,13 @@ export class CliAgentFactory implements AgentFactory {
   }
 
   /**
-   * One question to the approval reviewer's model: the utility model, or the
-   * model the session uses now. The reviewer gets no tools.
+   * One question to the model for helper work (the approval reviewer, the
+   * goal check): the utility model, or the model the session uses now. The
+   * helper gets no tools.
    */
-  private askReviewerModel(
+  private askHelperModel(
     agent: Agent,
-    prompt: ReviewPrompt,
+    prompt: { system: string; prompt: string },
     signal: AbortSignal,
   ): Promise<string> {
     const { model: sessionModel, id: sessionId } = agent.session;
