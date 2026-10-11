@@ -1,8 +1,9 @@
-import { useFrame } from './frame';
-import { Box, Text, useInput } from 'ink';
-import React, { useState } from 'react';
 import type { Checkpoint } from '@chimera/core';
+import { Box, Text, useInput } from 'ink';
+import React from 'react';
+import { useFrame } from './frame';
 import { useTheme } from './theme/ThemeProvider';
+import { useHighlight } from './use-highlight';
 
 export interface RewindPickerProps {
   checkpoints: Checkpoint[];
@@ -14,7 +15,7 @@ export interface RewindPickerProps {
 export function RewindPicker(props: RewindPickerProps): React.ReactElement {
   const theme = useTheme();
   const frame = useFrame('round');
-  const [highlight, setHighlight] = useState(0);
+  const { highlight, current, move } = useHighlight(0);
 
   useInput((input, key) => {
     if (key.escape || (key.ctrl && input === 'c')) {
@@ -23,19 +24,19 @@ export function RewindPicker(props: RewindPickerProps): React.ReactElement {
     }
     // Ink does not set key.shift for kitty SGR sequence (CSI 13;2u), so fall back to the stripped string.
     if ((key.shift && key.return) || input === '[13;2u') {
-      props.onFork(props.checkpoints[highlight]!);
+      props.onFork(props.checkpoints[current.current]!);
       return;
     }
     if (key.return) {
-      props.onRewind(props.checkpoints[highlight]!);
+      props.onRewind(props.checkpoints[current.current]!);
       return;
     }
     if (key.upArrow || (input === 'k' && !key.ctrl && !key.meta)) {
-      setHighlight((h) => Math.max(0, h - 1));
+      move((index) => Math.max(0, index - 1));
       return;
     }
     if (key.downArrow || (input === 'j' && !key.ctrl && !key.meta)) {
-      setHighlight((h) => Math.min(props.checkpoints.length - 1, h + 1));
+      move((index) => Math.min(props.checkpoints.length - 1, index + 1));
       return;
     }
   });

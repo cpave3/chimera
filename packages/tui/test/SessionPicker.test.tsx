@@ -163,6 +163,31 @@ describe('SessionPicker', () => {
     rendered.unmount();
   });
 
+  it('selects the row the keys moved to when Enter comes in the same burst', async () => {
+    const sessions = [
+      info({ id: '01AAAAAAAAAAAAAAAAAAAAAAAA', createdAt: 2 }),
+      info({ id: '01BBBBBBBBBBBBBBBBBBBBBBBB', createdAt: 1 }),
+    ];
+    const onSelect = vi.fn();
+    const rendered = render(
+      withTheme(
+        <SessionPicker
+          sessions={sessions}
+          currentSessionId="01AAAAAAAAAAAAAAAAAAAAAAAA"
+          onSelect={onSelect}
+          onCancel={vi.fn()}
+        />,
+      ),
+    );
+    await tick();
+    // No wait between the keys: the picker has not drawn the move yet.
+    rendered.stdin.write('\x1b[B');
+    rendered.stdin.write('\r');
+    await tick();
+    expect(onSelect).toHaveBeenCalledWith('01BBBBBBBBBBBBBBBBBBBBBBBB');
+    rendered.unmount();
+  });
+
   it('arrow-down then Enter selects the next row', async () => {
     const sessions = [
       info({ id: '01AAAAAAAAAAAAAAAAAAAAAAAA', createdAt: 2 }),

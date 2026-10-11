@@ -3,8 +3,8 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { RewindPicker } from '../src/RewindPicker';
-import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { pickBaseTheme } from '../src/theme/loader';
+import { ThemeProvider } from '../src/theme/ThemeProvider';
 
 function withTheme(node: React.ReactElement) {
   const theme = pickBaseTheme();
@@ -101,6 +101,28 @@ describe('RewindPicker', () => {
     rendered.stdin.write('\r');
     await tick();
     expect(onRewind).toHaveBeenCalledWith(TEST_CPS[1]);
+    rendered.unmount();
+  });
+
+  it('acts on the row the keys moved to when Enter comes in the same burst', async () => {
+    const onRewind = vi.fn();
+    const rendered = render(
+      withTheme(
+        <RewindPicker
+          checkpoints={TEST_CPS}
+          onRewind={onRewind}
+          onFork={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      ),
+    );
+    await tick();
+    // No wait between the keys: the picker has not drawn the move yet.
+    rendered.stdin.write('\x1b[B');
+    rendered.stdin.write('\x1b[B');
+    rendered.stdin.write('\r');
+    await tick();
+    expect(onRewind).toHaveBeenCalledWith(TEST_CPS[2]);
     rendered.unmount();
   });
 

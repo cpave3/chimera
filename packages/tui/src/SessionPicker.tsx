@@ -1,8 +1,9 @@
-import { useFrame } from './frame';
 import type { SessionId, SessionInfo } from '@chimera/core';
 import { Box, Text, useInput } from 'ink';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useFrame } from './frame';
 import { useTheme } from './theme/ThemeProvider';
+import { useHighlight } from './use-highlight';
 
 export interface SessionPickerRow {
   info: SessionInfo;
@@ -80,7 +81,7 @@ export function SessionPicker(props: SessionPickerProps): React.ReactElement {
   const theme = useTheme();
   const frame = useFrame('round');
   const rows = useMemo(() => buildSessionTreeRows(props.sessions), [props.sessions]);
-  const [highlight, setHighlight] = useState<number>(() => {
+  const { highlight, current, move } = useHighlight(() => {
     const idx = rows.findIndex((r) => r.info.id === props.currentSessionId);
     return idx >= 0 ? idx : 0;
   });
@@ -97,16 +98,16 @@ export function SessionPicker(props: SessionPickerProps): React.ReactElement {
       return;
     }
     if (key.return) {
-      const row = rows[highlight];
+      const row = rows[current.current];
       if (row) props.onSelect(row.info.id);
       return;
     }
     if (key.upArrow || (input === 'k' && !key.ctrl && !key.meta)) {
-      setHighlight((h) => Math.max(0, h - 1));
+      move((index) => Math.max(0, index - 1));
       return;
     }
     if (key.downArrow || (input === 'j' && !key.ctrl && !key.meta)) {
-      setHighlight((h) => Math.min(rows.length - 1, h + 1));
+      move((index) => Math.min(rows.length - 1, index + 1));
       return;
     }
   });
