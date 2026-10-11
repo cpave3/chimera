@@ -28,6 +28,7 @@
     "@chimera/modes": "workspace:*",
     "@chimera/skills": "workspace:*",
     "ink": "npm:@jrichman/ink@6.6.9",
+    "lowlight": "^3.3.0",
     "marked": "^18.0.2",
     "react": "^19.2.5"
   },

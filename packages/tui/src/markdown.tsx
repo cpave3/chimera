@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import { marked, type Tokens } from 'marked';
 import React from 'react';
+import { highlightCode } from './highlight';
 import type { Theme } from './theme/types';
 
 /** Floor for a table column when the table is too wide for the terminal. */
@@ -50,6 +51,29 @@ function renderBlock(
   }
   if (tok.type === 'code') {
     const codeToken = tok as Tokens.Code;
+    const highlighted = highlightCode(codeToken.text, codeToken.lang?.split(/\s/)[0]);
+    if (highlighted) {
+      return (
+        <Box key={key} flexDirection="column" paddingLeft={2} marginTop={gap}>
+          {highlighted.map((segments, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for code lines
+            <Text key={i}>
+              {segments.length === 0
+                ? ' '
+                : segments.map((segment, j) => (
+                    <Text
+                      // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for segments
+                      key={j}
+                      color={segment.token ? theme.syntax[segment.token] : theme.text.primary}
+                    >
+                      {segment.text}
+                    </Text>
+                  ))}
+            </Text>
+          ))}
+        </Box>
+      );
+    }
     const lines = codeToken.text.split('\n');
     return (
       <Box key={key} flexDirection="column" paddingLeft={2} marginTop={gap}>

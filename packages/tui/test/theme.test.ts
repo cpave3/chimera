@@ -67,6 +67,14 @@ describe('deepMerge', () => {
     status: { success: 'green', warning: 'yellow', error: 'red' },
     text: { primary: 'white', secondary: 'gray', muted: 'gray' },
     ui: { badge: 'yellow', accent: 'magenta' },
+    syntax: {
+      keyword: 'magenta',
+      string: 'green',
+      comment: 'gray',
+      number: 'yellow',
+      function: 'blue',
+      type: 'cyan',
+    },
   };
 
   it('returns base theme when user theme is empty', () => {

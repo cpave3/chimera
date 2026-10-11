@@ -1,4 +1,12 @@
-import type { AccentTokens, BaseTokens, StatusTokens, TextTokens, Theme, UITokens } from './types';
+import type {
+  AccentTokens,
+  BaseTokens,
+  StatusTokens,
+  SyntaxTokens,
+  TextTokens,
+  Theme,
+  UITokens,
+} from './types';
 
 export const defaultBaseTokens: BaseTokens = {
   foreground: 'white',
@@ -30,12 +38,22 @@ export const defaultUITokens: UITokens = {
   accent: 'magenta',
 };
 
+export const defaultSyntaxTokens: SyntaxTokens = {
+  keyword: 'magenta',
+  string: 'green',
+  comment: 'gray',
+  number: 'yellow',
+  function: 'blueBright',
+  type: 'cyan',
+};
+
 export const defaultTheme: Theme = {
   base: defaultBaseTokens,
   accent: defaultAccentTokens,
   status: defaultStatusTokens,
   text: defaultTextTokens,
   ui: defaultUITokens,
+  syntax: defaultSyntaxTokens,
 };
 
 // NO_COLOR mode: every token resolves to 'white' (or 'gray' for muted) so the
@@ -46,4 +64,12 @@ export const plainTheme: Theme = {
   status: { success: 'white', warning: 'white', error: 'white' },
   text: { primary: 'white', secondary: 'white', muted: 'gray' },
   ui: { badge: 'white', accent: 'white' },
+  syntax: {
+    keyword: 'white',
+    string: 'white',
+    comment: 'gray',
+    number: 'white',
+    function: 'white',
+    type: 'white',
+  },
 };

@@ -26,4 +26,12 @@ export const tokyoNightMoon: PartialTheme = {
     badge: '#ffc777',
     accent: '#4fd6be',
   },
+  syntax: {
+    keyword: '#c099ff',
+    string: '#c3e88d',
+    comment: '#7a88cf',
+    number: '#ff966c',
+    function: '#82aaff',
+    type: '#4fd6be',
+  },
 };

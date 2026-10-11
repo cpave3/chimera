@@ -30,8 +30,8 @@
 
 ## 6. Code colors
 
-- [ ] 6.1 Add the `syntax` theme tokens to the default theme and presets
-- [ ] 6.2 Test and implement highlighted code blocks
+- [x] 6.1 Add the `syntax` theme tokens to the default theme and presets
+- [x] 6.2 Test and implement highlighted code blocks
 
 ## 7. Approval list
 

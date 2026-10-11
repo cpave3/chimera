@@ -58,12 +58,23 @@ export interface UITokens {
   accent: AnsiColor;
 }
 
+/** Colours for fenced code blocks. */
+export interface SyntaxTokens {
+  keyword: AnsiColor;
+  string: AnsiColor;
+  comment: AnsiColor;
+  number: AnsiColor;
+  function: AnsiColor;
+  type: AnsiColor;
+}
+
 export interface Theme {
   base: BaseTokens;
   accent: AccentTokens;
   status: StatusTokens;
   text: TextTokens;
   ui: UITokens;
+  syntax: SyntaxTokens;
 }
 
 export type PartialTheme = {

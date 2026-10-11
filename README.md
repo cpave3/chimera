@@ -567,6 +567,7 @@ Only specify the tokens you want to override; the rest inherit from the default 
 - `status` — `success`, `warning`, `error`, `info`
 - `text` — `primary`, `secondary`, `muted`
 - `ui` — `badge`, `accent`
+- `syntax` — `keyword`, `string`, `comment`, `number`, `function`, `type` (fenced code blocks)
 
 JSON has no native comments, so the loader strips unknown top-level keys — you can leave a `_comment` field in the file as a note. If the JSON is malformed, the TUI prints `theme: ...` on stderr at startup and falls back to the default theme.
 

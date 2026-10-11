@@ -26,4 +26,12 @@ export const cyberpunk: PartialTheme = {
     badge: '#f2ee12',
     accent: '#66a0d4',
   },
+  syntax: {
+    keyword: '#b794f6',
+    string: '#4ade80',
+    comment: '#6b5d8a',
+    number: '#f2ee12',
+    function: '#66a0d4',
+    type: '#f37316',
+  },
 };

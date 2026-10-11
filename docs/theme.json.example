@@ -9,5 +9,9 @@
   },
   "text": {
     "muted": "blackBright"
+  },
+  "syntax": {
+    "keyword": "magentaBright",
+    "comment": "blackBright"
   }
 }

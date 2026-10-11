@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { BUILTIN_PRESETS } from './presets';
@@ -39,6 +39,7 @@ export function deepMerge(base: Theme, user: PartialTheme): Theme {
     status: mergeGroup(base.status, user.status),
     text: mergeGroup(base.text, user.text),
     ui: mergeGroup(base.ui, user.ui),
+    syntax: mergeGroup(base.syntax, user.syntax),
   };
 }
 
@@ -47,7 +48,7 @@ export type LoadResult =
   | { kind: 'missing' }
   | { kind: 'error'; message: string };
 
-const KNOWN_GROUPS = new Set(['base', 'accent', 'status', 'text', 'ui']);
+const KNOWN_GROUPS = new Set(['base', 'accent', 'status', 'text', 'ui', 'syntax']);
 
 export function loadUserTheme(themePath: string): LoadResult {
   if (!existsSync(themePath)) {
