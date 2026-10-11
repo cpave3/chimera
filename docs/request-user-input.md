@@ -47,3 +47,61 @@ A child agent's request ends only the child run. The parent receives the nested 
 The waiting status is live process state. Session events and conversation history are persisted, but reopening the server loads the session as `idle` rather than reconstructing a pending request.
 
 See [Hooks](hooks.md) for the notification hook payload and discovery paths.
+
+## Asking a question without ending the run
+
+`request_user_input` ends the run. For a choice the agent can act on at once
+there is `ask_question`: it puts one to four multiple-choice questions to the
+user and the run goes on in the same step with the answers.
+
+```json
+{
+  "questions": [
+    {
+      "question": "Which test runner should the new package use?",
+      "header": "Runner",
+      "options": [
+        { "label": "vitest", "description": "already used in this repository" },
+        { "label": "node:test" }
+      ]
+    }
+  ]
+}
+```
+
+Each question has two to four options. The user can pick one or type an
+answer of their own, so the model does not add an "other" option. The result
+has one entry for each question, in order:
+
+```json
+{ "status": "answered",
+  "answers": [ { "question": "Which test runner…", "answer": "vitest", "custom": false } ] }
+```
+
+| Status | When | What the model does |
+| --- | --- | --- |
+| `answered` | The user answered every question. | Goes on with the answers. |
+| `cancelled` | The user dismissed the dialog (`Esc`), or the run was interrupted. | Goes on with its own best choice and says which, or stops. |
+| `unavailable` | No user watches the session: `chimera run`, `chimera serve`, a subagent. | States its assumption and continues. The call does not wait. |
+
+In the TUI the questions show in a dialog, one at a time: `↑`/`↓` and
+`Enter`, or the number of an option; the last row opens a text field for an
+answer of your own.
+
+### For SDK clients
+
+The lifecycle is the one of a permission request:
+
+1. `question_request { requestId, questions }` arrives on the event stream.
+   The tool call stays open.
+2. The client answers with `client.answerQuestion(sessionId, requestId,
+   resolution)` (`POST /v1/sessions/:id/questions/:requestId`), where
+   `resolution` is `{ status: "answered", answers }` or
+   `{ status: "cancelled" }`. A question that is not pending answers 409.
+3. `question_resolved { requestId, status }` follows, and the run goes on.
+
+`GET /v1/sessions/:id` lists the open questions under `pendingQuestions`, so
+a client that connects later can show them. A session built by `chimera
+serve` answers `unavailable` on its own; only a session with a user (the
+interactive TUI) raises `question_request`.
+

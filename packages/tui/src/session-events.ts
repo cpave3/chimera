@@ -1,4 +1,4 @@
-import type { AgentEvent, Usage } from '@chimera/core';
+import type { AgentEvent, QuestionRequest, Usage } from '@chimera/core';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { mergePermissionQueue, type PendingPermission } from './permission-queue';
 import type { Scrollback } from './scrollback';
@@ -43,6 +43,8 @@ export interface SessionEventContext {
   setRunSteps: Dispatch<SetStateAction<number>>;
   /** The agent stopped to ask the user something. */
   onInputRequired?: () => void;
+  /** Questions of `ask_question` calls that wait for the user. */
+  setQuestionQueue: Dispatch<SetStateAction<QuestionRequest[]>>;
 }
 
 /**
@@ -169,6 +171,18 @@ export function applySessionEvent(
     } else if (inner.type === 'permission_resolved' || inner.type === 'permission_timeout') {
       setPermissionQueue((queue) => queue.filter((item) => item.requestId !== inner.requestId));
     }
+  } else if (ev.type === 'question_request') {
+    const { requestId, questions } = ev;
+    context.setQuestionQueue((queue) =>
+      queue.some((queued) => queued.requestId === requestId)
+        ? queue
+        : [...queue, { requestId, questions }],
+    );
+    setRunning(true);
+  } else if (ev.type === 'question_resolved') {
+    context.setQuestionQueue((queue) =>
+      queue.filter((queued) => queued.requestId !== ev.requestId),
+    );
   } else if (ev.type === 'user_input_required') {
     scrollback.addInfo(`Waiting for input: ${ev.request}`);
     context.onInputRequired?.();

@@ -140,6 +140,7 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
             spinner={view.spinner}
             label={describeActivity({
               awaitingApproval: view.pending !== null,
+              awaitingAnswer: view.question !== null,
               compacting,
               retry: view.retry,
               inFlightTool: view.inFlightTool,

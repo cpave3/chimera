@@ -122,6 +122,8 @@ chimera run --json "list the top-level files" > events.ndjson
 
 When progress requires a person, the agent can use `request_user_input`. Chimera emits a machine-readable handoff and ends that run without another model step; see [Requesting user input](docs/request-user-input.md).
 
+For a choice it can act on at once, the agent uses `ask_question` instead: one to four multiple-choice questions in a dialog, and the run goes on in the same step with your answers. Where no person watches the session (`chimera run`, `chimera serve`, a subagent) the tool does not wait; the agent states its assumption and continues.
+
 Start just the server (useful for attaching from another terminal):
 
 ```

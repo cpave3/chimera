@@ -1,6 +1,8 @@
 import type {
   Checkpoint,
   PermissionDecisionAction,
+  QuestionRequest,
+  QuestionResolution,
   SandboxMode,
   SessionId,
   SessionInfo,
@@ -81,6 +83,9 @@ export interface AppView {
   fileMenuHighlight: number;
 
   pending: PendingPermission | null;
+  /** The `ask_question` call at the head of the queue, if any. */
+  question: QuestionRequest | null;
+  answerQuestion: (resolution: QuestionResolution) => void;
   sudoAuthentication: SudoAuthenticationState | null;
   overlayPicker: OverlayDiffEntry[] | null;
   sessionPicker: SessionInfo[] | null;
@@ -105,6 +110,7 @@ export interface AppView {
 export function dialogOpen(view: AppView): boolean {
   return (
     view.pending !== null ||
+    view.question !== null ||
     view.sudoAuthentication !== null ||
     view.overlayPicker !== null ||
     view.sessionPicker !== null ||

@@ -192,6 +192,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
     memory: config.memory,
+    userCanAnswer: true,
     compaction: compactionConfig,
     compactor,
     responseTimeoutMs: config.responseTimeoutMs,

@@ -684,6 +684,53 @@ describe('CliAgentFactory', () => {
     await expect(readFile(join(cwd, 'frozen.txt'), 'utf8')).rejects.toThrow();
   });
 
+  it('lets ask_question reach the user only where a user watches the session', async () => {
+    const ask = async (options: Partial<ConstructorParameters<typeof CliAgentFactory>[0]>) => {
+      const factory = new CliAgentFactory({
+        providersConfig: anthropicOnly,
+        autoApprove: 'all',
+        home: cwd,
+        subagents: { enabled: false },
+        ...options,
+      });
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+      const tool = (
+        agent as unknown as {
+          opts: {
+            tools: Record<string, { execute: (args: object, options: object) => Promise<any> }>;
+          };
+        }
+      ).opts.tools.ask_question!;
+      const result = tool.execute(
+        { questions: [{ question: 'Which?', options: [{ label: 'a' }, { label: 'b' }] }] },
+        { toolCallId: 't', messages: [] },
+      );
+      return { agent, result };
+    };
+
+    const headless = await ask({});
+    expect(await headless.result).toMatchObject({ status: 'unavailable' });
+    expect(headless.agent.pendingQuestionRequests()).toEqual([]);
+
+    const subagent = await ask({
+      userCanAnswer: true,
+      subagents: { enabled: false, currentDepth: 1 },
+    });
+    expect(await subagent.result).toMatchObject({ status: 'unavailable' });
+
+    const interactive = await ask({ userCanAnswer: true });
+    // The call passes the tool interceptors before it reaches the user.
+    await vi.waitFor(() => expect(interactive.agent.pendingQuestionRequests()).toHaveLength(1));
+    const [pending] = interactive.agent.pendingQuestionRequests();
+    expect(pending?.questions[0]?.question).toBe('Which?');
+    interactive.agent.resolveQuestion(pending!.requestId, { status: 'cancelled' });
+    expect(await interactive.result).toMatchObject({ status: 'cancelled' });
+  });
+
   it('says nothing of explore when no such agent exists', async () => {
     const factory = new CliAgentFactory({
       providersConfig: anthropicOnly,
@@ -915,6 +962,7 @@ describe('CliAgentFactory', () => {
     // A Codex model id also resolves to the patch edit format.
     expect(Object.keys(tools).sort()).toEqual([
       'apply_patch',
+      'ask_question',
       'bash',
       'bash_kill',
       'bash_output',

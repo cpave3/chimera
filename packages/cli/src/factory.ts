@@ -220,6 +220,11 @@ export interface CliAgentFactoryOptions {
   utilityModel?: string;
   /** Project memory; on unless `enabled` is false. */
   memory?: { enabled?: boolean };
+  /**
+   * True when a person watches the session and can answer `ask_question`:
+   * the interactive TUI. Elsewhere the tool says that no user is available.
+   */
+  userCanAnswer?: boolean;
   /** Present only for the owner-local interactive TUI. */
   hostAuthentication?: HostAuthenticationCapability;
 }
@@ -261,6 +266,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly fallbackModel: string | undefined;
   private readonly utilityModel: string | undefined;
   private readonly memoryEnabled: boolean;
+  private readonly userCanAnswer: boolean;
   private readonly hostAuthentication: HostAuthenticationCapability | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
@@ -300,6 +306,7 @@ export class CliAgentFactory implements AgentFactory {
     this.fallbackModel = opts.fallbackModel;
     this.utilityModel = this.resolvableModel('utilityModel', opts.utilityModel);
     this.memoryEnabled = opts.memory?.enabled !== false;
+    this.userCanAnswer = opts.userCanAnswer === true;
     for (const mode of this.modes?.all() ?? []) {
       for (const tool of Object.keys(mode.toolLimits ?? {})) {
         if (!TOOLS_WITH_LIMITS.has(tool)) {
@@ -887,6 +894,13 @@ export class CliAgentFactory implements AgentFactory {
         taskList,
         recall: recallStore,
         requestUserInput: async (request) => agent.requestUserInput(request),
+        // A subagent's user is its parent agent, which cannot answer a dialog.
+        questions: {
+          ask:
+            this.userCanAnswer && (this.subagents.currentDepth ?? 0) === 0
+              ? (request) => agent.askQuestions(request)
+              : undefined,
+        },
       });
       let surfaceTools: ToolSet = { ...built.tools, ...extraTools };
       // An agent definition's tools list applies before mode filtering: a

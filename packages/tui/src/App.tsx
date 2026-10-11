@@ -5,6 +5,8 @@ import type {
   Checkpoint,
   ModelConfig,
   PermissionDecisionAction,
+  QuestionRequest,
+  QuestionResolution,
   SandboxMode,
   SessionId,
   SessionInfo,
@@ -224,6 +226,8 @@ export function App(props: AppProps): React.ReactElement | null {
     null,
   );
   const pending = permissionQueue[0] ?? null;
+  const [questionQueue, setQuestionQueue] = useState<QuestionRequest[]>([]);
+  const question = questionQueue[0] ?? null;
   const sudoAuthenticationRef = useRef<AbortController | null>(null);
   useEffect(() => () => sudoAuthenticationRef.current?.abort(), []);
   // Active subagents indexed by subagentId. Updated from the parent's stream.
@@ -486,6 +490,7 @@ export function App(props: AppProps): React.ReactElement | null {
     sessionHydrationRef.current = hydrationState;
     setRunning(false);
     setPermissionQueue([]);
+    setQuestionQueue([]);
     sudoAuthenticationRef.current?.abort();
     sudoAuthenticationRef.current = null;
     setSudoAuthentication(null);
@@ -505,6 +510,13 @@ export function App(props: AppProps): React.ReactElement | null {
             ),
           ),
         );
+        // A question asked before this client connected still waits for its answer.
+        setQuestionQueue((queue) => [
+          ...queue,
+          ...(s.pendingQuestions ?? []).filter(
+            (request) => !queue.some((queued) => queued.requestId === request.requestId),
+          ),
+        ]);
         // Sync the TUI's UI state with the actual session mode and model.
         setActiveModeName(s.mode);
         setCurrentModelRef(`${s.model.providerId}/${s.model.modelId}`);
@@ -602,6 +614,7 @@ export function App(props: AppProps): React.ReactElement | null {
       setRetry,
       setRunSteps,
       onInputRequired: () => notify?.('input', { runMs: 0 }),
+      setQuestionQueue,
     });
   }
 
@@ -619,6 +632,10 @@ export function App(props: AppProps): React.ReactElement | null {
   useEffect(() => {
     if (pendingRequestId !== null) notify?.('approval', { runMs: 0 });
   }, [pendingRequestId, notify]);
+  const questionRequestId = question?.requestId ?? null;
+  useEffect(() => {
+    if (questionRequestId !== null) notify?.('input', { runMs: 0 });
+  }, [questionRequestId, notify]);
 
   function interruptRun(): void {
     interruptedRef.current = true;
@@ -684,6 +701,7 @@ export function App(props: AppProps): React.ReactElement | null {
       scrollback,
       running,
       pending,
+      questionOpen: question !== null && pending === null && sudoAuthentication === null,
       activeModeName,
       pendingModeName,
       overlayPicker,
@@ -994,6 +1012,20 @@ export function App(props: AppProps): React.ReactElement | null {
     });
   }
 
+  function answerQuestion(resolution: QuestionResolution): void {
+    if (!question) return;
+    const { requestId } = question;
+    setQuestionQueue((queue) => queue.filter((queued) => queued.requestId !== requestId));
+    void activeSession.client
+      .answerQuestion(activeSession.sessionId, requestId, resolution)
+      .catch((err: unknown) => {
+        // 409: the run was interrupted, or another client answered first.
+        if (!(err instanceof ChimeraHttpError && err.status === 409)) {
+          scrollback.addError(`answer failed: ${(err as Error).message}`);
+        }
+      });
+  }
+
   function onResolve(action: PermissionDecisionAction): void {
     if (!pending) return;
     const item = pending;
@@ -1300,6 +1332,8 @@ export function App(props: AppProps): React.ReactElement | null {
     fileMenuItems,
     fileMenuHighlight,
     pending,
+    question,
+    answerQuestion,
     sudoAuthentication,
     overlayPicker,
     sessionPicker,

@@ -30,6 +30,8 @@ export interface KeyContext {
   running: boolean;
   /** The permission request at the head of the queue, if any. */
   pending: PendingPermission | null;
+  /** An `ask_question` dialog is open and has the keyboard. */
+  questionOpen: boolean;
   activeModeName: string;
   pendingModeName: string | null;
   overlayPicker: OverlayDiffEntry[] | null;
@@ -127,6 +129,7 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     return;
   }
   if (pending) return; // handled by modal
+  if (context.questionOpen) return; // handled by the question dialog
   if (overlayPicker) return; // handled by picker
   if (sessionPicker) return; // handled by SessionPicker
   if (rewindPicker) return; // handled by RewindPicker

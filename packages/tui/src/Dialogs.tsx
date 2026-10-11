@@ -1,6 +1,7 @@
 import React from 'react';
 import { OverlayPicker } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
+import { QuestionDialog } from './QuestionDialog';
 import { RewindPicker } from './RewindPicker';
 import { SessionPicker } from './SessionPicker';
 import { SudoPasswordModal } from './SudoPasswordModal';
@@ -31,6 +32,13 @@ export function Dialogs({ view }: { view: AppView }): React.ReactElement {
               : undefined
           }
           onResolve={view.onResolve}
+        />
+      ) : view.question ? (
+        // After the permission prompt: that one holds up a tool that is already running.
+        <QuestionDialog
+          key={view.question.requestId}
+          request={view.question}
+          onResolve={view.answerQuestion}
         />
       ) : null}
       {overlayPicker && (

@@ -1,6 +1,8 @@
 export interface ActivityInput {
   /** A permission request is open; the run cannot move until it is answered. */
   awaitingApproval: boolean;
+  /** The model asked the user a question and waits for the answer. */
+  awaitingAnswer?: boolean;
   compacting: boolean;
   /** Set while the agent waits to resend a step after a provider error. */
   retry: { attempt: number; maxAttempts: number } | null;
@@ -17,6 +19,7 @@ export interface ActivityInput {
  */
 export function describeActivity(input: ActivityInput): string {
   if (input.awaitingApproval) return 'waiting for approval';
+  if (input.awaitingAnswer) return 'waiting for your answer';
   if (input.compacting) return 'compacting context';
   if (input.retry) {
     return `provider error, retry ${input.retry.attempt}/${input.retry.maxAttempts}`;
