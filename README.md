@@ -141,6 +141,42 @@ chimera sessions rm <session-id>
 
 ## Sandbox
 
+Chimera has two sandboxes. The OS sandbox is on by default and confines the
+writes of host commands. The Docker sandbox is opt-in and moves the tools into
+a container.
+
+### OS sandbox
+
+Without `--sandbox`, each host `bash` command runs in the sandbox of the
+operating system (`bubblewrap` on Linux, `sandbox-exec` on macOS) when the
+machine has one. The command can read every file. It can write only in the
+working directory, the temp directory, the session's write paths and the git
+directory of the repository. It cannot write `.chimera/`, where the permission
+rules and hooks are.
+
+When the sandbox blocks a command, the model can ask to run it outside the
+sandbox. Chimera always asks you first. The context panel shows `sandbox os`
+while the OS sandbox is active.
+
+```json
+{
+  "commandPolicy": {
+    "hostBash": {
+      "osSandbox": "auto",
+      "network": "on",
+      "sandboxWritePaths": ["~/.cache/pnpm"]
+    }
+  }
+}
+```
+
+`osSandbox` is `auto` (default), `required` or `off`. `network: "off"` removes
+network access from sandboxed commands. See
+[Host bash command policy](docs/bash-command-policy.md#os-sandbox) for the
+rules and the limits. The macOS profile was not run on a Mac.
+
+### Docker sandbox
+
 Tool calls can be routed through a Docker container instead of running directly
 on the host. Three modes are available:
 
@@ -634,7 +670,8 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
   move what you read. `PgDn` to the end, or sending a message, follows the
   newest output again. A long session mounts the newest entries only and
   loads earlier ones when you scroll up from the top.
-- **Context panel.** Model, session, working directory, sandbox, and what was
+- **Context panel.** Model, session, working directory, sandbox (`os` when host
+  commands run in the OS sandbox, a Docker mode, or `off`), and what was
   loaded; context use as a bar split into system prompt, skills index and
   history (the split is an estimate; the total is the provider's count); the
   plan (the model's task list); the working tree (branch, commits ahead and

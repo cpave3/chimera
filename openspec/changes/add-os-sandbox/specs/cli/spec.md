@@ -14,3 +14,10 @@
 #### Scenario: Off
 - **WHEN** `osSandbox` is `off`
 - **THEN** host commands run without the OS sandbox
+
+### Requirement: Sandbox state in the TUI
+When the session's host commands run in the OS sandbox, the TUI SHALL show `os` as the sandbox, in the context panel and in the inline layout's banner and footer. A Docker sandbox mode SHALL keep its own name.
+
+#### Scenario: OS sandbox active
+- **WHEN** the interactive session starts with the OS sandbox active and no Docker sandbox
+- **THEN** the context panel shows `sandbox os`

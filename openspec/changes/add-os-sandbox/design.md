@@ -86,6 +86,32 @@ exist. Without it the session warns once and runs commands as before.
 `required` refuses every host command instead. The probe runs once for each
 process.
 
+### D7. The git directory
+
+`git commit` writes the repository's git directory. In a linked worktree, a
+submodule, or a session started below the repository root, that directory is
+not below the working directory, and every commit would fail in the sandbox.
+The factory therefore adds it to the writable paths: for a `.git` file, the
+directory its `gitdir:` line names, or that directory's `commondir` when it
+has one; for a `.git` directory above the working directory, that directory.
+A repository whose `.git` is in the working directory needs nothing. This
+gives a sandboxed command nothing it does not have in the plain case, where
+`.git` is writable as part of the project.
+
+### D8. Saying that the sandbox is on
+
+With the sandbox active, the `bash` tool description says what a command may
+write and how to ask for an unsandboxed run, so a small model does not have
+to fail first. The TUI shows `sandbox os` where it showed `sandbox off`; the
+CLI passes that state when it mounts the TUI.
+
+### D9. A factory without a policy
+
+`resolveHostBashPolicy` gives `auto`, and the three CLI commands always pass
+its result. A factory that is built with no policy at all keeps `off`: it
+does not probe the machine or create `.chimera` for a caller that did not
+ask. The probe result is kept for the life of the factory.
+
 ## Risks / Trade-offs
 
 - [A tool writes its cache outside the project] → the command fails with the

@@ -1,6 +1,52 @@
 # Host bash command policy
 
-Chimera analyzes every agent-issued **host** bash command before execution. Sandbox-target commands keep the existing sandbox policy.
+Chimera analyzes every agent-issued **host** bash command before execution, and runs it in the [OS sandbox](#os-sandbox) when the machine has one. Sandbox-target commands keep the existing sandbox policy.
+
+## OS sandbox
+
+Without the Docker sandbox, Chimera runs each host bash command in the sandbox of the operating system: `bubblewrap` on Linux and `sandbox-exec` on macOS. The kernel then applies the limits. The analysis below is no longer the only protection.
+
+A sandboxed command:
+
+- can read every file;
+- can write only in the working directory, the temp directory, the write paths of the session (`--add-write-path`, `/add-dir`), and the paths in `sandboxWritePaths`;
+- can write the git directory of the repository when that directory is not below the working directory (a linked worktree, a submodule, or a session started below the repository root);
+- cannot write `<cwd>/.chimera` or `~/.chimera`, so the command cannot change its own permission rules or hooks;
+- has no network access when `network` is `"off"`.
+
+Foreground and background commands obey the same limits.
+
+```json
+{
+  "commandPolicy": {
+    "hostBash": {
+      "osSandbox": "auto",
+      "network": "on",
+      "sandboxWritePaths": ["~/.cache/pnpm"]
+    }
+  }
+}
+```
+
+| Key | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `osSandbox` | `auto`, `required`, `off` | `auto` | `auto` uses the sandbox when the machine has one. If the machine has none, Chimera shows one warning and runs commands as before. `required` refuses each host command when the machine has no sandbox. `off` runs commands as before. |
+| `network` | `on`, `off` | `on` | `off` removes network access from sandboxed commands. |
+| `sandboxWritePaths` | list of directories | `[]` | More directories that a sandboxed command can write. `~` is the home directory. Use this for the cache of a package manager. |
+
+Because the kernel refuses a write outside these directories, Chimera does not ask about path findings for a sandboxed command. Risk findings, sudo and the hard blocks operate as before. A command that you approve for sudo runs outside the sandbox, because sudo cannot operate inside it.
+
+When the sandbox blocks a command, the tool result tells the model what the sandbox allows. The model can then call `bash` again with `unsandboxed: true` and a reason. Chimera always asks you about such a request and shows the reason. `autoApprove` and allow rules do not apply to it. A session with no user to ask (`chimera run`, a subagent) denies the request.
+
+While the sandbox is active, the file tools refuse to write `<cwd>/.chimera/permissions.json` and `<cwd>/.chimera/hooks/`. Chimera creates `<cwd>/.chimera` if it does not exist, because the sandbox cannot protect a path that does not exist.
+
+Limits of the OS sandbox:
+
+- The sandbox does not hide files. A sandboxed command can read your home directory. Use the Docker sandbox when a command must not read your files.
+- The file tools, MCP servers and hooks do not run in the sandbox.
+- On Linux, the sandbox needs `bubblewrap` and unprivileged user namespaces. Chimera runs a test command to make sure that the sandbox operates.
+- The macOS profile has unit tests for its text only. It was not run on a Mac.
+- With the Docker sandbox on (`--sandbox`), the OS sandbox is not used. A host command then follows the Docker sandbox rules.
 
 ## Balanced mode
 
@@ -83,4 +129,4 @@ For promptable findings, the TUI offers allow once, deny once, deny with feedbac
 
 ## Limits
 
-Balanced static analysis is intentionally an advisory safety net, not process confinement. Runtime data, scripts, approved commands, background processes, symlink races, and downloaded programs can behave differently after analysis. Use Chimera's sandbox when filesystem or process isolation is required.
+Balanced static analysis is intentionally an advisory safety net, not process confinement. Runtime data, scripts, approved commands, background processes, symlink races, and downloaded programs can behave differently after analysis. The OS sandbox confines the writes and, on request, the network of a host command. Use the Docker sandbox when a command must also not read your files, or when process isolation is required.

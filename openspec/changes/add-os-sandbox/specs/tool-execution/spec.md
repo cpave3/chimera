@@ -1,7 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: OS sandbox for host commands
-With the OS sandbox active and no Docker sandbox, every host `bash` command, foreground or background, SHALL run inside the OS sandbox. Inside it the command SHALL be able to read every file, and SHALL be able to write only in the working directory, the temp directory, the session's granted write paths and the configured sandbox write paths. `<cwd>/.chimera` and `~/.chimera` SHALL be read-only. With the network setting `off`, the command SHALL have no network access.
+With the OS sandbox active and no Docker sandbox, every host `bash` command, foreground or background, SHALL run inside the OS sandbox. Inside it the command SHALL be able to read every file, and SHALL be able to write only in the working directory, the temp directory, the session's granted write paths, the configured sandbox write paths, and the git directory of the working directory's repository when that directory is not below the working directory. `<cwd>/.chimera` and `~/.chimera` SHALL be read-only. With the network setting `off`, the command SHALL have no network access.
+
+#### Scenario: Commit in a linked worktree
+- **WHEN** the working directory is a linked git worktree and a sandboxed command runs `git commit`
+- **THEN** the commit is made
 
 #### Scenario: Write in the project
 - **WHEN** a sandboxed command writes a file in the working directory
@@ -18,6 +22,13 @@ With the OS sandbox active and no Docker sandbox, every host `bash` command, for
 #### Scenario: Network off
 - **WHEN** the network setting is `off` and a sandboxed command opens a connection
 - **THEN** the connection fails
+
+### Requirement: Sandbox in the tool description
+With the OS sandbox active, the `bash` tool description SHALL say where a command may write, that the network is off when it is, and that `unsandboxed: true` with a reason asks the user. Without the OS sandbox, the description SHALL NOT mention it.
+
+#### Scenario: Active
+- **WHEN** a session's host commands run in the OS sandbox
+- **THEN** the `bash` description names the working directory and `unsandboxed: true`
 
 ### Requirement: Blocked command note
 When a sandboxed command fails and its output shows that the sandbox refused a write, or refused the network while the network setting is `off`, the tool result SHALL carry a note that says what the sandbox allows and how to ask for an unsandboxed run.
