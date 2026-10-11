@@ -753,6 +753,81 @@ describe('server app', () => {
     });
   });
 
+  describe('session goal', () => {
+    async function session() {
+      const registry = new AgentRegistry({
+        factory: makeFactory(home),
+        instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      });
+      const app = buildApp({ registry, home });
+      const { sessionId } = await (
+        await app.request('/v1/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+        })
+      ).json();
+      const published: unknown[] = [];
+      registry.get(sessionId)!.bus.subscribe((envelope) => {
+        const { eventId: _eventId, sessionId: _sessionId, ts: _ts, ...event } = envelope;
+        published.push(event);
+      });
+      const put = (body: unknown) =>
+        app.request(`/v1/sessions/${sessionId}/goal`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      return { app, sessionId, published, put };
+    }
+
+    it('is set on an idle session, shown in the snapshot and told to subscribers', async () => {
+      const { app, sessionId, published, put } = await session();
+
+      const response = await put({ condition: 'all tests pass' });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ goal: { condition: 'all tests pass' } });
+      const snapshot = await (await app.request(`/v1/sessions/${sessionId}`)).json();
+      expect(snapshot.goal).toEqual({ condition: 'all tests pass' });
+      expect(published).toEqual([
+        { type: 'goal_updated', condition: 'all tests pass', change: 'set' },
+      ]);
+    });
+
+    it('is cleared with a null condition', async () => {
+      const { app, sessionId, published, put } = await session();
+      await put({ condition: 'all tests pass' });
+
+      const response = await put({ condition: null });
+
+      expect(await response.json()).toEqual({ goal: null });
+      const snapshot = await (await app.request(`/v1/sessions/${sessionId}`)).json();
+      expect(snapshot.goal).toBeUndefined();
+      expect(published.at(-1)).toEqual({
+        type: 'goal_updated',
+        condition: null,
+        change: 'cleared',
+      });
+    });
+
+    it('answers 400 for an empty condition or a malformed body, and 404 for an unknown session', async () => {
+      const { app, put } = await session();
+
+      expect((await put({ condition: '   ' })).status).toBe(400);
+      expect((await put({})).status).toBe(400);
+      expect(
+        (
+          await app.request('/v1/sessions/01AAAAAAAAAAAAAAAAAAAAAAAA/goal', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ condition: 'x' }),
+          })
+        ).status,
+      ).toBe(404);
+    });
+  });
+
   it('GET /v1/sessions/:id reads compactionCount and lastCompactedAt from disk', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),

@@ -5,6 +5,7 @@ import type {
   Checkpoint,
   ContextBreakdown,
   EventId,
+  Goal,
   ModelCapabilities,
   ModelConfig,
   ModelSettings,
@@ -314,6 +315,16 @@ export class ChimeraClient {
 
   async getMode(sessionId: SessionId): Promise<{ mode: string; pending: string | null }> {
     return this.json<{ mode: string; pending: string | null }>(`/v1/sessions/${sessionId}/mode`);
+  }
+
+  /** Set the session's goal, or clear it with null. Returns the goal after the change. */
+  async setGoal(sessionId: SessionId, condition: string | null): Promise<Goal | null> {
+    const { goal } = await this.json<{ goal: Goal | null }>(`/v1/sessions/${sessionId}/goal`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ condition }),
+    });
+    return goal;
   }
 
   async setMode(sessionId: SessionId, mode: string): Promise<void> {

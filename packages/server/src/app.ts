@@ -99,6 +99,10 @@ const modeSchema = z.object({
   mode: z.string(),
 });
 
+const goalSchema = z.object({
+  condition: z.string().trim().min(1).nullable(),
+});
+
 const modelSchema = z
   .object({
     model: z.string().nullable().optional(),
@@ -626,6 +630,25 @@ export function buildApp(opts: AppOptions): Hono {
       }
     }
     return c.body(null, 204);
+  });
+
+  // --- Goal ---------------------------------------------------------------
+  app.put('/v1/sessions/:id/goal', async (c) => {
+    const entry = registry.get(c.req.param('id'));
+    if (!entry) return c.json({ error: 'not found' }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parseResult = goalSchema.safeParse(body);
+    if (!parseResult.success) {
+      return c.json({ error: 'bad request', errors: parseResult.error.issues }, 400);
+    }
+    // The session can be idle, so the event goes on the bus and not into a run.
+    entry.bus.publish(entry.agent.setGoal(parseResult.data.condition));
+    return c.json({ goal: entry.agent.session.goal ?? null });
   });
 
   app.get('/v1/sessions/:id/mode', (c) => {

@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Agent, type ModelConfig } from '@chimera/core';
+import { AgentRegistry, buildApp, type ChimeraServer, startServer } from '@chimera/server';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { Agent, type ModelConfig } from '@chimera/core';
-import { AgentRegistry, buildApp, startServer, type ChimeraServer } from '@chimera/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChimeraClient } from '../src/client';
 
@@ -78,6 +78,20 @@ describe('ChimeraClient end-to-end', () => {
     const s = await client.getSession(sessionId);
     expect(s.id).toBe(sessionId);
     expect(s.cwd).toBe('/tmp');
+  });
+
+  it('sets and clears the goal of a session', async () => {
+    const client = new ChimeraClient({ baseUrl: server.url });
+    const { sessionId } = await client.createSession({ cwd: '/tmp', model, sandboxMode: 'off' });
+
+    const set = await client.setGoal(sessionId, 'all tests pass');
+    const seen = (await client.getSession(sessionId)).goal;
+    const cleared = await client.setGoal(sessionId, null);
+
+    expect(set).toEqual({ condition: 'all tests pass' });
+    expect(seen).toEqual({ condition: 'all tests pass' });
+    expect(cleared).toBeNull();
+    expect((await client.getSession(sessionId)).goal).toBeUndefined();
   });
 
   it('createSession sends name and requestedSessionId semantics', async () => {
