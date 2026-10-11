@@ -92,7 +92,7 @@ export interface AppProps {
    * (e.g., after AGENTS.md/AGENTS.local.md/CLAUDE.md changes). Returns the new prompt
    * to send to the server.
    */
-  reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
+  reloadSystemPrompt?: (ctx: { cwd: string; sessionId: SessionId }) => Promise<string> | string;
   /**
    * Per-tool scrollback formatters keyed by tool name. Passed to `Scrollback`
    * so it can render formatter summaries during session rehydration. Live

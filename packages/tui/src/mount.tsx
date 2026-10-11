@@ -57,7 +57,7 @@ export interface MountOptions {
    * (e.g., after AGENTS.md/AGENTS.local.md/CLAUDE.md changes). Returns the new prompt
    * to send to the server.
    */
-  reloadSystemPrompt?: (ctx: { cwd: string }) => Promise<string> | string;
+  reloadSystemPrompt?: (ctx: { cwd: string; sessionId: SessionId }) => Promise<string> | string;
   /**
    * Per-tool scrollback formatters keyed by tool name. Used by `Scrollback`
    * to render tool entries during session rehydration (resume / fork /

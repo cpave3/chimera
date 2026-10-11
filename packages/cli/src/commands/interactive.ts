@@ -2,7 +2,6 @@ import { ChimeraClient } from '@chimera/client';
 import type { ReloadingCommandRegistry } from '@chimera/commands';
 import { Compactor } from '@chimera/compaction';
 import {
-  composeSystemPrompt,
   INSTRUCTION_FILE_LIMIT_BYTES,
   oversizedInstructionFiles,
   type SandboxMode,
@@ -273,9 +272,6 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         }
       : undefined;
 
-  // Build extensions array matching the factory's logic for skills.
-  const extensions = skills ? [() => skills.buildIndex() || null] : undefined;
-
   const handle = mountTui({
     startupNotices: instructionFileNotices(opts.cwd, opts.home),
     layout: opts.inline ? 'inline' : config.tui?.layout,
@@ -300,31 +296,12 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     initialMode,
     sandboxMode,
     overlay,
-    reloadSystemPrompt: async ({ cwd }) => {
-      // Look up the session's active mode so the recomposed prompt keeps
-      // the `# Current mode: <name>` block — without this, /reload would
-      // strip the mode body and the next run would lose the mode's
-      // directive entirely.
-      let modeBlock: { name: string; body: string } | undefined;
-      try {
-        const current = await client.getMode(sessionId);
-        const found = modes.find(current.mode);
-        if (found) modeBlock = { name: found.name, body: found.body };
-      } catch {
-        // best-effort: fall back to initialMode below
-      }
-      if (!modeBlock) {
-        const fallback = modes.find(initialMode);
-        if (fallback) modeBlock = { name: fallback.name, body: fallback.body };
-      }
-      return composeSystemPrompt({
-        cwd,
-        home: opts.home,
-        model,
-        sandboxMode,
-        extensions,
-        mode: modeBlock,
-      });
+    // The factory composes the prompt the same way it did at session start:
+    // instruction files, skills, mode and tool list as they are now.
+    reloadSystemPrompt: ({ sessionId: activeSessionId }) => {
+      const prompt = factory.composeSystemPromptFor(activeSessionId);
+      if (prompt === undefined) throw new Error(`session ${activeSessionId} is not loaded`);
+      return prompt;
     },
   });
   try {

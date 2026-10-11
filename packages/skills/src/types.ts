@@ -52,6 +52,11 @@ export interface LoadSkillsOptions {
   onWarning?: (message: string) => void;
 }
 
+export interface SkillIndexOptions {
+  /** The most the index may take, estimated at four characters a token. */
+  maxTokens?: number;
+}
+
 export interface SkillRegistry {
   /** Every resolved skill, stable-sorted by name. */
   all(): Skill[];
@@ -60,8 +65,9 @@ export interface SkillRegistry {
   paths(): Set<string>;
   /**
    * Produces a system-prompt block listing resolved skills, or the empty
-   * string when the registry is empty.
+   * string when the registry is empty. With `maxTokens`, an index that would
+   * be larger lists names by directory, without descriptions.
    */
-  buildIndex(): string;
+  buildIndex(options?: SkillIndexOptions): string;
   collisions(): SkillCollision[];
 }

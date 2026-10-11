@@ -97,6 +97,9 @@ import { McpClientManager } from './mcp/client';
 import { registerMcpTools } from './mcp/tools';
 import type { CliSandboxOptions } from './sandbox-config';
 
+/** The most of the context window the skills index may take. */
+const SKILL_INDEX_SHARE = 0.02;
+
 export interface CliAgentFactoryOptions {
   providersConfig: ProvidersConfig;
   autoApprove: AutoApproveLevel;
@@ -236,6 +239,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveMcpClients = new Map<SessionId, McpClientManager>();
   private readonly liveBackgroundManagers = new Map<SessionId, BackgroundProcessManager>();
   private readonly liveBackgroundAgents = new Map<SessionId, BackgroundAgents>();
+  private readonly promptComposers = new Map<SessionId, () => string>();
   private deliverMessage: MessageDelivery | undefined;
   private readonly compaction: CompactionConfig | undefined;
   private readonly diagnosticsConfig: DiagnosticsConfig | undefined;
@@ -416,7 +420,17 @@ export class CliAgentFactory implements AgentFactory {
     if (session) session.model = init.model;
 
     const skillsReg = this.skills;
-    const extensions = skillsReg ? [() => skillsReg.buildIndex() || null] : undefined;
+    // The window of the model the session is on now; a model change moves it.
+    let sessionWindow = resolvedWindow.value;
+    const skillIndexFor = (contextWindow: number) =>
+      skillsReg
+        ? [
+            () =>
+              skillsReg.buildIndex({
+                maxTokens: Math.floor(contextWindow * SKILL_INDEX_SHARE),
+              }) || null,
+          ]
+        : undefined;
     const skillActivation = skillsReg ? buildSkillActivationLookup(skillsReg, init.cwd) : undefined;
 
     // Skills often live outside cwd (e.g. `~/.claude/skills/tdd/`). Allow
@@ -859,6 +873,7 @@ export class CliAgentFactory implements AgentFactory {
       mode: Mode | undefined,
       promptToolSet: ToolSet,
       surface: ToolSurface,
+      contextWindow: number,
     ): string => {
       const promptTools = Object.entries(promptToolSet).map(([name, definition]) => ({
         name,
@@ -871,7 +886,7 @@ export class CliAgentFactory implements AgentFactory {
         cwd: init.cwd,
         model: promptModel,
         sandboxMode: init.sandboxMode,
-        extensions,
+        extensions: skillIndexFor(contextWindow),
         mode: mode ? { name: mode.name, body: mode.body } : undefined,
         tools: promptTools,
         promptStyle: promptModel.promptStyle,
@@ -890,7 +905,21 @@ export class CliAgentFactory implements AgentFactory {
     }
     const initialTools = toolsInMode(initialSurface, activeMode);
     agent.setTools(initialTools);
-    agent.setSystemPrompt(promptFor(init.model, activeMode, initialTools, initialSurface));
+    agent.setSystemPrompt(
+      promptFor(init.model, activeMode, initialTools, initialSurface, sessionWindow),
+    );
+    // `/reload` composes the prompt again for whatever the session is on by then.
+    this.promptComposers.set(agent.session.id, () => {
+      const mode = modesReg ? modesReg.find(agent.session.mode) : undefined;
+      const surface = surfaceFor(agent.session.model);
+      return promptFor(
+        agent.session.model,
+        mode,
+        toolsInMode(surface, mode),
+        surface,
+        sessionWindow,
+      );
+    });
 
     // Everything about a model that follows from its ref: used when the user
     // or a mode moves the session to another model.
@@ -946,13 +975,18 @@ export class CliAgentFactory implements AgentFactory {
         const previousModel =
           agent.session.userModelOverride ?? previousMode?.model ?? sessionModelRef;
         const effectiveModelChanged = effectiveModel !== previousModel;
-        const nextModel = effectiveModelChanged
-          ? describeModel(effectiveModel).model
-          : agent.session.model;
+        const described = effectiveModelChanged ? describeModel(effectiveModel) : undefined;
+        const nextModel = described?.model ?? agent.session.model;
         const surface = surfaceFor(nextModel);
         const nextTools = toolsInMode(surface, next);
         return {
-          systemPrompt: promptFor(nextModel, next, nextTools, surface),
+          systemPrompt: promptFor(
+            nextModel,
+            next,
+            nextTools,
+            surface,
+            described?.newWindow.value ?? sessionWindow,
+          ),
           tools: nextTools,
           effectiveModel,
           effectiveModelChanged,
@@ -971,10 +1005,11 @@ export class CliAgentFactory implements AgentFactory {
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
       const surface = surfaceFor(described.model);
       const currentTools = toolsInMode(surface, currentMode);
+      sessionWindow = described.newWindow.value;
       return {
         model: described.model,
         languageModel: described.provider.getModel(described.modelId, agent.session.id),
-        systemPrompt: promptFor(described.model, currentMode, currentTools, surface),
+        systemPrompt: promptFor(described.model, currentMode, currentTools, surface, sessionWindow),
         tools: currentTools,
         contextWindow: described.newWindow.value,
         contextWindowIsApproximate: described.newWindow.source === 'fallback',
@@ -1239,6 +1274,14 @@ export class CliAgentFactory implements AgentFactory {
     return { absolute: resolved, added: !writeAlready };
   }
 
+  /**
+   * The system prompt of a live session, composed again from disk: its
+   * instruction files, its skills, its mode and its tools as they are now.
+   */
+  composeSystemPromptFor(sessionId: SessionId): string | undefined {
+    return this.promptComposers.get(sessionId)?.();
+  }
+
   /** The registry hands this over so a background child's answer can reach its parent. */
   setMessageDelivery(deliver: MessageDelivery): void {
     this.deliverMessage = deliver;
@@ -1247,6 +1290,7 @@ export class CliAgentFactory implements AgentFactory {
   async disposeSession(sessionId: SessionId): Promise<void> {
     const backgroundAgents = this.liveBackgroundAgents.get(sessionId);
     this.liveBackgroundAgents.delete(sessionId);
+    this.promptComposers.delete(sessionId);
     const manager = this.liveMcpClients.get(sessionId);
     this.liveMcpClients.delete(sessionId);
     await Promise.all([backgroundAgents?.stopAll(), manager?.close()]);

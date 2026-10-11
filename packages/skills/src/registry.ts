@@ -1,4 +1,8 @@
-import type { Skill, SkillCollision, SkillRegistry } from './types';
+import { basename, dirname } from 'node:path';
+import type { Skill, SkillCollision, SkillIndexOptions, SkillRegistry } from './types';
+
+// The estimate used across Chimera for prose.
+const CHARACTERS_PER_TOKEN = 4;
 
 export class InMemorySkillRegistry implements SkillRegistry {
   private readonly byName: Map<string, Skill>;
@@ -28,7 +32,7 @@ export class InMemorySkillRegistry implements SkillRegistry {
     return [...this._collisions];
   }
 
-  buildIndex(): string {
+  buildIndex(options: SkillIndexOptions = {}): string {
     const skills = this.all();
     if (skills.length === 0) return '';
     const lines: string[] = ['# Available skills', ''];
@@ -36,6 +40,36 @@ export class InMemorySkillRegistry implements SkillRegistry {
       lines.push(`- ${s.name} — ${s.description}`);
       lines.push(`  path: ${s.path}`);
     }
-    return lines.join('\n');
+    const full = lines.join('\n');
+    if (
+      options.maxTokens === undefined ||
+      full.length / CHARACTERS_PER_TOKEN <= options.maxTokens
+    ) {
+      return full;
+    }
+    return this.buildNameIndex(skills);
+  }
+
+  /** Names only, grouped by skills directory: what a very large library costs per request. */
+  private buildNameIndex(skills: Skill[]): string {
+    const byDirectory = new Map<string, string[]>();
+    const elsewhere: Skill[] = [];
+    for (const skill of skills) {
+      const skillDirectory = dirname(skill.path);
+      if (basename(skill.path) !== 'SKILL.md' || basename(skillDirectory) !== skill.name) {
+        elsewhere.push(skill);
+        continue;
+      }
+      const root = dirname(skillDirectory);
+      byDirectory.set(root, [...(byDirectory.get(root) ?? []), skill.name]);
+    }
+    return [
+      '# Available skills',
+      '',
+      `There are ${skills.length} skills, too many to describe here. To use one, read its file first: <directory>/<name>/SKILL.md.`,
+      '',
+      ...[...byDirectory].map(([root, names]) => `- ${root}: ${names.join(', ')}`),
+      ...elsewhere.map((skill) => `- ${skill.name}: ${skill.path}`),
+    ].join('\n');
   }
 }

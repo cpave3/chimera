@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryModeRegistry } from '@chimera/modes';
+import { InMemorySkillRegistry } from '@chimera/skills';
 import { loadAgents } from '@chimera/subagents';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
@@ -399,6 +400,64 @@ describe('CliAgentFactory', () => {
     expect(oneShot).toContain('spawn_agent');
     expect(oneShot).not.toContain('agent_status');
     expect(oneShot).not.toContain('agent_stop');
+  });
+
+  it('keeps the skills index within 2% of the context window', async () => {
+    const skill = (name: string) => ({
+      name,
+      description: 'A long description of what this skill is for and when to reach for it.',
+      path: `/skills/${name}/SKILL.md`,
+      source: 'user' as const,
+      frontmatter: {},
+    });
+    const promptWith = async (count: number) => {
+      const factory = new CliAgentFactory({
+        providersConfig: anthropicOnly,
+        autoApprove: 'all',
+        home: cwd,
+        subagents: { enabled: false },
+        models: { 'anthropic/claude-opus-4-7': { contextWindow: 100_000 } },
+        skills: new InMemorySkillRegistry(
+          Array.from({ length: count }, (_, index) => skill(`skill-${index}`)),
+          [],
+        ),
+      });
+      const { agent } = await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+      return (agent as unknown as { opts: { systemPrompt: string } }).opts.systemPrompt;
+    };
+
+    // 2% of 100k tokens is 2,000 tokens, about 8,000 characters.
+    expect(await promptWith(10)).toContain('skill-3 — A long description');
+    const large = await promptWith(200);
+    expect(large).not.toContain('A long description');
+    expect(large).toContain('- /skills: skill-0, skill-1, ');
+  });
+
+  it('composes the prompt of a live session again, with its tool list', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const first = (agent as unknown as { opts: { systemPrompt: string } }).opts.systemPrompt;
+    await writeFile(join(cwd, 'AGENTS.md'), 'NEW-PROJECT-RULE');
+
+    const again = factory.composeSystemPromptFor(agent.session.id);
+
+    expect(again).toContain('NEW-PROJECT-RULE');
+    expect(again).toContain('## Tools');
+    expect(again?.replace(/\n\n# [^\n]*AGENTS\.md\n\nNEW-PROJECT-RULE/, '')).toBe(first);
+    expect(factory.composeSystemPromptFor('no-such-session')).toBeUndefined();
   });
 
   it('says nothing of explore when no such agent exists', async () => {

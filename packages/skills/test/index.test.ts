@@ -49,6 +49,48 @@ describe('SkillRegistry.buildIndex', () => {
   });
 });
 
+describe('SkillRegistry.buildIndex with a token limit', () => {
+  const skill = (name: string, root: string) => ({
+    name,
+    description: `Does ${name} things, described at some length so the index grows.`,
+    path: `${root}/${name}/SKILL.md`,
+    source: 'project' as const,
+    frontmatter: {},
+  });
+  const library = new InMemorySkillRegistry(
+    [
+      ...Array.from({ length: 40 }, (_, index) =>
+        skill(`user-skill-${index}`, '/home/u/.chimera/skills'),
+      ),
+      skill('deploy', '/repo/.chimera/skills'),
+      { ...skill('odd', '/x'), path: '/somewhere/odd.md' },
+    ],
+    [],
+  );
+
+  it('is the full index when that is within the limit', () => {
+    expect(library.buildIndex({ maxTokens: 100_000 })).toBe(library.buildIndex());
+  });
+
+  it('lists names by directory, without descriptions, when the full index is too large', () => {
+    const index = library.buildIndex({ maxTokens: 500 });
+
+    expect(index.startsWith('# Available skills')).toBe(true);
+    expect(index).not.toContain('described at some length');
+    expect(index).toContain('- /home/u/.chimera/skills: user-skill-0, user-skill-1, ');
+    expect(index).toContain('- /repo/.chimera/skills: deploy');
+    expect(index).toContain('<directory>/<name>/SKILL.md');
+    // A skill that is not laid out as <directory>/<name>/SKILL.md keeps its own path.
+    expect(index).toContain('- odd: /somewhere/odd.md');
+    expect(index.length / 4).toBeLessThan(500);
+  });
+
+  it('names every skill in the short form', () => {
+    const index = library.buildIndex({ maxTokens: 500 });
+    for (const entry of library.all()) expect(index).toContain(entry.name);
+  });
+});
+
 describe('loadSkills integration with buildIndex', () => {
   let home: string;
 

@@ -440,8 +440,11 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
           await reloadFn.call(reg);
           // Reload AGENTS.md/AGENTS.local.md/CLAUDE.md if the hook is provided.
           if (props.reloadSystemPrompt) {
-            const newPrompt = await props.reloadSystemPrompt({ cwd: props.cwd });
-            await props.client.reloadSession(props.sessionId, newPrompt);
+            const newPrompt = await props.reloadSystemPrompt({
+              cwd: props.cwd,
+              sessionId: activeSession.sessionId,
+            });
+            await activeSession.client.reloadSession(activeSession.sessionId, newPrompt);
             scrollback.addInfo('system prompt reloaded.');
           } else {
             scrollback.addInfo('commands reloaded.');
