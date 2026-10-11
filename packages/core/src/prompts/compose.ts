@@ -1,8 +1,8 @@
 import { readFileSync, statSync } from 'node:fs';
 import { homedir, release as osRelease, type as osType } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { ModelConfig, SandboxMode } from '../types';
-import { ROLE_PROMPT } from './role';
+import type { ModelConfig, PromptStyle, SandboxMode } from '../types';
+import { composeRolePrompt, type PromptTool } from './role';
 
 export interface ComposeOptions {
   cwd: string;
@@ -16,6 +16,13 @@ export interface ComposeOptions {
    * followed by the body verbatim. Replaces nothing else in the prompt.
    */
   mode?: { name: string; body: string };
+  /**
+   * The tools registered for this session, after the mode allowlist. When
+   * omitted the tools section carries only the file-access rules.
+   */
+  tools?: PromptTool[];
+  /** Defaults to `lean`. */
+  promptStyle?: PromptStyle;
 }
 
 const SANDBOX_HINTS: Record<SandboxMode, string> = {
@@ -130,7 +137,10 @@ export function composeSystemPrompt(opts: ComposeOptions): string {
   // Order: role → session block (system-injected) → AGENTS.md / AGENTS.local.md
   // files (user-authored) → extensions. The session block goes BEFORE AGENTS.md
   // so the model can't mistake it for one of them.
-  const parts: string[] = [ROLE_PROMPT, `\n\n${buildEnvironmentBlock(opts)}`];
+  const parts: string[] = [
+    composeRolePrompt({ tools: opts.tools, promptStyle: opts.promptStyle }),
+    `\n\n${buildEnvironmentBlock(opts)}`,
+  ];
 
   const files = discoverAgentsFiles(opts.cwd, opts.home);
   for (const f of files) {

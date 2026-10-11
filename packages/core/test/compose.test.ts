@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { composeSystemPrompt, discoverAgentsFiles } from '../src/prompts/compose';
-import { ROLE_PROMPT } from '../src/prompts/role';
 
 describe('composeSystemPrompt', () => {
   let home: string;
@@ -20,6 +19,74 @@ describe('composeSystemPrompt', () => {
     const out = composeSystemPrompt({ cwd: home, home });
     expect(out).toContain('Chimera');
     expect(out).toContain('bash');
+  });
+
+  describe('tools section', () => {
+    function toolsSection(prompt: string): string {
+      const start = prompt.indexOf('## Tools');
+      return prompt.slice(start, prompt.indexOf('\n## ', start + 1));
+    }
+
+    it('lists exactly the tools the session registers', () => {
+      const prompt = composeSystemPrompt({
+        cwd: home,
+        home,
+        tools: [
+          { name: 'read', snippet: 'Read a file with line numbers.' },
+          { name: 'grep', snippet: 'Search file contents with a regex.' },
+        ],
+      });
+
+      const section = toolsSection(prompt);
+      expect(section).toContain('- read — Read a file with line numbers.');
+      expect(section).toContain('- grep — Search file contents with a regex.');
+      expect(section).not.toMatch(/^- (bash|edit|write) /m);
+      expect(prompt).not.toContain('four built-in tools');
+    });
+
+    it('tells the model how to reach files outside the working directory only when it has a shell', () => {
+      const withShell = composeSystemPrompt({
+        cwd: home,
+        home,
+        tools: [{ name: 'bash', snippet: 'Run a shell command.' }],
+      });
+      const readOnly = composeSystemPrompt({
+        cwd: home,
+        home,
+        tools: [{ name: 'read', snippet: 'Read a file.' }],
+      });
+
+      expect(toolsSection(withShell)).toContain('use bash with an absolute path');
+      expect(toolsSection(readOnly)).not.toContain('use bash');
+    });
+
+    it('adds the URL rule when web search is registered', () => {
+      const prompt = composeSystemPrompt({
+        cwd: home,
+        home,
+        tools: [
+          { name: 'fetch', snippet: 'Fetch a URL.' },
+          { name: 'web_search', snippet: 'Search the web.' },
+        ],
+      });
+
+      expect(prompt).toContain('Do not invent, assume, or guess URLs');
+    });
+  });
+
+  describe('prompt style', () => {
+    it('adds the working-method rules for the guided style', () => {
+      const prompt = composeSystemPrompt({ cwd: home, home, promptStyle: 'guided' });
+      expect(prompt).toContain('## Working method');
+      expect(prompt).toMatch(/Do not send the same call again unchanged/);
+    });
+
+    it('leaves the working-method rules out of the lean style', () => {
+      expect(composeSystemPrompt({ cwd: home, home, promptStyle: 'lean' })).not.toContain(
+        '## Working method',
+      );
+      expect(composeSystemPrompt({ cwd: home, home })).not.toContain('## Working method');
+    });
   });
 
   it('includes core behavioral rules in the role prompt', () => {
@@ -175,8 +242,8 @@ describe('composeSystemPrompt', () => {
     expect(prompt).toMatch(/^- date: \d{4}-\d{2}-\d{2}$/m);
     const envIdx = prompt.indexOf('# Chimera Session');
     const skillIdx = prompt.indexOf('=== SKILL INDEX ===');
-    expect(prompt.indexOf(ROLE_PROMPT)).toBe(0);
-    expect(prompt.indexOf(ROLE_PROMPT)).toBeLessThan(envIdx);
+    expect(prompt.startsWith('You are Chimera')).toBe(true);
+    expect(prompt.indexOf('## Ending a turn')).toBeLessThan(envIdx);
     expect(envIdx).toBeLessThan(skillIdx);
   });
 
