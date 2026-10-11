@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
@@ -7,15 +7,23 @@ import { CliAgentFactory } from '../src/factory';
 describe('CliAgentFactory.addSessionPath', () => {
   let cwd: string;
   let outsideDir: string;
+  let systemTmp: string | undefined;
 
   beforeEach(async () => {
     cwd = await mkdtemp(join(tmpdir(), 'chimera-factory-'));
-    // Deliberately NOT under /tmp so it is outside the default readAllowDirs.
-    outsideDir = await mkdtemp(join(homedir(), '.chimera-outside-'));
+    // A session reads its temp directory by default. With a temp directory
+    // of its own, a directory in the system one is outside the default
+    // read roots, and the suite writes nothing into the real home.
+    outsideDir = await mkdtemp(join(tmpdir(), 'chimera-outside-'));
+    systemTmp = process.env.TMPDIR;
+    process.env.TMPDIR = await mkdtemp(join(tmpdir(), 'chimera-session-tmp-'));
     process.env.CHIMERA_FACTORY_TEST_KEY = 'test-key';
   });
 
   afterEach(async () => {
+    await rm(process.env.TMPDIR!, { recursive: true, force: true });
+    if (systemTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = systemTmp;
     await rm(cwd, { recursive: true, force: true });
     await rm(outsideDir, { recursive: true, force: true });
     process.env.CHIMERA_FACTORY_TEST_KEY = undefined;

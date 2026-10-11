@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PermissionGate, PermissionRequest, PermissionResolution } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -31,22 +31,28 @@ class RecordingGate implements PermissionGate {
   removeRule = () => {};
 }
 
+let root: string;
 let cwd: string;
+let sandboxTmp: string;
 let outside: string;
 let gate: RecordingGate;
 let manager: BackgroundProcessManager;
 
 beforeEach(() => {
-  cwd = realpathSync(mkdtempSync(join(tmpdir(), 'chimera-bash-sandbox-')));
-  outside = mkdtempSync(join(homedir(), '.chimera-bash-sandbox-test-'));
+  // Siblings under one root: the suite needs nothing outside the system
+  // temp directory, and `outside` is still outside what the sandbox allows.
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'chimera-bash-sandbox-')));
+  cwd = join(root, 'project');
+  sandboxTmp = join(root, 'tmp');
+  outside = join(root, 'outside');
+  for (const directory of [cwd, sandboxTmp, outside]) mkdirSync(directory);
   gate = new RecordingGate();
   manager = new BackgroundProcessManager({ cwd });
 });
 
 afterEach(() => {
   manager.killAll();
-  rmSync(cwd, { recursive: true, force: true });
-  rmSync(outside, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 function bash(over: Partial<ToolContext> = {}): Bash {
@@ -59,7 +65,7 @@ function bash(over: Partial<ToolContext> = {}): Bash {
     backgroundProcesses: manager,
     osSandbox: createOsSandbox('bwrap', {
       cwd,
-      tmp: tmpdir(),
+      tmp: sandboxTmp,
       writablePaths: [],
       readOnlyPaths: [],
       network: 'on',
@@ -93,7 +99,7 @@ describe('bash tool description', () => {
   const sandbox = (network: 'on' | 'off') =>
     createOsSandbox('bwrap', {
       cwd,
-      tmp: tmpdir(),
+      tmp: sandboxTmp,
       writablePaths: [],
       readOnlyPaths: [],
       network,

@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -19,22 +19,28 @@ const hasBwrap =
     0;
 const describeBwrap = hasBwrap ? describe : describe.skip;
 
+let root: string;
 let cwd: string;
+let sandboxTmp: string;
 let outside: string;
 
 beforeEach(() => {
-  cwd = realpathSync(mkdtempSync(join(tmpdir(), 'chimera-os-sandbox-')));
-  // A directory outside the project and outside the temp directory.
-  outside = mkdtempSync(join(homedir(), '.chimera-os-sandbox-test-'));
+  // The project, the sandbox's temp directory and a directory outside both
+  // are siblings, so the suite needs nothing outside the system temp
+  // directory and also runs inside a sandbox of its own kind.
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'chimera-os-sandbox-')));
+  cwd = join(root, 'project');
+  sandboxTmp = join(root, 'tmp');
+  outside = join(root, 'outside');
+  for (const directory of [cwd, sandboxTmp, outside]) mkdirSync(directory);
 });
 
 afterEach(() => {
-  rmSync(cwd, { recursive: true, force: true });
-  rmSync(outside, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 function spec(over: Partial<OsSandboxSpec> = {}): OsSandboxSpec {
-  return { cwd, tmp: tmpdir(), writablePaths: [], readOnlyPaths: [], network: 'on', ...over };
+  return { cwd, tmp: sandboxTmp, writablePaths: [], readOnlyPaths: [], network: 'on', ...over };
 }
 
 /** Run a command the way the executor does: the wrapped string through `sh -c`. */
@@ -61,7 +67,7 @@ describeBwrap('bwrap sandbox', () => {
   });
 
   it('lets the command write in the working directory and the temp directory', () => {
-    const inTmp = join(tmpdir(), `chimera-os-sandbox-${process.pid}.txt`);
+    const inTmp = join(sandboxTmp, 'scratch.txt');
     try {
       const result = run(`echo project > made.txt && echo temp > ${inTmp}`);
 
