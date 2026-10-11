@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryModeRegistry } from '@chimera/modes';
+import { loadAgents } from '@chimera/subagents';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
 
@@ -340,6 +341,79 @@ describe('CliAgentFactory', () => {
     expect(description).toMatch(/anthropic\/claude-opus-4-7 \(default\)/);
     expect(description).toContain('anthropic/claude-haiku-4-5');
     expect(description).toContain('anthropic/claude-sonnet-4-5');
+  });
+
+  const anthropicOnly = {
+    providers: {
+      anthropic: {
+        shape: 'anthropic' as const,
+        baseUrl: 'https://example.invalid',
+        apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+      },
+    },
+  };
+
+  it('tells the model to give wide searches to the explore agent', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      agents: loadAgents({ cwd, userHome: cwd }),
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const { systemPrompt, tools } = (
+      agent as unknown as {
+        opts: { systemPrompt: string; tools: Record<string, { description: string }> };
+      }
+    ).opts;
+
+    expect(tools.spawn_agent.description).toContain('explore —');
+    expect(systemPrompt).toMatch(/spawn_agent.*agent "explore"/s);
+  });
+
+  it('says nothing of explore when no such agent exists', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+    });
+
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const { systemPrompt } = (agent as unknown as { opts: { systemPrompt: string } }).opts;
+
+    expect(systemPrompt).not.toContain('"explore"');
+  });
+
+  it('warns once about a utility model it cannot resolve, and goes on without one', async () => {
+    const warnings: string[] = [];
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      utilityModel: 'nowhere/cheap',
+      warn: (message) => warnings.push(message),
+    });
+
+    for (let build = 0; build < 2; build += 1) {
+      await factory.build({
+        cwd,
+        model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+        sandboxMode: 'off',
+      });
+    }
+
+    expect(warnings.filter((message) => message.includes('utilityModel'))).toEqual([
+      expect.stringContaining('nowhere/cheap'),
+    ]);
   });
 
   it('uses only the configured SearXNG provider and adds verified-URL guidance', async () => {

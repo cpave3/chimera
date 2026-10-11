@@ -99,6 +99,13 @@ export interface ChimeraConfig {
    * model again.
    */
   fallbackModel?: string;
+  /**
+   * One low-cost model (`<providerId>/<modelId>`) for helper work: agent
+   * definitions with `model: utility` (the built-in `explore` agent), and
+   * compaction summaries when `compaction.model` is not set. Without it,
+   * helper work runs on the session model.
+   */
+  utilityModel?: string;
   providers?: Record<string, ProviderSpec>;
   autoApprove?: AutoApproveLevel;
   commandPolicy?: {

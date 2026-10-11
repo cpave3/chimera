@@ -190,6 +190,12 @@ export interface CliAgentFactoryOptions {
    * unavailable after every retry.
    */
   fallbackModel?: string;
+  /**
+   * Model (`<providerId>/<modelId>`) for helper work: agent definitions that
+   * say `model: utility`. A reference that cannot be resolved is dropped
+   * with one warning.
+   */
+  utilityModel?: string;
   /** Present only for the owner-local interactive TUI. */
   hostAuthentication?: HostAuthenticationCapability;
 }
@@ -226,6 +232,7 @@ export class CliAgentFactory implements AgentFactory {
   private readonly responseTimeoutMs: number | undefined;
   private readonly defaultVisionModel: string | undefined;
   private readonly fallbackModel: string | undefined;
+  private readonly utilityModel: string | undefined;
   private readonly hostAuthentication: HostAuthenticationCapability | undefined;
   /**
    * Snapshot of the formatter map produced by the most recent `build()` call.
@@ -263,6 +270,7 @@ export class CliAgentFactory implements AgentFactory {
     this.responseTimeoutMs = opts.responseTimeoutMs;
     this.defaultVisionModel = opts.defaultVisionModel;
     this.fallbackModel = opts.fallbackModel;
+    this.utilityModel = this.resolvableModel('utilityModel', opts.utilityModel);
     this.hostAuthentication = opts.hostAuthentication;
     this.diagnosticsConfig = opts.diagnostics;
     this.recallConfig = opts.recall;
@@ -692,12 +700,15 @@ export class CliAgentFactory implements AgentFactory {
         chimeraBinArgs: invocation.preArgs,
         parentHasTty: this.subagents.parentHasTty ?? Boolean(process.stdin.isTTY),
         agents: this.agents,
+        utilityModelRef: this.utilityModel,
         availableModels: advertisedModels,
         modelOptions: this.modelsConfig,
       });
       extraTools.spawn_agent = spawn.tool;
       if (spawn.formatScrollback) extraFormatters.spawn_agent = spawn.formatScrollback;
-      extraSnippets.spawn_agent = 'Delegate a focused task to a fresh agent and get its answer.';
+      extraSnippets.spawn_agent = this.agents?.find('explore')
+        ? 'Delegate a focused task to a fresh agent and get its answer. For a wide search (many files, or a place you do not know yet), call it with agent "explore" and work from its findings; search directly when you know where to look.'
+        : 'Delegate a focused task to a fresh agent and get its answer.';
     }
 
     if (Object.keys(this.mcpServers).length > 0) {
@@ -970,6 +981,18 @@ export class CliAgentFactory implements AgentFactory {
     }
 
     return { agent, gate, hookRunner };
+  }
+
+  /** `ref` when the provider registry knows it; otherwise undefined, with a warning. */
+  private resolvableModel(key: string, ref: string | undefined): string | undefined {
+    if (!ref) return undefined;
+    try {
+      this.registry.resolve(ref);
+      return ref;
+    } catch (error) {
+      this.warn(`${key} "${ref}" cannot be used: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   /**

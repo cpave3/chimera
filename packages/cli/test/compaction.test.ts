@@ -52,6 +52,15 @@ describe('resolveCompactionConfig', () => {
     expect(config.model).toBeUndefined();
   });
 
+  it('summarizes on the utility model unless compaction names its own', () => {
+    expect(resolveCompactionConfig({ config: { utilityModel: 'a/cheap' } }).model).toBe('a/cheap');
+    expect(
+      resolveCompactionConfig({
+        config: { utilityModel: 'a/cheap', compaction: { model: 'b/summary' } },
+      }).model,
+    ).toBe('b/summary');
+  });
+
   it('reads values from config.compaction', () => {
     const config = resolveCompactionConfig({
       config: {

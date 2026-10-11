@@ -75,7 +75,7 @@ export function resolveCompactionConfig(opts: {
     enabled,
     reserveTokens: cfg?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
     keepRecentTokens: cfg?.keepRecentTokens ?? DEFAULT_KEEP_RECENT_TOKENS,
-    model: cfg?.model,
+    model: cfg?.model ?? opts.config.utilityModel,
     thresholdPercent: cfg?.thresholdPercent ?? DEFAULT_THRESHOLD_PERCENT,
   };
 }

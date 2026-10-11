@@ -178,6 +178,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       models: config.models,
       defaultVisionModel: config.defaultVisionModel,
       fallbackModel: config.fallbackModel,
+      utilityModel: config.utilityModel,
       compaction: compactionConfig,
       compactor,
       responseTimeoutMs: config.responseTimeoutMs,

@@ -1,14 +1,14 @@
 ## 1. Explore agent
 
-- [ ] 1.1 Test and implement discovery of built-in agent definitions
-- [ ] 1.2 Write `builtin/explore.md`; ship it in the package
-- [ ] 1.3 Test and implement the `utility` model alias in `spawn_agent`
+- [x] 1.1 Test and implement discovery of built-in agent definitions
+- [x] 1.2 Write `builtin/explore.md`; ship it in the package
+- [x] 1.3 Test and implement the `utility` model alias in `spawn_agent`
 
 ## 2. Utility model
 
-- [ ] 2.1 Test and add the `utilityModel` config key and the compaction fallback
-- [ ] 2.2 Wire the key into the factory; warn when it cannot be resolved
-- [ ] 2.3 Test and add the explore guidance to the prompt's tool list
+- [x] 2.1 Test and add the `utilityModel` config key and the compaction fallback
+- [x] 2.2 Wire the key into the factory; warn when it cannot be resolved
+- [x] 2.3 Test and add the explore guidance to the prompt's tool list
 
 ## 3. Background children
 
