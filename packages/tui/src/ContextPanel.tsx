@@ -46,6 +46,7 @@ const PADDING_COLUMNS = 2;
 const MAX_PLAN_LINES = 8;
 const MAX_WORKTREE_FILES = 8;
 const MAX_PEERS = 5;
+const HALF_GAP_COLUMNS = 2;
 // A completed task above the current one keeps the reader's place in the plan.
 const PLAN_LEAD_IN = 1;
 
@@ -355,6 +356,8 @@ export const ContextPanel = memo(function ContextPanel(
 
   const usage = usageState?.usage;
   const lastStep = usage?.lastStep;
+  // "in" and "out" share a row, half of the panel each.
+  const halfWidth = Math.floor((inner - HALF_GAP_COLUMNS) / 2);
   const cached =
     lastStep && lastStep.inputTokens > 0 && lastStep.cachedInputTokens > 0
       ? Math.min(100, Math.round((lastStep.cachedInputTokens / lastStep.inputTokens) * 100))
@@ -384,11 +387,39 @@ export const ContextPanel = memo(function ContextPanel(
         {sections}
       </Box>
       {usage && (
-        <Box width={inner} flexShrink={0} justifyContent="space-between">
-          <Text
-            color={theme.text.muted}
-          >{`↑ ${formatTokens(usage.inputTokens)} ↓ ${formatTokens(usage.outputTokens)}`}</Text>
-          {cached !== null && <Text color={theme.text.muted}>{`cache ${cached}%`}</Text>}
+        <Box flexDirection="column" flexShrink={0}>
+          <Fact
+            label="total"
+            value={formatTokens(usage.totalTokens)}
+            color={theme.text.primary}
+            width={inner}
+            theme={theme}
+          />
+          <Box width={inner} justifyContent="space-between">
+            <Fact
+              label="in"
+              value={formatTokens(usage.inputTokens)}
+              color={theme.text.primary}
+              width={halfWidth}
+              theme={theme}
+            />
+            <Fact
+              label="out"
+              value={formatTokens(usage.outputTokens)}
+              color={theme.text.primary}
+              width={inner - halfWidth - HALF_GAP_COLUMNS}
+              theme={theme}
+            />
+          </Box>
+          {cached !== null && (
+            <Fact
+              label="cache"
+              value={`${cached}%`}
+              color={theme.text.primary}
+              width={inner}
+              theme={theme}
+            />
+          )}
         </Box>
       )}
     </Box>

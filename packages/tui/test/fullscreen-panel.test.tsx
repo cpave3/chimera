@@ -156,8 +156,31 @@ describe('context panel', () => {
     expect(text).toMatch(/● api +build · approval/);
   });
 
-  it('shows the token totals of the session at the bottom', async () => {
+  it('shows the token total of the session at the bottom, with in and out side by side under it', async () => {
     const text = await panel({}, [usage(76_000)]);
-    expect(text.trimEnd().split('\n').at(-1)).toContain('↑ 3.2k ↓ 640');
+    const lines = text.trimEnd().split('\n');
+
+    expect(lines.at(-2)).toMatch(/^ *total +3\.8k$/);
+    expect(lines.at(-1)).toMatch(/^ *in +3\.2k +out +640$/);
+    // Half of the panel each: "out" starts at the middle of the row.
+    const row = lines.at(-1)!;
+    const start = row.search(/\S/);
+    const middle = start + Math.floor((row.length - start) / 2);
+    expect(Math.abs(row.indexOf('out') - middle)).toBeLessThanOrEqual(1);
+  });
+
+  it('adds the cached share of the last step under them when there is one', async () => {
+    const cachedUsage = usage(76_000) as Extract<AgentEvent, { type: 'usage_updated' }>;
+    cachedUsage.usage.lastStep = {
+      inputTokens: 76_000,
+      outputTokens: 640,
+      cachedInputTokens: 60_800,
+    };
+
+    const lines = (await panel({}, [cachedUsage])).trimEnd().split('\n');
+
+    expect(lines.at(-3)).toMatch(/^ *total +3\.8k$/);
+    expect(lines.at(-2)).toMatch(/^ *in +3\.2k +out +640$/);
+    expect(lines.at(-1)).toMatch(/^ *cache +80%$/);
   });
 });

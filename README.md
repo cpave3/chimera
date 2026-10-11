@@ -680,10 +680,12 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
                                                                     yg/json-flag            ↑1
   ⠹ write src/yg/commands/list.test.ts · 12s · step 6 · esc to …    M list.ts           +18 −3
                                                                     A list.test.ts
-    › message chimera
+
                                                                     PEERS
-   BUILD   enter steer · tab queue · esc interrupt                  ● api          plan · idle
-                                                                    ↑ 3.2k ↓ 640     cache 81%
+                                                                    ● api          plan · idle
+                                                                    total                 3.8k
+    › message chimera                                               in      3.2k  out      640
+   BUILD   enter steer · tab queue · esc interrupt                  cache                  81%
 ```
 
 - **Transcript pane.** It follows the newest output. `PgUp`, `PgDn` and the
@@ -698,7 +700,8 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
   plan (the model's task list); the working tree (branch, commits ahead and
   behind, changed files with lines added and removed); other live Chimera
   instances on this machine with their mode and state; and the session's
-  token totals with the cached share of the last prompt. `Ctrl+B` hides and
+  tokens: the total, then `in` and `out` side by side, then the cached share
+  of the last prompt. `Ctrl+B` hides and
   shows the panel. Under 100 columns the panel is dropped, and the hints row
   shows the model and the context percentage instead.
 - **Prompt box and hints row.** The row under the prompt shows the mode as a
