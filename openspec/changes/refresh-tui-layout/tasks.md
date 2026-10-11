@@ -1,8 +1,8 @@
 ## 1. Split App.tsx (no behavior change)
 
-- [ ] 1.1 Move entry rendering to `transcript.tsx` and prompt rendering to `prompt-view.tsx`
-- [ ] 1.2 Move the permission queue helpers to `permission-queue.ts`
-- [ ] 1.3 Move the status-bar widgets to `BottomChrome.tsx`
+- [x] 1.1 Move entry rendering to `transcript.tsx` and prompt rendering to `prompt-view.tsx`
+- [x] 1.2 Move the permission queue helpers to `permission-queue.ts`
+- [x] 1.3 Move the status-bar widgets to `BottomChrome.tsx`
 - [ ] 1.4 Move session event handling to `session-events.ts`
 - [ ] 1.5 Move slash command dispatch to `slash-dispatch.ts`
 - [ ] 1.6 Move key handling to `key-handler.ts`

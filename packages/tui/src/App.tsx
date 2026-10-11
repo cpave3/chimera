@@ -6,7 +6,6 @@ import type {
   Checkpoint,
   ModelConfig,
   PermissionDecisionAction,
-  PermissionRequest,
   SandboxMode,
   SessionId,
   SessionInfo,
@@ -18,13 +17,12 @@ import type { SkillRegistry } from '@chimera/skills';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { parseAttachTokens, readForAttach } from './attach-paths';
+import { BottomChrome } from './BottomChrome';
 import { runBangCommand } from './bang';
-import { ChromeBar } from './ChromeBar';
 import { isImageFile, readClipboardImage, saveImageToSession } from './clipboard';
 import { Header } from './Header';
 import {
   backspace,
-  cursorLineCol,
   endsWithUnescapedBackslashAtCursor,
   insertChar,
   insertNewline,
@@ -40,13 +38,17 @@ import {
 } from './input/buffer';
 import { type OpenInEditorResult, openInEditor as openInEditorImpl } from './input/external-editor';
 import { PasteRegistry } from './input/paste';
-import { renderMarkdown } from './markdown';
 import { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 import { PermissionModal } from './PermissionModal';
+import {
+  mergePermissionQueue,
+  type PendingPermission,
+  requiresSudoAuthentication,
+} from './permission-queue';
+import { previewLine, renderPromptLines } from './prompt-view';
 import { RewindPicker } from './RewindPicker';
 import { buildSessionTreeRows, formatRelativeTime, SessionPicker } from './SessionPicker';
 import { SlashMenu, type SlashMenuItem } from './SlashMenu';
-import { type StatusBarWidget } from './StatusBar';
 import { SudoPasswordModal } from './SudoPasswordModal';
 import { type Formatter, Scrollback, type ScrollbackEntry, type SubagentEntry } from './scrollback';
 import {
@@ -55,11 +57,9 @@ import {
   isBuiltin,
   OVERLAY_COMMANDS,
 } from './slash-commands';
-import { renderToolBody } from './ToolBody';
 import { applyThemeByName, listThemes } from './theme/loader';
 import { useTheme, useThemeContext } from './theme/ThemeProvider';
-import type { Theme } from './theme/types';
-import { UsageWidget } from './UsageWidget';
+import { clampInFlightChildren, renderEntryLines } from './transcript';
 
 function sessionHasActiveRun(status: SessionStatus): boolean {
   return status === 'running' || status === 'waiting_for_permission';
@@ -137,58 +137,6 @@ export interface AppProps {
   }>;
   /** Pending large text pastes captured by the terminal input filter. */
   pasteRegistry?: PasteRegistry;
-}
-
-interface PendingPermission {
-  requestId: string;
-  command: string;
-  reason?: string;
-  policyAnalysis?: Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
-  mcp?: PermissionRequest['mcp'];
-  /**
-   * When set, the request was raised inside a subagent and resolution must
-   * be sent to the child's server (via a freshly built ChimeraClient).
-   */
-  subagent?: {
-    id: string;
-    purpose: string;
-    sessionId: string;
-    url: string;
-  };
-}
-
-function requiresSudoAuthentication(policyAnalysis: PendingPermission['policyAnalysis']): boolean {
-  return (
-    policyAnalysis?.findings.some(
-      (finding) => finding.kind === 'elevation' && finding.ruleId === 'sudo',
-    ) ?? false
-  );
-}
-
-function mergePermissionQueue(
-  queue: PendingPermission[],
-  requests: Array<PermissionRequest | PendingPermission>,
-): PendingPermission[] {
-  const merged = [...queue];
-  for (const request of requests) {
-    const existingIndex = merged.findIndex((item) => item.requestId === request.requestId);
-    if (existingIndex >= 0) {
-      const existing = merged[existingIndex]!;
-      if (!existing.subagent && 'subagent' in request && request.subagent) {
-        merged[existingIndex] = { ...existing, subagent: request.subagent };
-      }
-      continue;
-    }
-    merged.push({
-      requestId: request.requestId,
-      command: request.command,
-      reason: request.reason,
-      policyAnalysis: request.policyAnalysis,
-      mcp: request.mcp,
-      ...('subagent' in request ? { subagent: request.subagent } : {}),
-    });
-  }
-  return merged;
 }
 
 interface SessionHydrationState {
@@ -1830,99 +1778,6 @@ export function App(props: AppProps): React.ReactElement {
     return showHeader ? [{ kind: 'header', id: '__header__' }, ...entryItems] : entryItems;
   }, [committedEntries, childrenByParent, showHeader]);
 
-  const cwdLeft = useMemo<StatusBarWidget[]>(
-    () => [
-      <Text key="cwd" color={theme.accent.primary}>
-        {props.cwd}
-      </Text>,
-    ],
-    [props.cwd, theme.accent.primary],
-  );
-  const cwdRight = useMemo<StatusBarWidget[]>(
-    () => [
-      <Text key="sandbox" color={theme.text.muted}>
-        {`[sandbox:${sandboxMode}]`}
-      </Text>,
-    ],
-    [sandboxMode, theme.text.muted],
-  );
-  const activeModeObj = props.modes?.find(activeModeName);
-  const pendingModeObj = pendingModeName ? props.modes?.find(pendingModeName) : undefined;
-  const modeWidget = useMemo<StatusBarWidget>(() => {
-    if (pendingModeObj && pendingModeObj.name !== activeModeName) {
-      return (
-        <Text>
-          <Text color={theme.text.muted}>[mode:</Text>
-          <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
-          <Text color={theme.text.muted}>{' → '}</Text>
-          <Text color={pendingModeObj.colorHex}>{pendingModeObj.name}</Text>
-          <Text color={theme.text.muted}>]</Text>
-        </Text>
-      );
-    }
-    return (
-      <Text>
-        <Text color={theme.text.muted}>[mode:</Text>
-        <Text color={activeModeObj?.colorHex ?? theme.text.muted}>{activeModeName}</Text>
-        <Text color={theme.text.muted}>]</Text>
-      </Text>
-    );
-  }, [activeModeName, activeModeObj, pendingModeName, pendingModeObj, theme.text.muted]);
-  const modelLeft = useMemo<StatusBarWidget[]>(
-    () => [
-      modeWidget,
-      <Text key="model" color={theme.accent.primary}>
-        {`${currentModelRef}${visionRouteRef ? ` → ${visionRouteRef} (vision)` : ''}`}
-      </Text>,
-      <Text key="session" color={theme.text.muted}>
-        {`session ${activeSession.sessionId.slice(-8)}`}
-      </Text>,
-      activeParentId ? (
-        <Text key="forked" color={theme.accent.secondary}>
-          (forked)
-        </Text>
-      ) : null,
-    ],
-    [
-      modeWidget,
-      currentModelRef,
-      visionRouteRef,
-      activeSession.sessionId,
-      activeParentId,
-      theme.accent.primary,
-      theme.text.muted,
-      theme.accent.secondary,
-    ],
-  );
-  const tasksWidget = useMemo<StatusBarWidget>(() => {
-    if (tasks.length === 0) return null;
-    const completed = tasks.filter((task) => task.status === 'completed').length;
-    const active = tasks.find((task) => task.status === 'in_progress');
-    const label = active
-      ? `[tasks ${completed}/${tasks.length}: ${active.content.length > 40 ? `${active.content.slice(0, 40)}…` : active.content}]`
-      : `[tasks ${completed}/${tasks.length}${completed === tasks.length ? ' done' : ''}]`;
-    return (
-      <Text key="tasks" color={theme.accent.secondary}>
-        {label}
-      </Text>
-    );
-  }, [tasks, theme.accent.secondary]);
-  const modelRight = useMemo<StatusBarWidget[]>(
-    () => [
-      tasksWidget,
-      usageState && (
-        <UsageWidget
-          key="usage"
-          usage={usageState.usage}
-          contextWindow={usageState.contextWindow}
-          usedContextTokens={usageState.usedContextTokens}
-          unknownWindow={usageState.unknownWindow}
-        />
-      ),
-    ],
-    [tasksWidget, usageState],
-  );
-
   // Steady-state during a run: the buffer is empty and the spinner /
   // streaming deltas re-render App many times per second. Keep the prompt
   // subtree referentially stable across those renders, and collapse the
@@ -2164,13 +2019,18 @@ export function App(props: AppProps): React.ReactElement {
           {promptBody}
         </Box>
       </Box>
-      <ChromeBar
-        cwdLeft={cwdLeft}
-        cwdRight={cwdRight}
-        modelLeft={modelLeft}
-        modelRight={modelRight}
-        separatorColor={theme.text.muted}
-        mutedColor={theme.text.muted}
+      <BottomChrome
+        cwd={props.cwd}
+        sandboxMode={sandboxMode}
+        modes={props.modes}
+        activeModeName={activeModeName}
+        pendingModeName={pendingModeName}
+        currentModelRef={currentModelRef}
+        visionRouteRef={visionRouteRef}
+        sessionId={activeSession.sessionId}
+        forked={activeParentId !== null}
+        tasks={tasks}
+        usageState={usageState}
       />
     </>
   );
@@ -2182,278 +2042,8 @@ export function App(props: AppProps): React.ReactElement {
  * the model reads it (firing `skill_activated`), and appends any args as the
  * user's request.
  */
-function previewLine(text: string): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine;
-}
-
-function renderPromptLines(
-  buffer: MultilineBuffer,
-  accentColor: string,
-  bangColor: string,
-  editorOpen: boolean,
-  isBang: boolean,
-): React.ReactElement[] {
-  const allLines = buffer.text.split('\n');
-  const { line: cursorLine, col: cursorCol } = cursorLineCol(buffer);
-  return allLines.map((lineText, idx) => {
-    const isFirst = idx === 0;
-    const prefix = isFirst ? (isBang ? 'bash > ' : '> ') : '  ';
-    const color = isBang ? bangColor : accentColor;
-    const showCursor = idx === cursorLine && !editorOpen;
-    if (!showCursor) {
-      return (
-        // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-        <Box key={idx}>
-          <Text color={isFirst ? color : undefined}>{prefix}</Text>
-          <Text>{lineText}</Text>
-        </Box>
-      );
-    }
-    const pre = lineText.slice(0, cursorCol);
-    const atChar = cursorCol < lineText.length ? lineText[cursorCol]! : ' ';
-    const post = cursorCol < lineText.length ? lineText.slice(cursorCol + 1) : '';
-    // Render the cursor line as a single <Text> with embedded SGR inverse
-    // escapes so the terminal wraps continuously. Three sibling <Text>
-    // nodes (pre / inverse / post) detach the cursor from the text flow
-    // because Ink treats each as a separate flex item.
-    const lineWithCursor = `${pre}\x1b[7m${atChar}\x1b[27m${post}`;
-    return (
-      // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-      <Box key={idx}>
-        <Text color={isFirst ? color : undefined}>{prefix}</Text>
-        <Text>{lineWithCursor}</Text>
-      </Box>
-    );
-  });
-}
-
 function expandSkillInvocation(name: string, path: string, args: string): string {
   const trimmed = args.trim();
   const head = `Use the "${name}" skill from ${path}.`;
   return trimmed.length > 0 ? `${head}\n\n${trimmed}` : head;
-}
-
-/**
- * Hard-wrap `text` into one string per visual line. Splits on explicit `\n`
- * first, then breaks each segment at `width` characters. The first segment's
- * available width is reduced by `firstOffset` to leave room for a prefix
- * like `you: ` or `[host] `.
- */
-function wrapToLines(text: string, width: number, firstOffset: number): string[] {
-  if (text.length === 0) return [''];
-  const available = Math.max(1, width);
-  const segments = text.split('\n');
-  const out: string[] = [];
-  segments.forEach((seg, segIdx) => {
-    let remaining = seg;
-    let budget = available - (segIdx === 0 ? firstOffset : 0);
-    if (budget < 1) budget = 1;
-    if (remaining.length === 0) {
-      out.push('');
-      return;
-    }
-    while (remaining.length > budget) {
-      out.push(remaining.slice(0, budget));
-      remaining = remaining.slice(budget);
-      budget = available;
-    }
-    out.push(remaining);
-  });
-  return out;
-}
-
-/**
- * Cap of nested subagent child rows rendered while the parent spawn_agent
- * tool entry is still in flight. The whole group lives in Ink's dynamic
- * region until the parent's tool_call_result lands, and a chatty subagent
- * (30-100 events/sec) would otherwise grow that region past the terminal
- * height — tipping Ink into its clearTerminal-per-frame fallback, which
- * flickers and erases the terminal's scrollback buffer (`\x1b[3J`) so the
- * user cannot scroll up. The full child list still commits to <Static>
- * atomically with the parent.
- */
-const MAX_INFLIGHT_SUBAGENT_ROWS = 4;
-
-function clampInFlightChildren(parentId: string, children: SubagentEntry[]): SubagentEntry[] {
-  if (children.length <= MAX_INFLIGHT_SUBAGENT_ROWS) return children;
-  const visible = children.slice(-(MAX_INFLIGHT_SUBAGENT_ROWS - 1));
-  const elided = children.length - visible.length;
-  return [
-    {
-      id: `${parentId}:elided`,
-      kind: 'subagent',
-      text: `… ${elided} earlier steps`,
-      parentEntryId: parentId,
-    },
-    ...visible,
-  ];
-}
-
-function renderEntryLines(
-  entry: ScrollbackEntry,
-  columns: number,
-  theme: Theme,
-  children: SubagentEntry[] = [],
-): React.ReactElement[] {
-  const width = Math.max(10, columns);
-
-  if (entry.kind === 'user') {
-    const prefix = 'you: ';
-    const imageLabels =
-      entry.imageCount && entry.imageCount > 0
-        ? Array.from({ length: entry.imageCount }, (_, i) => `[Image #${i + 1}]`).join(' ')
-        : '';
-    const displayText = imageLabels ? `${entry.text} ${imageLabels}` : entry.text;
-    const lines = wrapToLines(displayText, width, prefix.length);
-    return [
-      <Box key={`${entry.id}:u`} flexDirection="column">
-        <Text>
-          <Text color={theme.ui.accent} bold>
-            you
-          </Text>
-          {`: ${lines[0] ?? ''}`}
-        </Text>
-        {lines.slice(1).map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-          <Box key={i} paddingLeft={prefix.length}>
-            <Text>{line}</Text>
-          </Box>
-        ))}
-      </Box>,
-    ];
-  }
-  if (entry.kind === 'assistant') {
-    return [
-      <Box key={`${entry.id}:a`} flexDirection="column" paddingLeft={2}>
-        {renderMarkdown(entry.text, theme, Math.max(10, width - 2))}
-      </Box>,
-    ];
-  }
-  if (entry.kind === 'thinking') {
-    const lines = entry.text.split('\n');
-    return [
-      <Box key={`${entry.id}:th`} flexDirection="column" paddingLeft={2}>
-        {lines.map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for split output
-          <Text key={i} color={theme.text.muted}>
-            {line}
-          </Text>
-        ))}
-      </Box>,
-    ];
-  }
-  if (entry.kind === 'tool') {
-    const badge = entry.toolTarget === 'host' ? '[host]' : '[sandbox]';
-    const namePrefix = entry.displayName ?? entry.toolName;
-    const title = namePrefix ? `${namePrefix}: ` : '';
-    const prefixLen = badge.length + 1;
-    const textLines = wrapToLines(`${title}${entry.text}`, width, prefixLen);
-    const out: React.ReactElement[] = [
-      <Box key={`${entry.id}:t`} flexDirection="column">
-        <Text>
-          <Text color={theme.ui.badge}>{badge}</Text>{' '}
-          <Text color={theme.accent.secondary}>{textLines[0] ?? ''}</Text>
-        </Text>
-        {textLines.slice(1).map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-          <Box key={i} paddingLeft={prefixLen}>
-            <Text color={theme.accent.secondary}>{line}</Text>
-          </Box>
-        ))}
-        {entry.detail !== undefined &&
-          wrapToLines(entry.detail, width, prefixLen).map((line, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-            <Box key={`d${i}`} paddingLeft={prefixLen}>
-              <Text color={theme.text.muted}>{line}</Text>
-            </Box>
-          ))}
-        {renderToolBody(entry, { width, prefixLen, theme })}
-        {entry.skillName && (
-          <Box paddingLeft={prefixLen}>
-            <Text color={theme.ui.accent}>📚 skill: {entry.skillName}</Text>
-          </Box>
-        )}
-        {children.map((child, idx) => {
-          const isLast = idx === children.length - 1;
-          const connector = isLast ? '└ ' : '├ ';
-          const childLines = wrapToLines(child.text, width, prefixLen + connector.length);
-          return (
-            <Box key={`${entry.id}:c:${child.id}`} flexDirection="column" paddingLeft={prefixLen}>
-              <Text>
-                <Text color={theme.text.muted}>{connector}</Text>
-                <Text color={theme.text.muted}>{childLines[0] ?? ''}</Text>
-              </Text>
-              {childLines.slice(1).map((line, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-                <Box key={i} paddingLeft={connector.length}>
-                  <Text color={theme.text.muted}>{line}</Text>
-                </Box>
-              ))}
-              {child.detail !== undefined &&
-                wrapToLines(child.detail, width, prefixLen + connector.length).map((line, i) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-                  <Box key={`cd${i}`} paddingLeft={connector.length}>
-                    <Text color={theme.text.muted}>{line}</Text>
-                  </Box>
-                ))}
-            </Box>
-          );
-        })}
-      </Box>,
-    ];
-    if (entry.toolError) {
-      const errLines = wrapToLines(`error: ${entry.toolError}`, width, prefixLen);
-      out.push(
-        <Box key={`${entry.id}:e`} flexDirection="column" paddingLeft={prefixLen}>
-          {errLines.map((line, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-            <Text key={i} color={theme.status.error}>
-              {line}
-            </Text>
-          ))}
-        </Box>,
-      );
-    }
-    return out;
-  }
-  if (entry.kind === 'subagent') {
-    const idShort = entry.subagentId ? entry.subagentId.slice(-4) : '?';
-    const labelParts = [`[subagent ${idShort}`];
-    if (entry.subagentPurpose) labelParts.push(`: ${entry.subagentPurpose}`);
-    labelParts.push(']');
-    const label = labelParts.join('');
-    const prefix = `${label} `;
-    const lines = wrapToLines(entry.text, width, prefix.length + 2);
-    return [
-      <Box key={`${entry.id}:s`} flexDirection="column" paddingLeft={2}>
-        <Text>
-          <Text color={theme.ui.accent}>{label}</Text>{' '}
-          <Text color={theme.text.muted}>{lines[0] ?? ''}</Text>
-        </Text>
-        {lines.slice(1).map((line, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-          <Box key={i} paddingLeft={prefix.length}>
-            <Text color={theme.text.muted}>{line}</Text>
-          </Box>
-        ))}
-      </Box>,
-    ];
-  }
-  if (entry.kind === 'info' || entry.kind === 'mode_change') {
-    const lines = wrapToLines(entry.text, width, 0);
-    return lines.map((line, i) => (
-      // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-      <Text key={`${entry.id}:${i}`} color={theme.text.muted}>
-        {line}
-      </Text>
-    ));
-  }
-  const lines = wrapToLines(entry.text, width, 0);
-  return lines.map((line, i) => (
-    // biome-ignore lint/suspicious/noArrayIndexKey: positional index is stable for wrap output
-    <Text key={`${entry.id}:${i}`} color={theme.status.error}>
-      {line}
-    </Text>
-  ));
 }
