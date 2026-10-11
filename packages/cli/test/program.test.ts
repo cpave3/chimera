@@ -143,3 +143,31 @@ describe('chimera hooks list smoke', () => {
     expect(parsed.events.PostToolUse.project).toEqual([script]);
   });
 });
+
+describe('chimera --mcp-config', () => {
+  it.each([
+    ['the default command', []],
+    ['run', ['run']],
+    ['serve', ['serve']],
+    ['resume', ['resume']],
+    ['continue', ['continue']],
+  ])('is advertised on %s', (_label, command) => {
+    const r = spawnSync('node', [BIN, ...command, '--help'], { encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/--mcp-config <json\|@file>/);
+  });
+
+  it.each([
+    ['run', ['run', 'hi']],
+    ['serve', ['serve']],
+  ])('stops %s before any model is contacted when the value is not usable', (_label, command) => {
+    const home = `/tmp/chimera-mcp-flag-${Date.now()}`;
+    const r = spawnSync('node', [BIN, ...command, '--mcp-config', '{"servers":{}}'], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home },
+      timeout: 20_000,
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/--mcp-config.*mcpServers/);
+  });
+});

@@ -3,9 +3,10 @@
 Chimera connects to local MCP servers over stdio and remote servers over MCP
 Streamable HTTP. It discovers **tools** when a session starts and exposes them
 to the agent as namespaced tools. MCP resources and prompts, legacy SSE, manual
-bearer tokens, and OAuth device flow are not supported. MCP configuration is
-global only; there is no project-local MCP config, in-session hot reload, or
-TUI `/mcp` screen.
+bearer tokens, and OAuth device flow are not supported. Saved MCP configuration
+is global only; a launch flag can add servers for one session (see
+[Servers for one session](#servers-for-one-session)). There is no project-local
+MCP config, in-session hot reload, or TUI `/mcp` screen.
 
 ## Add a server
 
@@ -52,6 +53,33 @@ the server entry. Remote URLs must use HTTPS; plain HTTP is allowed only for
 loopback servers. Server names must start with a letter and contain only
 letters, digits, `_`, or `-`. Do not enable `trustedTools` unless you intend to
 authorize those tools without a prompt (see below).
+
+## Servers for one session
+
+`--mcp-config` gives one session MCP servers without saving them. It is
+accepted by `chimera`, `chimera run`, `chimera serve`, `chimera resume` and
+`chimera continue`. The value is a JSON document shaped like the config file,
+or `@` followed by the path of a file that holds one:
+
+```bash
+chimera --mcp-config '{"mcpServers":{"local":{"transport":"stdio","command":"node","args":["/path/to/server.js"]}}}'
+chimera run --mcp-config @./servers.json "list my projects"
+```
+
+The servers are merged over the global `mcpServers` for that session: a server
+with a new name is added, and one with the name of a global server replaces it.
+`~/.chimera/config.json` is not changed. Every rule of the config file applies
+(server names, `env:VARIABLE` references, HTTPS for remote URLs, `trustedTools`),
+and a value that breaks one stops the command before a model is contacted, with
+an error that names `--mcp-config`.
+
+This is how a program that launches Chimera, such as an orchestrator, adds its
+own tools to the sessions it starts. A stdio server defined this way receives
+Chimera's environment when its entry has an `env` map, so `{"SESSION":
+"env:SESSION"}` passes a variable the launcher set. Subagents started with
+`spawn_agent` read the global config only and do not receive these servers.
+`chimera mcp list`, `tools`, `call`, `login` and `logout` also act on the
+global config only.
 
 ## Inspect, call, and manage
 

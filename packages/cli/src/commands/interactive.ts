@@ -20,7 +20,7 @@ import {
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
-import { loadConfig, resolveHostBashPolicy, resolveModel } from '../config';
+import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
@@ -62,6 +62,11 @@ export interface InteractiveOptions {
   additionalReadPaths?: string[];
   /** Additional absolute paths for write access outside cwd. */
   additionalWritePaths?: string[];
+  /**
+   * Raw `--mcp-config` value: MCP servers for this session only, as JSON or
+   * `@<path>`. Merged over the global config by `resolveMcpServers`.
+   */
+  mcpConfig?: string;
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
@@ -71,6 +76,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
   const config = loadConfig(opts.home);
+  // Resolved before anything else is set up, so a bad --mcp-config stops the
+  // command at once instead of after a model has been chosen.
+  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
   const { model, ref, providersConfig } = resolveModel({
     cliModel: opts.model,
     cliSettings: opts.modelSettings,
@@ -144,7 +152,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config),
-    mcpServers: config.mcpServers,
+    mcpServers,
     home: opts.home,
     skills,
     agents,

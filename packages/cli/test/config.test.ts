@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadConfig, resolveHostBashPolicy, resolveModel } from '../src/config';
+import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../src/config';
 
 it('rejects invalid MCP server configuration with config path and server name', async () => {
   const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-invalid-'));
@@ -180,5 +180,80 @@ describe('resolveModel', () => {
       config: { providers },
     });
     expect(unflagged.model.toolCallShape).toBeUndefined();
+  });
+});
+
+describe('resolveMcpServers (--mcp-config)', () => {
+  const global = {
+    mcpServers: {
+      local: { transport: 'stdio' as const, command: 'node', args: ['server.js'] },
+      remote: { transport: 'http' as const, url: 'https://example.com/mcp' },
+    },
+  };
+
+  it('returns the global servers when the flag is absent', () => {
+    expect(resolveMcpServers(global, undefined)).toEqual(global.mcpServers);
+    expect(resolveMcpServers({}, undefined)).toEqual({});
+  });
+
+  it('adds servers given as JSON for this session and lets them replace a global one of the same name', () => {
+    const session = {
+      mcpServers: {
+        legato: {
+          transport: 'stdio',
+          command: '/usr/bin/legato',
+          args: ['mcp', 'serve'],
+          env: { LEGATO_TASK_ID: 'env:LEGATO_TASK_ID' },
+          trustedTools: ['show_card'],
+        },
+        remote: { transport: 'http', url: 'https://other.example.com/mcp' },
+      },
+    };
+    expect(resolveMcpServers(global, JSON.stringify(session))).toEqual({
+      local: global.mcpServers.local,
+      remote: session.mcpServers.remote,
+      legato: session.mcpServers.legato,
+    });
+    // The global config object is not changed by a session's servers.
+    expect(Object.keys(global.mcpServers)).toEqual(['local', 'remote']);
+  });
+
+  it('reads the same document from a file named with @', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chimera-mcp-flag-'));
+    const file = join(dir, 'servers.json');
+    await writeFile(
+      file,
+      JSON.stringify({ mcpServers: { fromfile: { transport: 'stdio', command: 'node' } } }),
+    );
+    expect(resolveMcpServers({}, `@${file}`)).toEqual({
+      fromfile: { transport: 'stdio', command: 'node' },
+    });
+  });
+
+  it.each([
+    ['text that is not JSON', 'legato=/usr/bin/legato', /--mcp-config.*JSON/i],
+    [
+      'a document without mcpServers',
+      '{"legato":{"transport":"stdio","command":"x"}}',
+      /--mcp-config.*mcpServers/,
+    ],
+    ['an array', '[]', /--mcp-config.*mcpServers/],
+    [
+      'a server the config file would reject',
+      '{"mcpServers":{"bad":{"transport":"http","url":"http://example.com/mcp"}}}',
+      /--mcp-config.*mcpServers.*bad.*url/i,
+    ],
+    [
+      'a literal secret in env',
+      '{"mcpServers":{"local":{"transport":"stdio","command":"node","env":{"KEY":"secret"}}}}',
+      /--mcp-config.*mcpServers.*local/,
+    ],
+    [
+      'a file that does not exist',
+      '@/nonexistent/chimera/servers.json',
+      /--mcp-config.*servers\.json/,
+    ],
+  ])('rejects %s, naming the flag', (_label, value, message) => {
+    expect(() => resolveMcpServers(global, value)).toThrow(message);
   });
 });

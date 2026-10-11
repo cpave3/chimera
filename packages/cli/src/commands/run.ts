@@ -18,7 +18,7 @@ import {
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
-import { loadConfig, resolveHostBashPolicy, resolveModel } from '../config';
+import { loadConfig, resolveHostBashPolicy, resolveMcpServers, resolveModel } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
@@ -69,6 +69,11 @@ export interface RunOptions {
   additionalReadPaths?: string[];
   /** Additional absolute paths for write access outside cwd. */
   additionalWritePaths?: string[];
+  /**
+   * Raw `--mcp-config` value: MCP servers for this session only, as JSON or
+   * `@<path>`. Merged over the global config by `resolveMcpServers`.
+   */
+  mcpConfig?: string;
 }
 
 export interface RunResult {
@@ -85,6 +90,9 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   let factory: AgentFactory;
   let cliFactory: CliAgentFactory | undefined;
   const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);
+  // Resolved before anything else is set up, so a bad --mcp-config stops the
+  // command at once instead of after a model has been chosen.
+  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
   const skills = loadSkillsFromConfig({
     cwd: opts.cwd,
     home: opts.home,
@@ -155,7 +163,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       hostBashPolicy: resolveHostBashPolicy(config),
-      mcpServers: config.mcpServers,
+      mcpServers,
       mcpHeadlessAutoDeny: true,
       home: opts.home,
       skills,

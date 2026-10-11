@@ -45,6 +45,13 @@ function applyModeOptions(cmd: Command): Command {
     .option('--no-modes', 'Skip mode discovery — sessions run with no mode block');
 }
 
+function applyMcpOptions(cmd: Command): Command {
+  return cmd.option(
+    '--mcp-config <json|@file>',
+    'MCP servers for this session only: {"mcpServers": {...}} as JSON, or @path to a JSON file. Merged over the global config; same names replace it',
+  );
+}
+
 function applyCompactionOptions(cmd: Command): Command {
   return cmd.option('--no-compaction', 'Disable automatic context-window compaction');
 }
@@ -93,36 +100,41 @@ export function buildProgram(): Command {
   // https://github.com/tj/commander.js#parsing-and-positional-options.
   program.enablePositionalOptions();
 
-  applyModeOptions(
-    applySubagentOptions(
-      applyCompactionOptions(
-        applySandboxOptions(
-          applyPathOptions(
-            program
-              .command('run [prompt...]', { isDefault: false })
-              .description('Run a one-shot prompt non-interactively.')
-              .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-              .option('--model-settings <json>', 'Session generation settings as JSON')
-              .option('--cwd <path>', 'Working directory', process.cwd())
-              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-              .option('--auto-approve <level>', 'none|sandbox|host|all')
-              .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
-              .option('--session <id>', 'Resume a persisted session')
-              .option('--session-name <name>', 'Name for a newly created session')
-              .option('--session-id <id>', 'Requested ID for a newly created session')
-              .addOption(
-                new Option(
-                  '--session-exists <policy>',
-                  'Collision policy: resume|new|error',
-                ).choices(['resume', 'new', 'error']),
-              )
-              .option('--stdin', 'Read prompt from stdin', false)
-              .option('--command <name>', 'Run a user command template by name')
-              .option('--args <args>', 'Arguments for --command (quoted string)')
-              .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-              .option('--no-skills', 'Skip skill discovery and system-prompt injection')
-              .option('-v, --verbose', 'Verbose logging', false)
-              .option('-q, --quiet', 'Suppress non-essential logging', false),
+  applyMcpOptions(
+    applyModeOptions(
+      applySubagentOptions(
+        applyCompactionOptions(
+          applySandboxOptions(
+            applyPathOptions(
+              program
+                .command('run [prompt...]', { isDefault: false })
+                .description('Run a one-shot prompt non-interactively.')
+                .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+                .option('--model-settings <json>', 'Session generation settings as JSON')
+                .option('--cwd <path>', 'Working directory', process.cwd())
+                .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+                .option('--auto-approve <level>', 'none|sandbox|host|all')
+                .option('--json', 'Emit NDJSON AgentEvents to stdout', false)
+                .option('--session <id>', 'Resume a persisted session')
+                .option('--session-name <name>', 'Name for a newly created session')
+                .option('--session-id <id>', 'Requested ID for a newly created session')
+                .addOption(
+                  new Option(
+                    '--session-exists <policy>',
+                    'Collision policy: resume|new|error',
+                  ).choices(['resume', 'new', 'error']),
+                )
+                .option('--stdin', 'Read prompt from stdin', false)
+                .option('--command <name>', 'Run a user command template by name')
+                .option('--args <args>', 'Arguments for --command (quoted string)')
+                .option(
+                  '--no-claude-compat',
+                  'Skip .claude/commands/ and .claude/skills/ discovery',
+                )
+                .option('--no-skills', 'Skip skill discovery and system-prompt injection')
+                .option('-v, --verbose', 'Verbose logging', false)
+                .option('-q, --quiet', 'Suppress non-essential logging', false),
+            ),
           ),
         ),
       ),
@@ -168,6 +180,7 @@ export function buildProgram(): Command {
       compaction: opts.compaction,
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
+      mcpConfig: opts.mcpConfig,
     });
     process.exit(exitCode);
   });
@@ -297,49 +310,51 @@ export function buildProgram(): Command {
       });
     });
 
-  applyModeOptions(
-    applySubagentOptions(
-      applyCompactionOptions(
-        applySandboxOptions(
-          applyPathOptions(
-            program
-              .command('serve')
-              .description('Start only the HTTP/SSE server.')
-              .option('-m, --model <modelRef>', 'Default model')
-              .option('--model-settings <json>', 'Session generation settings as JSON')
-              .option('--cwd <path>', 'Working directory', process.cwd())
-              .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
-              .option('--host <addr>', 'Bind address', '127.0.0.1')
-              .option('--machine-handshake', 'Emit a single JSON line on ready', false)
-              .option('--parent <sessionId>', 'Parent session id (for subagents)')
-              .option(
-                '--current-subagent-depth <n>',
-                'Internal: nesting depth of this child agent',
-                (v) => Number.parseInt(v, 10),
-              )
-              .option(
-                '--headless-permission-auto-deny',
-                'Internal: auto-deny host-target permission requests instead of prompting',
-                false,
-              )
-              .option('--auto-approve <level>', 'none|sandbox|host|all')
-              .option(
-                '--system-prompt-file <path>',
-                'Internal: read file contents as the session system prompt (overrides composed default)',
-              )
-              .option(
-                '--tools <list>',
-                'Internal: comma-separated tool allowlist for the session (e.g. "read,grep,glob")',
-              )
-              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-              .option('--session-name <name>', 'Name for the default session')
-              .option('--session-id <id>', 'Requested ID for the default session')
-              .addOption(
-                new Option(
-                  '--session-exists <policy>',
-                  'Collision policy: resume|new|error',
-                ).choices(['resume', 'new', 'error']),
-              ),
+  applyMcpOptions(
+    applyModeOptions(
+      applySubagentOptions(
+        applyCompactionOptions(
+          applySandboxOptions(
+            applyPathOptions(
+              program
+                .command('serve')
+                .description('Start only the HTTP/SSE server.')
+                .option('-m, --model <modelRef>', 'Default model')
+                .option('--model-settings <json>', 'Session generation settings as JSON')
+                .option('--cwd <path>', 'Working directory', process.cwd())
+                .option('--port <n>', 'Override ephemeral port', (v) => Number.parseInt(v, 10))
+                .option('--host <addr>', 'Bind address', '127.0.0.1')
+                .option('--machine-handshake', 'Emit a single JSON line on ready', false)
+                .option('--parent <sessionId>', 'Parent session id (for subagents)')
+                .option(
+                  '--current-subagent-depth <n>',
+                  'Internal: nesting depth of this child agent',
+                  (v) => Number.parseInt(v, 10),
+                )
+                .option(
+                  '--headless-permission-auto-deny',
+                  'Internal: auto-deny host-target permission requests instead of prompting',
+                  false,
+                )
+                .option('--auto-approve <level>', 'none|sandbox|host|all')
+                .option(
+                  '--system-prompt-file <path>',
+                  'Internal: read file contents as the session system prompt (overrides composed default)',
+                )
+                .option(
+                  '--tools <list>',
+                  'Internal: comma-separated tool allowlist for the session (e.g. "read,grep,glob")',
+                )
+                .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+                .option('--session-name <name>', 'Name for the default session')
+                .option('--session-id <id>', 'Requested ID for the default session')
+                .addOption(
+                  new Option(
+                    '--session-exists <policy>',
+                    'Collision policy: resume|new|error',
+                  ).choices(['resume', 'new', 'error']),
+                ),
+            ),
           ),
         ),
       ),
@@ -371,6 +386,7 @@ export function buildProgram(): Command {
       compaction: opts.compaction,
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
+      mcpConfig: opts.mcpConfig,
     });
   });
 
@@ -447,22 +463,27 @@ export function buildProgram(): Command {
       },
     );
 
-  applyModeOptions(
-    applySubagentOptions(
-      applyCompactionOptions(
-        applySandboxOptions(
-          applyPathOptions(
-            program
-              .command('resume [id]')
-              .description(
-                'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
-              )
-              .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-              .option('--cwd <path>', 'Working directory', process.cwd())
-              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-              .option('--auto-approve <level>', 'none|sandbox|host|all')
-              .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-              .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applyMcpOptions(
+    applyModeOptions(
+      applySubagentOptions(
+        applyCompactionOptions(
+          applySandboxOptions(
+            applyPathOptions(
+              program
+                .command('resume [id]')
+                .description(
+                  'Resume a persisted session. With <id>, resumes that session directly. Without an id, opens a picker scoped to the current directory.',
+                )
+                .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+                .option('--cwd <path>', 'Working directory', process.cwd())
+                .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+                .option('--auto-approve <level>', 'none|sandbox|host|all')
+                .option(
+                  '--no-claude-compat',
+                  'Skip .claude/commands/ and .claude/skills/ discovery',
+                )
+                .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+            ),
           ),
         ),
       ),
@@ -504,24 +525,30 @@ export function buildProgram(): Command {
       compaction: opts.compaction,
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
+      mcpConfig: opts.mcpConfig,
     });
   });
 
-  applyModeOptions(
-    applySubagentOptions(
-      applyCompactionOptions(
-        applySandboxOptions(
-          applyPathOptions(
-            program
-              .command('continue')
-              .alias('c')
-              .description('Resume the most-recently-active session in the current directory.')
-              .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-              .option('--cwd <path>', 'Working directory', process.cwd())
-              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-              .option('--auto-approve <level>', 'none|sandbox|host|all')
-              .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-              .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applyMcpOptions(
+    applyModeOptions(
+      applySubagentOptions(
+        applyCompactionOptions(
+          applySandboxOptions(
+            applyPathOptions(
+              program
+                .command('continue')
+                .alias('c')
+                .description('Resume the most-recently-active session in the current directory.')
+                .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+                .option('--cwd <path>', 'Working directory', process.cwd())
+                .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+                .option('--auto-approve <level>', 'none|sandbox|host|all')
+                .option(
+                  '--no-claude-compat',
+                  'Skip .claude/commands/ and .claude/skills/ discovery',
+                )
+                .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+            ),
           ),
         ),
       ),
@@ -551,6 +578,7 @@ export function buildProgram(): Command {
       compaction: opts.compaction,
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
+      mcpConfig: opts.mcpConfig,
     });
   });
 
@@ -571,38 +599,43 @@ export function buildProgram(): Command {
     });
 
   // Default (no subcommand): interactive TUI session.
-  applyModeOptions(
-    applySubagentOptions(
-      applyCompactionOptions(
-        applySandboxOptions(
-          applyPathOptions(
-            program
-              .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
-              .option('--model-settings <json>', 'Session model settings as a JSON object')
-              .option('--cwd <path>', 'Working directory', process.cwd())
-              .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
-              .option('--auto-approve <level>', 'none|sandbox|host|all')
-              .option('--session <id>', 'Resume a persisted session')
-              .option('--session-name <name>', 'Name for a newly created session')
-              .option('--session-id <id>', 'Requested ID for a newly created session')
-              .addOption(
-                new Option(
-                  '--session-exists <policy>',
-                  'Collision policy: resume|new|error',
-                ).choices(['resume', 'new', 'error']),
-              )
-              .option('--prompt <text>', 'Send an initial message on session start')
-              .option(
-                '--resume [id]',
-                'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
-              )
-              .option(
-                '-c, --continue',
-                'Resume the most-recently-active session in the current directory.',
-                false,
-              )
-              .option('--no-claude-compat', 'Skip .claude/commands/ and .claude/skills/ discovery')
-              .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+  applyMcpOptions(
+    applyModeOptions(
+      applySubagentOptions(
+        applyCompactionOptions(
+          applySandboxOptions(
+            applyPathOptions(
+              program
+                .option('-m, --model <modelRef>', 'Model (providerId/modelId)')
+                .option('--model-settings <json>', 'Session model settings as a JSON object')
+                .option('--cwd <path>', 'Working directory', process.cwd())
+                .option('--max-steps <n>', 'Agent loop cap', (v) => Number.parseInt(v, 10))
+                .option('--auto-approve <level>', 'none|sandbox|host|all')
+                .option('--session <id>', 'Resume a persisted session')
+                .option('--session-name <name>', 'Name for a newly created session')
+                .option('--session-id <id>', 'Requested ID for a newly created session')
+                .addOption(
+                  new Option(
+                    '--session-exists <policy>',
+                    'Collision policy: resume|new|error',
+                  ).choices(['resume', 'new', 'error']),
+                )
+                .option('--prompt <text>', 'Send an initial message on session start')
+                .option(
+                  '--resume [id]',
+                  'Resume a persisted session. With <id> resumes directly; without, opens a picker scoped to --cwd.',
+                )
+                .option(
+                  '-c, --continue',
+                  'Resume the most-recently-active session in the current directory.',
+                  false,
+                )
+                .option(
+                  '--no-claude-compat',
+                  'Skip .claude/commands/ and .claude/skills/ discovery',
+                )
+                .option('--no-skills', 'Skip skill discovery and system-prompt injection'),
+            ),
           ),
         ),
       ),
@@ -678,6 +711,7 @@ export function buildProgram(): Command {
       compaction: opts.compaction,
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
+      mcpConfig: opts.mcpConfig,
     });
   });
 

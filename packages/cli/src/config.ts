@@ -227,6 +227,49 @@ export function validateMcpServers(value: unknown, path: string): Record<string,
   return value as Record<string, McpServerConfig>;
 }
 
+/**
+ * The MCP servers one session starts with: the global `mcpServers`, plus those
+ * given for this session only through `--mcp-config`. The flag's value is a
+ * JSON document shaped like the config file (`{"mcpServers": {...}}`), or
+ * `@<path>` to a file holding one. A session server replaces a global server
+ * of the same name. Nothing is written to the config file.
+ */
+export function resolveMcpServers(
+  config: ChimeraConfig,
+  mcpConfig: string | undefined,
+): Record<string, McpServerConfig> {
+  const global = config.mcpServers ?? {};
+  if (mcpConfig === undefined) return global;
+  const source = '--mcp-config';
+  let raw = mcpConfig;
+  if (mcpConfig.startsWith('@')) {
+    const path = mcpConfig.slice(1);
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch (error) {
+      throw new Error(`${source}: cannot read ${path}: ${(error as Error).message}`);
+    }
+  }
+  let document: unknown;
+  try {
+    document = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `${source}: expected JSON or @<path to a JSON file>: ${(error as Error).message}`,
+    );
+  }
+  if (
+    !document ||
+    typeof document !== 'object' ||
+    Array.isArray(document) ||
+    !('mcpServers' in document)
+  ) {
+    throw new Error(`${source}: expected an object with an mcpServers key`);
+  }
+  const session = validateMcpServers((document as { mcpServers: unknown }).mcpServers, source);
+  return { ...global, ...session };
+}
+
 export function loadConfig(home = homedir()): ChimeraConfig {
   const path = configPath(home);
   let raw: string;
