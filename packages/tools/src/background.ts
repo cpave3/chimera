@@ -5,12 +5,27 @@ const SIGKILL_DELAY_MS = 2_000;
 
 export type BackgroundProcessStatus = 'running' | 'exited' | 'killed';
 
+export interface SandboxRetry {
+  reason: string;
+  initialExitCode: number;
+}
+
+export interface BackgroundLaunchOptions {
+  env?: Record<string, string>;
+  shellCommand?: string;
+  retryOnFailure?: (result: { exitCode: number; stderr: string }) => Promise<{
+    shellCommand: string;
+    reason: string;
+  } | null>;
+}
+
 export interface BackgroundProcess {
   id: string;
   command: string;
   status: BackgroundProcessStatus;
   exitCode: number | null;
   startedAt: number;
+  sandboxRetry?: SandboxRetry;
 }
 
 export interface BackgroundOutputRead {
@@ -19,6 +34,7 @@ export interface BackgroundOutputRead {
   status: BackgroundProcessStatus;
   exitCode: number | null;
   truncated: boolean;
+  sandboxRetry?: SandboxRetry;
 }
 
 export interface BackgroundExitNotice {
@@ -40,6 +56,8 @@ interface TrackedProcess {
   child: ChildProcess;
   stdout: CursorBuffer;
   stderr: CursorBuffer;
+  authorizing: boolean;
+  killRequested: boolean;
 }
 
 /**
@@ -67,10 +85,7 @@ export class BackgroundProcessManager {
    * Start `command` in the background. `shellCommand` is what runs when it
    * differs from what the record should show: the command in its sandbox.
    */
-  launch(
-    command: string,
-    opts: { env?: Record<string, string>; shellCommand?: string } = {},
-  ): BackgroundProcess {
+  launch(command: string, opts: BackgroundLaunchOptions = {}): BackgroundProcess {
     const id = `shell_${this.nextId++}`;
     const child = spawn('sh', ['-c', opts.shellCommand ?? command], {
       cwd: this.cwd,
@@ -90,20 +105,70 @@ export class BackgroundProcessManager {
       child,
       stdout: new CursorBuffer(this.maxOutputBytes),
       stderr: new CursorBuffer(this.maxOutputBytes),
+      authorizing: false,
+      killRequested: false,
     };
+    this.watchAttempt(tracked, opts);
+    this.processes.set(id, tracked);
+    return { ...record };
+  }
+
+  private watchAttempt(tracked: TrackedProcess, opts: BackgroundLaunchOptions): void {
+    const child = tracked.child;
+    const attemptStderr = opts.retryOnFailure ? new CursorBuffer(this.maxOutputBytes) : undefined;
     child.stdout?.on('data', (chunk: Buffer) => tracked.stdout.push(chunk));
-    child.stderr?.on('data', (chunk: Buffer) => tracked.stderr.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => {
+      tracked.stderr.push(chunk);
+      attemptStderr?.push(chunk);
+    });
     child.on('error', (err) => {
-      tracked.stderr.push(Buffer.from(String(err?.message ?? err)));
+      tracked.stderr.push(Buffer.from(String(err.message)));
       this.settle(tracked, 'exited', -1);
     });
     child.on('close', (code, signal) => {
       if (tracked.record.status !== 'running') return;
       const wasSignalled = signal === 'SIGTERM' || signal === 'SIGKILL';
-      this.settle(tracked, wasSignalled ? 'killed' : 'exited', code ?? (wasSignalled ? -1 : 0));
+      const exitCode = code ?? (wasSignalled ? -1 : 0);
+      if (tracked.killRequested) {
+        this.settle(tracked, 'killed', exitCode);
+        return;
+      }
+      if (signal === null && exitCode !== 0 && opts.retryOnFailure) {
+        void this.retry(tracked, opts, exitCode, attemptStderr!.consume());
+      } else {
+        this.settle(tracked, wasSignalled ? 'killed' : 'exited', exitCode);
+      }
     });
-    this.processes.set(id, tracked);
-    return { ...record };
+  }
+
+  private async retry(
+    tracked: TrackedProcess,
+    opts: BackgroundLaunchOptions,
+    exitCode: number,
+    stderr: string,
+  ): Promise<void> {
+    tracked.authorizing = true;
+    try {
+      const retry = await opts.retryOnFailure!({ exitCode, stderr });
+      if (tracked.record.status !== 'running') return;
+      tracked.authorizing = false;
+      if (!retry) {
+        this.settle(tracked, 'exited', exitCode);
+        return;
+      }
+      tracked.record.sandboxRetry = { reason: retry.reason, initialExitCode: exitCode };
+      tracked.stderr.pushNotice(`\nAutomatic host-retry: ${retry.reason}\n`);
+      tracked.child = spawn('sh', ['-c', retry.shellCommand], {
+        cwd: this.cwd,
+        env: { ...process.env, ...(opts.env ?? {}) },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
+      });
+      this.watchAttempt(tracked, { env: opts.env });
+    } catch (err) {
+      tracked.stderr.pushNotice(`\nAutomatic host-retry failed: ${String(err)}\n`);
+      this.settle(tracked, 'exited', exitCode);
+    }
   }
 
   get(id: string): BackgroundProcess | null {
@@ -125,6 +190,7 @@ export class BackgroundProcessManager {
       status: tracked.record.status,
       exitCode: tracked.record.exitCode,
       truncated: tracked.stdout.truncated || tracked.stderr.truncated,
+      ...(tracked.record.sandboxRetry ? { sandboxRetry: tracked.record.sandboxRetry } : {}),
     };
   }
 
@@ -132,6 +198,11 @@ export class BackgroundProcessManager {
   kill(id: string): boolean {
     const tracked = this.processes.get(id);
     if (!tracked || tracked.record.status !== 'running') return false;
+    tracked.killRequested = true;
+    if (tracked.authorizing) {
+      this.settle(tracked, 'killed', -1);
+      return true;
+    }
     this.signalGroup(tracked.child, 'SIGTERM');
     const killTimer = setTimeout(() => {
       if (tracked.record.status === 'running') {
@@ -145,7 +216,9 @@ export class BackgroundProcessManager {
   killAll(): void {
     for (const tracked of this.processes.values()) {
       if (tracked.record.status === 'running') {
-        this.signalGroup(tracked.child, 'SIGKILL');
+        tracked.killRequested = true;
+        if (tracked.authorizing) this.settle(tracked, 'killed', -1);
+        else this.signalGroup(tracked.child, 'SIGKILL');
       }
     }
   }
@@ -188,6 +261,13 @@ class CursorBuffer {
   truncated = false;
 
   constructor(private readonly cap: number) {}
+
+  // Lifecycle notices must remain visible even when process output hit the cap.
+  pushNotice(text: string): void {
+    const chunk = Buffer.from(text);
+    this.chunks.push(chunk);
+    this.size += chunk.length;
+  }
 
   push(chunk: Buffer): void {
     if (this.truncated) return;

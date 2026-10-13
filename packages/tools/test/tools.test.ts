@@ -137,6 +137,7 @@ describe('buildTools', () => {
     const permissionGate: PermissionGate = {
       request: async () => ({ decision: 'deny', remembered: false }),
       check: async () => null,
+      requestRememberedBypass: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},
@@ -167,6 +168,7 @@ describe('buildTools', () => {
         };
       },
       check: async () => null,
+      requestRememberedBypass: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},
@@ -207,6 +209,7 @@ describe('buildTools', () => {
         authentication: 'sudo',
       }),
       check: async () => null,
+      requestRememberedBypass: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},
@@ -246,6 +249,7 @@ describe('buildTools', () => {
           authentication: 'sudo',
         }),
         check: async () => null,
+        requestRememberedBypass: async () => null,
         addRule: () => {},
         listRules: () => [],
         removeRule: () => {},
@@ -270,6 +274,7 @@ describe('buildTools', () => {
     const permissionGate: PermissionGate = {
       request: vi.fn(async () => ({ decision: 'allow', remembered: false })),
       check: async () => null,
+      requestRememberedBypass: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},

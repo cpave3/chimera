@@ -18,6 +18,7 @@ class FakeGate implements PermissionGate {
     }),
   );
   check = vi.fn(async () => null);
+  requestRememberedBypass = vi.fn(async () => null);
   addRule = vi.fn();
   listRules = vi.fn(() => []);
   removeRule = vi.fn();

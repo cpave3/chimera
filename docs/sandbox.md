@@ -38,6 +38,17 @@ granting a prefix: they run without OS confinement. See
 The context panel shows
 `sandbox os` while the OS sandbox is active.
 
+For a recognized sandbox failure, Chimera retries the command once on the host
+if an explicit saved bypass rule passes a fresh policy check. It does not prompt
+or consult the AI reviewer for this retry. Normal failures, timeouts and cancelled
+calls are not retried. Foreground retries share the original timeout budget;
+background retries keep the same shell ID. Results include `sandbox_retry`
+evidence and preserve the first attempt's diagnostics.
+
+**A retry can repeat partial side effects.** The first attempt may have changed
+files or external state before failing. Grant saved bypass rules only for commands
+you trust to run again outside confinement.
+
 In the bypass prompt, choose **Allow once** for one run, or **Allow exact command…**
 to remember only the command shown. Choose **Allow command prefix…** to edit a
 prefix such as `legato` or `legato plan`. Review the pattern, then select session,

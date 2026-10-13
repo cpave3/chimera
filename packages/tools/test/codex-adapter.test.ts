@@ -34,6 +34,7 @@ describe('Codex Bash adapter', () => {
         return { decision: 'allow', remembered: false };
       },
       check: async () => null,
+      requestRememberedBypass: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},

@@ -38,14 +38,29 @@ With the OS sandbox active, the session block of the system prompt SHALL name th
 - **THEN** its system prompt has the line `- sandbox: os — …` and names `unsandboxed: true`
 
 ### Requirement: Blocked command note
-When a sandboxed command fails and its output shows that the sandbox refused a write, or refused the network while the network setting is `off`, the tool result SHALL carry a note that says what the sandbox allows and how to ask for an unsandboxed run.
+When a sandboxed command fails and its output shows that the sandbox refused a write, or refused the network while the network setting is `off`, and no automatic host retry is authorized, the tool result SHALL carry a note that says what the sandbox allows and how to ask for an unsandboxed run.
 
 #### Scenario: Refused write
 - **WHEN** a sandboxed command fails with `Read-only file system`
 - **THEN** the tool result has a `sandbox` note that names `unsandboxed`
 
+### Requirement: Automatic remembered bypass retry
+Foreground and background bash calls SHALL retry a recognized OS sandbox failure on the host once when a fresh, non-prompting policy check admits an explicit saved exact/prefix bypass rule. Deny rules, hard blocks, sudo authentication and other mandatory findings SHALL retain precedence. Ordinary/glob allow rules, auto-approval and AI reviewers SHALL NOT authorize retries. Normal command failures, timeouts and cancellations SHALL NOT be retried. Results SHALL retain visible `sandbox_retry` evidence and original diagnostics. Foreground retries SHALL share the original timeout budget; background retries SHALL retain the shell ID and prevent relaunch after cancellation, including cancellation during authorization. A retry may repeat partial side effects from the first attempt; documentation SHALL warn of this risk.
+
+#### Scenario: Registered tool retries a protected write
+- **WHEN** a sandboxed registered bash call fails writing a protected path and an explicit saved bypass rule matches
+- **THEN** it retries once on the host without a prompt or another model call, returns retry evidence, and the authorized write succeeds
+
+#### Scenario: Mandatory finding prevents retry
+- **WHEN** a saved bypass rule matches but a fresh policy check finds another mandatory approval requirement
+- **THEN** the sandbox failure is returned without a host retry or an approval prompt
+
+#### Scenario: Polling a background retry
+- **WHEN** a background command's stderr is consumed before it exits and its sandbox failure is authorized for retry
+- **THEN** retry classification still uses the first attempt's stderr, and subsequent polls retain retry metadata under the same shell ID
+
 ### Requirement: Unsandboxed request
-`bash` SHALL accept `unsandboxed: true`, which runs the command outside the OS sandbox. Such a call SHALL carry a `reason` and SHALL need approval unless an explicit exact/prefix bypass rule admits it under the permission policy. Auto-approval and ordinary allow rules SHALL NOT grant a bypass. With no user to ask and no bypass rule or reviewer approval, it SHALL be denied. Both native and Codex-shaped bash schemas SHALL retain the unsandboxed argument and reason.
+`bash` SHALL accept `unsandboxed: true`, which runs the command outside the OS sandbox. Such a call SHALL carry a `reason` and SHALL need approval unless an explicit exact/prefix bypass rule admits it under the permission policy. Auto-approval and ordinary allow rules SHALL NOT grant a bypass. With no user to ask and no bypass rule, it SHALL be denied. Both native and Codex-shaped bash schemas SHALL retain the unsandboxed argument and reason.
 
 #### Scenario: Approved
 - **WHEN** the model calls `bash` with `unsandboxed: true` and a reason, and the user allows it

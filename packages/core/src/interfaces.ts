@@ -164,6 +164,8 @@ export interface HostAuthenticationCapability {
 export interface PermissionGate {
   check(req: PermissionRequest): Promise<PermissionResolution | null>;
   request(req: PermissionRequest): Promise<PermissionResolution>;
+  /** Authorize an automatic sandbox retry using only explicit saved rules; never prompt. */
+  requestRememberedBypass(req: PermissionRequest): Promise<PermissionResolution | null>;
   addRule(rule: PermissionRule, persist: 'session' | 'project' | 'global'): void;
   listRules(): PermissionRule[];
   removeRule(index: number): void;

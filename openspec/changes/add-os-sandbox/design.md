@@ -80,7 +80,18 @@ When a sandboxed command fails and its stderr has the kernel's wording for a
 refused write (`Read-only file system`, or SQLite's `readonly database`), or, with the network off, for a
 failed lookup or connection, the result gains a `sandbox` note: what the
 sandbox allows, and that `unsandboxed: true` with a reason asks the user.
-The match is a heuristic; a miss costs only the hint.
+Before returning that note, the tool may retry once on the host if a fresh
+non-prompting gate check admits an explicit saved bypass rule. Other mandatory
+findings still prevent automatic retry; auto-approval and AI reviewers cannot
+authorize it. The match is heuristic, so a saved grant must be safe to reuse:
+the failed first attempt can already have produced side effects.
+
+Foreground retries retain the original diagnostics in `sandbox_retry` and use
+only the remaining timeout budget. Background retries retain the shell ID,
+append a visible retry notice, and retain retry metadata across output polls.
+Per-attempt stderr is buffered independently of destructive polls. Cancellation
+during authorization prevents relaunch. Ordinary failures, timeouts and cancelled
+calls are never retried, and a failing host attempt cannot retry again.
 
 ### D6. Availability
 

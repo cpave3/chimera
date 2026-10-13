@@ -44,6 +44,12 @@ type BashResult =
       timed_out: boolean;
       /** Present when the OS sandbox is why the command failed. */
       sandbox?: string;
+      sandbox_retry?: {
+        reason: string;
+        initial_exit_code: number;
+        initial_stdout: string;
+        initial_stderr: string;
+      };
     }
   | {
       shell_id: string;
@@ -57,7 +63,7 @@ function osSandboxDescription(ctx: ToolContext): string {
     ctx.osSandbox.spec.network === 'off'
       ? 'it can read every file, can write only in the working directory and the temp directory, and has no network access'
       : 'it can read every file and can write only in the working directory and the temp directory';
-  return ` A command runs in an OS sandbox: ${limits}. If a command must do more, set unsandboxed: true with a reason to request approval or use an explicit saved bypass permission. Do not ask the user to run the command manually.`;
+  return ` A command runs in an OS sandbox: ${limits}. A recognized sandbox failure is retried once on the host when an explicit saved bypass rule authorizes it. Otherwise, set unsandboxed: true with a reason to request approval. Do not ask the user to run the command manually.`;
 }
 
 export function buildBashTool(ctx: ToolContext) {
@@ -72,7 +78,7 @@ export function buildBashTool(ctx: ToolContext) {
     execute: async (args, { abortSignal, toolCallId }) => {
       const command = args.command;
       if (args.run_in_background) {
-        return launchBackground(ctx, args, toolCallId);
+        return launchBackground(ctx, args, toolCallId, abortSignal);
       }
 
       const target: 'sandbox' | 'host' =
@@ -126,17 +132,33 @@ export function buildBashTool(ctx: ToolContext) {
         }
       }
 
-      const result = await executor.exec(
+      const timeoutMs = args.timeout_ms ?? 120_000;
+      const startedAt = Date.now();
+      let result = await executor.exec(
         sandboxed && ctx.osSandbox ? ctx.osSandbox.wrap(command) : command,
-        { timeoutMs: args.timeout_ms, signal: abortSignal },
+        { timeoutMs, signal: abortSignal },
       );
       const note = sandboxed && ctx.osSandbox ? sandboxBlockNote(result, ctx.osSandbox.spec) : null;
+      let retry: Extract<BashResult, { exit_code: number }>['sandbox_retry'];
+      if (note && !result.timedOut && !abortSignal?.aborted) {
+        const reason = await sandboxRetryReason(ctx, command, executor.cwd(), result, toolCallId);
+        const remainingMs = timeoutMs - (Date.now() - startedAt);
+        if (reason && remainingMs > 0 && !abortSignal?.aborted) {
+          retry = {
+            reason,
+            initial_exit_code: result.exitCode,
+            initial_stdout: result.stdout,
+            initial_stderr: result.stderr,
+          };
+          result = await executor.exec(command, { timeoutMs: remainingMs, signal: abortSignal });
+        }
+      }
       return {
         stdout: result.stdout,
         stderr: result.stderr,
         exit_code: result.exitCode,
         timed_out: result.timedOut,
-        ...(note ? { sandbox: note } : {}),
+        ...(retry ? { sandbox_retry: retry } : note ? { sandbox: note } : {}),
       };
     },
     formatScrollback: (args, result) => {
@@ -144,7 +166,9 @@ export function buildBashTool(ctx: ToolContext) {
       if (!result) return { summary: head };
       if ('shell_id' in result) return { summary: `${head} (background: ${result.shell_id})` };
       if (result.timed_out) return { summary: `${head} (timed out)` };
-      return { summary: `${head} (exit ${result.exit_code})` };
+      return {
+        summary: `${head} (exit ${result.exit_code})${result.sandbox_retry ? ' (host retry)' : ''}`,
+      };
     },
   });
 }
@@ -177,10 +201,36 @@ function hostScope(
   return { sandboxed: false, request: { unsandboxed: true } };
 }
 
+async function sandboxRetryReason(
+  ctx: ToolContext,
+  command: string,
+  cwd: string,
+  result: { exitCode: number; stderr: string },
+  toolCallId?: string,
+): Promise<string | null> {
+  if (!ctx.osSandbox || !ctx.permissionGate || !sandboxBlockNote(result, ctx.osSandbox.spec)) {
+    return null;
+  }
+  const reason =
+    'Automatic host retry after an OS sandbox failure under a saved bypass permission.';
+  const resolution = await ctx.permissionGate.requestRememberedBypass({
+    requestId: newRequestId(),
+    tool: 'bash',
+    target: 'host',
+    command,
+    cwd,
+    unsandboxed: true,
+    reason,
+    ...(toolCallId ? { toolCallId } : {}),
+  });
+  return resolution?.decision === 'allow' ? reason : null;
+}
+
 async function launchBackground(
   ctx: ToolContext,
   args: BashArgs,
   toolCallId?: string,
+  abortSignal?: AbortSignal,
 ): Promise<BashResult> {
   const refuse = (stderr: string): BashResult => ({
     stdout: '',
@@ -217,7 +267,22 @@ async function launchBackground(
   }
   const launched = manager.launch(
     args.command,
-    scope.sandboxed && ctx.osSandbox ? { shellCommand: ctx.osSandbox.wrap(args.command) } : {},
+    scope.sandboxed && ctx.osSandbox
+      ? {
+          shellCommand: ctx.osSandbox.wrap(args.command),
+          retryOnFailure: async (result) => {
+            if (abortSignal?.aborted) return null;
+            const reason = await sandboxRetryReason(
+              ctx,
+              args.command,
+              (ctx.bashHostExecutor ?? ctx.hostExecutor).cwd(),
+              result,
+              toolCallId,
+            );
+            return reason && !abortSignal?.aborted ? { shellCommand: args.command, reason } : null;
+          },
+        }
+      : {},
   );
   return {
     shell_id: launched.id,

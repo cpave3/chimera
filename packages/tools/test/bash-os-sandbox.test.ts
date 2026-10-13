@@ -26,6 +26,7 @@ class RecordingGate implements PermissionGate {
     return this.answer;
   }
   check = async () => null;
+  requestRememberedBypass = async () => null;
   addRule = () => {};
   listRules = () => [];
   removeRule = () => {};

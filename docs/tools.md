@@ -120,6 +120,12 @@ command, not compounds, substitutions, redirects, wrappers or environment
 assignments. Trust the executable's subcommands before granting a prefix.
 See [Remembered sandbox bypass](bash-command-policy.md#remembered-sandbox-bypass).
 
+Recognized sandbox failures are retried once on the host when an explicit saved
+bypass rule passes a fresh, non-prompting policy check. This works in foreground
+and background execution; results include `sandbox_retry` evidence. Ordinary
+failures, timeouts and cancellations are not retried. The first attempt may have
+partially succeeded, so a retry can repeat side effects.
+
 After building a tool-surface fix (including the Codex-shaped `bash` schema),
 restart Chimera and start a new session to receive the updated tool definitions.
 Rebuilding alone does not replace the schemas in an already running session.

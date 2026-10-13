@@ -7,7 +7,7 @@ import type {
   PermissionRequest,
   PermissionResolution,
 } from '@chimera/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DefaultPermissionGate, type GateOptions } from '../src/gate';
 
 const pathFinding: CommandPolicyFinding = {
@@ -65,7 +65,7 @@ function gate(findings: CommandPolicyFinding[], over: Partial<GateOptions> = {})
             version: 1,
             outcome: findings.length === 0 ? 'pass' : 'approval_required',
             stages: [],
-            findings,
+            findings: [...findings],
           };
         },
       },
@@ -410,4 +410,149 @@ it.each([
     headless ? { decision: 'deny', denialSource: 'headless' } : { decision: 'allow' },
   );
   expect(asked).toHaveLength(headless ? 0 : 1);
+});
+
+it('authorizes an automatic retry only under an explicit bypass rule, without asking the user', async () => {
+  const { gate: built, asked, audited } = gate([], { autoApprove: 'all' });
+  const retry = request({
+    command: 'legato plan status',
+    reason: 'retry blocked host database write',
+  });
+  expect(await built.requestRememberedBypass(retry)).toBeNull();
+  built.applyRemember(
+    { scope: 'session', pattern: 'legato', patternKind: 'prefix', allowUnsandboxed: true },
+    { ...retry, unsandboxed: true },
+    'allow',
+  );
+  expect(await built.requestRememberedBypass(retry)).toMatchObject({
+    decision: 'allow',
+    remembered: true,
+  });
+  expect(asked).toEqual([]);
+  expect(audited).toMatchObject([
+    { source: 'rule', request: { unsandboxed: true, osSandbox: false } },
+  ]);
+});
+
+it.each([
+  riskFinding,
+  pathFinding,
+  sudoFinding,
+])('refuses automatic retries with another mandatory finding: $stageId', async (finding) => {
+  const { gate: built, asked } = gate([finding], {
+    reviewer: { review: async () => ({ decision: 'allow', reason: 'allow everything' }) },
+  });
+  const retry = request({ command: 'legato plan status' });
+  built.addRule(
+    {
+      tool: 'bash',
+      target: 'host',
+      pattern: 'legato',
+      patternKind: 'prefix',
+      allowUnsandboxed: true,
+      decision: 'allow',
+      createdAt: 1,
+    },
+    'session',
+  );
+  expect(await built.requestRememberedBypass(retry)).toBeNull();
+  expect(asked).toEqual([]);
+});
+
+it('does not treat an ordinary allow rule as automatic retry authorization', async () => {
+  const { gate: built, asked } = gate([]);
+  const retry = request({ command: 'legato plan status' });
+  built.addRule(
+    {
+      tool: 'bash',
+      target: 'host',
+      pattern: 'legato',
+      patternKind: 'prefix',
+      decision: 'allow',
+      createdAt: 1,
+    },
+    'session',
+  );
+  expect(await built.requestRememberedBypass(retry)).toBeNull();
+  expect(asked).toEqual([]);
+});
+
+it('honors deny rules during automatic retry authorization', async () => {
+  const { gate: built, asked } = gate([]);
+  const retry = request({ command: 'legato plan status' });
+  built.addRule(
+    {
+      tool: 'bash',
+      target: 'host',
+      pattern: 'legato',
+      patternKind: 'prefix',
+      allowUnsandboxed: true,
+      decision: 'allow',
+      createdAt: 1,
+    },
+    'session',
+  );
+  built.addRule(
+    {
+      tool: 'bash',
+      target: 'host',
+      pattern: retry.command,
+      patternKind: 'exact',
+      decision: 'deny',
+      createdAt: 2,
+    },
+    'session',
+  );
+  expect(await built.requestRememberedBypass(retry)).toMatchObject({
+    decision: 'deny',
+    denialSource: 'rule',
+  });
+  expect(asked).toEqual([]);
+});
+
+it.each([
+  'policy',
+  'grant',
+  'deny',
+])('reevaluates a changed %s before a host retry', async (change) => {
+  const findings: CommandPolicyFinding[] = [];
+  const review = vi.fn(async () => ({ decision: 'allow' as const, reason: 'ordinary allow' }));
+  const { gate: built, asked } = gate(findings, {
+    autoApprove: 'all',
+    headlessAutoDeny: true,
+    reviewer: { review },
+  });
+  const initial = request({ command: 'legato plan status', osSandbox: true });
+  built.addRule(
+    {
+      tool: 'bash',
+      target: 'host',
+      pattern: 'legato',
+      patternKind: 'prefix',
+      allowUnsandboxed: true,
+      decision: 'allow',
+      createdAt: 1,
+    },
+    'session',
+  );
+  expect(await built.request(initial)).toMatchObject({ decision: 'allow' });
+  if (change === 'policy') findings.push(riskFinding);
+  if (change === 'grant') built.removeRule(0);
+  if (change === 'deny')
+    built.addRule(
+      {
+        tool: 'bash',
+        target: 'host',
+        pattern: initial.command,
+        patternKind: 'exact',
+        decision: 'deny',
+        createdAt: 2,
+      },
+      'session',
+    );
+  const resolution = await built.requestRememberedBypass(initial);
+  if (change === 'deny') expect(resolution).toMatchObject({ decision: 'deny' });
+  else expect(resolution).toBeNull();
+  expect(asked).toEqual([]);
+  expect(review).not.toHaveBeenCalled();
 });

@@ -25,3 +25,11 @@
 
 - [x] 5.1 Update `README.md` and `docs/bash-command-policy.md`
 - [x] 5.2 `pnpm -r build`, `pnpm -r test`, `pnpm biome:lint`
+
+## 6. Automatic remembered-bypass retry
+
+- [x] 6.1 Add fresh, non-prompting saved-rule authorization preserving denies and mandatory findings
+- [x] 6.2 Retry recognized foreground sandbox failures once within the original timeout budget, retaining diagnostics
+- [x] 6.3 Retry background failures under the same ID, retaining polling evidence and preventing relaunch after cancellation
+- [x] 6.4 Verify registered-tool writes against real bubblewrap and negative authorization/cancellation cases
+- [x] 6.5 Document retry behavior and the risk of repeated partial side effects

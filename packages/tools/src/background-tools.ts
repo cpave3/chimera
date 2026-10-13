@@ -14,6 +14,7 @@ type OutputResult =
       status: 'running' | 'exited' | 'killed';
       exit_code: number | null;
       truncated: boolean;
+      sandbox_retry?: { reason: string; initial_exit_code: number };
     }
   | { error: string };
 
@@ -36,6 +37,14 @@ export function buildBashOutputTool(ctx: ToolContext) {
         status: read.status,
         exit_code: read.exitCode,
         truncated: read.truncated,
+        ...(read.sandboxRetry
+          ? {
+              sandbox_retry: {
+                reason: read.sandboxRetry.reason,
+                initial_exit_code: read.sandboxRetry.initialExitCode,
+              },
+            }
+          : {}),
       };
     },
     formatScrollback: (args, result) => {

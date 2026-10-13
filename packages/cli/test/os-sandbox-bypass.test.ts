@@ -29,6 +29,87 @@ describe('OS sandbox bypass through the CLI factory', () => {
   });
 
   it.skipIf(detectOsSandbox() !== 'bwrap').each([false, true])(
+    'automatically retries a registered sandboxed write under a saved bypass rule (background=%s)',
+    async (background) => {
+      const protectedDirectory = join(cwd, '.chimera');
+      const sandboxTmp = join(cwd, 'sandbox-tmp');
+      await mkdir(protectedDirectory);
+      await mkdir(sandboxTmp);
+      let prompts = 0;
+      const gate = new DefaultPermissionGate({
+        cwd,
+        home: cwd,
+        autoApprove: 'all',
+        raiseRequest: async () => {
+          prompts++;
+          return { decision: 'deny', remembered: false };
+        },
+      });
+      gate.addRule(
+        {
+          tool: 'bash',
+          target: 'host',
+          pattern: 'touch',
+          patternKind: 'prefix',
+          allowUnsandboxed: true,
+          decision: 'allow',
+          createdAt: 1,
+        },
+        'session',
+      );
+      const executor = new LocalExecutor({ cwd });
+      const manager = new BackgroundProcessManager({ cwd });
+      const tools = buildTools({
+        sandboxExecutor: executor,
+        hostExecutor: executor,
+        permissionGate: gate,
+        sandboxMode: 'off',
+        toolCallShape: 'codex',
+        backgroundProcesses: manager,
+        osSandbox: createOsSandbox('bwrap', {
+          cwd,
+          tmp: sandboxTmp,
+          writablePaths: [],
+          readOnlyPaths: [protectedDirectory],
+          network: 'on',
+        }),
+      }).tools as unknown as Record<string, BashTool>;
+      const target = join(protectedDirectory, 'automatic-host-state');
+      try {
+        let result = await tools.bash!.execute(
+          tools.bash!.inputSchema.parse({
+            command: `touch '${target}'`,
+            run_in_background: background,
+          }),
+          {},
+        );
+        if (background) {
+          const { shell_id: shellId } = result as { shell_id: string };
+          await expect.poll(() => manager.get(shellId)?.status).toBe('exited');
+          result = await tools.bash_output!.execute({ shell_id: shellId }, {});
+        }
+        expect(result).toMatchObject({
+          exit_code: 0,
+          sandbox_retry: {
+            initial_exit_code: 1,
+            reason: expect.stringContaining('Automatic host retry'),
+          },
+        });
+        if (background)
+          expect(result).toMatchObject({ stderr: expect.stringMatching(/Read-only file system/) });
+        else
+          expect(result).toMatchObject({
+            sandbox_retry: { initial_stderr: expect.stringMatching(/Read-only file system/) },
+          });
+        await access(target);
+        expect(prompts).toBe(0);
+      } finally {
+        manager.killAll();
+      }
+    },
+  );
+
+  it.skipIf(detectOsSandbox() !== 'bwrap').each([false, true])(
     'blocks a registered Codex write, then admits an explicitly remembered bypass (background=%s)',
     async (background) => {
       const protectedDirectory = join(cwd, '.chimera');

@@ -192,6 +192,17 @@ export class DefaultPermissionGate implements McpPermissionGate {
   }
 
   async request(req: PermissionRequest): Promise<PermissionResolution> {
+    return (await this.decide(req, false))!;
+  }
+
+  async requestRememberedBypass(req: PermissionRequest): Promise<PermissionResolution | null> {
+    return this.decide({ ...req, unsandboxed: true, osSandbox: false }, true);
+  }
+
+  private async decide(
+    req: PermissionRequest,
+    rememberedBypassOnly: boolean,
+  ): Promise<PermissionResolution | null> {
     if (req.mcp) throw new Error('Use requestMcp for MCP permissions');
     let evaluatedRequest = req;
     // A request to leave the OS sandbox is decided by the user also when the
@@ -248,12 +259,14 @@ export class DefaultPermissionGate implements McpPermissionGate {
         ) {
           return this.audited(evaluatedRequest, { decision: 'allow', remembered: true }, 'rule');
         }
+        if (rememberedBypassOnly) return null;
         const resolution = await this.prompt(evaluatedRequest);
         return resolution.decision === 'allow' && requiresSudoAuthentication(policyAnalysis)
           ? { ...resolution, authentication: 'sudo' }
           : resolution;
       }
     }
+    if (rememberedBypassOnly) return null;
     const matchingRule = await matchRule(req, this.store.all());
     if (matchingRule?.decision === 'deny') {
       return this.audited(
