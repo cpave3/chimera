@@ -127,21 +127,20 @@ const permissionRuleSchema = z.object({
     tool: z.string(),
     target: z.enum(['host', 'sandbox']),
     pattern: z.string(),
-    patternKind: z.enum(['exact', 'glob']),
+    patternKind: z.enum(['exact', 'glob', 'prefix']),
+    allowUnsandboxed: z.boolean().optional(),
     decision: z.enum(['allow', 'deny']),
     createdAt: z.number(),
   }),
   scope: z.enum(['session', 'project', 'global']),
 });
 
-const rememberSchema = z.union([
-  z.object({ scope: z.literal('session') }),
-  z.object({
-    scope: z.enum(['project', 'global']),
-    pattern: z.string(),
-    patternKind: z.enum(['exact', 'glob']),
-  }),
-]);
+const rememberSchema = z.object({
+  scope: z.enum(['session', 'project', 'global']),
+  pattern: z.string(),
+  patternKind: z.enum(['exact', 'glob', 'prefix']),
+  allowUnsandboxed: z.boolean().optional(),
+});
 const questionResolutionSchema = z.discriminatedUnion('status', [
   z.object({
     status: z.literal('answered'),

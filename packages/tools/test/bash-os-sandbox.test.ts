@@ -25,7 +25,7 @@ class RecordingGate implements PermissionGate {
     this.requests.push(request);
     return this.answer;
   }
-  check = () => null;
+  check = async () => null;
   addRule = () => {};
   listRules = () => [];
   removeRule = () => {};

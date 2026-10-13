@@ -221,3 +221,193 @@ describe('a request to run outside the OS sandbox', () => {
     ]);
   });
 });
+
+describe('remembered sandbox bypass permissions', () => {
+  it('admits an explicitly remembered exact command and audits the saved rule', async () => {
+    const { gate: built, asked, audited } = gate([]);
+    const bypass = request({ unsandboxed: true, reason: 'write host state' });
+    built.applyRemember(
+      { scope: 'session', pattern: bypass.command, patternKind: 'exact', allowUnsandboxed: true },
+      bypass,
+      'allow',
+    );
+
+    expect(await built.request(bypass)).toMatchObject({ decision: 'allow', remembered: true });
+    expect(asked).toEqual([]);
+    expect(audited).toMatchObject([{ source: 'rule', request: { unsandboxed: true } }]);
+  });
+});
+
+it('remembers a safe command prefix for the session and admits another invocation', async () => {
+  const { gate: built, asked } = gate([]);
+  const bypass = request({ unsandboxed: true, command: 'legato plan submit .legato/plans/test' });
+  built.applyRemember(
+    { scope: 'session', pattern: 'legato plan', patternKind: 'prefix', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+
+  expect(await built.request({ ...bypass, command: 'legato plan status --json' })).toMatchObject({
+    decision: 'allow',
+    remembered: true,
+  });
+  expect(asked).toEqual([]);
+});
+
+it.each([
+  'session',
+  'project',
+  'global',
+] as const)('keeps an explicit exact bypass rule in its %s scope', async (scope) => {
+  const { gate: built } = gate([], { headlessAutoDeny: true, autoApprove: 'none' });
+  const bypass = request({ unsandboxed: true, command: 'legato plan status' });
+  built.applyRemember(
+    { scope, pattern: bypass.command, patternKind: 'exact', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  expect(await built.request(bypass)).toMatchObject({ decision: 'allow', remembered: true });
+  const { gate: reloaded } = gate([], { headlessAutoDeny: true, autoApprove: 'none' });
+  expect(await reloaded.request(bypass)).toMatchObject(
+    scope === 'session'
+      ? { decision: 'deny', denialSource: 'headless' }
+      : { decision: 'allow', remembered: true },
+  );
+  expect(await built.request({ ...bypass, command: 'legato plan submit' })).toMatchObject({
+    decision: 'deny',
+    denialSource: 'headless',
+  });
+  expect(await built.request({ ...bypass, unsandboxed: false })).toMatchObject({
+    decision: 'deny',
+    denialSource: 'headless',
+  });
+});
+
+it.each([
+  riskFinding,
+  pathFinding,
+  sudoFinding,
+])('keeps other mandatory findings in force: $kind/$stageId', async (finding) => {
+  const { gate: built, asked } = gate([finding]);
+  const bypass = request({ unsandboxed: true });
+  built.applyRemember(
+    { scope: 'session', pattern: bypass.command, patternKind: 'exact', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  const resolution = await built.request(bypass);
+  expect(asked).toHaveLength(1);
+  expect(resolution.remembered).toBe(false);
+  if (finding === sudoFinding) expect(resolution.authentication).toBe('sudo');
+});
+
+it.each([
+  'project',
+  'global',
+] as const)('keeps a %s prefix bypass in its storage scope across projects', async (scope) => {
+  const bypass = request({ unsandboxed: true, command: 'legato plan status' });
+  const { gate: built } = gate([]);
+  built.applyRemember(
+    { scope, pattern: 'legato plan', patternKind: 'prefix', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  const { gate: otherProject } = gate([], {
+    cwd: join(cwd, 'other-project'),
+    autoApprove: 'none',
+    headlessAutoDeny: true,
+  });
+  expect(
+    await otherProject.request({ ...bypass, command: 'legato plan submit /tmp/plan' }),
+  ).toMatchObject(
+    scope === 'global'
+      ? { decision: 'allow', remembered: true }
+      : { decision: 'deny', denialSource: 'headless' },
+  );
+});
+
+it('a saved bypass allow never overrides a matching deny rule', async () => {
+  const { gate: built, asked } = gate([]);
+  const bypass = request({ unsandboxed: true });
+  built.applyRemember(
+    { scope: 'session', pattern: bypass.command, patternKind: 'exact', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  built.applyRemember(
+    { scope: 'session', pattern: bypass.command, patternKind: 'exact' },
+    bypass,
+    'deny',
+  );
+  expect(await built.request(bypass)).toMatchObject({ decision: 'deny', denialSource: 'rule' });
+  expect(asked).toEqual([]);
+});
+
+it('a saved bypass allow never overrides a blocked finding', async () => {
+  const { gate: built, asked } = gate([
+    {
+      kind: 'blocked',
+      stageId: 'hard_blocks',
+      ruleId: 'blocked',
+      message: 'blocked command',
+    },
+  ]);
+  const bypass = request({ unsandboxed: true });
+  built.applyRemember(
+    { scope: 'session', pattern: bypass.command, patternKind: 'exact', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  expect(await built.request(bypass)).toMatchObject({ decision: 'deny', denialSource: 'policy' });
+  expect(asked).toEqual([]);
+});
+
+it.each([
+  'legato-other plan status',
+  'legato plan status; printf unwanted',
+  'legato plan status && printf unwanted',
+  'legato plan status | cat',
+  'legato plan status > /tmp/result',
+  'legato plan status $(printf unwanted)',
+  'legato plan status `printf unwanted`',
+  'legato plan "$ACTION"',
+  'env legato plan status',
+  'bash -c "legato plan status"',
+  'legato plan "unterminated',
+])('a prefix bypass rule requires fresh approval for %s', async (command) => {
+  const { gate: built, asked } = gate([]);
+  const bypass = request({ unsandboxed: true, command: 'legato plan status' });
+  built.applyRemember(
+    { scope: 'session', pattern: 'legato', patternKind: 'prefix', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  await built.request({ ...bypass, command });
+  expect(asked).toHaveLength(1);
+});
+
+it('does not admit bypasses through a glob even when its rule has the bypass flag', async () => {
+  const { gate: built, asked } = gate([]);
+  const bypass = request({ unsandboxed: true, command: 'legato plan status; printf unwanted' });
+  built.applyRemember(
+    { scope: 'session', pattern: 'legato*', patternKind: 'glob', allowUnsandboxed: true },
+    bypass,
+    'allow',
+  );
+  await built.request(bypass);
+  expect(asked).toHaveLength(1);
+});
+
+it.each([
+  false,
+  true,
+])('never lets the AI reviewer grant a bypass (headless=%s)', async (headless) => {
+  const { gate: built, asked } = gate([], {
+    headlessAutoDeny: headless,
+    reviewer: { review: async () => ({ decision: 'allow', reason: 'ordinary host command' }) },
+  });
+  expect(await built.request(request({ unsandboxed: true }))).toMatchObject(
+    headless ? { decision: 'deny', denialSource: 'headless' } : { decision: 'allow' },
+  );
+  expect(asked).toHaveLength(headless ? 0 : 1);
+});

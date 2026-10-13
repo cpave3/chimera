@@ -72,7 +72,7 @@ export interface GateOptions {
  * In the OS sandbox the kernel refuses a write outside the allowed
  * directories and reads are allowed by design, so a path finding is no
  * reason to ask the user. A request to leave the sandbox is the opposite: it
- * is always the user's decision, so it gains a finding of its own.
+ * requires explicit authorization, so it gains a finding of its own.
  */
 function forExecutionScope(
   analysis: CommandPolicyAnalysis,
@@ -138,8 +138,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
     this.onReview = opts.onReview;
   }
 
-  check(req: PermissionRequest): PermissionResolution | null {
-    const rule = matchRule(req, this.store.all());
+  async check(req: PermissionRequest): Promise<PermissionResolution | null> {
+    const rule = await matchRule(req, this.store.all());
     if (!rule) return null;
     return {
       decision: rule.decision,
@@ -174,7 +174,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
       mcp: { server: call.server, tool: call.tool, preview: mcpArgumentPreview(call.args) },
       ...(call.toolCallId ? { toolCallId: call.toolCallId } : {}),
     };
-    const matchingRule = matchRule(request, this.store.all());
+    const matchingRule = await matchRule(request, this.store.all());
     if (matchingRule?.decision === 'deny') {
       return this.audited(
         request,
@@ -213,7 +213,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
         );
       }
       if (policyAnalysis.outcome === 'approval_required') {
-        const denyRule = matchRule(
+        const denyRule = await matchRule(
           req,
           this.store.all().filter((rule) => rule.decision === 'deny'),
         );
@@ -224,13 +224,37 @@ export class DefaultPermissionGate implements McpPermissionGate {
             'rule',
           );
         }
+        const bypassRule = req.unsandboxed
+          ? await matchRule(
+              req,
+              this.store
+                .all()
+                .filter(
+                  (rule) =>
+                    rule.decision === 'allow' &&
+                    rule.allowUnsandboxed &&
+                    rule.patternKind !== 'glob',
+                ),
+            )
+          : null;
+        if (
+          bypassRule &&
+          policyAnalysis.findings.every(
+            (finding) =>
+              finding.kind === 'elevation' &&
+              finding.stageId === 'os_sandbox' &&
+              finding.ruleId === 'unsandboxed',
+          )
+        ) {
+          return this.audited(evaluatedRequest, { decision: 'allow', remembered: true }, 'rule');
+        }
         const resolution = await this.prompt(evaluatedRequest);
         return resolution.decision === 'allow' && requiresSudoAuthentication(policyAnalysis)
           ? { ...resolution, authentication: 'sudo' }
           : resolution;
       }
     }
-    const matchingRule = matchRule(req, this.store.all());
+    const matchingRule = await matchRule(req, this.store.all());
     if (matchingRule?.decision === 'deny') {
       return this.audited(
         evaluatedRequest,
@@ -244,7 +268,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     if (this.autoApprove === 'host' && req.target === 'host') {
       return this.audited(evaluatedRequest, { decision: 'allow', remembered: false }, 'automatic');
     }
-    const byRule = matchingRule ? this.check(req) : null;
+    const byRule = matchingRule ? await this.check(req) : null;
     if (byRule) return this.audited(evaluatedRequest, byRule, 'rule');
     return this.prompt(evaluatedRequest);
   }
@@ -278,11 +302,12 @@ export class DefaultPermissionGate implements McpPermissionGate {
         );
       }
     }
-    const review =
-      (await this.reviewer?.review({
-        request: req,
-        ...(mcpArguments === undefined ? {} : { mcpArguments }),
-      })) ?? undefined;
+    const review = req.unsandboxed
+      ? undefined
+      : ((await this.reviewer?.review({
+          request: req,
+          ...(mcpArguments === undefined ? {} : { mcpArguments }),
+        })) ?? undefined);
     if (review) this.onReview?.(req, review);
     if (review?.decision === 'allow') {
       return this.audited(req, { decision: 'allow', remembered: false }, 'reviewer', review);
@@ -360,26 +385,13 @@ export class DefaultPermissionGate implements McpPermissionGate {
       );
       return;
     }
-    if (scope.scope === 'session') {
-      this.store.add(
-        {
-          tool: req.tool,
-          target: req.target,
-          pattern: req.command,
-          patternKind: 'exact',
-          decision,
-          createdAt: Date.now(),
-        },
-        'session',
-      );
-      return;
-    }
     this.store.add(
       {
         tool: req.tool,
         target: req.target,
         pattern: scope.pattern,
         patternKind: scope.patternKind,
+        ...(scope.allowUnsandboxed && req.unsandboxed ? { allowUnsandboxed: true } : {}),
         decision,
         createdAt: Date.now(),
       },

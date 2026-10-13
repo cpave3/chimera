@@ -33,7 +33,7 @@ describe('Codex Bash adapter', () => {
         requests.push(request);
         return { decision: 'allow', remembered: false };
       },
-      check: () => null,
+      check: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},

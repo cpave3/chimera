@@ -55,11 +55,12 @@ const INSTRUCTION_CHARACTERS = 6_000;
 const CALL_CHARACTERS = 4_000;
 
 /**
- * Whether the approval reviewer may decide a request. Sudo and the two
+ * Whether the approval reviewer may decide a request. Sandbox bypass, sudo and the two
  * highest risk levels always go to the user: a wrong `allow` there costs the
  * most, and the reviewer is a low-cost model.
  */
 export function reviewable(request: PermissionRequest): boolean {
+  if (request.unsandboxed) return false;
   const findings = request.policyAnalysis?.findings ?? [];
   return !findings.some(
     (finding) =>

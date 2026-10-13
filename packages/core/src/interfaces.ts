@@ -88,7 +88,7 @@ export interface PermissionRequest {
   osSandbox?: boolean;
   /**
    * The model asks to run the command outside the OS sandbox, with `reason`.
-   * Never admitted by an auto-approve level or an allow rule.
+   * Requires approval or an explicit remembered sandbox-bypass rule.
    */
   unsandboxed?: boolean;
   /** The AI SDK's id of the tool call that asks, when a tool call does. */
@@ -162,7 +162,7 @@ export interface HostAuthenticationCapability {
 }
 
 export interface PermissionGate {
-  check(req: PermissionRequest): PermissionResolution | null;
+  check(req: PermissionRequest): Promise<PermissionResolution | null>;
   request(req: PermissionRequest): Promise<PermissionResolution>;
   addRule(rule: PermissionRule, persist: 'session' | 'project' | 'global'): void;
   listRules(): PermissionRule[];
@@ -181,7 +181,9 @@ export interface PermissionRule {
   tool: string;
   target: ExecutionTarget;
   pattern: string;
-  patternKind: 'exact' | 'glob';
+  patternKind: 'exact' | 'glob' | 'prefix';
+  /** Explicit authorization to leave the OS sandbox, not a general allow rule. */
+  allowUnsandboxed?: boolean;
   decision: 'allow' | 'deny';
   createdAt: number;
 }

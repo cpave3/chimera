@@ -1,20 +1,26 @@
 import type { PermissionRequest, PermissionRule } from '@chimera/core';
 import { minimatch } from 'minimatch';
+import { matchesCommandPrefix } from './command-prefix';
 
-function matches(rule: PermissionRule, req: PermissionRequest): boolean {
+async function matches(rule: PermissionRule, req: PermissionRequest): Promise<boolean> {
   if (rule.tool !== req.tool) return false;
   if (rule.target !== req.target) return false;
+  if (rule.decision === 'allow' && rule.allowUnsandboxed && !req.unsandboxed) return false;
   if (rule.patternKind === 'exact') {
     return rule.pattern === req.command;
   }
-  return minimatch(req.command, rule.pattern);
+  if (rule.patternKind === 'prefix') {
+    return req.tool === 'bash' && matchesCommandPrefix(req.command, rule.pattern);
+  }
+  return rule.patternKind === 'glob' && minimatch(req.command, rule.pattern);
 }
 
-export function matchRule(
+export async function matchRule(
   req: PermissionRequest,
   rules: readonly PermissionRule[],
-): PermissionRule | null {
-  const candidates = rules.filter((r) => matches(r, req));
+): Promise<PermissionRule | null> {
+  const matched = await Promise.all(rules.map((rule) => matches(rule, req)));
+  const candidates = rules.filter((_, index) => matched[index]);
   if (candidates.length === 0) return null;
 
   // Tier 1: deny wins.

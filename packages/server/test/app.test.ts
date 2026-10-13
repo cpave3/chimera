@@ -371,6 +371,83 @@ describe('server app', () => {
     });
   });
 
+  it.each([
+    { scope: 'session', pattern: 'pnpm build', patternKind: 'prefix', allowUnsandboxed: true },
+    { scope: 'project', pattern: 'pnpm build', patternKind: 'prefix', allowUnsandboxed: true },
+    { scope: 'global', pattern: 'pnpm build', patternKind: 'prefix', allowUnsandboxed: true },
+    { scope: 'session', pattern: 'pnpm build', patternKind: 'exact', allowUnsandboxed: false },
+  ])('HTTP permission resolution retains remember fields: %j', async (remember) => {
+    const { DefaultPermissionGate } = await import('@chimera/permissions');
+    const factory: AgentFactory = {
+      build: async (init) => {
+        const { agent } = await makeFactory(home).build(init);
+        const gate = new DefaultPermissionGate({
+          cwd: init.cwd,
+          home,
+          autoApprove: 'none',
+          raiseRequest: (request) => agent.raisePermissionRequest(request),
+        });
+        agent.setRememberHandler((_requestId, scope, request) => {
+          gate.applyRemember(scope, request, 'allow');
+        });
+        return { agent, gate };
+      },
+    };
+    const registry = new AgentRegistry({
+      factory,
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const projectCwd = await mkdtemp(join(home, 'project-'));
+    const created = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: projectCwd, model }),
+    });
+    const { sessionId } = await created.json();
+    const request = {
+      ...buildPermissionRequest({
+        tool: 'bash',
+        command: 'pnpm build --filter server',
+        cwd: projectCwd,
+        reason: 'The build needs to write a shared cache',
+      }),
+      unsandboxed: true,
+    };
+    const resolution = registry.get(sessionId)!.agent.raisePermissionRequest(request);
+    const response = await app.request(
+      `/v1/sessions/${sessionId}/permissions/${request.requestId}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'allow', remember }),
+      },
+    );
+    expect(response.status).toBe(204);
+    expect(await resolution).toMatchObject({ decision: 'allow', remembered: true });
+    const listed = await app.request(`/v1/sessions/${sessionId}/permissions/rules`);
+    const expectedRule = {
+      tool: 'bash',
+      target: 'host',
+      pattern: remember.pattern ?? request.command,
+      patternKind: remember.patternKind ?? 'exact',
+      ...(remember.allowUnsandboxed ? { allowUnsandboxed: true } : {}),
+      decision: 'allow',
+      createdAt: expect.any(Number),
+    };
+    expect(await listed.json()).toEqual([expectedRule]);
+    if (remember.scope !== 'session') {
+      const rulesPath = join(
+        remember.scope === 'project' ? projectCwd : home,
+        '.chimera',
+        'permissions.json',
+      );
+      expect(JSON.parse(await readFile(rulesPath, 'utf8')).rules).toEqual([expectedRule]);
+    }
+    const snapshot = await app.request(`/v1/sessions/${sessionId}`);
+    expect(await snapshot.json()).toMatchObject({ pendingPermissions: [] });
+  });
+
   it('rule CRUD via /permissions/rules', async () => {
     // Use a factory that also provides a gate.
     const { DefaultPermissionGate } = await import('@chimera/permissions');
@@ -431,10 +508,11 @@ describe('server app', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         rule: {
-          tool: 'mcp',
+          tool: 'bash',
           target: 'host',
-          pattern: 'burnlite/list_projects',
-          patternKind: 'exact',
+          pattern: 'pnpm build',
+          patternKind: 'prefix',
+          allowUnsandboxed: true,
           decision: 'allow',
           createdAt: Date.now(),
         },
@@ -444,10 +522,21 @@ describe('server app', () => {
     expect(globalRuleResponse.status).toBe(201);
     expect(
       JSON.parse(await readFile(join(home, '.chimera', 'permissions.json'), 'utf8')).rules,
-    ).toHaveLength(1);
+    ).toEqual([
+      expect.objectContaining({
+        pattern: 'pnpm build',
+        patternKind: 'prefix',
+        allowUnsandboxed: true,
+      }),
+    ]);
     const listRulesResponse = await app.request(`/v1/sessions/${sessionId}/permissions/rules`);
     const rules = await listRulesResponse.json();
     expect(rules).toHaveLength(2);
+    expect(rules[1]).toMatchObject({
+      pattern: 'pnpm build',
+      patternKind: 'prefix',
+      allowUnsandboxed: true,
+    });
     const removeGlobalResponse = await app.request(
       `/v1/sessions/${sessionId}/permissions/rules/1`,
       {
@@ -1455,7 +1544,15 @@ describe('server app', () => {
       expect(Array.isArray(body.errors)).toBe(true);
     });
 
-    it('POST /v1/sessions/:id/permissions/:requestId rejects invalid remember shape', async () => {
+    it.each([
+      { scope: 'project' },
+      { scope: 'session' },
+      { scope: 'session', allowUnsandboxed: true },
+      { scope: 'session', pattern: 'pnpm build' },
+      { scope: 'session', patternKind: 'prefix' },
+      { scope: 'session', pattern: 'pnpm build', patternKind: 'invalid' },
+      { scope: 'session', allowUnsandboxed: 'true' },
+    ])('POST /v1/sessions/:id/permissions/:requestId rejects invalid remember shape: %j', async (remember) => {
       const { DefaultPermissionGate } = await import('@chimera/permissions');
       const factory: AgentFactory = {
         build: async (init) => {
@@ -1485,7 +1582,7 @@ describe('server app', () => {
       const response = await app.request(`/v1/sessions/${sessionId}/permissions/r1`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ decision: 'allow', remember: { scope: 'project' } }),
+        body: JSON.stringify({ decision: 'allow', remember }),
       });
       expect(response.status).toBe(400);
       const body = await response.json();

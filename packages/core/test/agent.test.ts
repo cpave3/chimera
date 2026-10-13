@@ -1667,10 +1667,18 @@ describe('Agent', () => {
       cwd: '/tmp',
     });
     const p = agent.raisePermissionRequest(req);
-    await agent.resolvePermission(req.requestId, 'allow', { scope: 'session' });
+    await agent.resolvePermission(req.requestId, 'allow', {
+      scope: 'session',
+      pattern: req.command,
+      patternKind: 'exact',
+    });
     const res = await p;
     expect(res.remembered).toBe(true);
-    expect(rememberedScope).toEqual({ scope: 'session' });
+    expect(rememberedScope).toEqual({
+      scope: 'session',
+      pattern: req.command,
+      patternKind: 'exact',
+    });
     await runPromise;
   });
 });

@@ -26,44 +26,44 @@ function rule(overrides: Partial<PermissionRule> = {}): PermissionRule {
 }
 
 describe('matchRule', () => {
-  it('returns null when no rule matches', () => {
-    expect(matchRule(req(), [rule({ pattern: 'pnpm test' })])).toBeNull();
+  it('returns null when no rule matches', async () => {
+    expect(await matchRule(req(), [rule({ pattern: 'pnpm test' })])).toBeNull();
   });
 
-  it('exact pattern matches only exactly', () => {
+  it('exact pattern matches only exactly', async () => {
     const r = rule({ pattern: 'git push origin main', patternKind: 'exact' });
-    expect(matchRule(req(), [r])?.decision).toBe('allow');
-    expect(matchRule(req({ command: 'git push origin dev' }), [r])).toBeNull();
+    expect((await matchRule(req(), [r]))?.decision).toBe('allow');
+    expect(await matchRule(req({ command: 'git push origin dev' }), [r])).toBeNull();
   });
 
-  it('glob pattern matches via minimatch', () => {
+  it('glob pattern matches via minimatch', async () => {
     const r = rule({ pattern: 'git push *', patternKind: 'glob' });
-    expect(matchRule(req({ command: 'git push origin main' }), [r])).not.toBeNull();
-    expect(matchRule(req({ command: 'git status' }), [r])).toBeNull();
+    expect(await matchRule(req({ command: 'git push origin main' }), [r])).not.toBeNull();
+    expect(await matchRule(req({ command: 'git status' }), [r])).toBeNull();
   });
 
-  it('deny wins over allow', () => {
+  it('deny wins over allow', async () => {
     const allow = rule({ pattern: 'git *', decision: 'allow' });
     const deny = rule({ pattern: 'git push *', decision: 'deny' });
-    const m = matchRule(req(), [allow, deny]);
+    const m = await matchRule(req(), [allow, deny]);
     expect(m?.decision).toBe('deny');
   });
 
-  it('longer pattern wins among same-decision rules', () => {
+  it('longer pattern wins among same-decision rules', async () => {
     const a = rule({ pattern: 'git *', decision: 'allow' });
     const b = rule({ pattern: 'git push *', decision: 'allow' });
-    const m = matchRule(req(), [a, b]);
+    const m = await matchRule(req(), [a, b]);
     expect(m?.pattern).toBe('git push *');
   });
 
-  it('most recent wins among otherwise-equal rules', () => {
+  it('most recent wins among otherwise-equal rules', async () => {
     const old = rule({ pattern: 'git *', createdAt: 100 });
     const fresh = rule({ pattern: 'git *', createdAt: 200 });
-    const m = matchRule(req({ command: 'git status' }), [old, fresh]);
+    const m = await matchRule(req({ command: 'git status' }), [old, fresh]);
     expect(m?.createdAt).toBe(200);
   });
 
-  it('does not match when tool differs', () => {
-    expect(matchRule(req(), [rule({ tool: 'other' })])).toBeNull();
+  it('does not match when tool differs', async () => {
+    expect(await matchRule(req(), [rule({ tool: 'other' })])).toBeNull();
   });
 });

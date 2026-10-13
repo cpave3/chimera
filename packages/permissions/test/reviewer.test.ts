@@ -54,10 +54,10 @@ function request(
 }
 
 describe('reviewable', () => {
-  it('takes a request with path, caution, unresolved or unsandboxed findings, or none', () => {
+  it('takes a request with path, caution or unresolved findings, or none', () => {
     expect(reviewable(request())).toBe(true);
     expect(reviewable(request([finding.path, finding.caution, finding.unresolved]))).toBe(true);
-    expect(reviewable(request([finding.unsandboxed], { unsandboxed: true }))).toBe(true);
+    expect(reviewable(request([finding.unsandboxed], { unsandboxed: true }))).toBe(false);
   });
 
   it('takes an MCP call', () => {

@@ -218,7 +218,12 @@ describe('DefaultPermissionGate', () => {
       autoApprove: 'all',
       raiseRequest: async (request) => {
         raised++;
-        if (raised === 1) gate.applyRemember({ scope: 'session' }, request, 'allow');
+        if (raised === 1)
+          gate.applyRemember(
+            { scope: 'session', pattern: request.command, patternKind: 'exact' },
+            request,
+            'allow',
+          );
         return { decision: 'allow', remembered: false };
       },
     });

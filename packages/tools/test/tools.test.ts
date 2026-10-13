@@ -136,7 +136,7 @@ describe('buildTools', () => {
     const exec = vi.spyOn(executor, 'exec');
     const permissionGate: PermissionGate = {
       request: async () => ({ decision: 'deny', remembered: false }),
-      check: () => null,
+      check: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},
@@ -166,7 +166,7 @@ describe('buildTools', () => {
           reviewerReason: 'the user did not ask for a push',
         };
       },
-      check: () => null,
+      check: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},
@@ -206,7 +206,7 @@ describe('buildTools', () => {
         remembered: false,
         authentication: 'sudo',
       }),
-      check: () => null,
+      check: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},
@@ -245,7 +245,7 @@ describe('buildTools', () => {
           remembered: false,
           authentication: 'sudo',
         }),
-        check: () => null,
+        check: async () => null,
         addRule: () => {},
         listRules: () => [],
         removeRule: () => {},
@@ -269,7 +269,7 @@ describe('buildTools', () => {
   it('rejects background sudo before permission or launch', async () => {
     const permissionGate: PermissionGate = {
       request: vi.fn(async () => ({ decision: 'allow', remembered: false })),
-      check: () => null,
+      check: async () => null,
       addRule: () => {},
       listRules: () => [],
       removeRule: () => {},

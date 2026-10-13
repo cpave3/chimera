@@ -227,6 +227,9 @@ export interface CompactorApi {
   compact(session: Session, reason: 'threshold' | 'manual'): Promise<CompactionOutcome>;
 }
 
-export type RememberScope =
-  | { scope: 'session' }
-  | { scope: 'project' | 'global'; pattern: string; patternKind: 'exact' | 'glob' };
+export interface RememberScope {
+  scope: 'session' | 'project' | 'global';
+  pattern: string;
+  patternKind: 'exact' | 'glob' | 'prefix';
+  allowUnsandboxed?: boolean;
+}
