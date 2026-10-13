@@ -5,6 +5,20 @@ import type { ChimeraToolDef } from './types';
 const CODEX_BASH_SCHEMA = z.object({
   command: z.string().describe('Bash command to execute.'),
   timeout: z.number().positive().optional().describe('Timeout in seconds.'),
+  target: z
+    .enum(['sandbox', 'host'])
+    .optional()
+    .describe("Which executor to use. Defaults to 'host' when sandbox is off."),
+  reason: z
+    .string()
+    .optional()
+    .describe('Short justification for running on the host or outside the OS sandbox.'),
+  unsandboxed: z
+    .boolean()
+    .optional()
+    .describe(
+      'Run outside the OS sandbox. Requires a reason and user approval or an explicit saved bypass permission.',
+    ),
 });
 
 const CODEX_BACKGROUND_BASH_SCHEMA = CODEX_BASH_SCHEMA.extend({
@@ -17,11 +31,14 @@ const CODEX_BACKGROUND_BASH_SCHEMA = CODEX_BASH_SCHEMA.extend({
     ),
 });
 
-type CodexBashArgs = { command: string; timeout?: number; run_in_background?: boolean };
+type CodexBashArgs = z.infer<typeof CODEX_BACKGROUND_BASH_SCHEMA>;
 
 function toNativeBashArgs(args: CodexBashArgs) {
   return {
     command: args.command,
+    ...(args.target !== undefined ? { target: args.target } : {}),
+    ...(args.reason !== undefined ? { reason: args.reason } : {}),
+    ...(args.unsandboxed !== undefined ? { unsandboxed: args.unsandboxed } : {}),
     ...(args.timeout !== undefined ? { timeout_ms: Math.ceil(args.timeout * 1000) } : {}),
     ...(args.run_in_background ? { run_in_background: true } : {}),
   };
@@ -72,8 +89,7 @@ export function buildCodexToolDefs(
   return {
     ...passThrough,
     bash: defineTool({
-      description:
-        'Execute a bash command and return stdout, stderr, exit code, and timeout status.',
+      description: nativeDefs.bash.tool.description!,
       promptSnippet: nativeDefs.bash.promptSnippet,
       inputSchema: nativeDefs.bash_output ? CODEX_BACKGROUND_BASH_SCHEMA : CODEX_BASH_SCHEMA,
       execute: async (args: CodexBashArgs, opts) => bash.execute(toNativeBashArgs(args), opts),

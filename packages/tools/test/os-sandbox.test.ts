@@ -237,6 +237,15 @@ describe('sandboxBlockNote', () => {
     ).toBeNull();
   });
 
+  it('tells the model to request a bypass after a SQLite read-only database failure', () => {
+    const note = sandboxBlockNote(
+      failed('database: bootstrapping migration ledger: attempt to write a readonly database (8)'),
+      spec(),
+    );
+    expect(note).toContain('unsandboxed: true');
+    expect(note).toContain('reason');
+  });
+
   it('says nothing for a command that worked, or failed for its own reasons', () => {
     expect(sandboxBlockNote({ exitCode: 0, stderr: 'Read-only file system' }, spec())).toBeNull();
     expect(sandboxBlockNote(failed('error TS2345: bad type'), spec())).toBeNull();

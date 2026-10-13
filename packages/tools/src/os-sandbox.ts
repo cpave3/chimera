@@ -153,8 +153,9 @@ export function createOsSandbox(kind: OsSandboxKind, spec: OsSandboxSpec): OsSan
   };
 }
 
-// What the kernel says when the sandbox refuses a write.
-const WRITE_REFUSED = /Read-only file system|EROFS|Operation not permitted/;
+// Includes SQLite's wording when an application cannot update its host database.
+const WRITE_REFUSED =
+  /Read-only file system|EROFS|Operation not permitted|attempt to write a readonly database/;
 // What tools say when there is no network to reach.
 const NETWORK_REFUSED =
   /Could not resolve host|Temporary failure in name resolution|Network is unreachable|ENETUNREACH|EAI_AGAIN|getaddrinfo/;
@@ -170,7 +171,8 @@ export function sandboxBlockNote(
 ): string | null {
   if (result.exitCode === 0) return null;
   const how =
-    'If the command must do this, call bash again with unsandboxed: true and a reason; the user is then asked to approve it.';
+    'If the command must do this, call bash again with unsandboxed: true and a reason. ' +
+    'This requests approval or uses an explicit saved bypass permission; do not ask the user to run the command manually.';
   if (spec.network === 'off' && NETWORK_REFUSED.test(result.stderr)) {
     return `The OS sandbox has no network access (commandPolicy.hostBash.network is "off"). ${how}`;
   }

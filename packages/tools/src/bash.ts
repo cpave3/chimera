@@ -22,7 +22,7 @@ const BASH_SCHEMA = z.object({
     .boolean()
     .optional()
     .describe(
-      'Run the command outside the OS sandbox. Needs a reason and the approval of the user. ' +
+      'Run the command outside the OS sandbox. Needs a reason and user approval or an explicit saved bypass permission. ' +
         'Use it only after the sandbox blocked a command that must write outside the working ' +
         'directory or reach the network.',
     ),
@@ -57,7 +57,7 @@ function osSandboxDescription(ctx: ToolContext): string {
     ctx.osSandbox.spec.network === 'off'
       ? 'it can read every file, can write only in the working directory and the temp directory, and has no network access'
       : 'it can read every file and can write only in the working directory and the temp directory';
-  return ` A command runs in an OS sandbox: ${limits}. If a command must do more, set unsandboxed: true with a reason; the user is then asked to approve it.`;
+  return ` A command runs in an OS sandbox: ${limits}. If a command must do more, set unsandboxed: true with a reason to request approval or use an explicit saved bypass permission. Do not ask the user to run the command manually.`;
 }
 
 export function buildBashTool(ctx: ToolContext) {
