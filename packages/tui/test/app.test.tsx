@@ -2125,7 +2125,7 @@ describe('PermissionModal', () => {
     unmount();
   });
 
-  it('choose → scope: allow + session remembers with session scope only', async () => {
+  it('choose → scope: allow + session remembers the exact command', async () => {
     const calls: unknown[] = [];
     const { stdin, lastFrame, unmount } = render(
       <PermissionModal
@@ -2141,7 +2141,12 @@ describe('PermissionModal', () => {
 
     (stdin as unknown as { write: (s: string) => void }).write('s');
     await new Promise((r) => setTimeout(r, 5));
-    expect(calls).toEqual([{ decision: 'allow', remember: { scope: 'session' } }]);
+    expect(calls).toEqual([
+      {
+        decision: 'allow',
+        remember: { scope: 'session', pattern: 'rm -rf /tmp', patternKind: 'exact' },
+      },
+    ]);
 
     unmount();
   });

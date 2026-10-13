@@ -20,8 +20,8 @@ export interface PermissionModalProps {
 type ModalMode =
   | { kind: 'choose' }
   | { kind: 'feedback'; text: string }
-  | { kind: 'pattern'; text: string }
-  | { kind: 'scope'; pattern: string };
+  | { kind: 'pattern' | 'prefix'; text: string }
+  | { kind: 'scope'; pattern: string; patternKind: 'exact' | 'glob' | 'prefix' };
 
 interface Choice {
   /** The letter key of the earlier prompt; still works. */
@@ -35,6 +35,10 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   const [mode, setMode] = useState<ModalMode>({ kind: 'choose' });
   const [selected, setSelected] = useState(0);
   const mandatory = Boolean(props.policyAnalysis);
+  const bypass = props.policyAnalysis?.findings.some(
+    (finding) =>
+      finding.stageId === 'os_sandbox' && 'ruleId' in finding && finding.ruleId === 'unsandboxed',
+  );
   const grantProposal = props.policyAnalysis?.grantProposal;
 
   const choices: Choice[] = [
@@ -47,29 +51,44 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
     ...(mandatory && grantProposal
       ? [
           {
-            key: 'g',
+            key: bypass ? 'w' : 'g',
             label: `Allow + session ${grantProposal.kind} ${grantProposal.path}`,
             tone: 'allow' as const,
             run: () => props.onResolve({ decision: 'allow_with_grant', grant: grantProposal }),
           },
         ]
       : []),
-    ...(mandatory
-      ? []
-      : [
+    ...(bypass
+      ? [
           {
             key: 'A',
-            label: 'Allow & remember…',
+            label: 'Allow exact command…',
             tone: 'allow' as const,
-            run: () => setMode({ kind: 'scope', pattern: props.command }),
+            run: () => setMode({ kind: 'scope', pattern: props.command, patternKind: 'exact' }),
           },
           {
             key: 'g',
-            label: 'Allow pattern…',
+            label: 'Allow command prefix…',
             tone: 'allow' as const,
-            run: () => setMode({ kind: 'pattern', text: props.command }),
+            run: () => setMode({ kind: 'prefix', text: props.command.trim().split(/\s+/)[0]! }),
           },
-        ]),
+        ]
+      : mandatory
+        ? []
+        : [
+            {
+              key: 'A',
+              label: 'Allow & remember…',
+              tone: 'allow' as const,
+              run: () => setMode({ kind: 'scope', pattern: props.command, patternKind: 'exact' }),
+            },
+            {
+              key: 'g',
+              label: 'Allow pattern…',
+              tone: 'allow' as const,
+              run: () => setMode({ kind: 'pattern', text: props.command }),
+            },
+          ]),
     {
       key: 'd',
       label: 'Deny once',
@@ -97,25 +116,30 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       }
       return;
     }
-    if (mode.kind === 'pattern') {
-      if (key.return) setMode({ kind: 'scope', pattern: mode.text });
-      else if (key.backspace || key.delete) {
-        setMode({ kind: 'pattern', text: mode.text.slice(0, -1) });
+    if (mode.kind === 'pattern' || mode.kind === 'prefix') {
+      if (key.return) {
+        setMode({
+          kind: 'scope',
+          pattern: mode.text,
+          patternKind:
+            mode.kind === 'prefix' ? 'prefix' : mode.text === props.command ? 'exact' : 'glob',
+        });
+      } else if (key.backspace || key.delete) {
+        setMode({ ...mode, text: mode.text.slice(0, -1) });
       } else if (input && !key.ctrl && !key.meta) {
-        setMode({ kind: 'pattern', text: mode.text + input });
+        setMode({ ...mode, text: mode.text + input });
       }
       return;
     }
     if (mode.kind === 'scope') {
-      if (input === 's') {
-        props.onResolve({ decision: 'allow', remember: { scope: 'session' } });
-      } else if (input === 'p' || input === 'g') {
+      if (input === 's' || input === 'p' || input === 'g') {
         props.onResolve({
           decision: 'allow',
           remember: {
-            scope: input === 'g' ? 'global' : 'project',
+            scope: input === 's' ? 'session' : input === 'g' ? 'global' : 'project',
             pattern: mode.pattern,
-            patternKind: mode.pattern === props.command ? 'exact' : 'glob',
+            patternKind: mode.patternKind,
+            ...(bypass ? { allowUnsandboxed: true } : {}),
           },
         });
       }
@@ -142,6 +166,14 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   const danger = theme.status.error;
   const success = theme.status.success;
   const muted = theme.text.muted;
+  const bypassWarning = bypass && (
+    <>
+      <Text color={danger}>Warning: this command runs outside the OS sandbox.</Text>
+      <Text color={danger}>
+        Remembering a bypass trusts the executable, not just its arguments.
+      </Text>
+    </>
+  );
 
   if (mode.kind === 'feedback') {
     return (
@@ -151,10 +183,13 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       </Box>
     );
   }
-  if (mode.kind === 'pattern') {
+  if (mode.kind === 'pattern' || mode.kind === 'prefix') {
     return (
       <Box flexDirection="column" borderStyle={frame} borderColor={badge} padding={1}>
-        <Text color={badge}>Edit pattern (Enter to confirm):</Text>
+        {bypassWarning}
+        <Text color={badge}>
+          Edit {mode.kind === 'prefix' ? 'command prefix' : 'pattern'} (Enter to confirm):
+        </Text>
         <Text>{mode.text}</Text>
       </Box>
     );
@@ -162,6 +197,12 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
   if (mode.kind === 'scope') {
     return (
       <Box flexDirection="column" borderStyle={frame} borderColor={badge} padding={1}>
+        {bypassWarning}
+        {bypass && (
+          <Text>
+            {mode.patternKind}: {mode.pattern}
+          </Text>
+        )}
         <Text color={badge}>Remember for [s]ession, [p]roject, or [g]lobal?</Text>
       </Box>
     );
@@ -197,6 +238,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       )}
       {props.reason && <Text color={muted}>Reason: {props.reason}</Text>}
       {props.reviewerReason && <Text color={muted}>Reviewer: {props.reviewerReason}</Text>}
+      {bypassWarning}
       {props.policyAnalysis?.stages.map((stage) => (
         <Text key={stage.id} color={muted}>
           Stage {stage.id}: {stage.status}

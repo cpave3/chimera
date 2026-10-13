@@ -19,7 +19,7 @@ such a stage.
 - The reviewer reads the tool call, the policy findings, the user's messages
   and the project instructions. It does not read tool results or assistant
   text, so text that a tool brought in cannot argue for its own approval.
-- Sudo commands and commands with a `danger` or `critical` risk finding never
+- Sandbox bypass requests, sudo commands and commands with a `danger` or `critical` risk finding never
   go to the reviewer. A deny rule or a hard block ends the request before
   the reviewer, as now.
 - After 3 escalations in a row or 10 in a session, the reviewer stops for

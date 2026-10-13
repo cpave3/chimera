@@ -215,6 +215,9 @@ build · anthropic/claude-opus-4-7 · sandbox os    ▰▰▰▰▱▱▱▱▱�
   one line each, wrapped between words.
 - **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
   digit, or the letter shown next to each choice. `Esc` denies.
+  For an OS sandbox bypass, choose **Allow once**, **Allow exact command…**, or
+  **Allow command prefix…**. Review the pattern and choose session, project, or
+  global scope. See [OS sandbox](sandbox.md#os-sandbox) for the limits.
 
 Each built-in tool ships with a `formatScrollback` hook in its definition
 that produces an args-only summary at call start and a result-aware summary

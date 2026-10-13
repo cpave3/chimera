@@ -2,8 +2,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChimeraClient } from '@chimera/client';
-import { InMemoryCommandRegistry, type CommandRegistry } from '@chimera/commands';
-import type { AgentEvent, ModelConfig, Session, SessionInfo } from '@chimera/core';
+import { type CommandRegistry, InMemoryCommandRegistry } from '@chimera/commands';
+import type {
+  AgentEvent,
+  ModelConfig,
+  PermissionDecisionAction,
+  Session,
+  SessionInfo,
+} from '@chimera/core';
 import { InMemorySkillRegistry, type SkillRegistry } from '@chimera/skills';
 import { render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +49,11 @@ interface StubClientOpts {
   setModelSpy?: (modelRef: string | null) => void;
   addPathSpy?: (kind: 'read' | 'write', path: string) => void;
   addPathError?: Error;
+  resolvePermissionSpy?: (
+    sessionId: string,
+    requestId: string,
+    action: PermissionDecisionAction,
+  ) => void;
 }
 
 function emptySession(id: string): Session {
@@ -102,6 +113,13 @@ function stubClient(
     addRule: async () => {},
     removeRule: async () => {},
     resolvePermission: async () => {},
+    resolvePermissionAction: async (
+      sessionId: string,
+      requestId: string,
+      action: PermissionDecisionAction,
+    ) => {
+      opts.resolvePermissionSpy?.(sessionId, requestId, action);
+    },
     listSubagents: async () => opts.subagents ?? [],
     getSession: async (id: string) => getSessionImpl(id),
     listSessions: async () => opts.sessions ?? [],
@@ -227,6 +245,220 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
+
+describe('TUI sandbox bypass permission', () => {
+  const command = 'legato plan create feature';
+  const bypassAnalysis: NonNullable<
+    Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis']
+  > = {
+    version: 1,
+    outcome: 'approval_required',
+    stages: [],
+    findings: [
+      {
+        kind: 'elevation',
+        stageId: 'os_sandbox',
+        ruleId: 'unsandboxed',
+        message: 'Bypass requested',
+      },
+    ],
+  };
+
+  function prompt(policyAnalysis: typeof bypassAnalysis | null = bypassAnalysis) {
+    const resolvePermissionSpy = vi.fn();
+    const client = stubClient({ resolvePermissionSpy });
+    const view = render(<App client={client} sessionId="s" modelRef="m/m" cwd="/tmp" />);
+    client.pushEvent({
+      type: 'permission_request',
+      requestId: 'bypass',
+      tool: 'bash',
+      target: 'host',
+      command,
+      reason: 'Legato needs to update its host database',
+      policyAnalysis: policyAnalysis ?? undefined,
+    });
+    return { ...view, resolvePermissionSpy };
+  }
+
+  it('warns about bypass and remembers the exact command for the session', async () => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt();
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      expect(lastFrame()).toContain('outside the OS sandbox');
+      expect(lastFrame()).toContain(command);
+      expect(lastFrame()).toContain('Legato needs to update its host database');
+      expect(lastFrame()).toContain('trusts the executable');
+      expect(lastFrame()).toContain('Allow exact command…');
+      expect(lastFrame()).toContain('Allow command prefix…');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, '2');
+      await waitFor(() => lastFrame()!.includes('Remember for'));
+      await type(stdin, 's');
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', {
+        decision: 'allow',
+        remember: {
+          scope: 'session',
+          pattern: command,
+          patternKind: 'exact',
+          allowUnsandboxed: true,
+        },
+      });
+    } finally {
+      unmount();
+    }
+  });
+
+  it.each([
+    ['s', 'session'],
+    ['p', 'project'],
+    ['g', 'global'],
+  ])('remembers an edited command prefix for %s (%s)', async (key, scope) => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt();
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, '3');
+      expect(lastFrame()).toContain('Edit command prefix');
+      expect(lastFrame()).toContain('legato');
+      expect(lastFrame()).not.toContain(command);
+      expect(lastFrame()).toContain('outside the OS sandbox');
+      await type(stdin, ' plan\r');
+      expect(lastFrame()).toContain('prefix: legato plan');
+      expect(lastFrame()).toContain('trusts the executable');
+      await type(stdin, key);
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', {
+        decision: 'allow',
+        remember: { scope, pattern: 'legato plan', patternKind: 'prefix', allowUnsandboxed: true },
+      });
+    } finally {
+      unmount();
+    }
+  });
+  it.each([
+    ['p', 'project'],
+    ['g', 'global'],
+  ])('remembers the exact bypass command for %s (%s)', async (key, scope) => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt();
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, 'A');
+      expect(lastFrame()).toContain(`exact: ${command}`);
+      await type(stdin, key);
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', {
+        decision: 'allow',
+        remember: { scope, pattern: command, patternKind: 'exact', allowUnsandboxed: true },
+      });
+    } finally {
+      unmount();
+    }
+  });
+
+  it('keeps prefix and filesystem-grant shortcuts distinct on a bypass request', async () => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt({
+      ...bypassAnalysis,
+      grantProposal: { id: 'write-host', kind: 'write', path: '/host/state' },
+    });
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, 'g');
+      expect(lastFrame()).toContain('Edit command prefix');
+      expect(resolvePermissionSpy).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+    }
+  });
+
+  it.each([
+    ['a', { decision: 'allow' }],
+    ['d', { decision: 'deny' }],
+  ])('%s resolves bypass once without remembering', async (key, action) => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt();
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, key);
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', action);
+    } finally {
+      unmount();
+    }
+  });
+
+  it.each([
+    { kind: 'elevation', stageId: 'sudo', ruleId: 'sudo', message: 'Needs sudo' },
+    { kind: 'elevation', stageId: 'other', ruleId: 'unsandboxed', message: 'Other stage' },
+    { kind: 'blocked', stageId: 'os_sandbox', ruleId: 'other', message: 'Other rule' },
+    { kind: 'risk', stageId: 'risk', level: 'danger', message: 'Risky command' },
+  ] satisfies typeof bypassAnalysis.findings)('does not offer remembered rules for $stageId / $message', async (finding) => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt({
+      ...bypassAnalysis,
+      findings: [finding],
+    });
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      const frame = lastFrame()!;
+      expect(frame).toContain('Allow once');
+      expect(frame).toContain('Deny once');
+      expect(frame).not.toContain('Allow exact command');
+      expect(frame).not.toContain('Allow command prefix');
+      expect(frame).not.toContain('Allow & remember');
+      expect(frame).not.toContain('Allow pattern');
+      expect(frame).not.toContain('outside the OS sandbox');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, 'Ag');
+      expect(lastFrame()).not.toContain('Remember for');
+      expect(resolvePermissionSpy).not.toHaveBeenCalled();
+      await type(stdin, 'd');
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', { decision: 'deny' });
+    } finally {
+      unmount();
+    }
+  });
+
+  it('remembers the ordinary exact command for the session', async () => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt(null);
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, 'As');
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', {
+        decision: 'allow',
+        remember: { scope: 'session', pattern: command, patternKind: 'exact' },
+      });
+    } finally {
+      unmount();
+    }
+  });
+
+  it('preserves ordinary session pattern remembering without granting bypass', async () => {
+    const { lastFrame, stdin, unmount, resolvePermissionSpy } = prompt(null);
+    try {
+      await waitFor(() => lastFrame()!.includes('Permission required'));
+      expect(lastFrame()).toContain('Allow & remember');
+      expect(lastFrame()).toContain('Allow pattern');
+      expect(lastFrame()).not.toContain('outside the OS sandbox');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await type(stdin, 'g');
+      await type(stdin, ' *\r');
+      await waitFor(() => lastFrame()!.includes('Remember for'));
+      await type(stdin, 's');
+      await waitFor(() => resolvePermissionSpy.mock.calls.length > 0);
+      expect(resolvePermissionSpy).toHaveBeenCalledWith('s', 'bypass', {
+        decision: 'allow',
+        remember: { scope: 'session', pattern: `${command} *`, patternKind: 'glob' },
+      });
+    } finally {
+      unmount();
+    }
+  });
+});
 
 describe('TUI slash dispatch', () => {
   it('/help lists user commands with descriptions', async () => {

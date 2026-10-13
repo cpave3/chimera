@@ -24,7 +24,7 @@ With the OS sandbox active and no Docker sandbox, every host `bash` command, for
 - **THEN** the connection fails
 
 ### Requirement: Sandbox in the tool description
-With the OS sandbox active, the `bash` tool description SHALL say where a command may write, that the network is off when it is, and that `unsandboxed: true` with a reason asks the user. Without the OS sandbox, the description SHALL NOT mention it.
+With the OS sandbox active, the `bash` tool description SHALL say where a command may write, that the network is off when it is, and that `unsandboxed: true` with a reason requests user approval or uses an explicit saved bypass rule. Without the OS sandbox, the description SHALL NOT mention it.
 
 #### Scenario: Active
 - **WHEN** a session's host commands run in the OS sandbox
@@ -45,7 +45,7 @@ When a sandboxed command fails and its output shows that the sandbox refused a w
 - **THEN** the tool result has a `sandbox` note that names `unsandboxed`
 
 ### Requirement: Unsandboxed request
-`bash` SHALL accept `unsandboxed: true`, which runs the command outside the OS sandbox. Such a call SHALL carry a `reason` and SHALL need the user's approval, whatever the auto-approve level and the allow rules are. With no user to ask, it SHALL be denied.
+`bash` SHALL accept `unsandboxed: true`, which runs the command outside the OS sandbox. Such a call SHALL carry a `reason` and SHALL need approval unless an explicit exact/prefix bypass rule admits it under the permission policy. Auto-approval and ordinary allow rules SHALL NOT grant a bypass. With no user to ask and no bypass rule or reviewer approval, it SHALL be denied. Both native and Codex-shaped bash schemas SHALL retain the unsandboxed argument and reason.
 
 #### Scenario: Approved
 - **WHEN** the model calls `bash` with `unsandboxed: true` and a reason, and the user allows it
@@ -56,8 +56,16 @@ When a sandboxed command fails and its output shows that the sandbox refused a w
 - **THEN** the command does not run, and the result asks for a reason
 
 #### Scenario: Auto-approval does not apply
-- **WHEN** auto-approve is `all` and the model calls `bash` with `unsandboxed: true`
+- **WHEN** auto-approve is `all`, no explicit bypass rule matches, and the model calls `bash` with `unsandboxed: true`
 - **THEN** the user is asked
+
+#### Scenario: Codex tool surface
+- **WHEN** a Codex-shaped bash call supplies `unsandboxed: true` and a reason
+- **THEN** both fields reach the native bash execution and permission gate
+
+#### Scenario: Tool-surface update takes effect
+- **WHEN** a tool-surface fix is built and Chimera is restarted with a new session
+- **THEN** the new session receives the updated tool definitions; rebuilding alone does not change a running session's schemas
 
 ### Requirement: Protected paths for the file tools
 While the OS sandbox is active, the file tools SHALL refuse to write `<cwd>/.chimera/permissions.json` and any path under `<cwd>/.chimera/hooks/`.

@@ -24,7 +24,7 @@ When an approval reviewer is configured, the permission gate SHALL give a reques
 - **THEN** the request is denied and the reviewer is not called
 
 ### Requirement: Requests the reviewer never sees
-A request with a sudo finding, or with a risk finding of level `danger` or `critical`, SHALL go to the user without a call to the reviewer.
+A sandbox bypass request, a request with a sudo finding, or one with a risk finding of level `danger` or `critical`, SHALL skip the reviewer. A bypass requires user approval or an applicable explicit saved bypass rule.
 
 #### Scenario: Sudo
 - **WHEN** a command with a sudo finding needs approval and a reviewer is configured

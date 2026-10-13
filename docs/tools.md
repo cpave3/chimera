@@ -109,6 +109,21 @@ Set `"diagnostics": { "enabled": false }` to turn the feature off, or
 test suites) are deliberately not auto-detected — they run on every edit, so
 opt in only where the project is small enough.
 
+## OS sandbox bypass
+
+With the OS sandbox active, `bash` accepts `unsandboxed: true` with a `reason`
+to request execution outside it. Generic auto-approval does not grant this.
+An explicit exact/prefix allow rule with `allowUnsandboxed: true` can remember
+the bypass for a session, project or globally; deny rules and other mandatory
+policy findings still apply. Prefixes cover only a single simple literal
+command, not compounds, substitutions, redirects, wrappers or environment
+assignments. Trust the executable's subcommands before granting a prefix.
+See [Remembered sandbox bypass](bash-command-policy.md#remembered-sandbox-bypass).
+
+After building a tool-surface fix (including the Codex-shaped `bash` schema),
+restart Chimera and start a new session to receive the updated tool definitions.
+Rebuilding alone does not replace the schemas in an already running session.
+
 ## Bash timeouts and interruption
 
 Foreground host commands have a 120-second default timeout. On timeout or

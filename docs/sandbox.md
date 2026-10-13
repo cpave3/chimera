@@ -27,9 +27,21 @@ directory of the repository. It cannot write `.chimera/`, where the permission
 rules and hooks are.
 
 When the sandbox blocks a command, the model can ask to run it outside the
-sandbox. That request needs approval: Chimera asks you, or the approval
-reviewer examines the request first when it is on. The context panel shows
+sandbox. That request needs user approval; the AI reviewer cannot grant it. An explicitly remembered
+allow rule with `allowUnsandboxed: true` and an exact or simple-command prefix
+pattern can grant the bypass, including in headless sessions. Ordinary allow
+rules, glob rules and auto-approval cannot. Deny rules win, and other mandatory
+findings still need approval. A prefix grant does not cover compound commands;
+those need fresh approval. Trust the executable and its subcommands before
+granting a prefix: they run without OS confinement. See
+[Remembered sandbox bypass](bash-command-policy.md#remembered-sandbox-bypass).
+The context panel shows
 `sandbox os` while the OS sandbox is active.
+
+In the bypass prompt, choose **Allow once** for one run, or **Allow exact command…**
+to remember only the command shown. Choose **Allow command prefix…** to edit a
+prefix such as `legato` or `legato plan`. Review the pattern, then select session,
+project, or global scope. A session rule expires when that session ends.
 
 ```json
 {
@@ -64,8 +76,8 @@ instructions. It answers `allow` or `escalate`.
 - In a session that has nobody to ask, `escalate` is a denial. The model gets
   the reason.
 
-Sudo commands and commands with a `danger` or `critical` finding always go to
-you. See
+Sandbox bypass requests, sudo commands and commands with a `danger` or `critical`
+finding skip the reviewer. See
 [Host bash command policy](bash-command-policy.md#approval-reviewer) for
 the rules, the limits and the audit record.
 

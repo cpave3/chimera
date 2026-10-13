@@ -36,8 +36,8 @@ of the pipeline, not a place in it.
 
 The gate, not the model, decides what the reviewer may see. A request with a
 sudo finding, or with a risk finding of level `danger` or `critical`, skips
-the reviewer. An unsandboxed request is reviewable: the approved plan sends
-it through the reviewer, and the reviewer sees the agent's reason.
+the reviewer. An unsandboxed request also skips the reviewer: only user approval
+or an applicable explicit saved bypass rule can authorize leaving the sandbox.
 
 ### D3. What the reviewer reads
 

@@ -65,15 +65,19 @@ sudo runs outside the sandbox, where setuid works.
 ### D4. The unsandboxed request
 
 `bash` takes `unsandboxed: true` with a `reason`. The gate treats it as
-approval-required whatever the auto-approve level and the allow rules are,
-and shows the reason; with no one to ask it is denied. The request carries
+approval-required regardless of auto-approve or ordinary allow rules,
+and shows the reason. An explicit exact/prefix allow rule with `allowUnsandboxed`
+can resolve the sandbox elevation finding, including in headless sessions.
+Matching deny rules, hard blocks and other mandatory findings retain their effect.
+Without a matching bypass rule, only the user can approve; the AI reviewer cannot.
+With no one to ask it is denied. The request carries
 an `elevation` finding with the rule id `unsandboxed`, so clients show it
 with what they already have.
 
 ### D5. Telling the model
 
 When a sandboxed command fails and its stderr has the kernel's wording for a
-refused write (`Read-only file system`), or, with the network off, for a
+refused write (`Read-only file system`, or SQLite's `readonly database`), or, with the network off, for a
 failed lookup or connection, the result gains a `sandbox` note: what the
 sandbox allows, and that `unsandboxed: true` with a reason asks the user.
 The match is a heuristic; a miss costs only the hint.

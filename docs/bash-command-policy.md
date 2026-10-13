@@ -36,7 +36,17 @@ Foreground and background commands obey the same limits.
 
 Because the kernel refuses a write outside these directories, Chimera does not ask about path findings for a sandboxed command. Risk findings, sudo and the hard blocks operate as before. A command that you approve for sudo runs outside the sandbox, because sudo cannot operate inside it.
 
-When the sandbox blocks a command, the tool result tells the model what the sandbox allows. The model can then call `bash` again with `unsandboxed: true` and a reason. Chimera always asks you about such a request and shows the reason. `autoApprove` and allow rules do not apply to it. A session with no user to ask (`chimera run`, a subagent) denies the request.
+When the sandbox blocks a command, the tool result tells the model what the sandbox allows. The model can then call `bash` again with `unsandboxed: true` and a reason. Without an explicit bypass rule, the request needs user approval and shows the reason; a session with no user to ask denies it. Neither `autoApprove`, ordinary allow rules nor the AI approval reviewer can grant a sandbox bypass.
+
+### Remembered sandbox bypass
+
+An allow rule with `allowUnsandboxed: true` explicitly trusts matching commands outside the OS sandbox. Only `patternKind: "exact"` or `"prefix"` can grant this bypass; a glob cannot. A matching deny rule wins. A bypass rule resolves only the `os_sandbox` elevation finding: sudo, risk, unauthorized paths and other mandatory findings still require approval, and hard blocks still deny. An explicit bypass rule can admit a matching command in a headless session when no other mandatory findings remain. It does not turn ordinary calls into unsandboxed calls: the model must still request `unsandboxed: true` with a reason.
+
+Prefix matching compares literal command tokens parsed from the shell AST, not raw string prefixes. Both the rule and the command must be a single simple command. Compounds, pipelines, substitutions, redirects, execution wrappers (such as `env`, `sudo`, `sh` or `timeout`), environment assignments and unsupported syntax do not match. A prefix of `pnpm build` matches `pnpm build --filter server`, not `pnpm builder` or `pnpm build && git push`. A compound command needs fresh approval rather than inheriting a prefix grant.
+
+Trust the executable and its subcommands before granting a prefix. A rule for `pnpm` can run package scripts; an executable may launch other programs or interpret arguments as code even though the shell command itself is simple. Prefix grants are not a sandbox for the executable's behavior.
+
+Remembered rules can be scoped to the session, project (`<cwd>/.chimera/permissions.json`) or global (`~/.chimera/permissions.json`). The rule API accepts `patternKind: "exact" | "glob" | "prefix"` and optional boolean `allowUnsandboxed`. Approval resolution accepts `remember: { scope, pattern, patternKind, allowUnsandboxed? }` for all three scopes. Both pattern fields are required, including for the session scope.
 
 While the sandbox is active, the file tools refuse to write `<cwd>/.chimera/permissions.json` and `<cwd>/.chimera/hooks/`. Chimera creates `<cwd>/.chimera` if it does not exist, because the sandbox cannot protect a path that does not exist.
 
@@ -115,11 +125,11 @@ Strict mode retains allow-by-proof behavior and also prompts when shell effects 
 
 The approval reviewer is a second model that examines a request before Chimera asks you. It is off by default. It uses the `utilityModel`, or the session model when no `utilityModel` is set.
 
-The reviewer examines only a request that Chimera would put to you: a host command with promptable findings, an unsandboxed request, or an MCP call that is not trusted. It does not change these decisions:
+The reviewer examines only a request that Chimera would put to you: a host command with promptable findings or an MCP call that is not trusted. It does not change these decisions:
 
 - A request that `autoApprove` or an allow rule admits runs without the reviewer.
 - A deny rule, a hard block or a blocking `PermissionRequest` hook denies the request before the reviewer.
-- A sudo command, and a command with a `danger` or `critical` risk finding, always goes to you.
+- Sandbox bypass requests, sudo commands, and commands with a `danger` or `critical` risk finding skip the reviewer. Without an applicable explicit saved bypass rule, you must approve a bypass.
 
 The reviewer reads:
 
@@ -145,7 +155,7 @@ Each decision is in the decision audit. An `allow` is a record with `"source": "
 
 Clients get an `approval_reviewed` event for each decision: `{ requestId, callId?, decision, reason, stopped? }`. A `permission_request` event for an escalated request has a `reviewerReason` field.
 
-The reviewer is a model and can be wrong. Keep it off when a wrong `allow` is not acceptable. With the OS sandbox on, a wrongly allowed command still cannot write outside the sandbox, unless the allowed request was an unsandboxed one.
+The reviewer is a model and can be wrong. Keep it off when a wrong `allow` is not acceptable. With the OS sandbox on, a wrongly allowed command still cannot write outside the sandbox. The reviewer cannot approve leaving it.
 
 ## Decision audit
 

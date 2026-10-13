@@ -18,7 +18,9 @@ holds the line and most prompts go away.
 - In the sandbox, a command whose only findings are about file paths runs
   with no prompt. Sudo and risk findings still need approval.
 - A command the sandbox blocked says so in its result. The model can ask to
-  run it unsandboxed with a reason; that request always goes to the user.
+  run it unsandboxed with a reason. The user must approve unless an explicit
+  saved exact/prefix bypass rule matches. Other mandatory policy findings remain.
+  Ordinary allow rules, auto-approval and the AI reviewer cannot grant a bypass.
 - `commandPolicy.hostBash.osSandbox`: `off`, `auto` (default) or `required`.
   `auto` uses the sandbox when it works and warns once when it does not;
   `required` refuses host commands without it.
