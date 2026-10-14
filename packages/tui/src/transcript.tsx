@@ -226,7 +226,11 @@ export function renderEntryLines(
       entry.durationMs !== undefined && entry.durationMs >= 1000
         ? ` · ${formatDuration(entry.durationMs)}`
         : '';
-    const reviewer = entry.reviewerApproved ? ' · approved by reviewer' : '';
+    const reviewer = entry.reviewerApproved
+      ? ' · approved by reviewer'
+      : entry.systemOneApproved
+        ? ' · approved by System One'
+        : '';
     const textLines = wrapToLines(
       `${badge}${title}${entry.text}${duration}${reviewer}`,
       width,

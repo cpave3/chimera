@@ -76,6 +76,8 @@ export interface ToolEntry extends BaseEntry {
   durationMs?: number;
   /** The approval reviewer allowed this call; the user was not asked. */
   reviewerApproved?: boolean;
+  /** The System One check approved this call; the user was not asked. */
+  systemOneApproved?: boolean;
   /** Optional follow-on lines from a tool's formatScrollback hook. */
   detail?: string;
   /** Set when a `skill_activated` event follows a `read` tool call. */
@@ -904,6 +906,14 @@ export class Scrollback {
           dirty = true;
         } else {
           this.addError(`tool error: ${ev.error}`);
+        }
+        return;
+      }
+      if (ev.type === 'system_one_checked') {
+        const entry = ev.callId ? this.toolsByCallId.get(ev.callId) : undefined;
+        if (entry && ev.decision === 'allow') {
+          entry.systemOneApproved = true;
+          dirty = true;
         }
         return;
       }

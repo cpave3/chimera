@@ -24,6 +24,7 @@ export function Dialogs({ view }: { view: AppView }): React.ReactElement {
           command={pending.command}
           reason={pending.reason}
           reviewerReason={pending.reviewerReason}
+          systemOneNote={pending.systemOneNote}
           target="host"
           policyAnalysis={pending.policyAnalysis}
           mcp={pending.mcp}

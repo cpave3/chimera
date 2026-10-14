@@ -10,6 +10,8 @@ export interface PermissionModalProps {
   reason?: string;
   /** Why the approval reviewer sent the request to the user. */
   reviewerReason?: string;
+  /** What the System One check found; it follows the words "System One". */
+  systemOneNote?: string;
   target: 'host';
   policyAnalysis?: PolicyAnalysis;
   mcp?: PermissionRequest['mcp'];
@@ -238,6 +240,7 @@ export function PermissionModal(props: PermissionModalProps): React.ReactElement
       )}
       {props.reason && <Text color={muted}>Reason: {props.reason}</Text>}
       {props.reviewerReason && <Text color={muted}>Reviewer: {props.reviewerReason}</Text>}
+      {props.systemOneNote && <Text color={muted}>System One {props.systemOneNote}</Text>}
       {bypassWarning}
       {props.policyAnalysis?.stages.map((stage) => (
         <Text key={stage.id} color={muted}>

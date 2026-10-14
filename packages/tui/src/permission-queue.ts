@@ -6,6 +6,8 @@ export interface PendingPermission {
   reason?: string;
   /** Why the approval reviewer sent the request to the user. */
   reviewerReason?: string;
+  /** What the System One check found before the request came to the user. */
+  systemOneNote?: string;
   policyAnalysis?: Extract<AgentEvent, { type: 'permission_request' }>['policyAnalysis'];
   mcp?: PermissionRequest['mcp'];
   /**
@@ -49,6 +51,7 @@ export function mergePermissionQueue(
       command: request.command,
       reason: request.reason,
       reviewerReason: request.reviewerReason,
+      systemOneNote: request.systemOneNote,
       policyAnalysis: request.policyAnalysis,
       mcp: request.mcp,
       ...('subagent' in request ? { subagent: request.subagent } : {}),

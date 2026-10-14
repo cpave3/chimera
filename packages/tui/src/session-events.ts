@@ -161,6 +161,7 @@ export function applySessionEvent(
             command: inner.command,
             reason: inner.reason,
             reviewerReason: inner.reviewerReason,
+            systemOneNote: inner.systemOneNote,
             policyAnalysis: inner.policyAnalysis,
             mcp: inner.mcp,
             subagent: {
