@@ -131,8 +131,15 @@ function literalWord(node: TreeSitter.Node): string | undefined {
 
 function hasOnlyLiteralNodes(node: TreeSitter.Node): boolean {
   return (
-    ['command_name', 'word', 'raw_string', 'string', 'string_content', 'concatenation'].includes(
-      node.type,
-    ) && node.namedChildren.every(hasOnlyLiteralNodes)
+    // The Bash grammar gives a bare integer argument its own `number` node.
+    [
+      'command_name',
+      'word',
+      'number',
+      'raw_string',
+      'string',
+      'string_content',
+      'concatenation',
+    ].includes(node.type) && node.namedChildren.every(hasOnlyLiteralNodes)
   );
 }

@@ -31,6 +31,22 @@ describe('matchesCommandPrefix', () => {
     ).resolves.toBe(false);
   });
 
+  it('treats bare integer arguments as literal tokens', async () => {
+    for (const command of [
+      'libretto render /tmp/preview.json --silent --jobs 2',
+      'libretto render -2',
+      'libretto render 0x10',
+      'libretto render 10#2',
+    ]) {
+      await expect(matchesCommandPrefix(command, 'libretto'), command).resolves.toBe(true);
+    }
+    await expect(matchesCommandPrefix('legato wait 30 --quiet', 'legato wait 30')).resolves.toBe(
+      true,
+    );
+    await expect(matchesCommandPrefix('legato wait 300', 'legato wait 30')).resolves.toBe(false);
+    await expect(matchesCommandPrefix('legato wait 10#$count', 'legato')).resolves.toBe(false);
+  });
+
   it('fails closed on anything other than one literal invocation, on either side', async () => {
     for (const unsafe of [
       '',
