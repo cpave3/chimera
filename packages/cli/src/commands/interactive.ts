@@ -34,6 +34,7 @@ import {
   resolveHostBashPolicy,
   resolveMcpServers,
   resolveModel,
+  resolveSystemOne,
 } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
@@ -199,6 +200,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     fallbackModel: config.fallbackModel,
     utilityModel: config.utilityModel,
     approvalReviewer: approvalReviewerEnabled(config),
+    systemOne: resolveSystemOne(config),
     goal: { maxContinuations: goalMaxContinuations(config) },
     memory: config.memory,
     userCanAnswer: true,

@@ -82,6 +82,42 @@ export interface HostBashPolicyConfig {
   sandboxWritePaths: string[];
 }
 
+/** One System One model that the config describes, under its name in `systemOne`. */
+export interface SystemOneModelConfig {
+  /** The `/v1/systemone` endpoint of the server. `jev` has TypeSafe's endpoint as its default. */
+  url?: string;
+  /** The model name in the request. Default `jev-latest`. */
+  model?: string;
+  /** `env:VAR_NAME`, or the key itself. A local server needs none. */
+  apiKey?: string;
+  /** The safety, above 0 and at most 1, a command needs to run without the user. Default 0.8. */
+  threshold?: number;
+}
+
+/** The settings of a System One check that is on, for the model the config chose. */
+export interface SystemOneSettings extends SystemOneModelConfig {
+  url: string;
+  /** Let the check also approve a command that leaves the OS sandbox. Default false. */
+  allowSandboxBypass?: boolean;
+  /** How long the model may take. Default 10000. */
+  timeoutMs?: number;
+}
+
+/**
+ * The `systemOne` section. Each key that is not a setting names a model:
+ * `{ "enabled": true, "model": "laya", "jev": {...}, "laya": {...} }`.
+ */
+export interface SystemOneConfig {
+  enabled?: boolean;
+  /** The name of the model section that the check uses. Default `jev`. */
+  model?: string;
+  allowSandboxBypass?: boolean;
+  timeoutMs?: number;
+  [name: string]: SystemOneModelConfig | boolean | number | string | undefined;
+}
+
+const JEV_DEFAULTS = { url: 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest' } as const;
+
 export type McpServerConfig =
   | {
       transport: 'stdio';
@@ -121,6 +157,12 @@ export interface ChimeraConfig {
    * approval before the user is asked. Off by default.
    */
   approvalReviewer?: { enabled?: boolean };
+  /**
+   * Let a System One model (Jev, or a server that speaks its protocol) rate a
+   * host bash command that needs approval before the user is asked. Off by
+   * default. Every command that needs approval is sent to the model's `url`.
+   */
+  systemOne?: SystemOneConfig;
   /** Limits for a session goal (`/goal`, `chimera run --goal`). */
   goal?: { maxContinuations?: number };
   providers?: Record<string, ProviderSpec>;
@@ -248,6 +290,42 @@ const hostBashPolicySchema = z
   .strict();
 
 const approvalReviewerSchema = z.object({ enabled: z.boolean().optional() }).strict();
+
+const systemOneModelSchema = z
+  .object({
+    url: z
+      .url()
+      .refine((value) => /^https?:$/.test(new URL(value).protocol), 'Must be an HTTP(S) URL')
+      .optional(),
+    model: z.string().min(1).optional(),
+    apiKey: z.string().min(1).optional(),
+    threshold: z.number().gt(0).max(1).optional(),
+  })
+  .strict();
+
+const systemOneSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    model: z.string().min(1).optional(),
+    allowSandboxBypass: z.boolean().optional(),
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  // Every other key is the name of a model.
+  .catchall(systemOneModelSchema)
+  .superRefine((value, context) => {
+    if (value.enabled !== true) return;
+    const name = value.model ?? 'jev';
+    const chosen = value[name] as SystemOneModelConfig | undefined;
+    if (!chosen) {
+      context.addIssue({
+        code: 'custom',
+        path: [name],
+        message: `the check uses the model "${name}", which has no settings`,
+      });
+    } else if (name !== 'jev' && chosen.url === undefined) {
+      context.addIssue({ code: 'custom', path: [name, 'url'], message: 'url is required' });
+    }
+  });
 
 const goalSchema = z.object({ maxContinuations: z.number().int().positive().optional() }).strict();
 
@@ -386,6 +464,12 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   if (!reviewer.success) {
     throw new Error(`Invalid approvalReviewer in ${path}: ${reviewer.error.message}`);
   }
+  const systemOne = systemOneSchema.safeParse(config.systemOne ?? {});
+  if (!systemOne.success) {
+    throw new Error(
+      `Invalid ${path}: ${systemOne.error.issues.map((issue) => `systemOne.${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+    );
+  }
   const goal = goalSchema.safeParse(config.goal ?? {});
   if (!goal.success) {
     throw new Error(`Invalid goal in ${path}: ${goal.error.message}`);
@@ -401,6 +485,25 @@ export function loadConfig(home = homedir()): ChimeraConfig {
 
 export function approvalReviewerEnabled(config: ChimeraConfig): boolean {
   return config.approvalReviewer?.enabled === true;
+}
+
+/** The settings of the System One check for the model the config chose, or undefined when it is off. */
+export function resolveSystemOne(config: ChimeraConfig): SystemOneSettings | undefined {
+  const {
+    enabled,
+    model: name = 'jev',
+    allowSandboxBypass,
+    timeoutMs,
+    ...models
+  } = config.systemOne ?? {};
+  if (enabled !== true) return undefined;
+  const chosen = models[name] as SystemOneModelConfig;
+  return {
+    ...(name === 'jev' ? JEV_DEFAULTS : {}),
+    ...(chosen as SystemOneModelConfig & { url: string }),
+    ...(allowSandboxBypass === undefined ? {} : { allowSandboxBypass }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
 }
 
 /** How many times one run may continue for a goal that is not met. */

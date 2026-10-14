@@ -47,6 +47,7 @@ import {
   CommandPolicyPipeline,
   commandRequiresSudo,
   createSessionReviewer,
+  createSystemOneCheck,
   DefaultPermissionGate,
   GatedExecutor,
   PathAuthorizationStage,
@@ -56,6 +57,7 @@ import {
   ScaryCommandStage,
   ShellEffectsStage,
   SudoApprovalStage,
+  SystemOneAudit,
 } from '@chimera/permissions';
 import {
   buildKeyResolver,
@@ -103,6 +105,7 @@ import type {
   HostBashPolicyConfig,
   McpServerConfig,
   ModelOptions,
+  SystemOneSettings,
   WebSearchConfig,
 } from './config';
 import { McpAuth } from './mcp/auth';
@@ -158,6 +161,11 @@ export interface CliAgentFactoryOptions {
    * user is asked. Default: false.
    */
   approvalReviewer?: boolean;
+  /**
+   * Let a System One model rate a host bash command that needs approval
+   * before the reviewer and the user. Default: no check.
+   */
+  systemOne?: SystemOneSettings;
   /** Limits for the check of a session goal. */
   goal?: { maxContinuations?: number };
   /**
@@ -269,6 +277,8 @@ export class CliAgentFactory implements AgentFactory {
   private readonly liveOsSandboxes = new Map<SessionId, OsSandbox>();
   private readonly detectOsSandbox: () => OsSandboxKind | null;
   private readonly approvalReviewer: boolean;
+  private readonly systemOne: SystemOneSettings | undefined;
+  private readonly systemOneApiKey: (() => string) | undefined;
   private readonly goalMaxContinuations: number | undefined;
   /** The OS sandbox of this machine; undefined until the first session looks for it. */
   private osSandboxKind: OsSandboxKind | null | undefined;
@@ -318,6 +328,7 @@ export class CliAgentFactory implements AgentFactory {
     };
     this.detectOsSandbox = opts.detectOsSandbox ?? detectOsSandbox;
     this.approvalReviewer = opts.approvalReviewer === true;
+    this.systemOne = opts.systemOne;
     this.goalMaxContinuations = opts.goal?.maxContinuations;
     this.home = opts.home;
     this.skills = opts.skills;
@@ -329,6 +340,9 @@ export class CliAgentFactory implements AgentFactory {
     this.sandbox = opts.sandbox;
     this.subagents = opts.subagents ?? {};
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
+    this.systemOneApiKey = opts.systemOne?.apiKey
+      ? buildKeyResolver(opts.systemOne.apiKey, { providerId: 'systemOne', warn: this.warn })
+      : undefined;
     this.providersConfig = opts.providersConfig;
     this.mcpServers = opts.mcpServers ?? {};
     this.mcpHeadlessAutoDeny = opts.mcpHeadlessAutoDeny ?? false;
@@ -701,6 +715,11 @@ export class CliAgentFactory implements AgentFactory {
       mode: this.hostBashPolicy.enabled ? this.hostBashPolicy.mode : 'disabled',
       onWarning: this.warn,
     });
+    const systemOneAudit = new SystemOneAudit({
+      home: this.home,
+      sessionId: agent.session.id,
+      onWarning: this.warn,
+    });
     const gate = new DefaultPermissionGate({
       cwd: init.cwd,
       home: this.home,
@@ -749,6 +768,33 @@ export class CliAgentFactory implements AgentFactory {
                 decision: review.decision,
                 reason: review.reason,
                 ...(review.stopped ? { stopped: review.stopped } : {}),
+              });
+            },
+          }
+        : {}),
+      ...(this.systemOne
+        ? {
+            systemOne: createSystemOneCheck({
+              url: this.systemOne.url,
+              model: this.systemOne.model,
+              threshold: this.systemOne.threshold,
+              allowSandboxBypass: this.systemOne.allowSandboxBypass,
+              timeoutMs: this.systemOne.timeoutMs,
+              apiKey: this.systemOneApiKey,
+              record: (entry) => systemOneAudit.record(entry),
+            }),
+            onSystemOne: (request, verdict) => {
+              const callId = request.toolCallId
+                ? agent.resolveCallId(request.toolCallId)
+                : undefined;
+              agent.pushEvent({
+                type: 'system_one_checked',
+                requestId: request.requestId,
+                ...(callId ? { callId } : {}),
+                decision: verdict.decision,
+                note: verdict.note,
+                ...(verdict.safety === undefined ? {} : { safety: verdict.safety }),
+                threshold: verdict.threshold,
               });
             },
           }

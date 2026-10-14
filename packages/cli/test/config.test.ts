@@ -9,6 +9,7 @@ import {
   resolveHostBashPolicy,
   resolveMcpServers,
   resolveModel,
+  resolveSystemOne,
 } from '../src/config';
 
 it('rejects invalid MCP server configuration with config path and server name', async () => {
@@ -156,6 +157,86 @@ describe('approval reviewer setting', () => {
     const home = await homeWith({ approvalReviewer: { enabled: true, model: 'x/y' } });
 
     expect(() => loadConfig(home)).toThrow(/approvalReviewer/);
+  });
+});
+
+describe('System One setting', () => {
+  async function homeWith(systemOne: unknown): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-config-'));
+    await mkdir(join(home, '.chimera'), { recursive: true });
+    await writeFile(join(home, '.chimera', 'config.json'), JSON.stringify({ systemOne }));
+    return home;
+  }
+  const resolved = async (systemOne: unknown) =>
+    resolveSystemOne(loadConfig(await homeWith(systemOne)));
+  const layaUrl = 'http://system-one.test/v1/systemone';
+  const jev = { apiKey: 'env:JEV_API_KEY' };
+  const laya = { url: layaUrl, model: 'english', threshold: 0.7 };
+
+  it('is off unless the config turns it on', async () => {
+    expect(resolveSystemOne({})).toBeUndefined();
+    expect(await resolved({ jev })).toBeUndefined();
+    expect(await resolved({ enabled: false, model: 'laya', jev, laya })).toBeUndefined();
+  });
+
+  it('uses Jev with only a key: the endpoint and the model name are known', async () => {
+    expect(await resolved({ enabled: true, jev })).toEqual({
+      url: 'https://api.typesafe.ai/v1/systemone',
+      model: 'jev-latest',
+      apiKey: 'env:JEV_API_KEY',
+    });
+  });
+
+  it('uses the model that the config names, with the settings of that model', async () => {
+    const both = { enabled: true, allowSandboxBypass: true, timeoutMs: 3000, jev, laya };
+
+    expect(await resolved({ ...both, model: 'laya' })).toEqual({
+      url: layaUrl,
+      model: 'english',
+      threshold: 0.7,
+      allowSandboxBypass: true,
+      timeoutMs: 3000,
+    });
+    expect(await resolved({ ...both, model: 'jev' })).toMatchObject({
+      url: 'https://api.typesafe.ai/v1/systemone',
+      apiKey: 'env:JEV_API_KEY',
+      allowSandboxBypass: true,
+    });
+    expect(await resolved({ ...both, model: 'jev' })).not.toHaveProperty('threshold');
+  });
+
+  it('lets the Jev section name another endpoint, model and threshold', async () => {
+    const gateway = 'https://gateway.test/api/v1/systemone';
+
+    expect(
+      await resolved({
+        enabled: true,
+        jev: { ...jev, url: gateway, model: 'jev-preview', threshold: 0.9 },
+      }),
+    ).toEqual({ url: gateway, model: 'jev-preview', apiKey: 'env:JEV_API_KEY', threshold: 0.9 });
+  });
+
+  it.each([
+    [
+      'a setting it does not know',
+      { enabled: true, jev, prompt: 'is it safe' },
+      /systemOne\.prompt/,
+    ],
+    ['a model setting it does not know', { enabled: true, jev: { ...jev, key: 'x' } }, /jev/],
+    ['a model that has no section', { enabled: true, model: 'laya', jev }, /systemOne\.laya/],
+    ['no model at all', { enabled: true }, /systemOne\.jev/],
+    ['a model without a URL', { enabled: true, model: 'laya', laya: {} }, /systemOne\.laya\.url/],
+    [
+      'a URL that is not HTTP',
+      { enabled: true, model: 'laya', laya: { url: 'file:///etc/passwd' } },
+      /systemOne\.laya\.url/,
+    ],
+    ['a threshold above 1', { enabled: true, jev: { ...jev, threshold: 85 } }, /threshold/],
+    ['a threshold of 0', { enabled: true, jev: { ...jev, threshold: 0 } }, /threshold/],
+  ])('refuses %s', async (_name, systemOne, message) => {
+    const home = await homeWith(systemOne);
+
+    expect(() => loadConfig(home)).toThrow(message);
   });
 });
 
