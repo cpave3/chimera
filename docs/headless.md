@@ -36,8 +36,9 @@ commands that the [command policy](bash-command-policy.md) accepts.
 - A command that the policy sends to the user (for example a `danger`
   finding, or an unsandboxed request) **waits** until a client answers the
   request through the HTTP API. A plain terminal has no such client, so the
-  run does not continue. Use rules, the OS sandbox or the
-  [approval reviewer](bash-command-policy.md#approval-reviewer) to prevent
+  run does not continue. Use rules, the OS sandbox, the
+  [approval reviewer](bash-command-policy.md#approval-reviewer) or the
+  [System One check](bash-command-policy.md#system-one-check) to prevent
   this, or drive the run from a client that answers.
 - An MCP call needs a `trustedTools` entry or an allow rule. Without one it is
   denied. See [MCP tools](mcp.md).
@@ -113,12 +114,13 @@ Events that a client must handle to drive a session without the TUI:
 
 | Event | The client must |
 | --- | --- |
-| `permission_request` | Answer with `POST …/permissions/:requestId`. A request that the approval reviewer escalated has a `reviewerReason`. |
+| `permission_request` | Answer with `POST …/permissions/:requestId`. A request that the approval reviewer escalated has a `reviewerReason`. A command that the System One check rejected has a `systemOneNote`. |
 | `question_request` | Answer or cancel with `POST …/questions/:requestId`. |
 | `user_input_required` | Show the request; the run has ended. |
 | `run_finished` | Read `reason`; the run is over. |
 
 Events that only report: `approval_reviewed` (the reviewer's decision),
+`system_one_checked` (the System One check's verdict),
 `goal_updated` (a goal change or check result), `task_list_updated`,
 `usage_updated`, `subagent_spawned` and `subagent_finished`,
 `background_process_exited`, and the tool and text events of

@@ -211,6 +211,10 @@ build · anthropic/claude-opus-4-7 · sandbox os    ▰▰▰▰▱▱▱▱▱�
 - **Reviewer mark.** A tool line that the approval reviewer allowed ends with
   `approved by reviewer`. See
   [Host bash command policy](bash-command-policy.md#approval-reviewer).
+- **System One mark.** A tool line that the System One check approved ends
+  with `approved by System One`. The approval prompt of a command that the
+  check rejected has a line that starts with `System One rejected`. See
+  [Host bash command policy](bash-command-policy.md#system-one-check).
 - **Notices.** Results of goal checks, background agents and compactions are
   one line each, wrapped between words.
 - **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a

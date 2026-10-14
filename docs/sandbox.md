@@ -27,7 +27,9 @@ directory of the repository. It cannot write `.chimera/`, where the permission
 rules and hooks are.
 
 When the sandbox blocks a command, the model can ask to run it outside the
-sandbox. That request needs user approval; the AI reviewer cannot grant it. An explicitly remembered
+sandbox. That request needs user approval; the AI reviewer cannot grant it. The
+[System One check](#system-one-check) can grant it only when its
+`allowSandboxBypass` setting is on. An explicitly remembered
 allow rule with `allowUnsandboxed: true` and an exact or simple-command prefix
 pattern can grant the bypass, including in headless sessions. Ordinary allow
 rules, glob rules and auto-approval cannot. Deny rules win, and other mandatory
@@ -39,7 +41,8 @@ The context panel shows
 `sandbox os` while the OS sandbox is active.
 
 For a recognized sandbox failure, Chimera retries the command once on the host
-if an explicit saved bypass rule passes a fresh policy check. It does not prompt
+if an explicit saved bypass rule passes a fresh policy check, or if the System
+One check with `allowSandboxBypass` approves the command. It does not prompt
 or consult the AI reviewer for this retry. Normal failures, timeouts and cancelled
 calls are not retried. Foreground retries share the original timeout budget;
 background retries keep the same shell ID. Results include `sandbox_retry`
@@ -91,6 +94,29 @@ Sandbox bypass requests, sudo commands and commands with a `danger` or `critical
 finding skip the reviewer. See
 [Host bash command policy](bash-command-policy.md#approval-reviewer) for
 the rules, the limits and the audit record.
+
+## System One check
+
+```json
+{ "systemOne": { "enabled": true, "jev": { "apiKey": "env:JEV_API_KEY" } } }
+```
+
+The System One check is off by default. When it is on, a host bash command
+that needs your approval goes first to a System One model (Jev, or a server
+with its protocol). The model rates how safe the command is.
+
+- A command at or above the `threshold` runs. The tool line shows
+  `approved by System One`.
+- A command below the threshold comes to you, with a note that the model
+  rejected it.
+- With `"allowSandboxBypass": true`, a command that the model approves can
+  also leave the OS sandbox.
+
+Sudo commands and commands with a `danger` or `critical` finding skip the
+check. Each command that the model rates is in
+`~/.chimera/logs/system-one-decisions.jsonl`. See
+[Host bash command policy](bash-command-policy.md#system-one-check) for the
+settings, the questions, the threshold and the limits.
 
 ## Docker sandbox
 

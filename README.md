@@ -243,7 +243,10 @@ Chimera has three layers between the model and your machine.
 3. **Approval prompts.** The prompt shows the command and the findings. With
    `"approvalReviewer": { "enabled": true }`, the `utilityModel` examines a
    request first: it allows what is plainly part of your task and sends the
-   rest to you. Sudo and dangerous commands always go to you.
+   rest to you. With `"systemOne": { "enabled": true, "jev": { "apiKey": "…" } }`,
+   a System One model (Jev or a compatible server) rates a bash command
+   first: a command that it rates safe runs, and the rest go to you with a
+   note. Sudo and dangerous commands always go to you.
 
 For more isolation, `--sandbox` moves the tools into a Docker container, with
 `bind`, `overlay` (review the changes before they reach your files) and
@@ -254,7 +257,7 @@ default is `host`: a host command that the policy accepts runs at once.
 
 - [Sandboxes](docs/sandbox.md): the OS sandbox and the Docker sandbox.
 - [Host bash command policy](docs/bash-command-policy.md): the rules, sudo,
-  the approval reviewer and the audit log.
+  the approval reviewer, the System One check and the audit log.
 - [`SECURITY.md`](SECURITY.md): the threat model.
 
 ## Context and memory
