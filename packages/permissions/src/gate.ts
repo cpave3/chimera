@@ -15,6 +15,7 @@ import type { HookRunner } from '@chimera/hooks';
 import { matchRule } from './matching';
 import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
+import type { SystemOneCheck, SystemOneVerdict } from './system-one';
 import type { AutoApproveLevel } from './types';
 
 export type RaiseRequestFn = (req: PermissionRequest) => Promise<PermissionResolution>;
@@ -56,6 +57,7 @@ export interface GateOptions {
     resolution: PermissionResolution;
     source: PermissionDecisionSource;
     review?: ApprovalReview;
+    systemOne?: SystemOneVerdict;
   }) => void;
   /**
    * Examines a request before the user is asked about it. Without one,
@@ -64,6 +66,13 @@ export interface GateOptions {
   reviewer?: ApprovalReviewer;
   /** Called with each decision of the reviewer. */
   onReview?: (request: PermissionRequest, review: ApprovalReview) => void;
+  /**
+   * Rates a bash command before the reviewer and the user. A command it
+   * approves runs; one it rejects goes to the user with its note.
+   */
+  systemOne?: SystemOneCheck;
+  /** Called with each verdict of the System One check. */
+  onSystemOne?: (request: PermissionRequest, verdict: SystemOneVerdict) => void;
 }
 
 /**
@@ -123,6 +132,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private readonly audit: GateOptions['audit'];
   private readonly reviewer: ApprovalReviewer | undefined;
   private readonly onReview: GateOptions['onReview'];
+  private readonly systemOne: SystemOneCheck | undefined;
+  private readonly onSystemOne: GateOptions['onSystemOne'];
 
   constructor(opts: GateOptions) {
     this.store = new RuleStore(opts.cwd, opts.home);
@@ -136,6 +147,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
     this.audit = opts.audit;
     this.reviewer = opts.reviewer;
     this.onReview = opts.onReview;
+    this.systemOne = opts.systemOne;
+    this.onSystemOne = opts.onSystemOne;
   }
 
   async check(req: PermissionRequest): Promise<PermissionResolution | null> {
@@ -155,10 +168,13 @@ export class DefaultPermissionGate implements McpPermissionGate {
    * 3. If a hookRunner is configured, fire PermissionRequest. A pre-hook
    *    block (exit 2) denies without raising the user prompt — the executor
    *    renders this denial as `{ error: "denied by hook" }`.
-   * 4. If an approval reviewer is configured and the request is its to
+   * 4. If a System One check is configured and the request is its to decide,
+   *    its `allow` allows the call. Its rejection goes to the user with its
+   *    note, past the reviewer.
+   * 5. If an approval reviewer is configured and the request is its to
    *    decide, its `allow` allows the call and its `escalate` goes on.
-   * 5. If headlessAutoDeny and host target, deny without raising.
-   * 6. Otherwise call raiseRequest to suspend the agent for user decision.
+   * 6. If headlessAutoDeny and host target, deny without raising.
+   * 7. Otherwise call raiseRequest to suspend the agent for user decision.
    */
   async requestMcp(
     call: McpPermissionCall,
@@ -259,7 +275,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
         ) {
           return this.audited(evaluatedRequest, { decision: 'allow', remembered: true }, 'rule');
         }
-        if (rememberedBypassOnly) return null;
+        if (rememberedBypassOnly) return this.retryApprovedBySystemOne(evaluatedRequest);
         const resolution = await this.prompt(evaluatedRequest);
         return resolution.decision === 'allow' && requiresSudoAuthentication(policyAnalysis)
           ? { ...resolution, authentication: 'sudo' }
@@ -286,73 +302,137 @@ export class DefaultPermissionGate implements McpPermissionGate {
     return this.prompt(evaluatedRequest);
   }
 
+  /** The denial of a blocking `PermissionRequest` hook, or null when no hook blocks. */
+  private async deniedByHook(req: PermissionRequest): Promise<PermissionResolution | null> {
+    if (!this.hookRunner) return null;
+    const result = await this.hookRunner.fire({
+      event: 'PermissionRequest',
+      tool_name: req.tool,
+      tool_input: req.mcp
+        ? { mcp: req.mcp }
+        : { command: req.command, ...(req.reason ? { reason: req.reason } : {}) },
+      target: req.target,
+      command: req.command,
+      ...(req.policyAnalysis ? { policy_analysis: req.policyAnalysis } : {}),
+    });
+    if (!result.blocked) return null;
+    this.emitResolved?.(req.requestId, 'deny', false);
+    return this.audited(req, { decision: 'deny', remembered: false, denialSource: 'hook' }, 'hook');
+  }
+
+  /** The System One check's verdict on a request, or undefined when it has none. */
+  private async checkedBySystemOne(req: PermissionRequest): Promise<SystemOneVerdict | undefined> {
+    const verdict = (await this.systemOne?.check(req)) ?? undefined;
+    if (verdict) this.onSystemOne?.(req, verdict);
+    return verdict;
+  }
+
   /**
-   * Put a request to whoever decides it: a blocking hook, the approval
-   * reviewer, then the user. `mcpArguments` are for the reviewer only; the
-   * request itself goes to clients without argument values.
+   * The automatic host retry of a command the OS sandbox stopped. Nobody is
+   * asked: the retry happens only when the System One check approves it. A
+   * hook can still block what the check approved.
+   */
+  private async retryApprovedBySystemOne(
+    req: PermissionRequest,
+  ): Promise<PermissionResolution | null> {
+    const verdict = await this.checkedBySystemOne(req);
+    if (verdict?.decision !== 'allow') return null;
+    return (
+      (await this.deniedByHook(req)) ??
+      this.audited(req, { decision: 'allow', remembered: false }, 'system_one', undefined, verdict)
+    );
+  }
+
+  /**
+   * Put a request to whoever decides it: a blocking hook, the System One
+   * check, the approval reviewer, then the user. `mcpArguments` are for the
+   * reviewer only; the request itself goes to clients without argument values.
    */
   private async prompt(
     req: PermissionRequest,
     mcpArguments?: unknown,
   ): Promise<PermissionResolution> {
-    if (this.hookRunner) {
-      const result = await this.hookRunner.fire({
-        event: 'PermissionRequest',
-        tool_name: req.tool,
-        tool_input: req.mcp
-          ? { mcp: req.mcp }
-          : { command: req.command, ...(req.reason ? { reason: req.reason } : {}) },
-        target: req.target,
-        command: req.command,
-        ...(req.policyAnalysis ? { policy_analysis: req.policyAnalysis } : {}),
-      });
-      if (result.blocked) {
-        this.emitResolved?.(req.requestId, 'deny', false);
-        return this.audited(
-          req,
-          { decision: 'deny', remembered: false, denialSource: 'hook' },
-          'hook',
-        );
-      }
+    const hookDenial = await this.deniedByHook(req);
+    if (hookDenial) return hookDenial;
+    const verdict = await this.checkedBySystemOne(req);
+    if (verdict?.decision === 'allow') {
+      return this.audited(
+        req,
+        { decision: 'allow', remembered: false },
+        'system_one',
+        undefined,
+        verdict,
+      );
     }
-    const review = req.unsandboxed
-      ? undefined
-      : ((await this.reviewer?.review({
-          request: req,
-          ...(mcpArguments === undefined ? {} : { mcpArguments }),
-        })) ?? undefined);
+    // A rejection is for the user. The reviewer gets only what the check had no opinion on.
+    const rejected = verdict !== undefined && !verdict.failed;
+    const review =
+      req.unsandboxed || rejected
+        ? undefined
+        : ((await this.reviewer?.review({
+            request: req,
+            ...(mcpArguments === undefined ? {} : { mcpArguments }),
+          })) ?? undefined);
     if (review) this.onReview?.(req, review);
     if (review?.decision === 'allow') {
-      return this.audited(req, { decision: 'allow', remembered: false }, 'reviewer', review);
+      return this.audited(
+        req,
+        { decision: 'allow', remembered: false },
+        'reviewer',
+        review,
+        verdict,
+      );
     }
     if ((this.headlessAutoDeny || (req.mcp && this.mcpHeadlessAutoDeny)) && req.target === 'host') {
       this.emitResolved?.(req.requestId, 'deny', false);
-      // The reviewer wanted the user to decide, and there is nobody to ask:
-      // the model gets the reviewer's reason in place of a bare denial.
-      return review
-        ? this.audited(
-            req,
-            {
-              decision: 'deny',
-              remembered: false,
-              denialSource: 'reviewer',
-              reviewerReason: review.reason,
-            },
-            'reviewer',
-            review,
-          )
-        : this.audited(
-            req,
-            { decision: 'deny', remembered: false, denialSource: 'headless' },
-            'headless',
-          );
+      // Somebody wanted the user to decide, and there is nobody to ask: the
+      // model gets that reason in place of a bare denial.
+      if (review) {
+        return this.audited(
+          req,
+          {
+            decision: 'deny',
+            remembered: false,
+            denialSource: 'reviewer',
+            reviewerReason: review.reason,
+          },
+          'reviewer',
+          review,
+          verdict,
+        );
+      }
+      if (rejected) {
+        return this.audited(
+          req,
+          {
+            decision: 'deny',
+            remembered: false,
+            denialSource: 'system_one',
+            systemOneNote: verdict.note,
+          },
+          'system_one',
+          undefined,
+          verdict,
+        );
+      }
+      return this.audited(
+        req,
+        { decision: 'deny', remembered: false, denialSource: 'headless' },
+        'headless',
+        undefined,
+        verdict,
+      );
     }
-    const raised = await this.raise(review ? { ...req, reviewerReason: review.reason } : req);
+    const raised = await this.raise({
+      ...req,
+      ...(review ? { reviewerReason: review.reason } : {}),
+      ...(verdict ? { systemOneNote: verdict.note } : {}),
+    });
     const resolution =
       raised.decision === 'deny' && !raised.denialSource
         ? { ...raised, denialSource: 'user' as const }
         : raised;
-    return this.audited(req, resolution, 'user', review);
+    return this.audited(req, resolution, 'user', review, verdict);
   }
 
   private audited(
@@ -360,8 +440,15 @@ export class DefaultPermissionGate implements McpPermissionGate {
     resolution: PermissionResolution,
     source: PermissionDecisionSource,
     review?: ApprovalReview,
+    systemOne?: SystemOneVerdict,
   ): PermissionResolution {
-    this.audit?.({ request, resolution, source, ...(review ? { review } : {}) });
+    this.audit?.({
+      request,
+      resolution,
+      source,
+      ...(review ? { review } : {}),
+      ...(systemOne ? { systemOne } : {}),
+    });
     return resolution;
   }
 

@@ -13,4 +13,6 @@ export * from './rule-store';
 export * from './scary-command-stage';
 export * from './shell-effects-stage';
 export * from './sudo-approval-stage';
+export * from './system-one';
+export * from './system-one-audit';
 export * from './types';

@@ -113,7 +113,10 @@ export function buildBashTool(ctx: ToolContext) {
         });
         if (resolution.decision === 'deny') {
           return refuse(
-            permissionDenialMessage(resolution.denialSource, resolution.reviewerReason),
+            permissionDenialMessage(
+              resolution.denialSource,
+              resolution.reviewerReason ?? resolution.systemOneNote,
+            ),
           );
         }
         if (resolution.authentication === 'sudo') {
@@ -262,7 +265,12 @@ async function launchBackground(
       ...scope.request,
     });
     if (resolution.decision === 'deny') {
-      return refuse(permissionDenialMessage(resolution.denialSource, resolution.reviewerReason));
+      return refuse(
+        permissionDenialMessage(
+          resolution.denialSource,
+          resolution.reviewerReason ?? resolution.systemOneNote,
+        ),
+      );
     }
   }
   const launched = manager.launch(

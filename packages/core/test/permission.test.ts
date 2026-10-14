@@ -16,4 +16,11 @@ describe('permissionDenialMessage', () => {
     );
     expect(permissionDenialMessage('reviewer')).toMatch(/^denied by reviewer: /);
   });
+
+  it('gives the model the note of the System One check', () => {
+    expect(
+      permissionDenialMessage('system_one', 'rejected: safety 0.31, needs 0.80, reads as "remote"'),
+    ).toBe('denied: System One rejected: safety 0.31, needs 0.80, reads as "remote"');
+    expect(permissionDenialMessage('system_one')).toBe('denied: System One rejected the command');
+  });
 });

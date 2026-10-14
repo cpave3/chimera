@@ -473,6 +473,7 @@ export class Agent {
         policyAnalysis: req.policyAnalysis,
         mcp: req.mcp,
         ...(req.reviewerReason ? { reviewerReason: req.reviewerReason } : {}),
+        ...(req.systemOneNote ? { systemOneNote: req.systemOneNote } : {}),
       });
     });
   }

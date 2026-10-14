@@ -95,6 +95,8 @@ export interface PermissionRequest {
   toolCallId?: string;
   /** Why the approval reviewer sent this request to the user. */
   reviewerReason?: string;
+  /** What the System One check found before this request came to the user. */
+  systemOneNote?: string;
 }
 
 export type PermissionDecisionAction =
@@ -112,6 +114,7 @@ export type PermissionDecisionSource =
   | 'headless'
   | 'policy'
   | 'reviewer'
+  | 'system_one'
   | 'user';
 
 export interface PermissionResolution {
@@ -131,11 +134,14 @@ export interface PermissionResolution {
    * - `hook`     — blocked by a `PermissionRequest` lifecycle hook.
    * - `headless` — server-side auto-deny when the parent has no TTY.
    * - `reviewer` — the approval reviewer escalated and nobody could be asked.
+   * - `system_one` — the System One check rejected and nobody could be asked.
    * - `user`     — interactively rejected at the prompt.
    */
   denialSource?: Exclude<PermissionDecisionSource, 'automatic'>;
   /** The approval reviewer's reason, when its escalation is the denial. */
   reviewerReason?: string;
+  /** The System One check's note, when its rejection is the denial. */
+  systemOneNote?: string;
 }
 
 export type HostAuthenticationResult =
@@ -164,7 +170,10 @@ export interface HostAuthenticationCapability {
 export interface PermissionGate {
   check(req: PermissionRequest): Promise<PermissionResolution | null>;
   request(req: PermissionRequest): Promise<PermissionResolution>;
-  /** Authorize an automatic sandbox retry using only explicit saved rules; never prompt. */
+  /**
+   * Authorize an automatic sandbox retry without asking anybody: by an
+   * explicit saved rule, or by a System One check that may grant a bypass.
+   */
   requestRememberedBypass(req: PermissionRequest): Promise<PermissionResolution | null>;
   addRule(rule: PermissionRule, persist: 'session' | 'project' | 'global'): void;
   listRules(): PermissionRule[];

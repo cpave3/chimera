@@ -55,18 +55,24 @@ const INSTRUCTION_CHARACTERS = 6_000;
 const CALL_CHARACTERS = 4_000;
 
 /**
- * Whether the approval reviewer may decide a request. Sandbox bypass, sudo and the two
- * highest risk levels always go to the user: a wrong `allow` there costs the
- * most, and the reviewer is a low-cost model.
+ * Sudo and the two highest risk levels. No model decides these: a wrong
+ * `allow` there costs the most.
  */
-export function reviewable(request: PermissionRequest): boolean {
-  if (request.unsandboxed) return false;
+export function highStakes(request: PermissionRequest): boolean {
   const findings = request.policyAnalysis?.findings ?? [];
-  return !findings.some(
+  return findings.some(
     (finding) =>
       (finding.kind === 'elevation' && finding.ruleId === 'sudo') ||
       (finding.kind === 'risk' && (finding.level === 'danger' || finding.level === 'critical')),
   );
+}
+
+/**
+ * Whether the approval reviewer may decide a request. Sandbox bypass and
+ * high-stakes requests always go to the user: the reviewer is a low-cost model.
+ */
+export function reviewable(request: PermissionRequest): boolean {
+  return !request.unsandboxed && !highStakes(request);
 }
 
 function cut(text: string, limit: number): string {

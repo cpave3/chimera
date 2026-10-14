@@ -128,3 +128,38 @@ it('leaves the reason of the reviewer out for an MCP call, where it can repeat a
   expect(JSON.parse(text)).toMatchObject({ source: 'reviewer', reviewer: { decision: 'allow' } });
   expect(text).not.toContain('super-secret');
 });
+
+it('records what the System One check found with the decision that followed', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'chimera-audit-'));
+  const audit = new PermissionDecisionAudit({ home, sessionId: 'session-1', mode: 'balanced' });
+
+  audit.record({
+    request: {
+      requestId: 'request-1',
+      tool: 'bash',
+      target: 'host',
+      command: 'vercel deploy --prod',
+      cwd: '/workspace',
+    },
+    resolution: { decision: 'deny', remembered: false, denialSource: 'user' },
+    source: 'user',
+    systemOne: {
+      decision: 'escalate',
+      note: 'rejected: safety 0.31, needs 0.80, reads as "remote"',
+      safety: 0.31,
+      threshold: 0.8,
+    },
+  });
+
+  const text = await readFile(join(home, '.chimera', 'logs', 'permission-decisions.jsonl'), 'utf8');
+  expect(JSON.parse(text)).toMatchObject({
+    decision: 'deny',
+    source: 'user',
+    systemOne: {
+      decision: 'escalate',
+      note: 'rejected: safety 0.31, needs 0.80, reads as "remote"',
+      safety: 0.31,
+      threshold: 0.8,
+    },
+  });
+});

@@ -67,6 +67,8 @@ export type AgentEvent =
       mcp?: PermissionRequest['mcp'];
       /** Why the approval reviewer sent the request to the user. */
       reviewerReason?: string;
+      /** What the System One check found before the request came to the user. */
+      systemOneNote?: string;
     }
   | {
       type: 'permission_resolved';
@@ -97,6 +99,18 @@ export type AgentEvent =
       reason: string;
       /** Set when this decision made the reviewer stop for the session. */
       stopped?: 'consecutive' | 'total';
+    }
+  /** The System One check rated a bash command before the user was asked. */
+  | {
+      type: 'system_one_checked';
+      requestId: string;
+      /** The tool call that asked, when one did. */
+      callId?: CallId;
+      decision: 'allow' | 'escalate';
+      note: string;
+      /** Absent when the model gave no answer. */
+      safety?: number;
+      threshold: number;
     }
   /** The model put questions to the user; the tool call waits for `question_resolved`. */
   | { type: 'question_request'; requestId: string; questions: Question[] }

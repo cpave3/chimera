@@ -192,6 +192,39 @@ describe('buildTools', () => {
     expect(background.stderr).toBe('denied by reviewer: the user did not ask for a push');
   });
 
+  it('bash gives the model the note of a System One rejection that nobody could overrule', async () => {
+    const permissionGate: PermissionGate = {
+      request: async () => ({
+        decision: 'deny',
+        remembered: false,
+        denialSource: 'system_one',
+        systemOneNote: 'rejected: safety 0.31, needs 0.80, reads as "remote"',
+      }),
+      check: async () => null,
+      requestRememberedBypass: async () => null,
+      addRule: () => {},
+      listRules: () => [],
+      removeRule: () => {},
+    };
+    const toolset = buildTools({
+      sandboxExecutor: executor,
+      hostExecutor: executor,
+      sandboxMode: 'off',
+      permissionGate,
+      backgroundProcesses: new BackgroundProcessManager({ cwd: root }),
+    }).tools as unknown as Record<string, AnyTool>;
+
+    const foreground = await toolset.bash!.execute({ command: 'git push' }, {});
+    const background = await toolset.bash!.execute(
+      { command: 'git push', run_in_background: true },
+      {},
+    );
+
+    const denial = 'denied: System One rejected: safety 0.31, needs 0.80, reads as "remote"';
+    expect(foreground.stderr).toBe(denial);
+    expect(background.stderr).toBe(denial);
+  });
+
   it('authenticates approved sudo before executing the exact command', async () => {
     const exec = vi.spyOn(executor, 'exec').mockResolvedValue({
       stdout: 'approved',

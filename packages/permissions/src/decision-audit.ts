@@ -8,6 +8,7 @@ import type {
 } from '@chimera/core';
 import { logsDir } from '@chimera/core';
 import type { ApprovalReview } from './reviewer';
+import type { SystemOneVerdict } from './system-one';
 
 export interface PermissionDecisionAuditOptions {
   home?: string;
@@ -22,6 +23,8 @@ export interface PermissionAuditEntry {
   source: PermissionDecisionSource;
   /** What the approval reviewer decided before this decision was made. */
   review?: ApprovalReview;
+  /** What the System One check found before this decision was made. */
+  systemOne?: SystemOneVerdict;
   feedback?: string;
   grant?: { id: string; kind: 'read' | 'write'; path: string };
 }
@@ -69,6 +72,7 @@ export class PermissionDecisionAudit {
       remembered: entry.resolution.remembered,
       findings,
       ...(entry.review ? { reviewer: this.reviewerRecord(entry) } : {}),
+      ...(entry.systemOne ? { systemOne: entry.systemOne } : {}),
       ...(!entry.request.mcp && feedback ? { feedback } : {}),
       ...(!entry.request.mcp && grant ? { grant } : {}),
     };
