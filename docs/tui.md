@@ -43,7 +43,7 @@ approval rules or the sandbox, because you typed it.
 | `/mode [name]` | Show the modes or switch. |
 | `/goal [condition \| clear]` | Show, set or clear the session's goal. |
 | `/rules` | List the permission rules (`/rules rm <n>` deletes one). |
-| `/add-read-path <path>`, `/add-write-path <path>` | Grant access to a file or directory outside the project. |
+| `/add-read-path <path>`, `/add-write-path <path>` | Grant access to a file or directory outside the project. The rest of the line is the path, spaces included; quotes are optional. |
 | `/context` | Show a token breakdown of the context. |
 | `/compact` | Compact the context now. |
 | `/reload` | Read commands and instruction files again. |
@@ -264,7 +264,10 @@ to recall input history.
   one it may write. Typing `@` or `#` at the start of a word opens a list of
   matching files (what git tracks plus untracked files it does not ignore;
   a directory walk outside a repository). `↑`/`↓` move, `Tab` or `Enter`
-  accepts, `Esc` closes the list.
+  accepts, `Esc` closes the list. A path with spaces in it goes in double
+  quotes (`@"My Vault/Daily Notes.md"`) or has each space escaped
+  (`@My\ Vault/today.md`, as a terminal pastes a dropped file); a path
+  chosen from the list is quoted for you.
 
 ## Notifications
 

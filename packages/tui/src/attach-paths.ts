@@ -11,16 +11,20 @@ export interface AttachToken {
 
 /**
  * Detect `@path` (read) and `#path` (write) tokens in user input.
- * The path runs to the next whitespace. `~/` expands via `os.homedir()`.
+ * The path runs to the next whitespace. A path with spaces in it is written
+ * in double quotes (`@"My Notes/a.md"`) or with each space escaped
+ * (`@My\ Notes/a.md`, as a terminal pastes a dropped file).
+ * `~/` expands via `os.homedir()`.
  * Otherwise resolved against `cwd` (absolute paths pass through).
  * Returns tokens in order of appearance.
  */
 export function parseAttachTokens(input: string, cwd: string): AttachToken[] {
   const tokens: AttachToken[] = [];
-  const pattern = /(^|\s)([@#])(\S+)/g;
+  const pattern = /(^|\s)([@#])(?:"([^"\n]+)"|((?:\\\s|\S)+))/g;
   let match: RegExpExecArray | null = pattern.exec(input);
   while (match !== null) {
-    const [, , prefix, rawPath] = match;
+    const [, , prefix, quotedPath, barePath] = match;
+    const rawPath = quotedPath ?? (barePath ?? '').replace(/\\(\s)/g, '$1');
     if (!isAttachmentPath(rawPath)) {
       match = pattern.exec(input);
     } else if (prefix === '#' && rawPath.startsWith('#')) {

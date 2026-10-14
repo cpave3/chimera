@@ -126,6 +126,30 @@ describe('TUI /add-read-path and /add-write-path', () => {
     unmount();
   });
 
+  it('takes a path with spaces whole, quoted or not', async () => {
+    const calls: Array<{ kind: 'read' | 'write'; path: string }> = [];
+    const { stdin, unmount } = render(
+      <App
+        client={stubClient({
+          addPathSpy: (kind, path) => calls.push({ kind, path }),
+        })}
+        sessionId="s"
+        modelRef="m/m"
+        model={TEST_MODEL}
+        cwd="/tmp"
+      />,
+    );
+    await type(stdin, '/add-write-path "/vault/Daily  Notes"\r');
+    await type(stdin, '/add-read-path /vault/My Archive\r');
+    await type(stdin, '/add-read-path /vault/Old\\ Notes\r');
+    expect(calls).toEqual([
+      { kind: 'write', path: '/vault/Daily  Notes' },
+      { kind: 'read', path: '/vault/My Archive' },
+      { kind: 'read', path: '/vault/Old Notes' },
+    ]);
+    unmount();
+  });
+
   it('/add-read-path with no arg shows a usage error and does not call client.addPath', async () => {
     const calls: Array<{ kind: 'read' | 'write'; path: string }> = [];
     const { lastFrame, stdin, unmount } = render(

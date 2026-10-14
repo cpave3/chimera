@@ -31,13 +31,17 @@ export function completionContext(buffer: MultilineBuffer): CompletionContext | 
   return { marker, query, start, end: cursor };
 }
 
-/** Replace the word under the cursor with the chosen path. */
+/**
+ * Replace the word under the cursor with the chosen path. A path with
+ * spaces in it is quoted, so it is still read as one attachment.
+ */
 export function acceptCompletion(
   buffer: MultilineBuffer,
   context: CompletionContext,
   path: string,
 ): MultilineBuffer {
-  const inserted = `${context.marker}${path} `;
+  const written = /\s/.test(path) ? `"${path}"` : path;
+  const inserted = `${context.marker}${written} `;
   return {
     text: buffer.text.slice(0, context.start) + inserted + buffer.text.slice(context.end),
     cursor: context.start + inserted.length,

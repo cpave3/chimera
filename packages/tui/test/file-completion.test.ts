@@ -80,6 +80,16 @@ describe('acceptCompletion', () => {
       cursor: 32,
     });
   });
+
+  it('quotes a path with spaces so it stays one attachment', () => {
+    const buffer = { text: '#dai', cursor: 4 };
+    const context = completionContext(buffer)!;
+
+    expect(acceptCompletion(buffer, context, 'Daily Notes/today.md')).toEqual({
+      text: '#"Daily Notes/today.md" ',
+      cursor: 24,
+    });
+  });
 });
 
 describe('listProjectFiles', () => {

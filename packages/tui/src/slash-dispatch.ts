@@ -122,14 +122,15 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
     case '/add-read-path':
     case '/add-write-path': {
       const kind = name === '/add-read-path' ? 'read' : 'write';
-      if (!arg) {
+      const path = pathArgument(raw.slice(name.length));
+      if (!path) {
         scrollback.addError(`usage: ${name} <path>`);
         return;
       }
       void (async () => {
         try {
-          await activeSession.client.addPath(activeSession.sessionId, kind, arg);
-          scrollback.addInfo(`${name}: granted ${kind} access to ${arg}`);
+          await activeSession.client.addPath(activeSession.sessionId, kind, path);
+          scrollback.addInfo(`${name}: granted ${kind} access to ${path}`);
         } catch (err) {
           scrollback.addError(`${name}: ${(err as Error).message}`);
         }
@@ -659,4 +660,15 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
       );
     }
   }
+}
+
+/**
+ * The path a command was given, spaces and all: the rest of the line, in
+ * double quotes or not, with any backslash-escaped spaces unescaped.
+ */
+function pathArgument(rest: string): string {
+  const text = rest.trim();
+  const quoted = /^"(.+)"$/.exec(text);
+  if (quoted) return quoted[1] ?? '';
+  return text.replace(/\\(\s)/g, '$1');
 }

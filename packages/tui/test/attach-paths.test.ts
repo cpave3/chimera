@@ -52,6 +52,22 @@ describe('parseAttachTokens', () => {
     ]);
   });
 
+  it('takes a quoted path with spaces as one token', () => {
+    expect(parseAttachTokens('read @"My Vault/Daily Notes.md" please', '/home/u')).toEqual([
+      { kind: 'read', raw: 'My Vault/Daily Notes.md', absolute: '/home/u/My Vault/Daily Notes.md' },
+    ]);
+  });
+
+  it('takes backslash-escaped spaces as part of the path', () => {
+    expect(parseAttachTokens('edit #/vault/Daily\\ Notes/today.md now', '/tmp')).toEqual([
+      {
+        kind: 'write',
+        raw: '/vault/Daily Notes/today.md',
+        absolute: '/vault/Daily Notes/today.md',
+      },
+    ]);
+  });
+
   it('expands @~/ to homedir', () => {
     expect(parseAttachTokens('show @~/notes.txt', '/tmp')).toEqual([
       {
