@@ -1290,6 +1290,55 @@ describe('Agent', () => {
     });
   });
 
+  it.each([
+    false,
+    true,
+  ])('reports automatic completion without clearing an outstanding prompt (pending=%s)', async (hasPendingPrompt) => {
+    const resolutions: unknown[] = [];
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('ok'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      permissionResolvedHook: {
+        async fire(resolution) {
+          await Promise.resolve();
+          resolutions.push(resolution);
+        },
+      },
+    });
+    const request = buildPermissionRequest({ tool: 'bash', command: 'rm file', cwd: '/tmp' });
+    let answered = false;
+    const pending = hasPendingPrompt
+      ? agent.raisePermissionRequest(request).then(() => {
+          answered = true;
+        })
+      : undefined;
+
+    await agent.emitPermissionResolved('automatic-retry', 'allow', false);
+
+    expect(resolutions).toEqual([
+      {
+        requestId: 'automatic-retry',
+        decision: 'allow',
+        remembered: false,
+        sessionStatus: hasPendingPrompt ? 'waiting_for_permission' : 'running',
+        remainingPending: hasPendingPrompt ? 1 : 0,
+      },
+    ]);
+    expect(agent.hasPendingPermission(request.requestId)).toBe(hasPendingPrompt);
+    expect(answered).toBe(false);
+    if (hasPendingPrompt) expect(agent.session.status).toBe('waiting_for_permission');
+    if (pending) {
+      await agent.resolvePermission(request.requestId, 'deny');
+      await pending;
+      expect(resolutions).toHaveLength(2);
+    }
+  });
+
   it('serializes concurrent resolution hooks in resulting-state order', async () => {
     const hookStates: string[] = [];
     let releaseFirstHook: (() => void) | undefined;
@@ -1318,13 +1367,24 @@ describe('Agent', () => {
 
     const firstResolution = agent.resolvePermission(first.requestId, 'allow');
     await new Promise((resolve) => setTimeout(resolve, 0));
+    const automaticResolution = agent.emitPermissionResolved('automatic-retry', 'allow', false);
     const secondResolution = agent.resolvePermission(second.requestId, 'allow');
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(hookStates).toEqual(['waiting_for_permission:1']);
     releaseFirstHook?.();
-    await Promise.all([firstResolution, secondResolution, firstPending, secondPending]);
-    expect(hookStates).toEqual(['waiting_for_permission:1', 'running:0']);
+    await Promise.all([
+      firstResolution,
+      automaticResolution,
+      secondResolution,
+      firstPending,
+      secondPending,
+    ]);
+    expect(hookStates).toEqual([
+      'waiting_for_permission:1',
+      'waiting_for_permission:1',
+      'running:0',
+    ]);
   });
 
   it('resumes a permission when the resolution hook fails', async () => {
@@ -1345,6 +1405,8 @@ describe('Agent', () => {
     const request = buildPermissionRequest({ tool: 'bash', command: 'rm file', cwd: '/tmp' });
     const resolution = agent.raisePermissionRequest(request);
 
+    await agent.emitPermissionResolved('automatic-retry', 'deny', false);
+    expect(agent.hasPendingPermission(request.requestId)).toBe(true);
     await agent.resolvePermission(request.requestId, 'allow');
 
     await expect(resolution).resolves.toMatchObject({ decision: 'allow' });

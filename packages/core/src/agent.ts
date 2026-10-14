@@ -598,17 +598,7 @@ export class Agent {
     this.pendingPermissions.delete(requestId);
     const remainingPending = this.pendingPermissions.size;
     this.session.status = remainingPending > 0 ? 'waiting_for_permission' : 'running';
-    try {
-      await this.opts.permissionResolvedHook?.fire({
-        requestId,
-        decision,
-        remembered: !!remember,
-        sessionStatus: this.session.status,
-        remainingPending,
-      });
-    } catch {
-      // observational hook failures must not strand the suspended tool call
-    }
+    await this.firePermissionResolvedHook(requestId, decision, !!remember);
 
     pending.resolve({
       decision,
@@ -640,13 +630,44 @@ export class Agent {
     return this.pendingPermissions.has(requestId);
   }
 
-  /**
-   * Emit a `permission_resolved` event without going through the
-   * raise/resolve dance. Used by the gate when the hook subsystem decides
-   * the call before the user is ever prompted — there is no pending request
-   * to settle, but the spec still requires the resolved event to fire.
-   */
-  emitPermissionResolved(requestId: string, decision: 'allow' | 'deny', remembered: boolean): void {
+  private async firePermissionResolvedHook(
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remembered: boolean,
+  ): Promise<void> {
+    const remainingPending = this.pendingPermissions.size;
+    try {
+      await this.opts.permissionResolvedHook?.fire({
+        requestId,
+        decision,
+        remembered,
+        sessionStatus: remainingPending > 0 ? 'waiting_for_permission' : 'running',
+        remainingPending,
+      });
+    } catch {
+      // Observational hook failures must not strand the caller.
+    }
+  }
+
+  /** Complete an automated decision through the same ordered lifecycle as a human response. */
+  emitPermissionResolved(
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remembered: boolean,
+  ): Promise<void> {
+    const resolution = this.permissionResolutionChain.then(() =>
+      this.emitPermissionResolvedSerial(requestId, decision, remembered),
+    );
+    this.permissionResolutionChain = resolution.catch(() => {});
+    return resolution;
+  }
+
+  private async emitPermissionResolvedSerial(
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remembered: boolean,
+  ): Promise<void> {
+    await this.firePermissionResolvedHook(requestId, decision, remembered);
     this.currentQueue?.push({
       type: 'permission_resolved',
       requestId,

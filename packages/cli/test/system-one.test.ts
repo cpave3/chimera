@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentEvent } from '@chimera/core';
@@ -93,6 +93,7 @@ describe('the System One check in a session', () => {
     /** The check's settings; null turns the check off. */
     systemOne?: Partial<SystemOneSettings> | null;
     headless?: boolean;
+    captureLifecycle?: boolean;
   }
 
   /**
@@ -101,6 +102,19 @@ describe('the System One check in a session', () => {
    */
   async function run(scenario: Scenario) {
     const target = join(outside, 'made.txt');
+    const lifecyclePath = join(home, 'permission-lifecycle.jsonl');
+    if (scenario.captureLifecycle) {
+      for (const event of ['PermissionRequest', 'PermissionResolved']) {
+        const directory = join(home, '.chimera', 'hooks', event);
+        await mkdir(directory, { recursive: true });
+        await writeFile(
+          join(directory, 'capture.sh'),
+          `#!/bin/sh\ncat >> '${lifecyclePath}'\nprintf '\\n' >> '${lifecyclePath}'\n`,
+          { mode: 0o755 },
+        );
+      }
+    }
+
     const sessionCalls: ChatBody[] = [];
     const systemOneCalls: Array<{ body: SystemOneBody; authorization?: string }> = [];
     vi.stubGlobal('fetch', async (input: unknown, init?: RequestInit) => {
@@ -166,8 +180,42 @@ describe('the System One check in a session', () => {
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line));
-    return { target, of, systemOneCalls, writeResult, logged, sessionId: agent.session.id };
+    const lifecycle = scenario.captureLifecycle
+      ? (await readFile(lifecyclePath, 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      : [];
+    return {
+      target,
+      of,
+      systemOneCalls,
+      writeResult,
+      logged,
+      lifecycle,
+      sessionId: agent.session.id,
+    };
   }
+
+  it.each([
+    ['automatic approval', 0.9, false, 'allow'],
+    ['headless denial', 0.2, true, 'deny'],
+    ['human denial', 0.2, false, 'deny'],
+  ] as const)('finishes the integration lifecycle after %s', async (_name, benign, headless, decision) => {
+    const { lifecycle, of } = await run({ benign, headless, captureLifecycle: true });
+
+    expect(lifecycle.map((entry) => entry.event)).toEqual([
+      'PermissionRequest',
+      'PermissionResolved',
+    ]);
+    expect(lifecycle[1]).toMatchObject({
+      decision,
+      session_status: 'running',
+      remaining_pending: 0,
+    });
+    expect(of('permission_resolved')).toHaveLength(1);
+    expect(of('permission_request')).toHaveLength(!headless && benign < 0.8 ? 1 : 0);
+  });
 
   it('runs a command the model rates safe, without a prompt, and reports the verdict', async () => {
     const { target, of, systemOneCalls } = await run({ benign: 0.9 });

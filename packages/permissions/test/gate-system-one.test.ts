@@ -262,6 +262,50 @@ describe('the System One check in the gate', () => {
     });
 
     it.each([
+      false,
+      true,
+    ])('settles the automatic retry lifecycle (hook blocks=%s)', async (blocked) => {
+      const lifecycle: string[] = [];
+      let releaseHook!: () => void;
+      let enterHook!: () => void;
+      const hookBlocked = new Promise<void>((resolve) => {
+        releaseHook = resolve;
+      });
+      const hookEntered = new Promise<void>((resolve) => {
+        enterHook = resolve;
+      });
+      const hookRunner = {
+        fire: async () => {
+          lifecycle.push('waiting');
+          return { blocked };
+        },
+      } as unknown as HookRunner;
+      const { gate: built, asked } = gate(approved, {
+        hookRunner,
+        emitResolved: async (requestId, decision, remembered) => {
+          enterHook();
+          await hookBlocked;
+          lifecycle.push(`${requestId}:${decision}:${remembered}`);
+        },
+      });
+
+      const completion = built.requestRememberedBypass(retry()).then((resolution) => {
+        lifecycle.push('resumed');
+        return resolution;
+      });
+      await hookEntered;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(lifecycle).toEqual(['waiting']);
+      releaseHook();
+      const resolution = await completion;
+
+      expect(asked).toHaveLength(0);
+      const decision = blocked ? 'deny' : 'allow';
+      expect(resolution?.decision).toBe(decision);
+      expect(lifecycle).toEqual(['waiting', `r1:${decision}:false`, 'resumed']);
+    });
+
+    it.each([
       ['rejects', rejected],
       ['gave no answer about', unanswered],
       ['does not decide', null],

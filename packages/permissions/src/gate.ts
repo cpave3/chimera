@@ -45,9 +45,13 @@ export interface GateOptions {
    * Optional callback invoked when the gate resolves a request without
    * routing through `raiseRequest` (e.g., the hook subsystem blocks the
    * call). The factory wires this to `Agent.emitPermissionResolved` so the
-   * `permission_resolved` event still fires for hook-decided denials.
+   * `permission_resolved` event and lifecycle hook finish before execution resumes.
    */
-  emitResolved?: (requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void;
+  emitResolved?: (
+    requestId: string,
+    decision: 'allow' | 'deny',
+    remembered: boolean,
+  ) => void | Promise<void>;
   commandPolicy?: {
     evaluator: CommandPolicyEvaluator;
     context: (request: PermissionRequest) => CommandPolicyContext;
@@ -126,7 +130,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private readonly mcpHeadlessAutoDeny: boolean;
   private readonly hookRunner: HookRunner | undefined;
   private readonly emitResolved:
-    | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void)
+    | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void | Promise<void>)
     | undefined;
   private readonly commandPolicy: GateOptions['commandPolicy'];
   private readonly audit: GateOptions['audit'];
@@ -232,7 +236,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
       );
       evaluatedRequest = { ...req, policyAnalysis };
       if (policyAnalysis.findings.some((finding) => finding.kind === 'blocked')) {
-        this.emitResolved?.(req.requestId, 'deny', false);
+        await this.emitResolved?.(req.requestId, 'deny', false);
         return this.audited(
           evaluatedRequest,
           { decision: 'deny', remembered: false, denialSource: 'policy' },
@@ -316,7 +320,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
       ...(req.policyAnalysis ? { policy_analysis: req.policyAnalysis } : {}),
     });
     if (!result.blocked) return null;
-    this.emitResolved?.(req.requestId, 'deny', false);
+    await this.emitResolved?.(req.requestId, 'deny', false);
     return this.audited(req, { decision: 'deny', remembered: false, denialSource: 'hook' }, 'hook');
   }
 
@@ -337,9 +341,15 @@ export class DefaultPermissionGate implements McpPermissionGate {
   ): Promise<PermissionResolution | null> {
     const verdict = await this.checkedBySystemOne(req);
     if (verdict?.decision !== 'allow') return null;
-    return (
-      (await this.deniedByHook(req)) ??
-      this.audited(req, { decision: 'allow', remembered: false }, 'system_one', undefined, verdict)
+    const hookDenial = await this.deniedByHook(req);
+    if (hookDenial) return hookDenial;
+    await this.emitResolved?.(req.requestId, 'allow', false);
+    return this.audited(
+      req,
+      { decision: 'allow', remembered: false },
+      'system_one',
+      undefined,
+      verdict,
     );
   }
 
@@ -356,6 +366,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     if (hookDenial) return hookDenial;
     const verdict = await this.checkedBySystemOne(req);
     if (verdict?.decision === 'allow') {
+      await this.emitResolved?.(req.requestId, 'allow', false);
       return this.audited(
         req,
         { decision: 'allow', remembered: false },
@@ -375,6 +386,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
           })) ?? undefined);
     if (review) this.onReview?.(req, review);
     if (review?.decision === 'allow') {
+      await this.emitResolved?.(req.requestId, 'allow', false);
       return this.audited(
         req,
         { decision: 'allow', remembered: false },
@@ -384,7 +396,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
       );
     }
     if ((this.headlessAutoDeny || (req.mcp && this.mcpHeadlessAutoDeny)) && req.target === 'host') {
-      this.emitResolved?.(req.requestId, 'deny', false);
+      await this.emitResolved?.(req.requestId, 'deny', false);
       // Somebody wanted the user to decide, and there is nobody to ask: the
       // model gets that reason in place of a bare denial.
       if (review) {

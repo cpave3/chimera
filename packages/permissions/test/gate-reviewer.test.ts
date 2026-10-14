@@ -101,12 +101,25 @@ const escalate: ApprovalReview = { decision: 'escalate', reason: 'writes outside
 
 describe('the approval reviewer in the gate', () => {
   it('allows a request the reviewer allows, and the user is not asked', async () => {
-    const { gate: built, asked, reviewed, reported, audited } = gate(allow);
+    const resolved: string[] = [];
+    const {
+      gate: built,
+      asked,
+      reviewed,
+      reported,
+      audited,
+    } = gate(allow, {
+      emitResolved: async (requestId, decision) => {
+        await Promise.resolve();
+        resolved.push(`${requestId}:${decision}`);
+      },
+    });
 
     const resolution = await built.request(request({ toolCallId: 'call-7' }));
 
     expect(resolution).toMatchObject({ decision: 'allow', remembered: false });
     expect(asked).toHaveLength(0);
+    expect(resolved).toEqual(['r1:allow']);
     expect(reviewed[0]!.request).toMatchObject({
       command: 'make cache',
       policyAnalysis: { findings: [pathFinding] },

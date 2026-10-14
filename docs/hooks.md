@@ -26,7 +26,7 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 | `PreToolUse`       | A tool call is about to run, before the permission gate.                       | pre   |
 | `PostToolUse`      | A tool call completes (success or error).                                      | post  |
 | `PermissionRequest`| The permission gate would otherwise prompt the user.                           | pre   |
-| `PermissionResolved`| An interactive permission is resolved, before the suspended tool resumes.      | post  |
+| `PermissionResolved`| A human or automated permission decision completes, before work resumes.      | post  |
 | `Stop`             | A run reaches a clean stop, before any stop-hook retry.                         | post  |
 | `OnError`          | A run terminates with `run_finished.reason: "error"`.                          | post  |
 | `UserInputRequired`| The agent requests human assistance and ends its current run.                    | post  |
@@ -81,7 +81,7 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
       "score": 80, "message": "destructive command" }]
   } }
 
-// PermissionResolved (interactive requests only)
+// PermissionResolved (human or automated decisions)
 { "event": "PermissionResolved", "session_id": "...", "cwd": "...",
   "request_id": "...", "decision": "allow", "remembered": false,
   "session_status": "running", "remaining_pending": 0 }
@@ -145,9 +145,9 @@ exit 0
 
 Pre-hooks **fail open** — a crashing or timing-out hook never blocks the agent. If you want strict denial on internal error, exit 2 explicitly inside your script.
 
-`OnError`, `UserInputRequired`, and `PermissionResolved` are observational. A failed resolution hook cannot prevent the permission decision from taking effect. Chimera waits for `PermissionResolved` after recomputing permission state but before releasing the suspended tool, so external state changes are ordered before resumed work. With multiple requests, `session_status` remains `waiting_for_permission` and `remaining_pending` stays nonzero until the final request resolves; the final resolution reports `running` and zero. Permission resolution never reports `idle` because allow and deny both continue the turn. A later terminal hook reports its actual outcome.
+`OnError`, `UserInputRequired`, and `PermissionResolved` are observational. A failed resolution hook cannot prevent the permission decision from taking effect. Chimera waits for `PermissionResolved` after recomputing permission state but before resuming work, so external state changes are ordered before resumed work. With multiple requests, `session_status` remains `waiting_for_permission` and `remaining_pending` stays nonzero until the final request resolves; the final resolution reports `running` and zero. Permission resolution never reports `idle` because allow and deny both continue the turn. A later terminal hook reports its actual outcome.
 
-`PermissionResolved` only fires for interactive requests that entered `waiting_for_permission`. Pre-hook blocks and headless automatic denials never suspend the run and therefore do not fire this lifecycle hook.
+`PermissionResolved` also fires when a request completes without a human prompt: System One or reviewer approvals, including automatic host retries, and hook, headless, or policy denials. This balances request hooks even when no interactive request was raised. A policy block can emit resolution without a preceding request hook. Automated completions use the same resolution queue and report the count of genuine pending permissions; they do not clear another request. Immediate rule matches and trusted or auto-approved calls that skip request hooks do not fire this lifecycle hook.
 
 Chimera waits for `OnError` and `UserInputRequired` to complete (or reach the per-script timeout) before publishing `run_finished` to clients. Timeout and interrupt completions use their dedicated events instead.
 
