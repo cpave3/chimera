@@ -112,7 +112,8 @@ function redactAudit(audit: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
-function redactCommand(command: string): string {
+/** A command without the values that look like credentials. */
+export function redactCommand(command: string): string {
   return command
     .replace(
       /\b([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s]+)/g,

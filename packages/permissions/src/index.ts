@@ -15,4 +15,5 @@ export * from './shell-effects-stage';
 export * from './sudo-approval-stage';
 export * from './system-one';
 export * from './system-one-audit';
+export * from './system-one-export';
 export * from './types';
