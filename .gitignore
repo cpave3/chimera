@@ -15,3 +15,6 @@ zod-worker-feedback.txt
 .cerberus/cache/
 .cerberus/sessions/
 
+
+# Eval results: the evalite database, exported runs and per-run transcripts.
+packages/evals/.results/

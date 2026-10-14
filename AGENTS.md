@@ -88,6 +88,26 @@ Subagent E2E tests are gated on `CHIMERA_TEST_E2E=1` and live in
 `packages/subagents/test/e2e-spawn.test.ts`. They spawn real `chimera serve`
 processes; no provider credentials needed.
 
+### Evals (`packages/evals`)
+
+`pnpm --filter @chimera/evals evals run` runs real `chimera run` sessions
+against a local LM Studio server and loads models onto the GPU. Do not start
+it unless the user asks. See `docs/evals.md`.
+
+- `pnpm --filter @chimera/evals test` is the unit suite and needs no model:
+  it drives the harness with `test/fixtures/fake-chimera.mjs`. To try the CLI
+  the same way, pass `--chimera <wrapper around the fake> --no-load` and set
+  `CHIMERA_EVALS_RESULTS_DIR` so the fake runs stay out of `.results/`.
+- The evals run `packages/cli/dist/bin.js`. Rebuild the CLI before a run that
+  measures a change to a prompt, a tool or a profile.
+- evalite 0.19 ignores `--hideTable` on `evalite run`; `hideTable` in
+  `evalite.config.ts` is what hides its table.
+- evalite needs `better-sqlite3`, a native module. It is in
+  `onlyBuiltDependencies` in `pnpm-workspace.yaml`. A missing binding after
+  an install means the build script did not run: `pnpm install --force`.
+- The planned small-model work, with the findings of the first pass, is in
+  `docs/scratch/small-model-tuning.md`.
+
 ## `pnpm typecheck` has known noise
 
 `tsc -b` is run from the root for typechecking, but:

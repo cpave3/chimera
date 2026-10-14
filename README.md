@@ -386,6 +386,7 @@ A value of the form `env:NAME` in an API key is read from the environment.
 | User commands | [docs/COMMANDS.md](docs/COMMANDS.md) |
 | MCP | [docs/mcp.md](docs/mcp.md) |
 | Hooks | [docs/hooks.md](docs/hooks.md) |
+| Evals with local models | [docs/evals.md](docs/evals.md) |
 
 ## Development
 
