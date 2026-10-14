@@ -7,8 +7,14 @@ import { SessionPicker } from './SessionPicker';
 import { SudoPasswordModal } from './SudoPasswordModal';
 import type { AppView } from './view';
 
+export interface DialogsProps {
+  view: AppView;
+  /** Rows the permission prompt may take, for a layout that does not fix its own height. */
+  permissionMaxHeight?: number;
+}
+
 /** The prompts and pickers that take the keyboard from the prompt box. */
-export function Dialogs({ view }: { view: AppView }): React.ReactElement {
+export function Dialogs({ view, permissionMaxHeight }: DialogsProps): React.ReactElement {
   const { pending, sudoAuthentication, overlayPicker, sessionPicker, rewindPicker } = view;
   return (
     <>
@@ -21,6 +27,7 @@ export function Dialogs({ view }: { view: AppView }): React.ReactElement {
         />
       ) : pending ? (
         <PermissionModal
+          key={pending.requestId}
           command={pending.command}
           reason={pending.reason}
           reviewerReason={pending.reviewerReason}
@@ -33,6 +40,8 @@ export function Dialogs({ view }: { view: AppView }): React.ReactElement {
               ? `[subagent ${pending.subagent.id.slice(-8)}: ${pending.subagent.purpose}]`
               : undefined
           }
+          maxHeight={permissionMaxHeight}
+          scrollerRef={view.dialogScrollerRef}
           onResolve={view.onResolve}
         />
       ) : view.question ? (

@@ -23,7 +23,7 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | `Esc` | Interrupt the run. |
 | `Ctrl+C` | Interrupt; press it twice to exit. |
 | `Ctrl+Z` | Suspend. |
-| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen). |
+| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen), or a permission request too tall for the screen. |
 | `Ctrl+B` | Show or hide the context panel (fullscreen). |
 | Drag | Select text; it is copied when you release the button (fullscreen). |
 
@@ -219,6 +219,9 @@ build · anthropic/claude-opus-4-7 · sandbox os    ▰▰▰▰▱▱▱▱▱�
   one line each, wrapped between words.
 - **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
   digit, or the letter shown next to each choice. `Esc` denies.
+  A request too tall for the screen scrolls above the choices, which stay in
+  view: `PgUp` and `PgDn` move it, and so does the mouse wheel in the
+  fullscreen layout. A line under the request says which lines are showing.
   For an OS sandbox bypass, choose **Allow once**, **Allow exact command…**, or
   **Allow command prefix…**. Review the pattern and choose session, project, or
   global scope. See [OS sandbox](sandbox.md#os-sandbox) for the limits.

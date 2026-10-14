@@ -21,7 +21,7 @@ import type { PendingPermission } from './permission-queue';
 import type { SlashMenuItem } from './SlashMenu';
 import type { Scrollback } from './scrollback';
 import { BUILTIN_COMMANDS } from './slash-commands';
-import type { TranscriptScroller } from './view';
+import type { DialogScroller, TranscriptScroller } from './view';
 
 /** What a key press may read and change in the App. */
 export interface KeyContext {
@@ -73,6 +73,8 @@ export interface KeyContext {
   /** The layout owns the screen: the transcript scrolls and the panel toggles. */
   fullscreen: boolean;
   scrollerRef: MutableRefObject<TranscriptScroller | null>;
+  /** Set while a dialog that can scroll is open. */
+  dialogScrollerRef: MutableRefObject<DialogScroller | null>;
   setPanelOpen: Dispatch<SetStateAction<boolean>>;
 }
 
@@ -120,13 +122,19 @@ export function handleKey(char: string, key: Key, context: KeyContext): void {
     setFileMenuDismissedAt,
     fullscreen,
     scrollerRef,
+    dialogScrollerRef,
     setPanelOpen,
   } = context;
-  // The transcript scrolls under a dialog too: the user may want to read
-  // what led to a permission request before answering it.
-  if (fullscreen && (key.pageUp || key.pageDown)) {
-    scrollerRef.current?.scrollPages(key.pageUp ? -1 : 1);
-    return;
+  if (key.pageUp || key.pageDown) {
+    const pages = key.pageUp ? -1 : 1;
+    // A dialog too tall for the screen scrolls first: its end is out of reach otherwise.
+    if (dialogScrollerRef.current?.scrollPages(pages)) return;
+    // The transcript scrolls under a dialog too: the user may want to read
+    // what led to a permission request before answering it.
+    if (fullscreen) {
+      scrollerRef.current?.scrollPages(pages);
+      return;
+    }
   }
   if (pending) return; // handled by modal
   if (context.questionOpen) return; // handled by the question dialog

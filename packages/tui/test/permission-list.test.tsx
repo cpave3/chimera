@@ -114,4 +114,33 @@ describe('approval list', () => {
     expect(resolved).toEqual([]);
     unmount();
   });
+
+  it('keeps every character of text that arrives in one burst', async () => {
+    const { stdin, resolved, unmount } = mount();
+    await settle();
+    await press(stdin, 'f');
+
+    // No render happens between these: a paste, or keys faster than a frame.
+    stdin.write('n');
+    stdin.write('o');
+    stdin.write(ENTER);
+    await settle();
+
+    expect(resolved).toEqual([{ decision: 'deny', feedback: 'no' }]);
+    unmount();
+  });
+
+  it('applies the choice the arrows reached when Enter follows in the same burst', async () => {
+    const { stdin, resolved, unmount } = mount();
+    await settle();
+
+    stdin.write(DOWN);
+    stdin.write(DOWN);
+    stdin.write(DOWN);
+    stdin.write(ENTER);
+    await settle();
+
+    expect(resolved).toEqual([{ decision: 'deny' }]);
+    unmount();
+  });
 });

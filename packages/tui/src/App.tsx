@@ -57,7 +57,7 @@ import { BUILTIN_COMMANDS, isBuiltin, OVERLAY_COMMANDS } from './slash-commands'
 import { dispatchSlash } from './slash-dispatch';
 import { useThemeContext } from './theme/ThemeProvider';
 import { formatTranscript } from './transcript-text';
-import type { AppView, SudoAuthenticationState, TranscriptScroller } from './view';
+import type { AppView, DialogScroller, SudoAuthenticationState, TranscriptScroller } from './view';
 import type { WorktreeStatus } from './worktree';
 
 function sessionHasActiveRun(status: SessionStatus): boolean {
@@ -284,6 +284,7 @@ export function App(props: AppProps): React.ReactElement | null {
   const [helpOpen, setHelpOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const scrollerRef = useRef<TranscriptScroller | null>(null);
+  const dialogScrollerRef = useRef<DialogScroller | null>(null);
   const [retry, setRetry] = useState<{ attempt: number; maxAttempts: number } | null>(null);
   const [runSteps, setRunSteps] = useState(0);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -674,7 +675,8 @@ export function App(props: AppProps): React.ReactElement | null {
       if (event.kind === 'wheel-up' || event.kind === 'wheel-down') {
         // The text moves under a highlight that is fixed to the screen.
         screenSelection?.clear();
-        scrollerRef.current?.scrollBy(event.kind === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES);
+        const lines = event.kind === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES;
+        if (!dialogScrollerRef.current?.scrollBy(lines)) scrollerRef.current?.scrollBy(lines);
       } else if (event.kind === 'copied') {
         setCopiedCharacters(event.characters);
         clearTimeout(noticeTimer);
@@ -744,6 +746,7 @@ export function App(props: AppProps): React.ReactElement | null {
       setFileMenuDismissedAt,
       fullscreen,
       scrollerRef,
+      dialogScrollerRef,
       setPanelOpen,
     });
   });
@@ -1357,6 +1360,7 @@ export function App(props: AppProps): React.ReactElement | null {
     forkFrom,
     panelOpen,
     scrollerRef,
+    dialogScrollerRef,
     copiedCharacters,
   };
 

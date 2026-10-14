@@ -36,6 +36,14 @@ export interface TranscriptScroller {
   toEnd(): void;
 }
 
+/** What a dialog taller than the rows it was given lets the key handler do. */
+export interface DialogScroller {
+  /** Negative scrolls toward the top. False when the whole dialog is in view. */
+  scrollBy(lines: number): boolean;
+  /** A page is the height of the scrolling part less one line of overlap. */
+  scrollPages(pages: number): boolean;
+}
+
 /**
  * Everything a layout draws, built once by the App controller. A layout
  * reads it and calls its handlers; it keeps no session state of its own.
@@ -108,6 +116,7 @@ export interface AppView {
 
   panelOpen: boolean;
   scrollerRef: MutableRefObject<TranscriptScroller | null>;
+  dialogScrollerRef: MutableRefObject<DialogScroller | null>;
   /** Characters of a selection that just went to the clipboard; null when there is nothing to say. */
   copiedCharacters: number | null;
 }

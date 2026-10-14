@@ -155,7 +155,7 @@ export function InlineView({ view }: { view: AppView }): React.ReactElement {
         )}
         {view.helpOpen && <HelpPanel />}
         <QueueList messages={queue} maxLines={liveRegion.queuedLines} />
-        <Dialogs view={view} />
+        <Dialogs view={view} permissionMaxHeight={liveRegion.permissionLines} />
         {view.menuItems.length > 0 && (
           <SlashMenu items={view.menuItems} highlightIdx={view.menuHighlight} />
         )}

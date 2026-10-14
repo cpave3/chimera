@@ -167,6 +167,8 @@ export function TranscriptPane({
       flexDirection="column"
       flexGrow={1}
       flexShrink={1}
+      // The pane takes the rows nothing else needs, and asks for none of its own.
+      flexBasis={0}
       overflowY="scroll"
       overflowX="hidden"
       backgroundColor={theme.base.background}

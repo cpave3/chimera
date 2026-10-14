@@ -17,6 +17,8 @@ export interface LiveRegionPlan {
   queuedLines: number;
   /** Lines held for everything else in the live region. */
   reservedLines: number;
+  /** Lines a permission prompt may take; the request scrolls in one that needs more. */
+  permissionLines: number;
 }
 
 export const MAX_TASK_LINES = 6;
@@ -26,6 +28,10 @@ const FIXED_LINES = 4;
 // In-flight transcript entries: streamed text spills at 8 lines, plus a
 // tool line and the blank line above each.
 const IN_FLIGHT_RESERVE = 11;
+// The status rows and the prompt box's border, which sit under a permission prompt.
+const LINES_UNDER_PERMISSION = 3;
+// A permission prompt's border, padding and choices, with a line of the request.
+const MIN_PERMISSION_LINES = 14;
 
 /**
  * Split the live region's height among its optional parts. Ink redraws the
@@ -42,5 +48,11 @@ export function planLiveRegion(input: LiveRegionInput): LiveRegionPlan {
   const crowded = input.modalOpen || input.helpOpen;
   // A header with no task under it says nothing.
   const taskLines = crowded || Math.min(wanted, free) < 2 ? 0 : Math.min(wanted, free);
-  return { taskLines, queuedLines, reservedLines };
+  // The prompt may push what is above it off the screen, but all of it must
+  // show at once: its choices are at the bottom and its request at the top.
+  const permissionLines = Math.max(
+    MIN_PERMISSION_LINES,
+    input.rows - 1 - LINES_UNDER_PERMISSION - input.promptLines,
+  );
+  return { taskLines, queuedLines, reservedLines, permissionLines };
 }

@@ -209,6 +209,8 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
         hintRoom,
       );
 
+  const permissionPromptShown = view.pending !== null && view.sudoAuthentication === null;
+
   const lastElapsedRef = useRef(0);
   if (view.runStartedAt !== null) lastElapsedRef.current = Date.now() - view.runStartedAt;
 
@@ -250,7 +252,12 @@ export function FullscreenView({ view }: { view: AppView }): React.ReactElement 
         <Box flexDirection="column" flexShrink={0}>
           {view.helpOpen && <HelpPanel fullscreen />}
           <QueueList messages={view.queue} maxLines={MAX_QUEUED_LINES} />
+        </Box>
+        {/* A permission prompt taller than the rows left gives rows back and scrolls. */}
+        <Box flexDirection="column" flexShrink={permissionPromptShown ? 1 : 0}>
           <Dialogs view={view} />
+        </Box>
+        <Box flexDirection="column" flexShrink={0}>
           {view.menuItems.length > 0 && (
             <SlashMenu items={view.menuItems} highlightIdx={view.menuHighlight} />
           )}
