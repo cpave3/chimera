@@ -139,6 +139,18 @@ node scripts/smoke-release.mjs dist/release/chimera-linux-amd64 v0.0.0-local
   the agent. It exits non-zero naming each failed check.
 - A binary is about 110 MB. If `/tmp` is a small tmpfs, set `TMPDIR` to
   a directory on a larger disk for the build.
+- **Cutting a release:** `gh workflow run release -f bump=patch` (or
+  `minor`, `major`), on `main` only. `.github/workflows/release.yml` takes
+  the next version from the newest stable `vX.Y.Z` tag
+  (`scripts/next-version.sh`; the first release is `v0.0.1` or `v0.1.0`),
+  runs `pnpm -r build` and `pnpm -r test`, builds the binaries, installs a
+  pinned `rcodesign` for the darwin one, smoke-tests linux-amd64, attests
+  build provenance, pushes the sandbox image to
+  `ghcr.io/cpave3/chimera-sandbox` as `:vX.Y.Z` and `:latest`, and runs
+  `gh release create` with generated notes. Nothing is committed back to
+  `main`: the tag is the version. `-f dry_run=true` builds and checks on
+  any branch and publishes nothing. Asset names carry no version, so
+  `releases/latest/download/chimera-linux-amd64` is always the newest.
 - Code that only a single file can get wrong (paths beside a module,
   `process.argv[1]`, files read from a package directory) needs a check in
   the smoke test: the unit suites run from source and cannot see it.
