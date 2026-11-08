@@ -1,9 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   isPidAlive,
@@ -170,8 +172,15 @@ describe('lockfile', () => {
     it('removes the lockfile of a process that is told to terminate', async () => {
       // The home comes through the environment and is checked before anything
       // is written: a child that missed it would write into the real home.
+      // Compiled to JS first: Node 20 cannot import a .ts file.
+      const modulePath = join(home, 'lockfile.mjs');
+      const source = await readFile(new URL('../src/lockfile.ts', import.meta.url), 'utf8');
+      const compiled = ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      });
+      await writeFile(modulePath, compiled.outputText);
       const script = `
-        import { writeLockfile, removeLockfileOnExit } from ${JSON.stringify(new URL('../src/lockfile.ts', import.meta.url).href)};
+        import { writeLockfile, removeLockfileOnExit } from ${JSON.stringify(pathToFileURL(modulePath).href)};
         const home = process.env.LOCKFILE_TEST_HOME;
         if (!home) process.exit(2);
         writeLockfile({ pid: process.pid, port: 1, cwd: '/tmp', startedAt: 0, version: '0', url: 'http://127.0.0.1:1' }, home);
