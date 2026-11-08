@@ -87,6 +87,12 @@ export class InlineScreen {
     this.write(body, lines, width, height);
   }
 
+  /** Clear the screen and the scrollback; the next frame starts at the top. */
+  clear(): void {
+    writeFrame(this.out, CLEAR_SCREEN_AND_SCROLLBACK);
+    this.previous = [];
+  }
+
   /** Forget what is on screen: the next frame is written from the cursor as a first frame. */
   reset(): void {
     this.previous = [];

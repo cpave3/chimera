@@ -2,8 +2,8 @@ import { basename, resolve } from 'node:path';
 import type { SessionId } from '@chimera/core';
 import { type ControllerHooks, TuiController } from './app/controller';
 import { FullscreenLayout } from './app/fullscreen';
+import { InlineLayout } from './app/inline';
 import type { TuiOptions } from './app/options';
-import { mountInkTui } from './ink-mount';
 import {
   decideNotification,
   FocusTracker,
@@ -12,6 +12,7 @@ import {
 } from './notify';
 import { AltScreen } from './terminal/alt-screen';
 import { type SignalPort, TerminalHost, type TerminalInputStream } from './terminal/host';
+import { InlineScreen } from './terminal/inline-screen';
 import type { InputEvent } from './terminal/keys';
 import { resolveTheme, type TuiLayout } from './theme/loader';
 import type { Style } from './theme/style';
@@ -80,14 +81,14 @@ export function mountTui(opts: MountOptions): TuiHandle {
   const env = terminal.env ?? process.env;
   const { stdout } = terminal;
   const layout = resolveLayout(opts.layout, { isTTY: stdout.isTTY === true, term: env.TERM });
-  if (layout === 'inline' && !opts.terminal) return mountInkTui(opts, layout);
+  const fullscreen = layout === 'fullscreen';
+  const tty = stdout.isTTY === true;
 
   let theme = resolveTheme({ env });
   if (theme.error && !opts.terminal) process.stderr.write(`theme: ${theme.error}\n`);
   let style: Style = theme.style;
   const notifications = opts.notifications ?? 'auto';
   const focusTracker = new FocusTracker();
-  const screen = new AltScreen(stdout);
   const title = `chimera · ${basename(resolve(opts.cwd))}`;
 
   let frameTimer: NodeJS.Timeout | undefined;
@@ -98,11 +99,12 @@ export function mountTui(opts: MountOptions): TuiHandle {
     resolveExit = resolveExited;
   });
 
+  const size = () => ({ width: stdout.columns ?? 80, height: stdout.rows ?? 24 });
   const draw = () => {
     frameTimer = undefined;
-    if (finished || !screen.entered) return;
+    if (finished) return;
     lastFrameAt = Date.now();
-    screen.render(fullscreen.frame(stdout.columns ?? 80, stdout.rows ?? 24, style));
+    surface.draw();
   };
   const requestRender = () => {
     if (finished || frameTimer) return;
@@ -115,19 +117,19 @@ export function mountTui(opts: MountOptions): TuiHandle {
     exit: () => finish(),
     handoff: (operation) =>
       host.handoff(async () => {
-        screen.leave();
+        surface.leave();
         try {
           return await operation();
         } finally {
           if (!finished) {
-            screen.enter();
+            surface.enter();
             requestRender();
           }
         }
       }),
     suspend: () => host.suspend(),
     notify: (reason, detail) => {
-      if (stdout.isTTY !== true) return;
+      if (!tty) return;
       const kind = decideNotification({
         setting: notifications,
         reason,
@@ -136,7 +138,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
       });
       stdout.write(notificationSequence(kind, `${title}: ${ATTENTION_TEXT[reason]}`));
     },
-    transcriptReset: () => fullscreen.reset(),
+    transcriptReset: () => surface.reset(),
     reloadTheme: () => {
       theme = resolveTheme({ env });
       style = theme.style;
@@ -144,13 +146,72 @@ export function mountTui(opts: MountOptions): TuiHandle {
     },
   };
 
-  const controller = new TuiController(opts, hooks, true);
-  const fullscreen = new FullscreenLayout(controller);
+  const controller = new TuiController(opts, hooks, fullscreen);
+  const surface: Surface = fullscreen ? alternateSurface() : inlineSurface();
+
+  /** The fullscreen layout on the alternate screen. */
+  function alternateSurface(): Surface {
+    const screen = new AltScreen(stdout);
+    const view = new FullscreenLayout(controller);
+    return {
+      draw: () => {
+        if (!screen.entered) return;
+        const { width, height } = size();
+        screen.render(view.frame(width, height, style));
+      },
+      enter: () => screen.enter(),
+      leave: () => screen.leave(),
+      resized: () => screen.invalidate(),
+      resumed: () => screen.enter(),
+      reset: () => view.reset(),
+      finish: () => screen.leave(),
+      wheel: (lines) => {
+        if (!controller.modalCard()?.scroll?.(lines)) view.scrollBy(lines);
+        requestRender();
+      },
+    };
+  }
+
+  /** The inline layout in the terminal's own scrollback. */
+  function inlineSurface(): Surface {
+    const screen = new InlineScreen(stdout);
+    const view = new InlineLayout(controller);
+    const cursor = (visible: boolean) => {
+      if (tty) stdout.write(visible ? SHOW_CURSOR : HIDE_CURSOR);
+    };
+    return {
+      draw: () => {
+        const { width, height } = size();
+        screen.render(view.frame(width, height, style));
+      },
+      enter: () => cursor(false),
+      leave: () => cursor(true),
+      resized: () => {},
+      // The shell wrote under the TUI while it was stopped: print it all again.
+      resumed: () => {
+        cursor(false);
+        screen.reprint();
+      },
+      reset: () => {
+        view.reset();
+        screen.clear();
+      },
+      finish: () => {
+        const { width } = size();
+        screen.render(view.exitFrame(width, style));
+        stdout.write('\r\n');
+        cursor(true);
+      },
+      wheel: () => {},
+    };
+  }
+
   const host = new TerminalHost({
     stdin: terminal.stdin,
     stdout,
-    mouse: opts.mouse !== false,
-    focus: notifications === 'auto' && stdout.isTTY === true,
+    mouse: fullscreen && opts.mouse !== false,
+    focus: notifications === 'auto' && tty,
+    modes: tty,
     signals: terminal.signals,
     onInput: (event: InputEvent) => {
       if (event.type === 'focus') {
@@ -159,30 +220,27 @@ export function mountTui(opts: MountOptions): TuiHandle {
       }
       if (event.type === 'mouse') {
         if (event.action === 'wheel-up' || event.action === 'wheel-down') {
-          if (!controller.modalCard()?.scroll?.(event.action === 'wheel-up' ? -3 : 3)) {
-            fullscreen.scrollBy(event.action === 'wheel-up' ? -3 : 3);
-          }
-          requestRender();
+          surface.wheel(event.action === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES);
         }
         return;
       }
       controller.handleInput(event);
     },
   });
-  host.onSuspend = () => screen.leave();
+  host.onSuspend = () => surface.leave();
   host.onResume = () => {
-    screen.enter();
+    surface.resumed();
     draw();
   };
 
   const onResize = () => {
-    screen.invalidate();
+    surface.resized();
     draw();
   };
 
   function restore(): void {
     host.stop();
-    screen.leave();
+    surface.leave();
   }
 
   function finish(): void {
@@ -191,7 +249,8 @@ export function mountTui(opts: MountOptions): TuiHandle {
     clearTimeout(frameTimer);
     stdout.off('resize', onResize);
     controller.dispose();
-    restore();
+    host.stop();
+    surface.finish();
     process.removeListener('exit', restore);
     resolveExit();
   }
@@ -199,7 +258,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
   // A crash must not leave the user's shell with the TUI's modes on.
   process.once('exit', restore);
   stdout.on('resize', onResize);
-  screen.enter();
+  surface.enter();
   host.start();
   controller.start();
   draw();
@@ -211,5 +270,26 @@ export function mountTui(opts: MountOptions): TuiHandle {
     unmount: () => finish(),
   };
 }
+
+/** What a layout draws on, and how it lets the terminal go and takes it back. */
+interface Surface {
+  draw(): void;
+  /** Take the screen back after a program that took it over. */
+  enter(): void;
+  /** Give the screen to a program that takes it over. */
+  leave(): void;
+  resized(): void;
+  /** The process continued after Ctrl+Z. */
+  resumed(): void;
+  /** The transcript was thrown away. */
+  reset(): void;
+  /** Leave the TUI for good. */
+  finish(): void;
+  wheel(lines: number): void;
+}
+
+const WHEEL_LINES = 3;
+const HIDE_CURSOR = '\x1b[?25l';
+const SHOW_CURSOR = '\x1b[?25h';
 
 export { TuiController };

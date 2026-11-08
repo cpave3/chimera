@@ -107,7 +107,7 @@ export interface Mounted {
 /** `mountTui` on a virtual terminal with a fake session. */
 export async function mount(
   overrides: Partial<MountOptions> = {},
-  size = { columns: 100, rows: 30 },
+  size: { columns: number; rows: number; isTTY?: boolean } = { columns: 100, rows: 30 },
 ): Promise<Mounted> {
   const term = new VirtualTerminal(size);
   const input = new VirtualInput();

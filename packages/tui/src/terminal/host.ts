@@ -48,6 +48,8 @@ export interface TerminalHostOptions {
   mouse: boolean;
   /** Ask for focus reports, for notifications that depend on focus. */
   focus?: boolean;
+  /** False when stdout is not a terminal: no mode sequences are written. */
+  modes?: boolean;
   onInput(event: InputEvent): void;
   signals?: SignalPort;
   escapeTimeoutMs?: number;
@@ -90,11 +92,13 @@ export class TerminalHost {
   private readonly onContinue = () => this.resume();
 
   get modesOn(): string {
+    if (this.options.modes === false) return '';
     const { mouse, focus } = this.options;
     return `${KITTY_ON}${MODIFY_OTHER_KEYS_ON}${BRACKETED_PASTE_ON}${mouse ? MOUSE_ON : ''}${focus ? FOCUS_ON : ''}`;
   }
 
   get modesOff(): string {
+    if (this.options.modes === false) return '';
     const { mouse, focus } = this.options;
     return `${focus ? FOCUS_OFF : ''}${mouse ? MOUSE_OFF : ''}${BRACKETED_PASTE_OFF}${MODIFY_OTHER_KEYS_OFF}${KITTY_OFF}`;
   }
@@ -158,7 +162,7 @@ export class TerminalHost {
       this.listening = true;
     }
     stdin.resume();
-    stdout.write(this.modesOn);
+    if (this.modesOn) stdout.write(this.modesOn);
   }
 
   private releaseTerminal(): void {
@@ -169,7 +173,7 @@ export class TerminalHost {
       this.listening = false;
     }
     stdin.pause();
-    stdout.write(this.modesOff);
+    if (this.modesOff) stdout.write(this.modesOff);
     try {
       stdin.setRawMode?.(false);
     } catch {

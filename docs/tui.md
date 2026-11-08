@@ -128,41 +128,21 @@ chimera  v0.4.0 · manticore/gpt-5 · ~/Projects/yggdrasil
 
 ### Inline layout
 
-```
-› add retry logic to the provider client
+The inline layout draws the same rows into the terminal's own scrollback:
+the transcript, then the task row, any card, the prompt box and the status
+line right under it. Your terminal (or tmux) scrolls it and selects text in
+it; Chimera never captures the mouse here.
 
-◆ I will add backoff to the stream call. Then I will add a test.
-
-● read 3 files · 1 search
-  src/agent.ts (2409 lines), src/events.ts (217 lines), retry (4 matches), …
-● edit packages/core/src/agent.ts (1 replacement)
-  ╭──────────────────────────────────────────────────────────────────────────╮
-  │ 1481 -           const stream = streamText({                             │
-  │ 1481 +           const stream = this.startStep({                         │
-  ╰──────────────────────────────────────────────────────────────────────────╯
-✗ bash pnpm --filter @chimera/core test (exit 1) · 8.2s
-
-─── 1m 12s · 6 steps · 7 tool calls · ↑ 114k ↓ 3.7k tokens · cache 78%
-
-tasks 2/4
-◼ Add a test for mid-stream errors
-◻ Update README
-⠹ running pnpm --filter @chimera/core test · 12s · step 3 · 3.1k tokens · esc to interrupt
-────────────────────────────────────────────────────────────────────────────────
-> _
-build · anthropic/claude-opus-4-7 · sandbox os    ▰▰▰▰▱▱▱▱▱▱ 42% · 84k/200k · cache 81%
-~/Projects/chimera · session 12345678 · tasks 2/4 · ◼ Add a test…      enter steer
-```
-
-- **Task panel.** During a run the task list shows above the prompt, from the
-  task in progress onward, at most six lines.
-- **Footer.** Row 1: mode, model and sandbox on the left; a context gauge with
-  percentage, used/window tokens and the cached share of the last prompt on
-  the right. Row 2: working directory, session id, task count and the task in
-  progress on the left; the keys that matter in the current state on the
-  right. On a narrow terminal each row drops its least important items first.
-- **Start banner.** Version, model, working directory, session, mode, sandbox,
-  and the number of skills and commands loaded.
+- **Redraws.** Only the rows that changed are written, inside synchronized
+  output, so streaming does not flicker. A change to a row that has already
+  scrolled off the screen (such as `Ctrl+O`) or a new terminal width clears
+  the screen and the scrollback and prints the transcript again, laid out
+  for the new width. In tmux this clears the pane's history; the transcript
+  printed again replaces it.
+- **Spinners.** The prompt box's top border shows the spinner; a running tool
+  row shows `○`, so a row that scrolled away is never redrawn on every tick.
+- **Exit.** The transcript stays in the scrollback without the prompt box,
+  followed by the `chimera --session <id>` command that resumes it.
 
 ### In both layouts
 

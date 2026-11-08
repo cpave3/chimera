@@ -331,10 +331,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
   try {
     await handle.waitUntilExit();
-    // The alternate screen takes the session with it; say how to get back.
-    if (handle.layout === 'fullscreen') {
-      process.stdout.write(formatExitSummary(handle.activeSessionId()));
-    }
+    // The transcript stays in the scrollback; say how to get back to it.
+    process.stdout.write(formatExitSummary(handle.activeSessionId()));
   } finally {
     stopLockfileCleanup();
     removeLockfile(process.pid, opts.home);

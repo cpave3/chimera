@@ -36,7 +36,7 @@ const ESC = '\x1b';
  * for them. A bare LF moves down without returning, as on a TTY in raw mode.
  */
 export class VirtualTerminal extends EventEmitter {
-  readonly isTTY = true;
+  readonly isTTY: boolean;
   columns: number;
   rows: number;
   /** Private modes (`CSI ? n h`) that are on; autowrap (7) starts on. */
@@ -58,10 +58,15 @@ export class VirtualTerminal extends EventEmitter {
   private scrolledOff: Row[] = [];
   private style: CellStyle = {};
   private pending = '';
-  private output = '';
+  private recent = '';
+  /** Everything written since the terminal was made. */
+  output = '';
 
-  constructor(size: { columns: number; rows: number } = { columns: 80, rows: 24 }) {
+  constructor(
+    size: { columns: number; rows: number; isTTY?: boolean } = { columns: 80, rows: 24 },
+  ) {
     super();
+    this.isTTY = size.isTTY ?? true;
     this.columns = size.columns;
     this.rows = size.rows;
     this.main = this.newBuffer();
@@ -95,6 +100,7 @@ export class VirtualTerminal extends EventEmitter {
   write(data: string | Uint8Array, encodingOrCallback?: unknown, callback?: unknown): boolean {
     const text = typeof data === 'string' ? data : Buffer.from(data).toString('utf8');
     this.output += text;
+    this.recent += text;
     this.feed(this.pending + text);
     const done = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
     if (typeof done === 'function') (done as () => void)();
@@ -103,9 +109,9 @@ export class VirtualTerminal extends EventEmitter {
 
   /** What was written since the last call. */
   takeOutput(): string {
-    const output = this.output;
-    this.output = '';
-    return output;
+    const recent = this.recent;
+    this.recent = '';
+    return recent;
   }
 
   resize(columns: number, rows: number): void {
