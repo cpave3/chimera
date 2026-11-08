@@ -101,6 +101,8 @@ export function mountTui(opts: MountOptions): TuiHandle {
   let frameTimer: NodeJS.Timeout | undefined;
   let lastFrameAt = 0;
   let finished = false;
+  // Another program (the editor, the pager, the shell after a suspend) owns the terminal.
+  let away = false;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolveExited) => {
     resolveExit = resolveExited;
@@ -109,12 +111,12 @@ export function mountTui(opts: MountOptions): TuiHandle {
   const size = () => ({ width: stdout.columns ?? 80, height: stdout.rows ?? 24 });
   const draw = () => {
     frameTimer = undefined;
-    if (finished) return;
+    if (finished || away) return;
     lastFrameAt = Date.now();
     surface.draw();
   };
   const requestRender = () => {
-    if (finished || frameTimer) return;
+    if (finished || away || frameTimer) return;
     const wait = Math.max(0, FRAME_INTERVAL_MS - (Date.now() - lastFrameAt));
     frameTimer = setTimeout(draw, wait);
   };
@@ -124,14 +126,11 @@ export function mountTui(opts: MountOptions): TuiHandle {
     exit: () => finish(),
     handoff: (operation) =>
       host.handoff(async () => {
-        surface.leave();
+        goAway();
         try {
           return await operation();
         } finally {
-          if (!finished) {
-            surface.enter();
-            requestRender();
-          }
+          comeBack();
         }
       }),
     suspend: () => host.suspend(),
@@ -272,11 +271,23 @@ export function mountTui(opts: MountOptions): TuiHandle {
       controller.handleInput(event);
     },
   });
-  host.onSuspend = () => surface.leave();
-  host.onResume = () => {
+  host.onSuspend = () => goAway();
+  host.onResume = () => comeBack();
+
+  function goAway(): void {
+    away = true;
+    clearTimeout(frameTimer);
+    frameTimer = undefined;
+    surface.leave();
+  }
+
+  /** Draw again from scratch: what the other program wrote invalidates what the surface knew. */
+  function comeBack(): void {
+    away = false;
+    if (finished) return;
     surface.resumed();
     draw();
-  };
+  }
 
   const onResize = () => {
     surface.resized();
