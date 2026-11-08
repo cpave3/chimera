@@ -18,3 +18,12 @@ zod-worker-feedback.txt
 
 # Eval results: the evalite database, exported runs and per-run transcripts.
 packages/evals/.results/
+
+# Local agent and tool state: Claude Code's per-user settings and agent
+# worktrees, a pnpm store created inside the repo, and cerberus sessions
+# in any package.
+.claude/settings.local.json
+.claude/worktrees/
+.pnpm-store/
+**/.cerberus/cache/
+**/.cerberus/sessions/
