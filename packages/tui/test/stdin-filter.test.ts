@@ -388,3 +388,48 @@ describe('lone Escape delivery', () => {
     expect(input.reads).toEqual(['\x1b']);
   });
 });
+
+describe('bracketed paste line ends', () => {
+  function readPaste(chunks: string[], registry?: PasteRegistry): string {
+    const queue = [...chunks];
+    const upstream = Object.assign(new EventEmitter(), {
+      isTTY: true,
+      pause() {},
+      resume() {},
+      setRawMode() {},
+      setEncoding() {},
+      ref() {},
+      unref() {},
+      read: () => queue.shift() ?? null,
+    }) as unknown as NodeJS.ReadStream;
+    const filtered = createFilteredStdin(upstream, registry);
+    const reads: string[] = [];
+    filtered.on('readable', () => {
+      let chunk: unknown = filtered.read();
+      while (chunk !== null) {
+        reads.push(String(chunk));
+        chunk = filtered.read();
+      }
+    });
+    upstream.emit('readable');
+    return reads.join('');
+  }
+
+  it('turns CR and CRLF line ends in a paste into linefeeds', () => {
+    expect(readPaste(['\x1b[200~line one\rline two\r\nline three\x1b[201~'])).toBe(
+      'line one\nline two\nline three',
+    );
+  });
+
+  it('keeps a CRLF split across chunks as one line break', () => {
+    expect(readPaste(['\x1b[200~one\r', '\ntwo\x1b[201~'])).toBe('one\ntwo');
+  });
+
+  it('compacts a paste whose lines end in CR', () => {
+    const registry = new PasteRegistry();
+    const output = readPaste(['\x1b[200~one\rtwo\rthree\rfour\rfive\x1b[201~'], registry);
+
+    expect(output).toBe('[Pasted text #1, 5 lines]');
+    expect(registry.expand(output)).toBe('one\ntwo\nthree\nfour\nfive');
+  });
+});

@@ -131,10 +131,12 @@ export function createFilteredStdin(
         }
         pasteContent += pendingInput.slice(0, endIndex);
         pendingInput = pendingInput.slice(endIndex + pasteEnd.length);
+        // tmux paste-buffer and many terminals send pasted line breaks as CR.
+        const pastedText = pasteContent.replace(/\r\n?/g, '\n');
         const output =
-          pasteRegistry && shouldCompactPaste(pasteContent)
-            ? pasteRegistry.register(pasteContent)
-            : pasteContent;
+          pasteRegistry && shouldCompactPaste(pastedText)
+            ? pasteRegistry.register(pastedText)
+            : pastedText;
         if (output.length > 0) queue.push(output);
         pasteContent = null;
         continue;
