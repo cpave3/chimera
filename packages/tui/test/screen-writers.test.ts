@@ -211,3 +211,30 @@ describe('AltScreen', () => {
     expect(term.modes.has(25)).toBe(true);
   });
 });
+
+describe('a row with controls in it', () => {
+  const hostile = '\x1b[31mred\x1b[0m\x1b]52;c;eA==\x07\x1b[?1049l\x1b[H\r\x07 text';
+
+  it.each([
+    ['InlineScreen', (term: VirtualTerminal) => new InlineScreen(term)],
+    [
+      'AltScreen',
+      (term: VirtualTerminal) => {
+        const screen = new AltScreen(term);
+        screen.enter();
+        return screen;
+      },
+    ],
+  ])('%s writes its colours and drops every other control', (_name, create) => {
+    const term = new VirtualTerminal({ columns: 40, rows: 5 });
+    const screen = create(term);
+    term.takeOutput();
+    screen.render([hostile]);
+    const written = term.takeOutput();
+    expect(written).toContain('\x1b[31mred\x1b[0m');
+    expect(written).not.toContain('\x1b]52');
+    expect(written).not.toContain('\x1b[?1049l');
+    expect(written).not.toContain('\x07');
+    expect(term.screen()[0]?.trimEnd()).toBe('red text');
+  });
+});

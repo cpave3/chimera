@@ -1,4 +1,5 @@
 import { type TerminalOutput, writeFrame } from './output';
+import { onlyStyles } from './sanitize';
 import { clipToWidth, displayWidth } from './width';
 
 const ERASE_LINE = '\x1b[2K';
@@ -29,9 +30,10 @@ export class InlineScreen {
   render(next: string[]): void {
     const width = this.out.columns ?? 80;
     const height = this.out.rows ?? 24;
-    const lines = next.map((line) =>
-      displayWidth(line) > width ? clipToWidth(line, width) : line,
-    );
+    const lines = next.map((raw) => {
+      const line = onlyStyles(raw);
+      return displayWidth(line) > width ? clipToWidth(line, width) : line;
+    });
     if (!this.started) {
       this.started = true;
       this.write(`\r${this.joined(lines)}`, lines, width, height);

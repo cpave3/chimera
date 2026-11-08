@@ -2,6 +2,7 @@ import { formatElapsed } from '../activity';
 import { lineDiff } from '../diff';
 import { displayPath } from '../display-path';
 import type { ScrollbackEntry, SubagentEntry, ToolEntry } from '../scrollback';
+import { sanitizeDeep, sanitizeText } from '../terminal/sanitize';
 import { clipToWidth, displayWidth, padToWidth } from '../terminal/width';
 import type { ColorToken } from '../theme/palette';
 import type { Style } from '../theme/style';
@@ -74,7 +75,7 @@ export function renderTranscript(
 
 /** One entry's lines, with the blank line it starts with when it has one. */
 export function renderEntry(entry: ScrollbackEntry, context: RowContext): string[] {
-  const rows = renderEntryRows(entry, context).map((line) =>
+  const rows = renderEntryRows(sanitizeDeep(entry), context).map((line) =>
     displayWidth(line) > context.width ? clipToWidth(line, context.width) : line,
   );
   return gapBefore(entry) ? ['', ...rows] : rows;
@@ -280,7 +281,7 @@ export function renderTool(entry: ToolEntry, context: RowContext): string[] {
     }
     shown.forEach((child, index) => {
       const connector = index === shown.length - 1 ? '└ ' : '├ ';
-      const text = clipToWidth(child.text, bodyWidth(width) - 2);
+      const text = clipToWidth(sanitizeText(child.text), bodyWidth(width) - 2);
       rows.push(`${BODY_INDENT}${style.fg('dim', connector)}${style.fg('muted', text)}`);
     });
   }

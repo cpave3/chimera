@@ -1,6 +1,7 @@
 import type { QuestionAnswer, QuestionRequest, QuestionResolution } from '@chimera/core';
 import { wrapText } from '../ledger/text';
 import type { InputEvent } from '../terminal/keys';
+import { sanitizeDeep, sanitizeText } from '../terminal/sanitize';
 import type { Style } from '../theme/style';
 import { type Card, cardInnerWidth, renderCard } from './card';
 
@@ -78,8 +79,8 @@ export class QuestionCard implements Card {
   }
 
   render(width: number, maxRows: number, style: Style): string[] {
-    const asked = this.question;
-    if (!asked) return [];
+    if (!this.question) return [];
+    const asked = sanitizeDeep(this.question);
     const inner = cardInnerWidth(width);
     const total = this.request.questions.length;
     const title = [
@@ -104,7 +105,7 @@ export class QuestionCard implements Card {
         `${highlighted ? style.fg('accent', '› ') : '  '}${highlighted ? style.bold(label) : style.fg('muted', label)}`,
       );
     } else {
-      choices.push(`${style.fg('accent', '› ')}${this.typed}${style.inverse(' ')}`);
+      choices.push(`${style.fg('accent', '› ')}${sanitizeText(this.typed)}${style.inverse(' ')}`);
     }
     const keys =
       this.typed === null

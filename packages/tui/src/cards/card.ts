@@ -1,4 +1,5 @@
 import type { InputEvent } from '../terminal/keys';
+import { sanitizeText } from '../terminal/sanitize';
 import { clipToWidth, displayWidth } from '../terminal/width';
 import type { ColorToken } from '../theme/palette';
 import type { Style } from '../theme/style';
@@ -118,7 +119,7 @@ export function choiceRow(
 
 /** Text on one row: line breaks shown as `↵`. */
 export function oneLine(text: string): string {
-  return text.replace(/\r?\n/g, '↵');
+  return sanitizeText(text.replace(/\r?\n/g, '↵'));
 }
 
 /**

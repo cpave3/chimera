@@ -2,6 +2,7 @@ import type { AgentEvent, PermissionDecisionAction } from '@chimera/core';
 import { wrapText } from '../ledger/text';
 import type { PendingPermission } from '../permission-queue';
 import type { InputEvent } from '../terminal/keys';
+import { sanitizeDeep } from '../terminal/sanitize';
 import type { Style } from '../theme/style';
 import {
   type Card,
@@ -221,7 +222,7 @@ export class PermissionCard implements Card {
   }
 
   private facts(width: number, style: Style): string[] {
-    const { request } = this;
+    const request = sanitizeDeep(this.request);
     const room = Math.max(10, width - FACT_LABEL_WIDTH - 2);
     const fact = (label: string, value: string, tone?: 'error' | 'dim') =>
       wrapText(value, room, tone ? (text) => style.fg(tone, text) : undefined).map((line, index) =>

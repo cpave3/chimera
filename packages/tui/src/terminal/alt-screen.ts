@@ -1,4 +1,5 @@
 import { type TerminalOutput, writeFrame } from './output';
+import { onlyStyles } from './sanitize';
 import { clipToWidth, displayWidth } from './width';
 
 const ENTER = '\x1b[?1049h\x1b[?7l\x1b[?25l\x1b[2J\x1b[H';
@@ -42,7 +43,7 @@ export class AltScreen {
     const width = this.out.columns ?? 80;
     const height = this.out.rows ?? 24;
     const rows = Array.from({ length: height }, (_, index) => {
-      const line = next[index] ?? '';
+      const line = onlyStyles(next[index] ?? '');
       return displayWidth(line) > width ? clipToWidth(line, width) : line;
     });
     let body = this.full ? '\x1b[2J' : '';
