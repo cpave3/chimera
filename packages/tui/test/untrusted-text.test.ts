@@ -116,6 +116,10 @@ describe('untrusted text through the mounted TUI', () => {
     expect(mounted.term.alternate).toBe(true);
     expect(mounted.screen()).toContain('beforeafter');
     await mounted.unmount();
+    // The transcript printed into the shell's scrollback on exit.
+    const exitPrint = mounted.term.takeOutput();
+    expect(exitPrint).toContain('beforeafter');
+    expect(exitPrint).not.toContain('\x1b]52');
   });
 
   it('keeps controls out of the pattern a permission request offers to edit', () => {

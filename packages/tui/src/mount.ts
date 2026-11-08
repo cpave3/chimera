@@ -15,6 +15,7 @@ import { AltScreen } from './terminal/alt-screen';
 import { type SignalPort, TerminalHost, type TerminalInputStream } from './terminal/host';
 import { InlineScreen } from './terminal/inline-screen';
 import type { InputEvent, MouseEvent } from './terminal/keys';
+import { onlyStyles } from './terminal/sanitize';
 import { resolveTheme, type TuiLayout } from './theme/loader';
 import type { Style } from './theme/style';
 
@@ -186,7 +187,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
         screen.leave();
         // The session stays in the shell's scrollback, in the inline form.
         if (lines.length > 0)
-          stdout.write(`${lines.map((line) => `${line}\x1b[0m`).join('\r\n')}\r\n`);
+          stdout.write(`${lines.map((line) => `${onlyStyles(line)}\x1b[0m`).join('\r\n')}\r\n`);
       },
       wheel: (lines) => {
         view.clearSelection();
