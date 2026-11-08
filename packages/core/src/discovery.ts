@@ -1,5 +1,14 @@
-import { type Dirent, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
+import {
+  type Dirent,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 export interface ParsedDocument {
@@ -311,4 +320,33 @@ export function parseToolsCsv(raw: string | undefined): string[] {
     out.push(name);
   }
   return out;
+}
+
+/**
+ * Write built-in assets, imported as text at build time, to a directory a
+ * discovery tier can read, and return it. A single binary has no package
+ * directory on disk, so built-ins travel inside the code. The directory is
+ * named by a hash of the files, so it is written once per set of contents
+ * and never changes under a process that reads it.
+ */
+export function materializeBuiltins(
+  assetType: string,
+  files: Record<string, string>,
+  root: string = join(tmpdir(), `chimera-builtin-${process.getuid?.() ?? 'user'}`),
+): string {
+  const hash = createHash('sha256');
+  for (const [path, content] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
+    hash.update(path).update('\0').update(content).update('\0');
+  }
+  const dir = join(root, assetType, hash.digest('hex').slice(0, 16));
+  if (existsSync(join(dir, '.complete'))) return dir;
+  for (const [path, content] of Object.entries(files)) {
+    const target = join(dir, path);
+    mkdirSync(dirname(target), { recursive: true });
+    const partial = `${target}.${process.pid}.tmp`;
+    writeFileSync(partial, content);
+    renameSync(partial, target);
+  }
+  writeFileSync(join(dir, '.complete'), '');
+  return dir;
 }

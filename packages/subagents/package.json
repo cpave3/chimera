@@ -15,8 +15,7 @@
     "./builtin/*": "./builtin/*"
   },
   "files": [
-    "dist",
-    "builtin"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",

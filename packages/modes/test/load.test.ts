@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -22,6 +22,14 @@ describe('loadModes', () => {
     expect(names).toContain('plan');
     expect(registry.find('build')?.source).toBe('builtin');
     expect(registry.find('plan')?.source).toBe('builtin');
+  });
+
+  it('loads the builtins from the code, not from a directory beside the package', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });
+    const path = registry.find('build')!.path;
+    expect(path).not.toContain(join('packages', 'modes', 'builtin'));
+    expect(path.startsWith(tmpdir())).toBe(true);
   });
 
   it('plan builtin reads and researches, with spawn_agent limited to explore, and has no bash', () => {

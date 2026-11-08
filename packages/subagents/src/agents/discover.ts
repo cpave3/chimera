@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildTiers, parseFrontmatter, parseToolsCsv } from '@chimera/core';
+import { basename, join } from 'node:path';
+import { buildTiers, materializeBuiltins, parseFrontmatter, parseToolsCsv } from '@chimera/core';
+import { BUILTIN_AGENTS } from './builtin';
 import type { AgentCollision, AgentDefinition, AgentSource, LoadAgentsOptions } from './types';
 
 export interface DiscoverResult {
@@ -11,31 +11,13 @@ export interface DiscoverResult {
 
 export { parseToolsCsv };
 
-/**
- * Locate the bundled `builtin/` directory at runtime. The directory ships at
- * `<package-root>/builtin/`, which is `../builtin/` from the compiled
- * `dist/index.js`. During vitest, `import.meta.url` points into
- * `src/agents/`, one level deeper.
- */
-function builtinAgentsDir(): string | undefined {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const candidate of [join(here, '..', 'builtin'), join(here, '..', '..', 'builtin')]) {
-    try {
-      if (statSync(candidate).isDirectory()) return candidate;
-    } catch {
-      // not this one
-    }
-  }
-  return undefined;
-}
-
 export function discover(opts: LoadAgentsOptions): DiscoverResult {
   const tiers = buildTiers({
     cwd: opts.cwd,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     assetType: 'agents',
-    builtinDir: builtinAgentsDir(),
+    builtinDir: materializeBuiltins('agents', BUILTIN_AGENTS),
   });
   const byName = new Map<string, AgentDefinition>();
   const collisions: AgentCollision[] = [];

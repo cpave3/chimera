@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildTiers, parseFrontmatter } from '@chimera/core';
+import { basename, join } from 'node:path';
+import { buildTiers, materializeBuiltins, parseFrontmatter } from '@chimera/core';
+import { BUILTIN_SKILLS } from './builtin';
 import type { LoadSkillsOptions, Skill, SkillCollision, SkillSource } from './types';
 
 export interface DiscoverResult {
@@ -10,10 +10,7 @@ export interface DiscoverResult {
 }
 
 export function discover(opts: LoadSkillsOptions): DiscoverResult {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  const builtinDir = moduleDir.endsWith(`${join('packages', 'skills', 'src')}`)
-    ? join(moduleDir, '../builtin')
-    : join(moduleDir, 'builtin');
+  const builtinDir = materializeBuiltins('skills', BUILTIN_SKILLS);
   const tiers = buildTiers({
     cwd: opts.cwd,
     userHome: opts.userHome,

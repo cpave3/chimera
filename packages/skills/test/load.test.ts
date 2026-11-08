@@ -19,6 +19,8 @@ describe('loadSkills discovery', () => {
     const registry = loadSkills({ cwd: home, userHome: home });
 
     expect(registry.find('review-bash-policy')).toMatchObject({ source: 'builtin' });
+    // From the code: a single binary has no skills directory on disk.
+    expect(registry.find('review-bash-policy')!.path).not.toContain(join('packages', 'skills'));
   });
 
   it('loads a project skill with valid frontmatter', async () => {

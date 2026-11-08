@@ -1655,17 +1655,49 @@ function definedFields<T extends object>(fields: T): Partial<T> {
   ) as Partial<T>;
 }
 
+/** What decides how Chimera starts another copy of itself; the process's own by default. */
+export interface InvocationContext {
+  env: NodeJS.ProcessEnv;
+  execPath: string;
+  argv: readonly string[];
+  /** Bun's flag for a `bun build --compile` executable. */
+  standalone?: boolean;
+}
+
+function processInvocationContext(): InvocationContext {
+  const bun = (globalThis as { Bun?: { isStandaloneExecutable?: boolean } }).Bun;
+  return {
+    env: process.env,
+    execPath: process.execPath,
+    argv: process.argv,
+    standalone: bun?.isStandaloneExecutable === true,
+  };
+}
+
 /**
- * Resolve the chimera invocation tuple. Honors `CHIMERA_BIN` if set; otherwise
- * uses `process.execPath` plus the current entrypoint script (so subagents
- * spawn through the same node binary as the parent).
+ * A single executable carries its own entry point: its script argument is a
+ * path inside the binary (`/$bunfs/...`), not a file another process can run.
  */
-export function resolveChimeraInvocation(): { bin: string; preArgs: string[] } {
-  const fromEnv = process.env.CHIMERA_BIN;
+export function isSingleExecutable(context: InvocationContext): boolean {
+  return context.standalone === true || (context.argv[1] ?? '').startsWith('/$bunfs/');
+}
+
+/**
+ * Resolve the chimera invocation tuple. Honors `CHIMERA_BIN` if set. A
+ * single executable re-runs itself with no script argument; otherwise it is
+ * `process.execPath` plus the current entrypoint script, so subagents spawn
+ * through the same node binary as the parent.
+ */
+export function resolveChimeraInvocation(context: InvocationContext = processInvocationContext()): {
+  bin: string;
+  preArgs: string[];
+} {
+  const fromEnv = context.env.CHIMERA_BIN;
   if (fromEnv) return { bin: fromEnv, preArgs: [] };
-  const entry = process.argv[1];
+  if (isSingleExecutable(context)) return { bin: context.execPath, preArgs: [] };
+  const entry = context.argv[1];
   if (entry && entry.length > 0) {
-    return { bin: process.execPath, preArgs: [entry] };
+    return { bin: context.execPath, preArgs: [entry] };
   }
   return { bin: 'chimera', preArgs: [] };
 }

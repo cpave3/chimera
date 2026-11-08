@@ -1,31 +1,13 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildTiers, parseFrontmatter } from '@chimera/core';
+import { join } from 'node:path';
+import { buildTiers, materializeBuiltins, parseFrontmatter } from '@chimera/core';
+import { BUILTIN_MODES } from './builtin';
 import { colorFor, isValidHex } from './color';
 import type { LoadModesOptions, Mode, ModeCollision, ModeSource } from './types';
 
 export interface DiscoverResult {
   modes: Mode[];
   collisions: ModeCollision[];
-}
-
-/**
- * Locate the bundled `builtin/` directory at runtime. The directory ships at
- * `<package-root>/builtin/`, which is `../builtin/` from the compiled
- * `dist/index.js`. During vitest, `import.meta.url` points into `src/`, so
- * `../builtin/` from there also lands on the package root's `builtin/`.
- */
-function builtinModesDir(): string | undefined {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const candidate = join(here, '..', 'builtin');
-    const st = statSync(candidate);
-    if (st.isDirectory()) return candidate;
-  } catch {
-    // ignore
-  }
-  return undefined;
 }
 
 const TOOL_ENTRY = /^([\w-]+)\s*(?:\(([^)]*)\))?$/;
@@ -78,7 +60,7 @@ export function discover(opts: LoadModesOptions): DiscoverResult {
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     assetType: 'modes',
-    builtinDir: builtinModesDir(),
+    builtinDir: materializeBuiltins('modes', BUILTIN_MODES),
   });
   const byName = new Map<string, Mode>();
   const collisions: ModeCollision[] = [];
