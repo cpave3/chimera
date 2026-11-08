@@ -39,19 +39,18 @@ large hosted model to a small local one.
 
 ## Install
 
-Chimera needs Node.js 20 or later. `corepack` selects the pinned `pnpm`
-version.
+On Linux (x86_64, aarch64) or a Mac with Apple silicon:
 
 ```bash
-corepack enable
-pnpm install
-pnpm -r build
-pnpm link --global      # puts `chimera` on your PATH
+curl -fsSL https://raw.githubusercontent.com/cpave3/chimera/main/install.sh | sh
 chimera --version
 ```
 
-`pnpm unlink --global` removes the link. Without a link, run
-`node packages/cli/dist/bin.js <args>`.
+The script puts one binary in `~/.local/bin/chimera`, after checking it
+against the release's checksums. It needs no Node.js. `chimera update`
+installs a newer release, and a release build keeps itself current in the
+background. Manual downloads, updates, running from source and uninstalling
+are in [docs/install.md](docs/install.md).
 
 On Linux, install `bubblewrap` to get the [OS sandbox](#safety). Without it
 Chimera shows one warning and runs commands unsandboxed.
@@ -373,6 +372,7 @@ A value of the form `env:NAME` in an API key is read from the environment.
 
 | Topic | Page |
 | --- | --- |
+| Install, update, uninstall | [docs/install.md](docs/install.md) |
 | Keys, commands, layouts, notifications, themes | [docs/tui.md](docs/tui.md) |
 | Sessions, resume, fork, rewind, files on disk | [docs/sessions.md](docs/sessions.md) |
 | One-shot runs, the server, the HTTP API | [docs/headless.md](docs/headless.md) |

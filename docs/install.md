@@ -1,5 +1,70 @@
 # Installing and updating Chimera
 
+## Install script
+
+On Linux (x86_64 or aarch64) or a Mac with Apple silicon:
+
+```
+curl -fsSL https://raw.githubusercontent.com/cpave3/chimera/main/install.sh | sh
+```
+
+- The script picks the binary for your OS and CPU, downloads it and the
+  release's `SHA256SUMS` from the newest release, and checks the binary's
+  checksum. On a mismatch it stops and installs nothing.
+- The binary goes to `~/.local/bin/chimera` (the directory is made when it
+  is missing). If that directory is not on your `PATH`, the script says so
+  and prints the line to add to your shell profile.
+- `CHIMERA_INSTALL_DIR` puts it somewhere else. Any other OS or CPU gets
+  an error naming the platforms that are built.
+- Running the script again installs the newest release over the old one.
+
+## Manual download
+
+Each release has one file per platform and a `SHA256SUMS`:
+
+| Platform | File |
+| --- | --- |
+| Linux x86_64 | `chimera-linux-amd64` |
+| Linux aarch64 | `chimera-linux-arm64` |
+| macOS, Apple silicon | `chimera-darwin-arm64` |
+
+`releases/latest/download/<file>` is always the newest release:
+
+```
+base=https://github.com/cpave3/chimera/releases/latest/download
+file=chimera-linux-amd64
+curl -fL -O "$base/$file" -O "$base/SHA256SUMS"
+grep " $file\$" SHA256SUMS | sha256sum -c       # macOS: ... | shasum -a 256 -c
+mkdir -p ~/.local/bin && install -m 0755 "$file" ~/.local/bin/chimera
+```
+
+A release page also lists a build provenance attestation;
+`gh attestation verify chimera-linux-amd64 --repo cpave3/chimera` checks it.
+
+## Running from source
+
+```
+corepack enable
+pnpm install
+pnpm -r build
+pnpm link --global      # puts `chimera` on your PATH
+chimera --version       # dev
+```
+
+This needs Node.js 20 or later. A build from source reports the version
+`dev`: it never updates itself, and `chimera update` leaves it alone. Pull
+and run `pnpm -r build` to update it. `pnpm unlink --global` removes the
+link; without one, run `node packages/cli/dist/bin.js <args>`.
+
+## Uninstall
+
+```
+rm ~/.local/bin/chimera     # or wherever `command -v chimera` points
+rm -rf ~/.chimera           # optional: config, sessions, logs, themes, hooks
+```
+
+Projects may also hold a `.chimera/` directory of their own.
+
 ## Updating
 
 A Chimera installed from a release can replace itself with a newer one:
