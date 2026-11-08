@@ -44,9 +44,8 @@ shows in a second whether the binary still starts.
 Every piece of Chimera state under the user's home goes in `~/.chimera/`:
 config (`config.json`), sessions, instances, logs, overlays, themes, hooks.
 Do not introduce `~/.config/chimera/` paths — XDG-style placement was
-explicitly rejected for this project (see
-`openspec/changes/add-tui-color-theme-system/design.md` for the original
-ruling). Project-local state mirrors the same name: `<cwd>/.chimera/`.
+explicitly rejected for this project when colour themes were added.
+Project-local state mirrors the same name: `<cwd>/.chimera/`.
 
 When adding a new global-state directory, default to
 `join(homedir(), '.chimera', '<thing>')` and accept an override option for
@@ -182,22 +181,13 @@ not the package barrel) at the start of each case.
   loop lifetime management. `PassThrough` doesn't provide those; delegate to
   the upstream source.
 
-## OpenSpec workflow
+## Planning: wayfinder and Burnlite
 
-Changes live in `openspec/changes/<name>/` with `proposal.md`, `design.md`,
-`specs/**/*.md`, and `tasks.md`. Archived changes move to `openspec/specs/`.
-
-Useful commands:
-
-```
-openspec list --json
-openspec status --change <name> --json
-openspec instructions apply --change <name> --json
-```
-
-`tasks.md` is the canonical task list — edit `[ ]` → `[x]` as you complete
-each one, rather than tracking in-memory. Slash commands `/opsx:apply`,
-`/opsx:propose`, `/opsx:archive` wrap the above.
+Maps, specs and tickets live in Burnlite, Project `CHIM`. Read
+`docs/agents/issue-tracker.md` before any planning-skill or tracker
+operation (`/wayfinder`, to-spec, to-tickets, implement, triage): it maps
+each operation to a Burnlite tool. Settled project terms are in
+`GLOSSARY.md`; use them in code, docs and tickets.
 
 ## Commands system (hot-reload)
 
@@ -208,7 +198,7 @@ Commands (`.chimera/commands/*.md`, `.claude/commands/*.md`) are:
 - **TUI-only hot-reloaded.** The `ReloadingCommandRegistry` watches tier dirs
   with `fs.watch` (150ms debounce). `listCommands()` on the server returns a
   per-session snapshot captured at session creation — mid-session reloads
-  don't affect it (documented in the spec).
+  don't affect it (see `docs/COMMANDS.md`, "Hot reload in the TUI").
 
 If adding similar assets (skills, subagents), follow the same pattern:
 reloading registry for the TUI, frozen snapshot on the server, docs-side
@@ -243,7 +233,7 @@ Inherited from user rules:
 
 Format: `<type>(<scope>): <short description>`. Types seen: `feat`, `fix`,
 `docs`, `chore`. Scope is a package name or area (`tui`, `cli`, `commands`,
-`openspec`, etc.). Body wrapped to ~72 cols.
+`agents`, etc.). Body wrapped to ~72 cols.
 
 **Do not add `Co-Authored-By` trailers.** Claude did much of the early work
 on this repo, so historical commits carry that trailer; other agents
