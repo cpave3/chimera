@@ -11,7 +11,7 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | --- | --- |
 | `Enter` | Send. During a run: steer the agent. |
 | `Tab` | During a run: hold the message for the next turn. |
-| `Shift+Enter` | New line where the terminal reports it; `Alt+Enter`, or `\` then `Enter`, everywhere. |
+| `Shift+Enter` | New line where the terminal reports it (in tmux: `set -s extended-keys on`); `Alt+Enter`, or `\` then `Enter`, everywhere. |
 | `Ctrl+G` | Edit the prompt in `$EDITOR`. |
 | `Ctrl+V` | Paste an image from the clipboard. |
 | `Ctrl+T` | Open the full transcript in a pager. |

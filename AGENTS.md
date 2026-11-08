@@ -83,6 +83,13 @@ skip otherwise. They live in `packages/cli/test/e2e-sandbox.test.ts` and
 `CHIMERA_TEST_SANDBOX_IMAGE` to override the default `chimera-sandbox:dev`)
 to run them.
 
+tmux E2E tests are gated on `CHIMERA_TEST_TMUX=1` (and skip without tmux
+on the PATH) and live in `packages/cli/test/e2e-tmux.test.ts`. They run the
+**built** CLI (`pnpm -r build` first) against
+`packages/cli/test/fixtures/fake-model-server.mjs` in a private tmux server
+(`tmux -L chimera-test-<pid> -f /dev/null`), never the user's server or
+config. Any new tmux test must do the same.
+
 Subagent E2E tests are gated on `CHIMERA_TEST_E2E=1` and live in
 `packages/subagents/test/e2e-spawn.test.ts`. They spawn real `chimera serve`
 processes; no provider credentials needed.

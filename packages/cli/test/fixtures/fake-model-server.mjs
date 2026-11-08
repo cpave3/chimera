@@ -5,7 +5,9 @@
 // script: a JSON array of steps. Each request takes the first step whose
 // `when` (a substring of the last user or tool message) matches, or the next
 // unused step without `when`. A step is either { "text": "..." } or
-// { "tool": "name", "args": { ... } }. With no step left it answers "done".
+// { "tool": "name", "args": { ... } }. A step with "repeat": true is never
+// used up, and "{last}" in its text is the message it answers. With no step
+// left it answers "done".
 //
 // Usage: node fake-model-server.mjs <script.json> [port]
 // Prints "listening <port>" on stdout once it is ready.
@@ -30,8 +32,8 @@ function pick(messages) {
   for (const [index, step] of steps.entries()) {
     if (used.has(index)) continue;
     if (step.when !== undefined && !lastText.includes(step.when)) continue;
-    used.add(index);
-    return step;
+    if (!step.repeat) used.add(index);
+    return step.text ? { ...step, text: step.text.replaceAll('{last}', lastText) } : step;
   }
   return { text: 'done' };
 }
