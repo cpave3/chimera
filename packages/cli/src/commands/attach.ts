@@ -6,6 +6,7 @@ import { InMemorySkillRegistry } from '@chimera/skills';
 import { mountTui } from '@chimera/tui';
 import { loadConfig } from '../config';
 import { listLiveInstances } from '../lockfile';
+import { VERSION } from '../version';
 
 export interface AttachOptions {
   target: string;
@@ -81,6 +82,7 @@ export async function runAttach(opts: AttachOptions): Promise<void> {
     mouse: tui?.mouse,
     notifications: tui?.notifications,
     statusLine: config.statusLine,
+    version: VERSION,
     client,
     sessionId,
     modelRef: session.userModelOverride ?? `${session.model.providerId}/${session.model.modelId}`,

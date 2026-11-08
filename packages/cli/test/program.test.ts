@@ -7,10 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 const BIN = join(__dirname, '..', 'dist', 'bin.js');
 
 describe('chimera CLI smoke', () => {
-  it('--version prints a semver', () => {
+  it('--version prints dev for a build from source', () => {
     const r = spawnSync('node', [BIN, '--version'], { encoding: 'utf8' });
     expect(r.status).toBe(0);
-    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(r.stdout.trim()).toBe('dev');
   });
 
   it('rejects --sandbox-mode without --sandbox', () => {

@@ -361,6 +361,7 @@ A value of the form `env:NAME` in an API key is read from the environment.
 | `chimera skills`, `commands`, `agents` | List what Chimera found in this directory. |
 | `chimera hooks list` | List the hooks. |
 | `chimera sandbox build` | Build the Docker sandbox image. |
+| `chimera version` | Print the version (`dev` for a build from source); `--json` gives `{"version", "release"}`. |
 
 `chimera <command> --help` shows each flag.
 

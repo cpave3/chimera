@@ -40,10 +40,10 @@ import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
-import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
+import { VERSION } from '../version';
 
 export interface InteractiveOptions {
   cwd: string;
@@ -102,7 +102,7 @@ export function formatExitSummary(sessionId: string): string {
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const sandboxOpts = opts.sandboxFlags
-    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: CHIMERA_CLI_VERSION })
+    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
@@ -224,7 +224,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     instance: {
       pid: process.pid,
       cwd: opts.cwd,
-      version: '0.1.0',
+      version: VERSION,
       sandboxMode,
     },
     loadCommands: () => commands.list(),
@@ -270,7 +270,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       cwd: opts.cwd,
       sessionId,
       startedAt: Date.now(),
-      version: '0.1.0',
+      version: VERSION,
       url: server.url,
     },
     opts.home,
@@ -300,6 +300,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     mouse: config.tui?.mouse,
     notifications: config.tui?.notifications,
     statusLine: config.statusLine,
+    version: VERSION,
     client,
     sessionId,
     modelRef: ref,

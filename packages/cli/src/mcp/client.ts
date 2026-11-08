@@ -9,6 +9,7 @@ import {
   StreamableHTTPError,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { VERSION } from '../version';
 import { McpAuth } from './auth.js';
 
 export type McpServerConfig =
@@ -82,7 +83,7 @@ export class McpClientManager {
               this.authProvider?.(name, config.url) ??
               new McpAuth(name, config.url, { clientId: config.clientId }),
           });
-    const client = new Client({ name: 'chimera', version: '0.1.0' });
+    const client = new Client({ name: 'chimera', version: VERSION });
     try {
       await client.connect(transport, { timeout: this.limits.connectMs });
       this.clients.set(name, client);

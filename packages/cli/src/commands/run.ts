@@ -36,10 +36,10 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
-import { CHIMERA_CLI_VERSION } from '../program';
 import { RunRows } from '../run-rows';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
+import { VERSION } from '../version';
 
 export interface RunOptions {
   prompt: string;
@@ -102,7 +102,7 @@ export interface RunResult {
 
 export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   const sandboxOpts = opts.sandboxFlags
-    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: CHIMERA_CLI_VERSION })
+    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
@@ -252,7 +252,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 
   const registry = new AgentRegistry({
     factory,
-    instance: { pid: process.pid, cwd: opts.cwd, version: '0.1.0', sandboxMode },
+    instance: { pid: process.pid, cwd: opts.cwd, version: VERSION, sandboxMode },
     loadCommands: () => commands.list(),
     loadSkills: () => skills.all(),
     loadModes: () => modes.all(),

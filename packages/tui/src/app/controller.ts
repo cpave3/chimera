@@ -71,7 +71,6 @@ import type { InputEvent, KeyEvent } from '../terminal/keys';
 import { clipToWidth } from '../terminal/width';
 import type { Style } from '../theme/style';
 import { formatTranscript } from '../transcript-text';
-import { CHIMERA_VERSION } from '../version';
 import { readWorktree, type WorktreeStatus } from '../worktree';
 import type { TuiOptions } from './options';
 
@@ -631,7 +630,7 @@ export class TuiController {
     if (!this.showBanner) return [];
     return renderBanner(
       {
-        version: this.options.version ?? CHIMERA_VERSION,
+        version: this.options.version ?? 'dev',
         modelRef: this.options.modelRef,
         cwd: this.options.cwd,
         skillCount: this.options.skills?.all().length ?? 0,
@@ -661,7 +660,7 @@ export class TuiController {
   private updateStatusCommand(): void {
     this.statusCommand?.update(
       buildStatusPayload(this.statusFacts(), {
-        version: this.options.version ?? CHIMERA_VERSION,
+        version: this.options.version ?? 'dev',
         mode: this.activeModeName,
       }),
       this.columns,
