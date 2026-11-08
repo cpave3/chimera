@@ -1,13 +1,14 @@
 export * from './App';
+export type { Peer } from './ContextPanel';
 export * from './Header';
 export * from './input/sudo-authentication';
 export * from './mount';
+export type { NotificationSetting } from './notify';
 export { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
 export * from './PermissionModal';
 export * from './SlashMenu';
 export * from './StatusBar';
 export * from './scrollback';
 export * from './slash-commands';
+export * from './terminal';
 export * from './theme';
-export type { Peer } from './ContextPanel';
-export type { NotificationSetting } from './notify';
