@@ -155,11 +155,24 @@ const SHORT_NAMES: Record<string, string> = {
 };
 
 /** The tool's name as the label column shows it: short enough for seven cells. */
-function toolLabel(entry: ToolEntry): string {
+/**
+ * The tool's name as the label column shows it, and what goes before its
+ * argument. An MCP tool (`server / tool`, or `mcp__server__tool`) is
+ * labelled by its server, and its own name leads the argument, so neither
+ * is cut to a few letters.
+ */
+function toolLabel(entry: ToolEntry): { label: string; lead: string } {
   const name = entry.displayName ?? SHORT_NAMES[entry.toolName] ?? entry.toolName;
-  if (name.length <= LABEL_WIDTH) return name;
-  // An MCP tool is `mcp__server__tool`: its own name says the most.
-  return name.split('__').at(-1)!;
+  const mcp = name.includes(' / ')
+    ? name.split(' / ')
+    : name.startsWith('mcp__')
+      ? name.split('__').slice(1)
+      : null;
+  if (mcp && mcp.length >= 2) {
+    const [server, ...tool] = mcp;
+    return { label: server!, lead: `${tool.join('/')} ` };
+  }
+  return { label: name, lead: '' };
 }
 
 type ToolState = 'running' | 'done' | 'failed';
@@ -203,12 +216,14 @@ function splitLines(text: string): string[] {
 export function renderTool(entry: ToolEntry, context: RowContext): string[] {
   const { style, width } = context;
   const state = toolState(entry);
-  const name = toolLabel(entry);
+  const { label: name, lead } = toolLabel(entry);
   const labelText =
     state === 'running' ? `${context.spinner} ${name}` : state === 'failed' ? `✗ ${name}` : name;
   const labelTone: ColorToken =
     state === 'running' ? 'warning' : state === 'failed' ? 'error' : 'muted';
-  const { argument, facts } = splitSummary(entry.text);
+  const summary = splitSummary(entry.text);
+  const { facts } = summary;
+  const argument = `${lead}${summary.argument}`;
   let factText: string;
   let factPaint: (text: string) => string = (text) =>
     style.fg(state === 'failed' ? 'error' : 'dim', text);

@@ -156,11 +156,21 @@ describe('tool rows', () => {
     const lines = plain(
       [
         tool({ toolName: 'mcp__github__create_issue', text: 'title', toolResult: {} }),
+        tool({
+          toolName: 'mcp__burnlite__add_task',
+          displayName: 'burnlite / add_task_to_project',
+          text: 'project_id',
+          toolResult: {},
+        }),
         tool({ toolName: 'spawn_agent', displayName: 'explore', text: 'find it', toolResult: {} }),
       ],
       100,
     );
-    expect(lines).toEqual(['create…  title', 'explore  find it']);
+    expect(lines).toEqual([
+      ' github  create_issue title',
+      'burnli…  add_task_to_project project_id',
+      'explore  find it',
+    ]);
   });
 
   it('shows a tool error under the row', () => {

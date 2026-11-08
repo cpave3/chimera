@@ -189,35 +189,12 @@ function summarizeExploration(members: ToolEntry[]): string {
     .join(' · ');
 }
 
-export interface ScrollbackOptions {
-  /**
-   * Max line count the in-flight streaming entry may reach before completed
-   * paragraphs spill into finalized chunk entries (which commit to <Static>).
-   * Keeps Ink's dynamic region shorter than the terminal: once the dynamic
-   * frame is taller than the viewport, Ink falls back to a clearTerminal +
-   * full-rewrite per render, which flickers and floods scrollback.
-   */
-  streamSpillLines?: number;
-}
-
-const DEFAULT_STREAM_SPILL_LINES = 8;
-
-/**
- * Streaming state for one delta/done text channel (assistant or thinking).
- *
- * `suppressSpill` is true while the current delta cycle re-streams a textId
- * that already completed (the SDK re-emits text parts across step
- * boundaries). Spilling is disabled for such cycles so the duplicate stays
- * one uncommitted entry that the done-time dedupe can still remove.
- */
+/** Streaming state for one delta/done text channel (assistant or thinking). */
 interface TextStream {
   kind: 'assistant' | 'thinking';
   buf: string | null;
   /** Id of the active entry currently being streamed into. */
   entryId: string | null;
-  /** Chars of `buf` already moved into finalized spill-chunk entries. */
-  spilled: number;
-  suppressSpill: boolean;
   /** textId → final text of completed streams, for re-emission dedupe. */
   completedTexts: Map<string, string>;
 }
@@ -227,8 +204,6 @@ function newTextStream(kind: 'assistant' | 'thinking'): TextStream {
     kind,
     buf: null,
     entryId: null,
-    spilled: 0,
-    suppressSpill: false,
     completedTexts: new Map(),
   };
 }
@@ -239,7 +214,6 @@ function isTextEntry(entry: ScrollbackEntry): entry is AssistantEntry | Thinking
 
 export class Scrollback {
   private entries: ScrollbackEntry[] = [];
-  private streamSpillLines: number;
   private assistantStream = newTextStream('assistant');
   private thinkingStream = newTextStream('thinking');
   private toolsByCallId = new Map<CallId, ToolEntry>();
@@ -262,29 +236,13 @@ export class Scrollback {
   private suppressUserContent: string | null = null;
   private formatters: Record<string, Formatter>;
 
-  /** Observable-store: cached snapshot and subscriber list for useSyncExternalStore. */
+  /** The entries as of the last change, and who to tell about the next one. */
   private _snapshot: ScrollbackEntry[] = [];
   private _listeners = new Set<() => void>();
   private _flushScheduled = false;
 
-  /**
-   * Monotonic commit cursor: entries[0..committedCount) are finalized and safe
-   * to hand to Ink's `<Static>`, which renders positionally and append-only —
-   * an item inserted before its cursor is never printed and displaces the
-   * tail into duplicate prints. The cursor advances only while the *prefix*
-   * is finalized: a pending tool or streaming text entry blocks everything
-   * after it (those render in the dynamic region until the blocker resolves).
-   * Never decremented except by clear().
-   */
-  private committedCount = 0;
-  private _splitSnapshot: { entries: ScrollbackEntry[]; committedCount: number } = {
-    entries: [],
-    committedCount: 0,
-  };
-
-  constructor(formatters: Record<string, Formatter> = {}, options: ScrollbackOptions = {}) {
+  constructor(formatters: Record<string, Formatter> = {}) {
     this.formatters = formatters;
-    this.streamSpillLines = options.streamSpillLines ?? DEFAULT_STREAM_SPILL_LINES;
   }
 
   private safeFormat(name: string, args: unknown, result?: unknown): ToolDisplay | undefined {
@@ -306,7 +264,7 @@ export class Scrollback {
     return [...this.entries];
   }
 
-  /** useSyncExternalStore subscribe function. */
+  /** Called after each burst of changes. */
   subscribe(callback: () => void): () => void {
     this._listeners.add(callback);
     return () => {
@@ -314,64 +272,14 @@ export class Scrollback {
     };
   }
 
-  /** useSyncExternalStore getSnapshot function. */
+  /** The entries as of the last change. */
   getSnapshot(): ScrollbackEntry[] {
     return this._snapshot;
   }
 
-  /**
-   * Entries plus the committed-prefix length, captured atomically so the
-   * committed/in-flight split can never disagree with the entry list (the
-   * race that React-state-based classification had).
-   */
-  splitSnapshot(): { entries: ScrollbackEntry[]; committedCount: number } {
-    return this._splitSnapshot;
-  }
-
-  /** Update the cached snapshot and schedule a single notification microtask. */
+  /** Update the cached snapshot. */
   private updateSnapshot(): void {
-    this.advanceCommitCursor();
     this._snapshot = [...this.entries];
-    this._splitSnapshot = { entries: this._snapshot, committedCount: this.committedCount };
-  }
-
-  /**
-   * An entry is finalized when its content can no longer change and its
-   * position in the render order is settled.
-   */
-  private isFinalized(entry: ScrollbackEntry, index: number, lastTopLevelIdx: number): boolean {
-    if (entry.kind === 'assistant') return entry.id !== this.assistantStream.entryId;
-    if (entry.kind === 'thinking') return entry.id !== this.thinkingStream.entryId;
-    if (entry.kind === 'tool') {
-      return entry.toolResult !== undefined || entry.toolError !== undefined;
-    }
-    // A group stays open, and uncommitted, while only exploration calls
-    // still in flight follow it: each of them joins the group as it returns.
-    if (entry.kind === 'explore') {
-      return entry.closed === true || !this.entries.slice(index + 1).every(isExplorationInFlight);
-    }
-    // A trailing mode_change stays uncommitted so consecutive switches can
-    // collapse into one row before it is baked into <Static>.
-    if (entry.kind === 'mode_change') return index !== lastTopLevelIdx;
-    return true;
-  }
-
-  private advanceCommitCursor(): void {
-    let lastTopLevelIdx = -1;
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      const candidate = this.entries[i]!;
-      if (candidate.kind !== 'subagent' || !candidate.parentEntryId) {
-        lastTopLevelIdx = i;
-        break;
-      }
-    }
-    while (this.committedCount < this.entries.length) {
-      const entry = this.entries[this.committedCount]!;
-      if (!this.isFinalized(entry, this.committedCount, lastTopLevelIdx)) break;
-      // Committing is what closes a group: nothing can join it once printed.
-      if (entry.kind === 'explore') entry.closed = true;
-      this.committedCount += 1;
-    }
   }
 
   /** Count what a run did, from its first event to `run_finished`. */
@@ -469,91 +377,29 @@ export class Scrollback {
     return undefined;
   }
 
-  /**
-   * When the in-flight streaming text grows past `streamSpillLines`, peel its
-   * completed paragraphs off into the current entry — which finalizes — and
-   * continue streaming into a fresh active entry. Returns the number of
-   * chars of `tail` consumed by the spill (0 when no safe boundary exists).
-   * Entries are only ever appended, so the commit cursor's append-only
-   * invariant holds: the old active entry finalizes in place and the new
-   * tail entry lands after it.
-   */
-  private spillStreamingParagraphs(stream: TextStream, tail: string): number {
-    if (countLines(tail) <= this.streamSpillLines) return 0;
-    const boundary = lastParagraphBoundary(tail);
-    if (boundary <= 0) return 0;
-    const active = this.entries.find((e) => e.id === stream.entryId);
-    if (!active || !isTextEntry(active)) return 0;
-    active.text = tail.slice(0, boundary).trimEnd();
-    let consumed = boundary;
-    while (tail[consumed] === '\n') consumed += 1;
-    const newId = this.newId();
-    this.entries.push({
-      id: newId,
-      kind: stream.kind,
-      text: tail.slice(consumed),
-      textId: active.textId,
-    });
-    stream.entryId = newId;
-    return consumed;
-  }
-
   private applyTextDelta(stream: TextStream, ev: { id?: string; delta: string }): void {
     if (stream.buf === null) {
       stream.buf = '';
-      stream.spilled = 0;
-      stream.suppressSpill = ev.id !== undefined && stream.completedTexts.has(ev.id);
       const id = this.newId();
       stream.entryId = id;
       this.entries.push({ id, kind: stream.kind, text: '', textId: ev.id });
     }
     stream.buf += ev.delta;
-    if (!stream.suppressSpill) {
-      stream.spilled += this.spillStreamingParagraphs(stream, stream.buf.slice(stream.spilled));
-    }
     const target = this.entries.find((e) => e.id === stream.entryId);
-    if (target && target.kind === stream.kind) {
-      target.text = stream.buf.slice(stream.spilled);
-    }
+    if (target && target.kind === stream.kind) target.text = stream.buf;
   }
 
   private applyTextDone(stream: TextStream, ev: { id?: string; text: string }): void {
-    const streamed = stream.buf;
-    const spilled = stream.spilled;
     stream.buf = null;
-    stream.spilled = 0;
     const trackedIdx = this.entries.findIndex((e) => e.id === stream.entryId);
     stream.entryId = null;
     if (ev.id !== undefined) {
-      // Group-aware dedupe: when an earlier emission of this textId produced
-      // the same full text (possibly as several spilled chunks no
-      // single-entry comparison could match), drop the re-streamed
-      // duplicate wholesale.
+      // Dedupe: an earlier emission of this textId produced the same text.
       if (trackedIdx >= 0 && stream.completedTexts.get(ev.id) === ev.text) {
         this.entries.splice(trackedIdx, 1);
         return;
       }
       stream.completedTexts.set(ev.id, ev.text);
-    }
-    if (spilled > 0 && trackedIdx >= 0) {
-      // Earlier paragraphs were spilled into already-committed entries,
-      // which are immutable once printed by <Static>. Reconcile only the
-      // tail: when the canonical text matches what we streamed, swap in
-      // its remainder; otherwise keep the streamed tail as-is. Dedupe is
-      // impossible here — the chunks are physically in the terminal.
-      const target = this.entries[trackedIdx];
-      if (target && isTextEntry(target)) {
-        const prefixMatches =
-          streamed !== null && ev.text.slice(0, spilled) === streamed.slice(0, spilled);
-        const tailText = prefixMatches ? ev.text.slice(spilled) : target.text;
-        if (tailText.length === 0) {
-          this.entries.splice(trackedIdx, 1);
-        } else {
-          target.text = tailText;
-          if (ev.id !== undefined) target.textId = ev.id;
-        }
-        return;
-      }
     }
     if (trackedIdx >= 0) {
       const target = this.entries[trackedIdx];
@@ -626,8 +472,6 @@ export class Scrollback {
   private resetTextStream(stream: TextStream): void {
     stream.buf = null;
     stream.entryId = null;
-    stream.spilled = 0;
-    stream.suppressSpill = false;
     stream.completedTexts.clear();
   }
 
@@ -676,9 +520,7 @@ export class Scrollback {
    * Append (or collapse into) a mode-change entry. When the trailing entry
    * is also a `mode_change`, mutate its `modeTo` in place and keep the
    * original `modeFrom` — so a streak `build → plan → question → build`
-   * renders as a single `build → build` row. The TUI keeps the trailing
-   * mode-change row out of `<Static>` until any other entry lands, at
-   * which point the collapsed row commits.
+   * renders as a single `build → build` row.
    */
   addModeChange(from: string, to: string): void {
     const last = this.entries[this.entries.length - 1];
@@ -704,7 +546,6 @@ export class Scrollback {
   clear(): void {
     this.run = null;
     this.entries = [];
-    this.committedCount = 0;
     this.toolsByCallId.clear();
     this.subagentParents.clear();
     this.backgroundSubagents.clear();
@@ -943,8 +784,8 @@ export class Scrollback {
         return;
       }
       if (ev.type === 'subagent_spawned' && ev.background) {
-        // Its spawn line is finished the moment the call returns; rows under
-        // a finished line would break the commit order.
+        // Only the end of a background agent shows; its steps would land
+        // under a spawn line that finished long before.
         this.backgroundSubagents.add(ev.subagentId);
         return;
       }
@@ -1099,10 +940,8 @@ export class Scrollback {
         return;
       }
       if (ev.type === 'run_finished') {
-        // Finalize dangling state so the commit cursor can't wedge: an
-        // interrupted run may leave a streaming text entry without its
-        // *_done event and pending tool entries without results, which
-        // would otherwise block every later entry from committing.
+        // An interrupted run may leave a streaming text entry without its
+        // *_done event and pending tool entries without results.
         this.resetTextStream(this.assistantStream);
         this.resetTextStream(this.thinkingStream);
         for (let i = this.entries.length - 1; i >= 0; i--) {
@@ -1131,39 +970,6 @@ export class Scrollback {
       }
     }
   }
-}
-
-function countLines(text: string): number {
-  let count = 1;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') count += 1;
-  }
-  return count;
-}
-
-/**
- * Index of the newline ending the last completed paragraph in `text` — i.e.
- * the start of the last blank-line separator — or -1 when the text is a
- * single unbroken paragraph. Blank lines inside an open code fence are not
- * separators: each spilled chunk is lexed as standalone markdown, so a chunk
- * boundary there would leave both halves with unbalanced fences.
- */
-function lastParagraphBoundary(text: string): number {
-  let boundary = -1;
-  let pos = 0;
-  let insideFence = false;
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    // The segment after the final '\n' is not a completed line, so it
-    // cannot act as a paragraph separator.
-    if (i > 0 && i < lines.length - 1 && !insideFence && line.trim() === '') {
-      boundary = pos - 1;
-    }
-    if (/^[ \t]*(```|~~~)/.test(line)) insideFence = !insideFence;
-    pos += line.length + 1;
-  }
-  return boundary;
 }
 
 function previewLine(text: string): string {

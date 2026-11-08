@@ -171,25 +171,18 @@ function renderTable(table: Tokens.Table, width: number, style: Style): string[]
   return lines;
 }
 
-/** Column widths that fit `room`: natural when they fit, else shrunk in proportion. */
+/**
+ * Column widths that fit `room`: natural when they fit, else the widest
+ * column gives up a cell at a time, so short columns keep their words whole.
+ */
 function distribute(natural: number[], room: number): number[] {
-  const total = natural.reduce((sum, value) => sum + value, 0);
-  if (total <= room) return natural;
-  const widths = natural.map((value) =>
-    Math.max(Math.min(value, TABLE_MIN_COLUMN), Math.floor((value / total) * room)),
-  );
+  const widths = [...natural];
   let sum = widths.reduce((acc, value) => acc + value, 0);
   while (sum > room) {
     const widest = widths.indexOf(Math.max(...widths));
     if (widths[widest]! <= TABLE_MIN_COLUMN) break;
     widths[widest]! -= 1;
     sum -= 1;
-  }
-  while (sum < room) {
-    const short = widths.findIndex((value, index) => value < natural[index]!);
-    if (short < 0) break;
-    widths[short]! += 1;
-    sum += 1;
   }
   return widths;
 }

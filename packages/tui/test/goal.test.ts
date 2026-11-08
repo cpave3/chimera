@@ -1,10 +1,6 @@
 import { type AgentEvent, formatGoalMessage } from '@chimera/core';
-import { render } from 'ink-testing-library';
-import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App } from '../src/App';
 import type { MountOptions } from '../src/mount';
-import { fakeSession as inkSession, settle as inkSettle, plain } from './fullscreen-helpers';
 import { fakeSession, type Mounted, mount } from './harness';
 
 type GoalEvent = Extract<AgentEvent, { type: 'goal_updated' }>;
@@ -177,24 +173,13 @@ describe('goal results in the transcript', () => {
 });
 
 describe('the goal in the inline layout', () => {
-  it('is in the footer', async () => {
-    const session = inkSession();
-    const { lastFrame, unmount } = render(
-      createElement(App, {
-        client: session.client,
-        sessionId: '01ABCDEFGH8AWWBRGC',
-        modelRef: 'manticore/gpt',
-        cwd: '/tmp/project',
-        layout: 'inline',
-        terminalSize: { columns: 100, rows: 30 },
-        readWorktree: async () => null,
-      }),
+  it('is in the status line under the prompt box', async () => {
+    mounted = await mount(
+      { layout: 'inline', statusLine: { rows: [{ left: ['goal'] }] } },
+      { columns: 100, rows: 30 },
     );
-    session.push(goalEvent({ change: 'set' }));
-    await inkSettle(700);
-    const frame = plain(lastFrame());
-    unmount();
+    await mounted.event(goalEvent({ change: 'set' }));
 
-    expect(frame).toMatch(/goal: all tests pass/);
+    expect(mounted.term.history().at(-1)).toMatch(/^╰─ goal: all tests pass ─+╯$/);
   });
 });

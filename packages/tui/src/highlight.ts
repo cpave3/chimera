@@ -1,7 +1,7 @@
 import { common, createLowlight } from 'lowlight';
-import type { SyntaxTokens } from './theme/types';
+import type { SyntaxToken } from './theme/palette';
 
-export type SyntaxToken = keyof SyntaxTokens;
+export type { SyntaxToken };
 
 export interface CodeSegment {
   text: string;

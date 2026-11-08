@@ -109,13 +109,9 @@ it unless the user asks. See `docs/evals.md`.
 
 ## `pnpm typecheck` has known noise
 
-`tsc -b` is run from the root for typechecking, but:
-
-1. It emits pre-existing JSX errors in `packages/tui/src/*.tsx` because the
-   root tsconfig doesn't set `jsx`. Harmless — `tsup` builds fine with its own
-   per-package tsconfig.
-2. It can leak compiled artifacts (`*.js`, `*.d.ts`, `*.cjs`) **into `src/`
-   directories**. Clean up after yourself:
+`tsc -b` is run from the root for typechecking, but it can leak compiled
+artifacts (`*.js`, `*.d.ts`, `*.cjs`) **into `src/` directories**. Clean up
+after yourself:
 
    ```
    find packages -path '*/node_modules' -prune -o \
@@ -129,43 +125,40 @@ it unless the user asks. See `docs/evals.md`.
 
 ## TUI renderer
 
-The fullscreen layout runs on Chimera's own line renderer, not Ink:
+The TUI runs on Chimera's own line renderer; there is no React or Ink.
 
 - `src/app/controller.ts` holds all TUI state in plain fields and handles
-  every input event; `src/app/fullscreen.ts` lays the transcript viewport
-  over the chrome; `src/mount.ts` wires them to the terminal.
+  every input event. `src/app/fullscreen.ts` lays the transcript viewport
+  over the chrome on the alternate screen; `src/app/inline.ts` writes the
+  transcript and the chrome into the terminal's scrollback. `src/mount.ts`
+  wires either to the terminal.
 - Line components (`src/ledger/*`, `src/cards/*`) render state to string
-  lines for a width. Measure and clip with `src/terminal/width.ts` only.
-- `src/terminal/keys.ts` parses input into one event per key;
-  `src/terminal/host.ts` owns raw mode and the key, paste and mouse modes.
+  lines for a width. Measure, clip and pad with `src/terminal/width.ts`
+  only, never `.length`. A component keeps no state of its own except a
+  card, whose state is plain fields read on every key.
+- `src/terminal/keys.ts` parses each read into one event per key, in order;
+  `src/terminal/host.ts` owns raw mode and the key, paste and mouse modes,
+  and restores them on exit, suspend and hand-off.
+- The screen writers (`src/terminal/inline-screen.ts`,
+  `src/terminal/alt-screen.ts`) rewrite only changed rows, inside
+  synchronized output.
+
+## TUI testing conventions
+
 - Test through `mountTui` with `test/harness.ts`: a fake client, scripted
-  bytes on a `VirtualInput`, and a `VirtualTerminal` as stdout whose
-  `screen()` is what the user sees. Do not assert a spinner frame; it moves
-  every 80 ms.
-
-The inline layout still runs on Ink until it moves too; the Ink notes below
-apply to it only.
-
-## TUI testing conventions (Ink, inline layout)
-
-Uses `ink-testing-library` + `vitest`. Two things catch people:
-
-- **Per-char sleeps when feeding stdin.** React state updates for each
-  keystroke race with follow-up keys (e.g. Enter after typing a command).
-  Use the `type()` helper pattern already in
-  `packages/tui/test/slash-dispatch.test.tsx`:
-
-  ```ts
-  for (const ch of text) {
-    stdin.write(ch);
-    await new Promise((r) => setTimeout(r, 1));
-  }
-  await new Promise((r) => setTimeout(r, 20));
-  ```
-
-- **Raw escape sequences for special keys.** `\x03` = Ctrl+C, `\x1b` = Esc,
-  `\x1b[A/B/C/D` = arrows, `\x1b[5~`/`\x1b[6~` = PageUp/PageDown,
-  `\x1b[<64;x;yM` = wheel-up (SGR mouse). Tab = `\t`, Enter = `\r`.
+  bytes on a `VirtualInput`, and a `VirtualTerminal` as stdout.
+  `term.screen()` is what the user sees; `term.history()` adds the
+  scrollback; `term.takeOutput()` is what was written since the last look.
+- Send a burst of keys as one read: `keys('/goal x\r')`. No per-character
+  sleeps are needed; keys act in order. A lone Esc waits for the escape
+  timeout, so give it ~60 ms: `keys('\x1b', 120)`.
+- Raw sequences: `\x03` Ctrl+C, `\x1b[A`–`D` arrows, `\x1b[5~`/`\x1b[6~`
+  PgUp/PgDn, `\x1b[13;2u` Shift+Enter, `\x1b[Z` Shift+Tab, `\x1b[<64;x;yM`
+  wheel up (SGR mouse), `\x1b[200~…\x1b[201~` a paste. Tab `\t`, Enter `\r`.
+- Line components have `render(width)` tests of their own
+  (`test/ledger-*.test.ts`, `test/cards.test.ts`); check display width with
+  `displayWidth`, not `.length`.
+- Do not assert a spinner frame: it moves every 80 ms.
 
 ## Agent construction in tests
 
@@ -179,26 +172,6 @@ so the TUI can flag the window value as approximate.
 warnings in module-level state. Tests asserting on warning counts must call
 `__resetContextWindowWarnings()` (imported from `../src/context-window`,
 not the package barrel) at the start of each case.
-
-## Ink (v7) specifics
-
-- **`<Static>` is positional and append-only.** It renders
-  `items.slice(prevLength)` and never re-renders or backfills. The TUI
-  therefore commits scrollback entries through a monotonic cursor owned by
-  the `Scrollback` store (`splitSnapshot()`): an entry commits only when it
-  is finalized AND everything before it is committed. Never classify
-  committed/in-flight per entry in the React layer — out-of-order tool
-  results or mid-stream info lines will insert before `<Static>`'s cursor,
-  printing duplicates and dropping entries. Tests:
-  `packages/tui/test/scrollback-commit.test.ts`.
-
-- `render()` options we rely on: `exitOnCtrlC: false` (so our handler
-  interrupts instead of exiting) and `stdin` (custom stream — see
-  `packages/tui/src/mouse.ts`).
-- A custom stdin stream must implement `isTTY`, `setRawMode`, `setEncoding`,
-  `pause`, `resume`, **and `ref`/`unref`** — Ink calls ref/unref for event
-  loop lifetime management. `PassThrough` doesn't provide those; delegate to
-  the upstream source.
 
 ## Planning: wayfinder and Burnlite
 

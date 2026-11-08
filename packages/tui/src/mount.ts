@@ -37,8 +37,6 @@ export interface TerminalStreams {
 }
 
 export interface MountOptions extends TuiOptions {
-  /** The other live Chimera instances, for the Ink layout's context panel. */
-  listPeers?: () => Promise<import('./ContextPanel').Peer[]>;
   /** Injection point for tests: the terminal to draw on. Defaults to the process's. */
   terminal?: TerminalStreams;
   /** Injection point for tests: the system clipboard tool. Defaults to wl-copy, xclip, xsel or pbcopy. */

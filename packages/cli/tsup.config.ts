@@ -9,6 +9,6 @@ export default defineConfig({
   },
   format: ['esm'],
   tsconfig: './tsconfig.json',
-  // bin.js loads the CLI from the sibling index.js at runtime; see src/bin.ts.
-  external: ['ink', 'react', 'react/jsx-runtime', './index.js'],
+  // bin.js loads the CLI from the sibling index.js; see src/bin.ts.
+  external: ['./index.js'],
 });

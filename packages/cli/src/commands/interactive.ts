@@ -40,7 +40,6 @@ import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
-import { listPeers } from '../peers';
 import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
@@ -301,7 +300,6 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     mouse: config.tui?.mouse,
     notifications: config.tui?.notifications,
     statusLine: config.statusLine,
-    listPeers: () => listPeers({ home: opts.home }),
     client,
     sessionId,
     modelRef: ref,

@@ -235,10 +235,7 @@ export class TuiController {
     private readonly hooks: ControllerHooks,
     readonly fullscreen: boolean,
   ) {
-    // Without Ink's <Static> there is nothing to spill paragraphs for.
-    this.scrollback = new Scrollback(options.formatters, {
-      streamSpillLines: Number.POSITIVE_INFINITY,
-    });
+    this.scrollback = new Scrollback(options.formatters);
     this.editor = new PromptEditor(this.pastes);
     this.activeSession = { client: options.client, sessionId: options.sessionId, label: 'parent' };
     this.activeModeName = options.initialMode ?? 'build';
@@ -730,10 +727,14 @@ export class TuiController {
     );
     const above: string[] = [];
     if (this.queue.length > 0) {
+      const earlier = this.queue.length - MAX_QUEUED_ROWS;
+      if (earlier > 0) {
+        above.push(`${label('queued', 'dim', style)}${style.fg('dim', `+${earlier} more`)}`);
+      }
       for (const [index, message] of this.queue.slice(-MAX_QUEUED_ROWS).entries()) {
         const text = clipToWidth(previewLine(message), Math.max(10, width - BODY_INDENT.length));
         above.push(
-          `${index === 0 ? label('queued', 'dim', style) : BODY_INDENT}${style.fg('muted', text)}`,
+          `${index === 0 && earlier <= 0 ? label('queued', 'dim', style) : BODY_INDENT}${style.fg('muted', text)}`,
         );
       }
     }

@@ -1,9 +1,5 @@
 import type { AgentEvent } from '@chimera/core';
-import { render } from 'ink-testing-library';
-import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App } from '../src/App';
-import { fakeSession as inkSession, settle as inkSettle, plain } from './fullscreen-helpers';
 import { type Mounted, mount, settle } from './harness';
 
 const PAGE_UP = '\x1b[5~';
@@ -131,39 +127,21 @@ describe('a permission card that fits', () => {
   });
 });
 
-describe('a permission prompt taller than the terminal, in the inline layout', () => {
-  const ROWS = 40;
+describe('a permission card taller than the terminal, in the inline layout', () => {
+  it('keeps the choices on screen and scrolls the request under them', async () => {
+    mounted = await mount({ layout: 'inline' }, { columns: 100, rows: 30 });
+    await mounted.event(permissionRequest(longCommand(60)));
+    const top = mounted.screen();
+    await mounted.keys(PAGE_DOWN);
+    const lower = mounted.screen();
 
-  /** The rows of the frame that a terminal of `ROWS` rows still shows. */
-  function onScreen(frame: string | undefined): string {
-    return [...plain(frame).split('\n'), ''].slice(-ROWS).join('\n');
-  }
-
-  it('shows the whole prompt on one screen and scrolls the request', async () => {
-    const session = inkSession();
-    const { lastFrame, unmount, stdin } = render(
-      createElement(App, {
-        client: session.client,
-        sessionId: '01ABCDEFGH8AWWBRGC',
-        modelRef: 'manticore/gpt',
-        cwd: '/tmp/project',
-        terminalSize: { columns: 100, rows: ROWS },
-      }),
-    );
-    session.push(permissionRequest(longCommand(60)));
-    await inkSettle(80);
-    const top = onScreen(lastFrame());
-    stdin.write(PAGE_DOWN);
-    await inkSettle();
-    const lower = onScreen(lastFrame());
-    unmount();
-
-    expect(top).toContain('Permission required');
-    expect(top).toContain('echo step 1 of 60;');
-    expect(top).toMatch(/› 1\. Allow once/);
-    expect(top).toMatch(/lines 1–\d+ of 62 · pgup\/pgdn scroll/);
+    expectChoicesInView(top);
+    expect(top).toContain('│ bash   echo step 1 of 60;');
+    expect(firstLineInView(top)).toBe(1);
+    expect(top).not.toContain('echo step 60 of 60;');
+    expectChoicesInView(lower);
     expect(lower).not.toContain('echo step 1 of 60;');
-    expect(lower).toMatch(/echo step [23]\d of 60;/);
-    expect(lower).toMatch(/› 1\. Allow once/);
+    expect(firstLineInView(lower)).toBeGreaterThan(1);
+    expect(lower).toContain(`echo step ${firstLineInView(lower)} of 60;`);
   });
 });
