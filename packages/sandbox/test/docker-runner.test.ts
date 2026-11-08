@@ -5,7 +5,7 @@ describe('SpawnDockerRunner timeout', () => {
   it('SIGTERM kills a long-running child near timeoutMs (no SIGKILL needed)', async () => {
     const runner = new SpawnDockerRunner({ command: 'sh' });
     const start = Date.now();
-    const r = await runner.run(['-c', 'sleep 60'], { timeoutMs: 100 });
+    const r = await runner.run(['-c', 'exec sleep 60'], { timeoutMs: 100 });
     const elapsed = Date.now() - start;
     expect(r.timedOut).toBe(true);
     expect(r.exitCode).toBe(-1);
