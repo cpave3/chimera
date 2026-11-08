@@ -28,6 +28,7 @@ import {
   runSessionsRm,
 } from './commands/sessions';
 import { runSkillsList } from './commands/skills';
+import { runUpdate } from './commands/update';
 import { VERSION, versionReport } from './version';
 
 function applySubagentOptions(cmd: Command): Command {
@@ -99,6 +100,15 @@ function applyPathOptions(cmd: Command): Command {
 export function buildProgram(): Command {
   const program = new Command('chimera');
   program.version(VERSION);
+  program
+    .command('update')
+    .description('Install the newest release of chimera over this one (a release build only)')
+    .option('--check', 'only report whether a newer release exists')
+    .option('--json', 'print {"current", "latest", "available", "url"} (and "updated") as JSON')
+    .option('--version <tag>', 'install this release, e.g. to go back after a bad one')
+    .action(async (options: { check?: boolean; json?: boolean; version?: string }) => {
+      await runUpdate(options);
+    });
   program
     .command('version')
     .description('Print the version of this build; --json for {version, release}. Reads no config.')
