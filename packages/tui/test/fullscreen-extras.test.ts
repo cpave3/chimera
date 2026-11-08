@@ -1,3 +1,4 @@
+import type { AgentEvent } from '@chimera/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Mounted, mount, runFinished, settle, text, toolCall, userMessage } from './harness';
 
@@ -162,5 +163,27 @@ describe('exit', () => {
     expect(history).toContain('         The answer stays.');
     expect(history.some((row) => row.startsWith('╭─'))).toBe(false);
     mounted = undefined;
+  });
+});
+
+describe('search and a request that arrives during it', () => {
+  it('gives way to a permission card, so its keys answer the request', async () => {
+    const view = await mount();
+    await view.keys('\x06need');
+    expect(view.screen()).toMatch(/find {2}› need/);
+    await view.event({
+      type: 'permission_request',
+      requestId: 'r1',
+      tool: 'bash',
+      target: 'host',
+      command: 'git push',
+    } as AgentEvent);
+    expect(view.screen()).toContain('approval needed');
+    expect(view.screen()).not.toMatch(/find {2}›/);
+    await view.keys('a');
+    expect(view.session.resolutions).toEqual([
+      { requestId: 'r1', action: expect.objectContaining({ decision: 'allow' }) },
+    ]);
+    await view.unmount();
   });
 });

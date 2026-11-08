@@ -93,6 +93,8 @@ export class FullscreenLayout implements TranscriptScroller {
     this.transcriptWidth = Math.max(10, width - SCROLLBAR_COLUMNS);
     const context = controller.rowContext(this.transcriptWidth, style, children);
     this.view.update(controller.banner(this.transcriptWidth, style), entries, context);
+    // A request or question that arrives while searching takes the keyboard.
+    if (this.search && controller.modalCard()) this.search = null;
     if (this.search) this.findMatches(entries, context, style);
     const chrome = [...this.searchRow(width, style), ...controller.chrome(width, height, style)];
     this.viewport = Math.max(1, height - chrome.length);
@@ -259,8 +261,12 @@ export class FullscreenLayout implements TranscriptScroller {
 
   // ---------- search ----------
 
-  /** Keys for search: Ctrl+F opens it; while open it has the keyboard. True when it took the key. */
+  /**
+   * Keys for search: Ctrl+F opens it; while open it has the keyboard, until
+   * a card that needs an answer appears. True when it took the key.
+   */
   handleKey(event: InputEvent): boolean {
+    if (this.search && this.controller.modalCard()) this.search = null;
     if (event.type === 'paste' && this.search) {
       this.setQuery(this.search.query + event.text.replace(/\n/g, ' '));
       return true;
