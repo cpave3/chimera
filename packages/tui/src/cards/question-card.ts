@@ -3,7 +3,7 @@ import { wrapText } from '../ledger/text';
 import type { InputEvent } from '../terminal/keys';
 import { sanitizeDeep, sanitizeText } from '../terminal/sanitize';
 import type { Style } from '../theme/style';
-import { type Card, cardInnerWidth, renderCard } from './card';
+import { type Card, type CardScroll, cardInnerWidth, renderCard, scrollCard } from './card';
 
 const OWN_ANSWER = 'Type an answer…';
 
@@ -17,6 +17,9 @@ export class QuestionCard implements Card {
   private selected = 0;
   /** The text so far while the user types an answer; null while they pick. */
   private typed: string | null = null;
+  private readonly scrollState: CardScroll = { top: 0 };
+  private lastBodyRows = 0;
+  private lastRoom = 0;
 
   constructor(
     private readonly request: QuestionRequest,
@@ -33,6 +36,7 @@ export class QuestionCard implements Card {
     this.answers = [...this.answers, { question: asked.question, answer: text, custom }];
     this.selected = 0;
     this.typed = null;
+    this.scrollState.top = 0;
     if (this.answers.length === this.request.questions.length) {
       this.onResolve({ status: 'answered', answers: this.answers });
     }
@@ -111,11 +115,23 @@ export class QuestionCard implements Card {
       this.typed === null
         ? `1-${ownRow + 1} or ↑↓ enter · type to answer · esc skip`
         : 'enter answer · esc back';
+    const footer = ['', ...choices];
+    this.lastBodyRows = body.length;
+    this.lastRoom = Math.max(1, maxRows - 2 - footer.length - 1);
     return renderCard(
-      { title, tone: 'info', keys, body, footer: ['', ...choices] },
+      { title, tone: 'info', keys, body, footer },
       width,
       maxRows,
       style,
+      this.scrollState,
     );
+  }
+
+  scrollPages(pages: number): boolean {
+    return this.scroll(pages * Math.max(1, this.lastRoom - 1));
+  }
+
+  scroll(lines: number): boolean {
+    return scrollCard(this.scrollState, lines, this.lastBodyRows, this.lastRoom);
   }
 }

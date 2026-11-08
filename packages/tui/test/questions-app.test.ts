@@ -117,3 +117,31 @@ describe('a question from the agent', () => {
     expect(mounted.screen()).toContain('Which test runner?');
   });
 });
+
+describe('a question taller than its card', () => {
+  const tallQuestion = {
+    type: 'question_request',
+    requestId: 'q-tall',
+    questions: [
+      {
+        question: Array.from({ length: 20 }, (_, i) => `line ${i + 1} of the question`).join('\n'),
+        options: [{ label: 'yes' }, { label: 'no' }],
+      },
+    ],
+  } as AgentEvent;
+
+  it('scrolls its question with PgDn, PgUp and the wheel, keeping the choices in view', async () => {
+    mounted = await mount({}, { columns: 80, rows: 24 });
+    await mounted.event(tallQuestion);
+    expect(mounted.screen()).toMatch(/lines 1–\d+ of 2\d/);
+    expect(mounted.screen()).not.toContain('line 20 of the question');
+    await mounted.keys('\x1b[6~\x1b[6~');
+    expect(mounted.screen()).toMatch(/lines 11–20 of 20/);
+    expect(mounted.screen()).toContain('line 20 of the question');
+    expect(mounted.screen()).toContain('1. yes');
+    await mounted.keys('\x1b[5~');
+    expect(mounted.screen()).toMatch(/lines 2–11 of 20/);
+    await mounted.keys('\x1b[<64;10;5M');
+    expect(mounted.screen()).toMatch(/lines 1–10 of 20/);
+  });
+});
