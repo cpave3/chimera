@@ -36,7 +36,7 @@ index 863c53b5adf7982e289402e5dfcf2d6471eedb4f..980f5ca136a7c3dbda886222119b44d4
    // 0a. System file overwrite via redirect (echo "x" > /etc/passwd)
    //     This is critical — even a "safe" command like echo is dangerous if
 diff --git a/src/ast-analyzer.ts b/src/ast-analyzer.ts
-index affbe196622dc02cfb5f97c9f2f79a615f0b6a2b..81d4c007770cd13fb45ddea2c3a73c01dbbe8a05 100644
+index affbe196622dc02cfb5f97c9f2f79a615f0b6a2b..cc4a5c3f85674873cc0e2ba5559eb8587f98a46f 100644
 --- a/src/ast-analyzer.ts
 +++ b/src/ast-analyzer.ts
 @@ -41,6 +41,7 @@ export interface CommandAnalysis {
@@ -101,3 +101,12 @@ index affbe196622dc02cfb5f97c9f2f79a615f0b6a2b..81d4c007770cd13fb45ddea2c3a73c01
        // The content of command substitution is the text inside $()
        // We store it for recursive analysis in scoring
        const innerText = node.text;
+@@ -327,7 +365,7 @@ export function analyzeCommand(command: string): CommandAnalysis {
+     }
+   }
+   
+-  walk(tree.rootNode);
++  walk(tree!.rootNode);
+   
+   // Determine intent from executable
+   if (result.executable) {

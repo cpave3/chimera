@@ -9,6 +9,10 @@ import {
   StreamableHTTPError,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import {
+  type CallToolResult,
+  CallToolResultSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { VERSION } from '../version';
 import { McpAuth } from './auth.js';
 
@@ -16,7 +20,7 @@ export type McpServerConfig =
   | { transport: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
   | { transport: 'http'; url: string; clientId?: string };
 export type McpTool = Awaited<ReturnType<Client['listTools']>>['tools'][number];
-export type McpCallResult = Awaited<ReturnType<Client['callTool']>>;
+export type McpCallResult = CallToolResult;
 export type McpLimits = {
   connectMs?: number;
   discoveryMs?: number;
@@ -134,10 +138,12 @@ export class McpClientManager {
       throw new Error(`Unknown MCP tool ${name}/${toolName}`);
     const client = await this.connect(name);
     try {
-      const result = await client.callTool({ name: toolName, arguments: args }, undefined, {
-        signal,
-        timeout: this.limits.callMs,
-      });
+      // Parsed with the current schema, so the result always has `content`.
+      const result = (await client.callTool(
+        { name: toolName, arguments: args },
+        CallToolResultSchema,
+        { signal, timeout: this.limits.callMs },
+      )) as CallToolResult;
       if (Buffer.byteLength(JSON.stringify(result)) > this.limits.maxResultBytes) {
         throw new Error(`MCP tool ${name}/${toolName} returned an oversized result`);
       }

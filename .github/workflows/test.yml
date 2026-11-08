@@ -24,12 +24,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Packages import each other through their built dist/, so build first.
+      - run: pnpm build
+
       - run: pnpm typecheck
 
       - run: pnpm fmt:check
 
       - run: pnpm lint
-
-      - run: pnpm build
 
       - run: pnpm test
