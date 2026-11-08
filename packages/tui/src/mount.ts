@@ -4,6 +4,7 @@ import { type ControllerHooks, TuiController } from './app/controller';
 import { FullscreenLayout } from './app/fullscreen';
 import { InlineLayout } from './app/inline';
 import type { TuiOptions } from './app/options';
+import { clipboardSequence, writeClipboardText } from './clipboard';
 import {
   decideNotification,
   FocusTracker,
@@ -13,7 +14,7 @@ import {
 import { AltScreen } from './terminal/alt-screen';
 import { type SignalPort, TerminalHost, type TerminalInputStream } from './terminal/host';
 import { InlineScreen } from './terminal/inline-screen';
-import type { InputEvent } from './terminal/keys';
+import type { InputEvent, MouseEvent } from './terminal/keys';
 import { resolveTheme, type TuiLayout } from './theme/loader';
 import type { Style } from './theme/style';
 
@@ -40,6 +41,8 @@ export interface MountOptions extends TuiOptions {
   listPeers?: () => Promise<import('./ContextPanel').Peer[]>;
   /** Injection point for tests: the terminal to draw on. Defaults to the process's. */
   terminal?: TerminalStreams;
+  /** Injection point for tests: the system clipboard tool. Defaults to wl-copy, xclip, xsel or pbcopy. */
+  writeClipboard?: (text: string) => Promise<unknown>;
 }
 
 export interface TuiHandle {
@@ -153,21 +156,56 @@ export function mountTui(opts: MountOptions): TuiHandle {
   function alternateSurface(): Surface {
     const screen = new AltScreen(stdout);
     const view = new FullscreenLayout(controller);
+    const copy = (text: string) => {
+      // Both ways: the terminal's clipboard sequence reaches the user's
+      // machine over SSH, and the system tool works where a terminal ignores it.
+      stdout.write(clipboardSequence(text));
+      void (opts.writeClipboard ?? writeClipboardText)(text);
+      controller.showNotice(
+        `copied ${text.length} ${text.length === 1 ? 'character' : 'characters'}`,
+      );
+    };
     return {
       draw: () => {
         if (!screen.entered) return;
         const { width, height } = size();
         screen.render(view.frame(width, height, style));
+        if (view.revealPending()) screen.render(view.frame(width, height, style));
       },
       enter: () => screen.enter(),
       leave: () => screen.leave(),
       resized: () => screen.invalidate(),
       resumed: () => screen.enter(),
       reset: () => view.reset(),
-      finish: () => screen.leave(),
+      finish: () => {
+        const { width } = size();
+        const lines = view.exitLines(width, style);
+        screen.leave();
+        // The session stays in the shell's scrollback, in the inline form.
+        if (lines.length > 0)
+          stdout.write(`${lines.map((line) => `${line}\x1b[0m`).join('\r\n')}\r\n`);
+      },
       wheel: (lines) => {
+        view.clearSelection();
         if (!controller.modalCard()?.scroll?.(lines)) view.scrollBy(lines);
         requestRender();
+      },
+      mouse: (event) => {
+        if (event.button !== 0) return;
+        if (event.action === 'press') view.press(event.x, event.y);
+        else if (event.action === 'drag') view.drag(event.x, event.y);
+        else if (event.action === 'release') {
+          const result = view.release(requestRender);
+          if (result?.kind === 'click') view.click(result.x, result.y);
+          else if (result?.kind === 'copy') copy(result.text);
+        }
+        requestRender();
+      },
+      key: (event) => {
+        if (event.type === 'key' || event.type === 'paste') view.clearSelection();
+        if (!view.handleKey(event)) return false;
+        requestRender();
+        return true;
       },
     };
   }
@@ -203,6 +241,8 @@ export function mountTui(opts: MountOptions): TuiHandle {
         cursor(true);
       },
       wheel: () => {},
+      mouse: () => {},
+      key: () => false,
     };
   }
 
@@ -221,9 +261,10 @@ export function mountTui(opts: MountOptions): TuiHandle {
       if (event.type === 'mouse') {
         if (event.action === 'wheel-up' || event.action === 'wheel-down') {
           surface.wheel(event.action === 'wheel-up' ? -WHEEL_LINES : WHEEL_LINES);
-        }
+        } else surface.mouse(event);
         return;
       }
+      if (surface.key(event)) return;
       controller.handleInput(event);
     },
   });
@@ -286,6 +327,10 @@ interface Surface {
   /** Leave the TUI for good. */
   finish(): void;
   wheel(lines: number): void;
+  /** Press, drag and release: selection and clicks. */
+  mouse(event: MouseEvent): void;
+  /** A key the layout takes before the controller; true when it did. */
+  key(event: InputEvent): boolean;
 }
 
 const WHEEL_LINES = 3;

@@ -26,6 +26,9 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | `Ctrl+Z` | Suspend. |
 | `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen), or a card too tall for the screen. |
 | `Ctrl+Home` / `Ctrl+End` | Jump to the top of the transcript, and back to the newest output (fullscreen). |
+| `Ctrl+F` | Search the transcript (fullscreen). |
+| Click | Expand or collapse one tool call or thought (fullscreen). |
+| Drag | Select text; it is copied when you release the button (fullscreen). |
 
 A `!command` runs in your shell with your rights. It does not go through the
 approval rules or the sandbox, because you typed it.
@@ -117,14 +120,34 @@ chimera  v0.4.0 · manticore/gpt-5 · ~/Projects/yggdrasil
   the mouse wheel scroll it; while you are scrolled away, new output does not
   move what you read. `Ctrl+Home` jumps to the top; `Ctrl+End`, or sending a
   message, follows the newest output again.
+- **Where you are.** A thin scrollbar at the right edge shows your place in
+  the session. When there is more above, the top row says `▲ N earlier
+  lines`; when you have scrolled away from the newest output, the bottom row
+  says `▼ N newer lines · jump to latest · ctrl+end`.
 - **Mouse.** The wheel scrolls the transcript, or a card too tall for the
-  screen. Set `tui.mouse` to `false` to leave the mouse to the terminal.
+  screen. A click on a tool call or a thought expands or collapses just that
+  entry. Drag with the left button to select text: it is copied when you
+  release the button, and the prompt box's top border says how much. A
+  selection stays inside the transcript; the indent it starts in is left
+  out, and code copied from a block leaves out the `┆` gutter, so it keeps
+  its shape. The copy goes through the system clipboard tool (`wl-copy`,
+  `xclip`, `xsel`, `pbcopy`) and through the terminal's clipboard sequence
+  (OSC 52), which is what reaches your machine over SSH. In tmux, OSC 52
+  needs `set -g set-clipboard on`; the system tool needs nothing.
+  `Shift`+drag still gives you the terminal's own selection in most
+  terminals. Set `tui.mouse` to `false` to leave the mouse to the terminal.
+- **Search.** `Ctrl+F` opens a search row above the prompt box. Matches are
+  highlighted in the transcript, including in collapsed output, which opens
+  when you get to a match inside it. `Enter` goes to the next match back
+  from the newest, `Shift+Enter` or `Ctrl+P` to the one after it, and `Esc`
+  closes the search.
 - **Handing over.** `Ctrl+G` (your editor), `Ctrl+T` (the pager) and `Ctrl+Z`
   (suspend) give the terminal back to the program or the shell, and the TUI
   redraws everything when it gets it back.
-- **Exit.** The alternate screen takes the session with it, so Chimera prints
-  the session id and the `chimera --session <id>` command that resumes it.
-  `Ctrl+T` opens the full transcript in a pager at any time.
+- **Exit.** Chimera leaves the alternate screen and prints the whole
+  transcript in the inline form, so the session stays in your shell's and
+  tmux's scrollback, then the `chimera --session <id>` command that resumes
+  it. `Ctrl+T` opens the full transcript in a pager at any time.
 
 ### Inline layout
 
