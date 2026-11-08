@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { render } from 'ink-testing-library';
 import { Text } from 'ink';
+import { render } from 'ink-testing-library';
 import React, { useContext } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeContext, ThemeProvider, useTheme, useThemeContext } from '../src/theme/ThemeProvider';
@@ -21,7 +21,7 @@ describe('ThemeProvider', () => {
         <TestComponent />
       </ThemeProvider>,
     );
-    expect(lastFrame()).toContain('cyan');
+    expect(lastFrame()).toContain('magenta');
   });
 
   it('provides custom theme via useTheme', () => {
@@ -42,7 +42,7 @@ describe('useTheme', () => {
   it('provides default theme when used without provider', () => {
     // useTheme returns default theme if no provider (fallback behavior)
     const { lastFrame } = render(<TestComponent />);
-    expect(lastFrame()).toContain('cyan');
+    expect(lastFrame()).toContain('magenta');
   });
 });
 
@@ -108,13 +108,13 @@ describe('ThemeProvider.reload', () => {
     );
 
     // Default theme initially — no theme.json on disk yet.
-    expect(lastFrame()).toContain(`${defaultTheme.accent.primary}|none`);
+    expect(lastFrame()).toContain('magenta|none');
 
     writeFileSync(
       themePath,
       JSON.stringify({
         _themeName: 'fixture',
-        accent: { primary: '#abcdef' },
+        accent: '#abcdef',
       }),
     );
     reload!();
@@ -124,7 +124,7 @@ describe('ThemeProvider.reload', () => {
   });
 
   it('falls back to the base theme when the file disappears between reloads', async () => {
-    writeFileSync(themePath, JSON.stringify({ accent: { primary: '#111111' } }));
+    writeFileSync(themePath, JSON.stringify({ accent: '#111111' }));
 
     let reload: (() => void) | undefined;
     const { lastFrame } = render(
@@ -142,6 +142,6 @@ describe('ThemeProvider.reload', () => {
     rmSync(themePath);
     reload!();
     await new Promise((r) => setImmediate(r));
-    expect(lastFrame()).toContain(`${defaultTheme.accent.primary}|none`);
+    expect(lastFrame()).toContain('magenta|none');
   });
 });

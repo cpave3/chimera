@@ -4,250 +4,202 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyThemeByName,
-  buildTheme,
-  deepMerge,
   getDefaultThemePath,
   listThemes,
   loadUserTheme,
-  pickBaseTheme,
+  resolveTheme,
 } from '../src/theme/loader';
-import { BUILTIN_PRESETS } from '../src/theme/presets';
-import { defaultTheme, fullscreenTheme, plainTheme } from '../src/theme/tokens';
-import type { PartialTheme, Theme } from '../src/theme/types';
+import { BUILTIN_THEMES, THEME_TOKENS, type ThemeTokens } from '../src/theme/palette';
+import { createStyle, detectColorLevel } from '../src/theme/style';
 
-describe('pickBaseTheme', () => {
-  it('returns defaultTheme when NO_COLOR is unset', () => {
-    expect(pickBaseTheme({})).toBe(defaultTheme);
-  });
+const ESC = '\x1b[';
 
-  it('returns defaultTheme when NO_COLOR is empty (per NO_COLOR spec)', () => {
-    expect(pickBaseTheme({ NO_COLOR: '' })).toBe(defaultTheme);
-  });
+/** The parameters of every SGR sequence in `text`. */
+function sgrCodes(text: string): string[] {
+  return text
+    .split(ESC)
+    .slice(1)
+    .map((part) => part.slice(0, part.indexOf('m')));
+}
 
-  it('returns plainTheme when NO_COLOR has any value', () => {
-    expect(pickBaseTheme({ NO_COLOR: '1' })).toBe(plainTheme);
-  });
-
-  it('gives the fullscreen layout a palette with its own background', () => {
-    const theme = pickBaseTheme({}, 'fullscreen');
-    expect(theme).toBe(fullscreenTheme);
-    expect(theme.base.background).toBe('#1f1d27');
-    expect(theme.accent.primary).toBe('#b79cf7');
-    expect(theme.surface.panel).toBe('#1b1a22');
-  });
-
-  it('keeps the ANSI palette, with no fills, for the inline layout', () => {
-    const theme = pickBaseTheme({}, 'inline');
-    expect(theme).toBe(defaultTheme);
-    expect(theme.base.background).toBeUndefined();
-    expect(theme.surface).toEqual({});
-  });
-
-  it('fills no surface under NO_COLOR, in either layout', () => {
-    expect(pickBaseTheme({ NO_COLOR: '1' }, 'fullscreen')).toBe(plainTheme);
-    expect(plainTheme.surface).toEqual({});
-  });
-});
-
-describe('surface tokens', () => {
-  it('merges a user surface colour over the base', () => {
-    const merged = deepMerge(fullscreenTheme, { surface: { panel: '#101010' } });
-    expect(merged.surface.panel).toBe('#101010');
-    expect(merged.surface.raised).toBe(fullscreenTheme.surface.raised);
-  });
-
-  it('reads the surface group from a theme file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'chimera-theme-surface-'));
-    const path = join(dir, 'theme.json');
-    writeFileSync(
-      path,
-      JSON.stringify({ surface: { border: '#333333' }, text: { dim: '#555555' } }),
-    );
-    const result = loadUserTheme(path);
-    rmSync(dir, { recursive: true, force: true });
-    expect(result).toMatchObject({
-      kind: 'ok',
-      theme: { surface: { border: '#333333' }, text: { dim: '#555555' } },
-    });
-  });
-});
-
-describe('theme tokens', () => {
-  it('defaultTheme has all required token groups', () => {
-    expect(defaultTheme.base).toBeDefined();
-    expect(defaultTheme.accent).toBeDefined();
-    expect(defaultTheme.status).toBeDefined();
-    expect(defaultTheme.text).toBeDefined();
-    expect(defaultTheme.ui).toBeDefined();
-  });
-
-  it('defaultTheme has required tokens', () => {
-    expect(defaultTheme.base.foreground).toBeDefined();
-    expect(defaultTheme.accent.primary).toBeDefined();
-    expect(defaultTheme.accent.secondary).toBeDefined();
-    expect(defaultTheme.status.success).toBeDefined();
-    expect(defaultTheme.status.warning).toBeDefined();
-    expect(defaultTheme.status.error).toBeDefined();
-    expect(defaultTheme.text.primary).toBeDefined();
-    expect(defaultTheme.text.secondary).toBeDefined();
-    expect(defaultTheme.text.muted).toBeDefined();
-    expect(defaultTheme.ui.badge).toBeDefined();
-    expect(defaultTheme.ui.accent).toBeDefined();
-  });
-
-  it('plainTheme has neutral values for all tokens', () => {
-    expect(plainTheme.accent.primary).toBe('white');
-    expect(plainTheme.status.error).toBe('white');
-    expect(plainTheme.status.successBg).toBeUndefined();
-    expect(plainTheme.status.errorBg).toBeUndefined();
-  });
-});
-
-describe('deepMerge', () => {
-  const baseTheme: Theme = {
-    base: { foreground: 'white' },
-    accent: { primary: 'cyan', secondary: 'blue' },
-    status: { success: 'green', warning: 'yellow', error: 'red' },
-    text: { primary: 'white', secondary: 'gray', muted: 'gray' },
-    ui: { badge: 'yellow', accent: 'magenta' },
-    syntax: {
-      keyword: 'magenta',
-      string: 'green',
-      comment: 'gray',
-      number: 'yellow',
-      function: 'blue',
-      type: 'cyan',
-    },
-    surface: {},
+describe('createStyle', () => {
+  const theme: ThemeTokens = {
+    ...BUILTIN_THEMES.default,
+    accent: 'magenta',
+    muted: 'brightBlack',
+    info: '#7aa7ff',
   };
 
-  it('returns base theme when user theme is empty', () => {
-    const result = deepMerge(baseTheme, {});
-    expect(result).toEqual(baseTheme);
+  it('maps ANSI colour names to 16-colour foreground SGR, closed by the foreground reset', () => {
+    const style = createStyle(theme, 'truecolor');
+    expect(style.fg('accent', 'hi')).toBe(`${ESC}35mhi${ESC}39m`);
+    expect(style.fg('muted', 'hi')).toBe(`${ESC}90mhi${ESC}39m`);
   });
 
-  it('overrides single token group', () => {
-    const userTheme: PartialTheme = {
-      accent: { primary: 'red' },
-    };
-    const result = deepMerge(baseTheme, userTheme);
-    expect(result.accent.primary).toBe('red');
-    expect(result.accent.secondary).toBe('blue'); // unchanged
+  it('maps hex to truecolor SGR', () => {
+    expect(createStyle(theme, 'truecolor').fg('info', 'x')).toBe(
+      `${ESC}38;2;122;167;255mx${ESC}39m`,
+    );
   });
 
-  it('overrides multiple token groups', () => {
-    const userTheme: PartialTheme = {
-      accent: { primary: 'green' },
-      status: { error: 'magenta' },
-    };
-    const result = deepMerge(baseTheme, userTheme);
-    expect(result.accent.primary).toBe('green');
-    expect(result.status.error).toBe('magenta');
-    expect(result.accent.secondary).toBe('blue'); // unchanged
+  it('maps hex to the nearest 256-colour entry without truecolor', () => {
+    // #7aa7ff: 122,167,255 -> cube levels 135,175,255 -> 16 + 36*2 + 6*3 + 5 = 111
+    expect(createStyle(theme, 'ansi256').fg('info', 'x')).toBe(`${ESC}38;5;111mx${ESC}39m`);
+    // A grey lands on the grey ramp.
+    expect(createStyle({ ...theme, info: '#5e5a6e' }, 'ansi256').fg('info', 'x')).toBe(
+      `${ESC}38;5;241mx${ESC}39m`,
+    );
   });
 
-  it('preserves base theme structure', () => {
-    const userTheme: PartialTheme = {
-      text: { primary: 'cyan' },
-    };
-    const result = deepMerge(baseTheme, userTheme);
-    // All other groups should be preserved
-    expect(result.base).toEqual(baseTheme.base);
-    expect(result.status).toEqual(baseTheme.status);
-    expect(result.ui).toEqual(baseTheme.ui);
+  it('maps hex to a 16-colour entry on a 16-colour terminal', () => {
+    expect(createStyle({ ...theme, info: '#f08a8a' }, 'ansi16').fg('info', 'x')).toBe(
+      `${ESC}91mx${ESC}39m`,
+    );
   });
 
-  it('ignores group values that are not objects', () => {
-    const userTheme = { accent: 'red' } as unknown as PartialTheme;
-    const result = deepMerge(baseTheme, userTheme);
-    expect(result.accent).toEqual(baseTheme.accent);
+  it('nests: an inner style closes only its own attribute', () => {
+    const style = createStyle(theme, 'truecolor');
+    const line = style.bold(`a ${style.fg('accent', 'b')} c`);
+    expect(line).toBe(`${ESC}1ma ${ESC}35mb${ESC}39m c${ESC}22m`);
+  });
+
+  it('leaves the default foreground alone', () => {
+    expect(createStyle({ ...theme, text: 'default' }, 'truecolor').fg('text', 'x')).toBe('x');
+  });
+
+  it('under NO_COLOR draws no colour and keeps the hierarchy with bold and dim', () => {
+    const style = createStyle(BUILTIN_THEMES.chimera, 'none');
+    for (const token of THEME_TOKENS) {
+      expect(sgrCodes(style.fg(token, 'x')).filter((code) => /^(3|4|9|10)\d/.test(code))).toEqual(
+        [],
+      );
+    }
+    expect(style.fg('muted', 'x')).toBe(`${ESC}2mx${ESC}22m`);
+    expect(style.fg('accent', 'x')).toBe(`${ESC}1mx${ESC}22m`);
+    expect(style.fg('text', 'x')).toBe('x');
+    expect(style.diffBg('add', 'x')).toBe('x');
+  });
+
+  it('paints diff backgrounds only for a theme that sets them', () => {
+    expect(createStyle(BUILTIN_THEMES.default, 'truecolor').diffBg('add', 'x')).toBe('x');
+    const tinted = createStyle(BUILTIN_THEMES.chimera, 'truecolor');
+    expect(tinted.hasDiffTints).toBe(true);
+    expect(tinted.diffBg('add', 'x')).toBe(`${ESC}48;2;33;56;38mx${ESC}49m`);
+    expect(tinted.diffBg('remove', 'x')).toBe(`${ESC}48;2;61;35;41mx${ESC}49m`);
+  });
+
+  it('never paints a background outside the diff tints', () => {
+    const style = createStyle(BUILTIN_THEMES.chimera, 'truecolor');
+    for (const token of THEME_TOKENS) {
+      expect(sgrCodes(style.fg(token, 'x')).filter((code) => /^(4|10)\d/.test(code))).toEqual([]);
+    }
+  });
+});
+
+describe('detectColorLevel', () => {
+  it('reads NO_COLOR, COLORTERM and TERM', () => {
+    expect(detectColorLevel({ NO_COLOR: '1', COLORTERM: 'truecolor' })).toBe('none');
+    expect(detectColorLevel({ NO_COLOR: '', COLORTERM: 'truecolor' })).toBe('truecolor');
+    expect(detectColorLevel({ COLORTERM: '24bit' })).toBe('truecolor');
+    expect(detectColorLevel({ TERM: 'tmux-256color' })).toBe('ansi256');
+    expect(detectColorLevel({ TERM: 'xterm' })).toBe('ansi16');
+  });
+});
+
+describe('the shipped themes', () => {
+  it('default uses only the terminal palette', () => {
+    for (const value of Object.values(BUILTIN_THEMES.default)) expect(value).not.toMatch(/^#/);
+    expect(BUILTIN_THEMES.default.diffAddBg).toBeUndefined();
+  });
+
+  it('chimera sets every token as an explicit colour, with diff tints', () => {
+    for (const token of THEME_TOKENS)
+      expect(BUILTIN_THEMES.chimera[token]).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
 
 describe('loadUserTheme', () => {
-  let tmpDir: string;
+  let dir: string;
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'theme-test-'));
+    dir = mkdtempSync(join(tmpdir(), 'chimera-theme-'));
   });
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const write = (content: unknown) => {
+    const path = join(dir, 'theme.json');
+    writeFileSync(path, typeof content === 'string' ? content : JSON.stringify(content));
+    return path;
+  };
+
+  it('reports a missing file', () => {
+    expect(loadUserTheme(join(dir, 'absent.json'))).toEqual({ kind: 'missing' });
   });
 
-  it('reports missing for non-existent path', () => {
-    const result = loadUserTheme(join(tmpDir, 'no-such-file.json'));
-    expect(result).toEqual({ kind: 'missing' });
+  it('reads flat tokens and the active name, ignoring _-prefixed notes', () => {
+    const path = write({ _themeName: 'mine', _comment: 'note', accent: 'green', info: '#00AAFF' });
+    expect(loadUserTheme(path)).toEqual({
+      kind: 'ok',
+      theme: { accent: 'green', info: '#00AAFF' },
+      activeName: 'mine',
+    });
   });
 
-  it('reports ok with parsed theme for valid JSON', () => {
-    const path = join(tmpDir, 'theme.json');
-    writeFileSync(path, JSON.stringify({ accent: { primary: 'magenta' } }));
-    const result = loadUserTheme(path);
-    expect(result).toEqual({ kind: 'ok', theme: { accent: { primary: 'magenta' } } });
-  });
-
-  it('reports error for malformed JSON', () => {
-    const path = join(tmpDir, 'theme.json');
-    writeFileSync(path, '{ "accent":');
-    const result = loadUserTheme(path);
+  it('refuses the old grouped format, naming the new tokens', () => {
+    const result = loadUserTheme(write({ accent: { primary: 'red' }, status: { error: 'red' } }));
     expect(result.kind).toBe('error');
-    if (result.kind === 'error') expect(result.message).toMatch(/invalid JSON/i);
+    if (result.kind !== 'error') return;
+    expect(result.message).toMatch(/old/);
+    for (const token of ['text', 'muted', 'dim', 'accent', 'diffAddBg', 'keyword']) {
+      expect(result.message).toContain(token);
+    }
   });
 
-  it('reports error for non-object root', () => {
-    const path = join(tmpDir, 'theme.json');
-    writeFileSync(path, '"hello"');
-    const result = loadUserTheme(path);
-    expect(result.kind).toBe('error');
-    if (result.kind === 'error') expect(result.message).toMatch(/object/i);
+  it('refuses an unknown token and a value that is not a colour', () => {
+    expect(loadUserTheme(write({ acent: 'red' }))).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/unknown token "acent"/),
+    });
+    expect(loadUserTheme(write({ accent: 'purpleish' }))).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/accent.*purpleish/),
+    });
   });
 
-  it('strips unknown top-level keys (e.g. _comment)', () => {
-    const path = join(tmpDir, 'theme.json');
-    writeFileSync(path, JSON.stringify({ _comment: 'A note', accent: { primary: 'red' } }));
-    const result = loadUserTheme(path);
-    expect(result).toEqual({ kind: 'ok', theme: { accent: { primary: 'red' } } });
+  it('reports malformed JSON', () => {
+    expect(loadUserTheme(write('{ "accent":'))).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/invalid JSON/),
+    });
   });
 });
 
-describe('buildTheme', () => {
-  const baseTheme: Theme = {
-    base: { foreground: 'white' },
-    accent: { primary: 'cyan', secondary: 'blue' },
-    status: { success: 'green', warning: 'yellow', error: 'red' },
-    text: { primary: 'white', secondary: 'gray', muted: 'gray' },
-    ui: { badge: 'yellow', accent: 'magenta' },
-  };
-
-  let tmpDir: string;
+describe('resolveTheme', () => {
+  let dir: string;
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'theme-test-'));
+    dir = mkdtempSync(join(tmpdir(), 'chimera-theme-'));
   });
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('merges a user theme over the default theme', () => {
+    const themePath = join(dir, 'theme.json');
+    writeFileSync(themePath, JSON.stringify({ accent: 'green' }));
+    const resolved = resolveTheme({ themePath, env: { TERM: 'xterm' } });
+    expect(resolved.tokens).toEqual({ ...BUILTIN_THEMES.default, accent: 'green' });
+    expect(resolved.style.fg('accent', 'x')).toBe(`${ESC}32mx${ESC}39m`);
+    expect(resolved.error).toBeUndefined();
   });
 
-  it('returns base theme when no user theme file exists', () => {
-    const result = buildTheme(baseTheme, join(tmpDir, 'absent.json'));
-    expect(result).toEqual(baseTheme);
-  });
-
-  it('merges a user partial on top of the base', () => {
-    const path = join(tmpDir, 'theme.json');
-    writeFileSync(
-      path,
-      JSON.stringify({ accent: { primary: 'magenta' }, status: { error: 'redBright' } }),
-    );
-    const result = buildTheme(baseTheme, path);
-    expect(result.accent.primary).toBe('magenta');
-    expect(result.accent.secondary).toBe('blue');
-    expect(result.status.error).toBe('redBright');
-    expect(result.status.success).toBe('green');
-    expect(result.ui).toEqual(baseTheme.ui);
+  it('falls back to the default theme and reports why when the file is bad', () => {
+    const themePath = join(dir, 'theme.json');
+    writeFileSync(themePath, JSON.stringify({ text: { primary: 'red' } }));
+    const resolved = resolveTheme({ themePath, env: {} });
+    expect(resolved.tokens).toEqual(BUILTIN_THEMES.default);
+    expect(resolved.error).toMatch(/old/);
   });
 });
 
 describe('getDefaultThemePath', () => {
-  it('resolves to ~/.chimera/theme.json (matches the rest of the app)', () => {
+  it('is ~/.chimera/theme.json', () => {
     expect(getDefaultThemePath()).toBe(join(homedir(), '.chimera', 'theme.json'));
   });
 });
@@ -257,43 +209,19 @@ describe('listThemes', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'chimera-theme-list-'));
   });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('lists all bundled presets when no user dir is present', () => {
-    const themePath = join(dir, 'theme.json');
-    const presetsDir = join(dir, 'absent-themes');
-    const list = listThemes({ presetsDir, themePath });
-    const names = list.map((t) => t.name);
-    for (const builtin of Object.keys(BUILTIN_PRESETS)) {
-      expect(names).toContain(builtin);
-    }
-    expect(list.every((t) => !t.active)).toBe(true);
-  });
-
-  it('marks the active theme based on _themeName in theme.json', () => {
-    const themePath = join(dir, 'theme.json');
-    writeFileSync(themePath, JSON.stringify({ _themeName: 'cyberpunk' }));
-    const presetsDir = join(dir, 'absent-themes');
-    const list = listThemes({ presetsDir, themePath });
-    const cp = list.find((t) => t.name === 'cyberpunk')!;
-    expect(cp.active).toBe(true);
-    expect(list.filter((t) => t.active)).toHaveLength(1);
-  });
-
-  it('user-dir entries shadow builtins of the same name', () => {
+  it('lists default and chimera plus user themes, marking the active one', () => {
     const presetsDir = join(dir, 'themes');
     mkdirSync(presetsDir);
-    writeFileSync(join(presetsDir, 'cyberpunk.json'), '{}');
     writeFileSync(join(presetsDir, 'mine.json'), '{}');
-    const list = listThemes({
-      presetsDir,
-      themePath: join(dir, 'theme.json'),
-    });
-    expect(list.find((t) => t.name === 'cyberpunk')!.source).toBe('user');
-    expect(list.find((t) => t.name === 'mine')!.source).toBe('user');
-    expect(list.find((t) => t.name === 'tokyo-night-moon')!.source).toBe('builtin');
+    const themePath = join(dir, 'theme.json');
+    writeFileSync(themePath, JSON.stringify({ _themeName: 'chimera' }));
+    expect(listThemes({ presetsDir, themePath })).toEqual([
+      { name: 'chimera', source: 'builtin', active: true },
+      { name: 'default', source: 'builtin', active: false },
+      { name: 'mine', source: 'user', active: false },
+    ]);
   });
 });
 
@@ -302,54 +230,42 @@ describe('applyThemeByName', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'chimera-theme-apply-'));
   });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('writes the chosen builtin to theme.json with a _themeName marker', () => {
+  it('writes a builtin theme with its marker, and it reads back', () => {
     const themePath = join(dir, 'sub', 'theme.json');
-    const presetsDir = join(dir, 'themes');
-    const r = applyThemeByName('cyberpunk', { presetsDir, themePath });
-    expect(r.origin).toBe('builtin');
+    const applied = applyThemeByName('chimera', { presetsDir: join(dir, 'themes'), themePath });
+    expect(applied.origin).toBe('builtin');
     const written = JSON.parse(readFileSync(themePath, 'utf-8'));
-    expect(written._themeName).toBe('cyberpunk');
-    expect(written.accent.primary).toBe(BUILTIN_PRESETS.cyberpunk!.accent!.primary);
+    expect(written._themeName).toBe('chimera');
+    expect(written.accent).toBe(BUILTIN_THEMES.chimera.accent);
+    expect(loadUserTheme(themePath)).toMatchObject({ kind: 'ok', activeName: 'chimera' });
   });
 
-  it('prefers a user preset over a builtin of the same name', () => {
-    const themePath = join(dir, 'theme.json');
+  it('prefers a user theme of the same name', () => {
     const presetsDir = join(dir, 'themes');
     mkdirSync(presetsDir);
-    writeFileSync(
-      join(presetsDir, 'cyberpunk.json'),
-      JSON.stringify({ accent: { primary: '#000000' } }),
-    );
-    const r = applyThemeByName('cyberpunk', { presetsDir, themePath });
-    expect(r.origin).toBe('user');
-    const written = JSON.parse(readFileSync(themePath, 'utf-8'));
-    expect(written.accent.primary).toBe('#000000');
+    writeFileSync(join(presetsDir, 'chimera.json'), JSON.stringify({ accent: '#000000' }));
+    const themePath = join(dir, 'theme.json');
+    expect(applyThemeByName('chimera', { presetsDir, themePath }).origin).toBe('user');
+    expect(JSON.parse(readFileSync(themePath, 'utf-8')).accent).toBe('#000000');
   });
 
-  it('throws on unknown name', () => {
+  it('refuses a user theme in the old format', () => {
+    const presetsDir = join(dir, 'themes');
+    mkdirSync(presetsDir);
+    writeFileSync(join(presetsDir, 'old.json'), JSON.stringify({ accent: { primary: 'red' } }));
     expect(() =>
-      applyThemeByName('does-not-exist', {
+      applyThemeByName('old', { presetsDir, themePath: join(dir, 'theme.json') }),
+    ).toThrow(/old/);
+  });
+
+  it('throws on an unknown name', () => {
+    expect(() =>
+      applyThemeByName('cyberpunk', {
         presetsDir: join(dir, 'themes'),
         themePath: join(dir, 'theme.json'),
       }),
-    ).toThrow(/unknown theme/);
-  });
-
-  it('round-trip: applied theme can be read back via loadUserTheme', () => {
-    const themePath = join(dir, 'theme.json');
-    applyThemeByName('tokyo-night-moon', {
-      presetsDir: join(dir, 'themes'),
-      themePath,
-    });
-    const r = loadUserTheme(themePath);
-    expect(r.kind).toBe('ok');
-    if (r.kind === 'ok') {
-      expect(r.activeName).toBe('tokyo-night-moon');
-      expect(r.theme.accent?.primary).toBe(BUILTIN_PRESETS['tokyo-night-moon']!.accent!.primary);
-    }
+    ).toThrow(/unknown theme 'cyberpunk'/);
   });
 });

@@ -315,44 +315,61 @@ nothing. For anything else (a sound, a phone push), use a `Stop` hook; see
 
 ## Themes
 
-The TUI loads a user theme from `~/.chimera/theme.json`, alongside the rest of Chimera's user state (sessions, config, logs). Create the file to override any subset of the default colour tokens:
+Chimera draws in foreground colours only and never paints the background, so
+it sits on your terminal's own theme, light or dark. Two themes ship:
+
+- `default`: the terminal's 16-colour palette. It is what you get with no
+  `theme.json`.
+- `chimera`: tuned explicit colours, with faint tints behind added and
+  removed diff rows.
+
+A theme is a flat set of semantic tokens:
+
+| Token | Used for |
+| --- | --- |
+| `text` | body text |
+| `muted` | tool rows, labels, borders |
+| `dim` | hints, the status line, gutters |
+| `accent` | your messages, the mode, inline code |
+| `info` | notices and links |
+| `success`, `warning`, `error` | outcomes; context use above 70% and 90% |
+| `diffAdd`, `diffRemove` | added and removed diff rows |
+| `diffAddBg`, `diffRemoveBg` | optional tints behind diff rows; set both or neither |
+| `keyword`, `string`, `number`, `comment`, `function`, `type` | code blocks |
+
+Each value is an ANSI colour name (`black`, `red`, `green`, `yellow`, `blue`,
+`magenta`, `cyan`, `white`, and `brightBlack` to `brightWhite`), `default`
+for the terminal's own foreground, or `#rrggbb`. On a terminal without
+truecolor (no `COLORTERM=truecolor`), a hex colour is drawn as the nearest
+256-colour entry. `NO_COLOR` turns colour off; the hierarchy stays, with
+bold and dim.
+
+To override a few tokens, write them to `~/.chimera/theme.json`; the rest
+keep the default theme's colours:
 
 ```json
 {
-  "accent": {
-    "primary": "green",
-    "secondary": "cyanBright"
-  },
-  "status": {
-    "error": "redBright"
-  },
-  "text": {
-    "muted": "gray"
-  }
+  "accent": "brightGreen",
+  "error": "#ff5f5f"
 }
 ```
 
-Only specify the tokens you want to override; the rest inherit from the default theme. Available token groups:
+Keys starting with `_` are notes (`_comment`). A file in the grouped format
+of earlier versions (`{ "accent": { "primary": ... } }`), an unknown token or
+a value that is not a colour is refused: the TUI prints `theme: ...` on
+stderr at start and uses the default theme.
 
-- `base` — `foreground`, `background`
-- `accent` — `primary`, `secondary`, `tertiary`
-- `status` — `success`, `warning`, `error`, `info`, `successBg`, `errorBg` (diff rows)
-- `text` — `primary`, `secondary`, `muted`, `dim`
-- `ui` — `badge`, `accent`
-- `syntax` — `keyword`, `string`, `comment`, `number`, `function`, `type` (fenced code blocks)
-- `surface` — `panel`, `raised`, `sunken`, `border` (fills and lines of the fullscreen layout)
-
-The two layouts start from different defaults. The fullscreen layout paints its own background, so its default theme is a set of explicit colours (background `#1f1d27`, accent `#b79cf7`) with fills for the panel and the prompt box. The inline layout sits on your terminal's background, so its default theme uses ANSI colour names and no fills. Your `theme.json` merges over whichever applies. A surface with no colour is drawn without a fill; set `base.background` and the `surface` colours together when you re-skin the fullscreen layout. `NO_COLOR` gives both layouts a plain theme with no fills.
-
-JSON has no native comments, so the loader strips unknown top-level keys — you can leave a `_comment` field in the file as a note. If the JSON is malformed, the TUI prints `theme: ...` on stderr at startup and falls back to the default theme.
-
-See [`theme.json.example`](theme.json.example) for an annotated partial-override sample, or [`theme-dracula.json`](theme-dracula.json) for a full re-skin.
+See [`theme.json.example`](theme.json.example) for a partial override, or
+[`theme-dracula.json`](theme-dracula.json) for a full theme.
 
 ### Switching between themes
 
-The TUI ships a few bundled presets: `default`, `tokyo-night-moon`, and `cyberpunk`. From inside the TUI:
+- `/theme` lists the themes; the active one is marked with a leading `*`.
+- `/theme <name>` writes that theme into `~/.chimera/theme.json` (with a
+  `_themeName` marker so `/theme` can show which is active) and applies it
+  without a restart.
 
-- `/theme` — list available themes; the active one is marked with a leading `*`.
-- `/theme <name>` — write the chosen preset into `~/.chimera/theme.json` (with a `_themeName` marker so `/theme` can show which is active) and live-reload without restarting.
-
-Drop additional partial themes into `~/.chimera/themes/<name>.json` to extend the list; user files shadow bundled presets of the same name. Hand-edits to `~/.chimera/theme.json` always take effect on next start, but running `/theme <name>` overwrites them.
+Drop more themes into `~/.chimera/themes/<name>.json` to extend the list; a
+user file shadows a shipped theme of the same name. Hand-edits to
+`~/.chimera/theme.json` take effect on the next start, but `/theme <name>`
+overwrites them.

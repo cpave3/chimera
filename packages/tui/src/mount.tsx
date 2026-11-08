@@ -1,3 +1,4 @@
+import { basename, resolve } from 'node:path';
 import type { ChimeraClient } from '@chimera/client';
 import type { CommandRegistry } from '@chimera/commands';
 import type {
@@ -9,13 +10,12 @@ import type {
 } from '@chimera/core';
 import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
-import { basename, resolve } from 'node:path';
 import chalk from 'chalk';
 import { render } from 'ink';
 import { App, type OverlayHandlers } from './App';
 import type { Peer } from './ContextPanel';
 import { clipboardSequence, writeClipboardText } from './clipboard';
-import { MOUSE_DISABLE, MOUSE_ENABLE, type MouseEvent, MouseBus } from './input/mouse';
+import { MOUSE_DISABLE, MOUSE_ENABLE, MouseBus, type MouseEvent } from './input/mouse';
 import { PasteRegistry } from './input/paste';
 import { type Region, ScreenSelection } from './input/screen-selection';
 import { createFilteredStdin } from './input/stdin-filter';
@@ -29,13 +29,8 @@ import {
   notificationSequence,
 } from './notify';
 import type { Formatter } from './scrollback';
-import {
-  deepMerge,
-  getDefaultThemePath,
-  loadUserTheme,
-  pickBaseTheme,
-  type TuiLayout,
-} from './theme/loader';
+import { toLegacyTheme } from './theme/legacy';
+import { resolveTheme, type TuiLayout } from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
 
 export interface MountOptions {
@@ -247,14 +242,10 @@ export function mountTui(opts: MountOptions): TuiHandle {
   if (stdout.isTTY) {
     stdout.write('\x1b[>4;0m\x1b[>4m\x1b[<u');
   }
-  const base = pickBaseTheme(process.env, layout);
-  const result = loadUserTheme(getDefaultThemePath());
-  if (result.kind === 'error') {
-    process.stderr.write(`theme: ${result.message}\n`);
-  }
-  const theme = result.kind === 'ok' ? deepMerge(base, result.theme) : base;
-  const isUserTheme = result.kind === 'ok';
-  const activeName = result.kind === 'ok' ? result.activeName : undefined;
+  const resolved = resolveTheme();
+  if (resolved.error) process.stderr.write(`theme: ${resolved.error}\n`);
+  const theme = toLegacyTheme(resolved.tokens, resolved.style.level === 'none');
+  const { isUserTheme, activeName } = resolved;
 
   const pasteRegistry = new PasteRegistry();
   const mouse = new MouseBus();
@@ -325,7 +316,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
   process.once('exit', restoreTerminal);
 
   instance = render(
-    <ThemeProvider theme={theme} isUserTheme={isUserTheme} activeName={activeName} layout={layout}>
+    <ThemeProvider theme={theme} isUserTheme={isUserTheme} activeName={activeName}>
       <App
         client={opts.client}
         sessionId={opts.sessionId}

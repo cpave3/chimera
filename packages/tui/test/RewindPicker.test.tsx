@@ -3,11 +3,12 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { RewindPicker } from '../src/RewindPicker';
-import { pickBaseTheme } from '../src/theme/loader';
+import { toLegacyTheme } from '../src/theme/legacy';
+import { BUILTIN_THEMES } from '../src/theme/palette';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 
 function withTheme(node: React.ReactElement) {
-  const theme = pickBaseTheme();
+  const theme = toLegacyTheme(BUILTIN_THEMES.default, false);
   return (
     <ThemeProvider theme={theme} isUserTheme={false}>
       {node}

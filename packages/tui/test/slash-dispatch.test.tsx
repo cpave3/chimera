@@ -888,9 +888,9 @@ describe('TUI /theme slash dispatch', () => {
     await waitFor(() => lastFrame()!.includes('themes:'));
     const frame = lastFrame()!;
     expect(frame).toContain('themes:');
-    expect(frame).toContain('cyberpunk');
-    expect(frame).toContain('tokyo-night-moon');
+    expect(frame).toContain('chimera');
     expect(frame).toContain('default');
+    expect(frame).not.toContain('cyberpunk');
     expect(frame).toContain('Use /theme <name> to apply.');
     unmount();
   });
@@ -899,12 +899,12 @@ describe('TUI /theme slash dispatch', () => {
     const { lastFrame, stdin, unmount } = render(
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
-    await type(stdin, '/theme cyberpunk\r');
-    await waitFor(() => lastFrame()!.includes("theme: applied 'cyberpunk'"));
+    await type(stdin, '/theme chimera\r');
+    await waitFor(() => lastFrame()!.includes("theme: applied 'chimera'"));
     await type(stdin, '/theme\r');
-    await waitFor(() => /\*\s+cyberpunk/.test(lastFrame()!));
+    await waitFor(() => /\*\s+chimera/.test(lastFrame()!));
     const frame = lastFrame()!;
-    expect(frame).toMatch(/\*\s+cyberpunk/);
+    expect(frame).toMatch(/\*\s+chimera/);
     unmount();
   });
 
@@ -912,12 +912,12 @@ describe('TUI /theme slash dispatch', () => {
     const { lastFrame, stdin, unmount } = render(
       <App client={stubClient({})} sessionId="s" modelRef="m/m" cwd="/tmp" />,
     );
-    await type(stdin, '/theme cyberpunk\r');
-    await waitFor(() => lastFrame()!.includes("theme: applied 'cyberpunk' (builtin)"));
-    expect(lastFrame()).toContain("theme: applied 'cyberpunk' (builtin)");
+    await type(stdin, '/theme chimera\r');
+    await waitFor(() => lastFrame()!.includes("theme: applied 'chimera' (builtin)"));
+    expect(lastFrame()).toContain("theme: applied 'chimera' (builtin)");
     const written = JSON.parse(readFileSync(join(tmpHome, '.chimera', 'theme.json'), 'utf-8'));
-    expect(written._themeName).toBe('cyberpunk');
-    expect(written.accent.primary).toBeDefined();
+    expect(written._themeName).toBe('chimera');
+    expect(written.accent).toBe('#b79cf7');
     unmount();
   });
 

@@ -3,7 +3,8 @@ import { render } from 'ink-testing-library';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { buildSessionTreeRows, SessionPicker } from '../src/SessionPicker';
-import { pickBaseTheme } from '../src/theme/loader';
+import { toLegacyTheme } from '../src/theme/legacy';
+import { BUILTIN_THEMES } from '../src/theme/palette';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 
 function info(overrides: Partial<SessionInfo> & { id: string }): SessionInfo {
@@ -28,7 +29,7 @@ function info(overrides: Partial<SessionInfo> & { id: string }): SessionInfo {
 }
 
 function withTheme(node: React.ReactElement) {
-  const theme = pickBaseTheme();
+  const theme = toLegacyTheme(BUILTIN_THEMES.default, false);
   return (
     <ThemeProvider theme={theme} isUserTheme={false}>
       {node}

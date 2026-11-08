@@ -1,13 +1,10 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import {
-  deepMerge,
-  getDefaultThemePath,
-  loadUserTheme,
-  pickBaseTheme,
-  type TuiLayout,
-} from './loader';
-import { defaultTheme } from './tokens';
+import { toLegacyTheme } from './legacy';
+import { resolveTheme } from './loader';
+import { BUILTIN_THEMES } from './palette';
 import type { Theme, ThemeContextValue } from './types';
+
+const defaultTheme = toLegacyTheme(BUILTIN_THEMES.default, false);
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: defaultTheme,
@@ -22,8 +19,6 @@ export interface ThemeProviderProps {
   activeName?: string;
   /** Override the disk path read by `reload()`. Tests pass a temp file. */
   themePath?: string;
-  /** The layout the theme is for; `reload()` starts from that layout's palette. */
-  layout?: TuiLayout;
   children: React.ReactNode;
 }
 
@@ -38,7 +33,6 @@ export function ThemeProvider({
   isUserTheme = false,
   activeName,
   themePath,
-  layout,
   children,
 }: ThemeProviderProps): React.ReactElement {
   const [state, setState] = useState<ThemeState>({
@@ -48,19 +42,13 @@ export function ThemeProvider({
   });
 
   const reload = useCallback(() => {
-    const base = pickBaseTheme(process.env, layout);
-    const path = themePath ?? getDefaultThemePath();
-    const result = loadUserTheme(path);
-    if (result.kind === 'ok') {
-      setState({
-        theme: deepMerge(base, result.theme),
-        isUserTheme: true,
-        activeName: result.activeName,
-      });
-    } else {
-      setState({ theme: base, isUserTheme: false, activeName: undefined });
-    }
-  }, [themePath, layout]);
+    const resolved = resolveTheme({ themePath });
+    setState({
+      theme: toLegacyTheme(resolved.tokens, resolved.style.level === 'none'),
+      isUserTheme: resolved.isUserTheme,
+      activeName: resolved.activeName,
+    });
+  }, [themePath]);
 
   const value = useMemo<ThemeContextValue>(() => ({ ...state, reload }), [state, reload]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
