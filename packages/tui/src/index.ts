@@ -2,6 +2,7 @@ export * from './App';
 export type { Peer } from './ContextPanel';
 export * from './Header';
 export * from './input/sudo-authentication';
+export * from './ledger';
 export * from './mount';
 export type { NotificationSetting } from './notify';
 export { type OverlayDiffEntry, OverlayPicker } from './OverlayPicker';
