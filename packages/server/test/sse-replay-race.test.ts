@@ -98,7 +98,7 @@ describe('SSE replay race', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwd: '/tmp', model }),
     });
-    const { sessionId } = await createRes.json() as { sessionId: string };
+    const { sessionId } = (await createRes.json()) as { sessionId: string };
 
     // Start a run to produce events.
     await fetch(`${server.url}/v1/sessions/${sessionId}/messages`, {
@@ -150,7 +150,7 @@ describe('SSE replay race', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cwd: '/tmp', model }),
     });
-    const { sessionId } = await createRes.json() as { sessionId: string };
+    const { sessionId } = (await createRes.json()) as { sessionId: string };
 
     const sseUrl = `${server.url}/v1/sessions/${sessionId}/events`;
     const ctrl1 = new AbortController();

@@ -9,10 +9,7 @@ import {
   StreamableHTTPError,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import {
-  type CallToolResult,
-  CallToolResultSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { type CallToolResult, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { VERSION } from '../version';
 import { McpAuth } from './auth.js';
 

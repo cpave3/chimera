@@ -1,8 +1,10 @@
-const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
+// Built from strings, as in width.ts: biome rejects control characters in regex literals.
+const CONTROL_CLASS = String.raw`[\x00-\x08\x0b-\x1f\x7f-\x9f]`;
 // CSI (7- and 8-bit); OSC, DCS, SOS, PM and APC strings up to BEL, ST or the end; then any other two-byte escape.
-const ESCAPE_SEQUENCE =
-  /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?|\x1b[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[\s\S]?/g;
-const OTHER_CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+const ESCAPE_SOURCE = String.raw`(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?|\x1b[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[\s\S]?`;
+const CONTROL = new RegExp(CONTROL_CLASS);
+const ESCAPE_SEQUENCE = new RegExp(ESCAPE_SOURCE, 'g');
+const OTHER_CONTROLS = new RegExp(CONTROL_CLASS, 'g');
 
 /**
  * Text from a model, a tool or a file, made safe to write to the terminal:
@@ -38,8 +40,8 @@ export function sanitizeDeep<T>(value: T): T {
   return value;
 }
 
-const SGR = /^\x1b\[[0-9;:]*m$/;
-const ANY_CONTROL = new RegExp(`${ESCAPE_SEQUENCE.source}|${OTHER_CONTROLS.source}`, 'g');
+const SGR = new RegExp(String.raw`^\x1b\[[0-9;:]*m$`);
+const ANY_CONTROL = new RegExp(`${ESCAPE_SOURCE}|${CONTROL_CLASS}`, 'g');
 
 /**
  * A rendered row with its colours (SGR) kept and every other escape or

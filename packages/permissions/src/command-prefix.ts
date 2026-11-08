@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { basename, } from 'node:path';
+import { basename } from 'node:path';
 import * as TreeSitter from 'web-tree-sitter';
 import { bashGrammarPath } from './grammar';
 

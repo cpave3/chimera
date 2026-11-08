@@ -24,14 +24,7 @@
         "reasoningEffort": {
           "status": "supported",
           "type": "enum",
-          "values": [
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-            "ultra"
-          ],
+          "values": ["low", "medium", "high", "xhigh", "max", "ultra"],
           "default": "medium"
         },
         "parallelToolCalls": {

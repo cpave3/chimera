@@ -59,8 +59,6 @@ describe('resolveAttachTarget', () => {
   });
 
   it('throws when no instance matches', () => {
-    expect(() => resolveAttachTarget('nonexistent', home)).toThrow(
-      /No running instance matches/,
-    );
+    expect(() => resolveAttachTarget('nonexistent', home)).toThrow(/No running instance matches/);
   });
 });

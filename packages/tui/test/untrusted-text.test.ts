@@ -12,11 +12,14 @@ const style = createStyle(BUILTIN_THEMES.default, 'ansi16');
 // Sets the clipboard, leaves the alternate screen, moves the cursor home, and a C1 CSI.
 const HOSTILE = 'before\x1b]52;c;YXR0YWNrZXI=\x07\x1b[?1049l\x1b[H\x9b2J\rafter\x07';
 
+const SGR_SEQUENCE = new RegExp(String.raw`\x1b\[[0-9;]*m`, 'g');
+const CONTROL_CHARACTER = new RegExp(String.raw`[\x00-\x08\x0b-\x1f\x7f-\x9f]`);
+
 /** What the styling itself writes: SGR colours and resets only. */
 function onlySgr(lines: string[]): void {
   for (const line of lines) {
-    const withoutSgr = line.replace(/\x1b\[[0-9;]*m/g, '');
-    expect(withoutSgr).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/);
+    const withoutSgr = line.replace(SGR_SEQUENCE, '');
+    expect(withoutSgr).not.toMatch(CONTROL_CHARACTER);
   }
 }
 
