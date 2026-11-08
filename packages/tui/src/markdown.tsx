@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import { marked, type Tokens } from 'marked';
 import React from 'react';
+import stringWidth from 'string-width';
 import { highlightCode } from './highlight';
 import type { Theme } from './theme/types';
 
@@ -121,14 +122,14 @@ function renderTable(
   const bodyRows = tok.rows ?? [];
   const numCols = headerCells.length || (bodyRows[0]?.length ?? 0);
 
-  // Natural width per column: longest cell plain-text (header or body). We
-  // measure `cell.text` (markdown-stripped) rather than the rendered nodes
-  // so bold/code markers don't inflate the width.
+  // Natural width per column: widest cell plain-text (header or body), in
+  // terminal cells. We measure `cell.text` (markdown-stripped) rather than
+  // the rendered nodes so bold/code markers don't inflate the width.
   const natural: number[] = [];
   for (let col = 0; col < numCols; col++) {
-    let widest = headerCells[col]?.text.length ?? 0;
+    let widest = stringWidth(headerCells[col]?.text ?? '');
     for (const row of bodyRows) {
-      widest = Math.max(widest, row[col]?.text.length ?? 0);
+      widest = Math.max(widest, stringWidth(row[col]?.text ?? ''));
     }
     natural.push(widest);
   }
@@ -270,16 +271,17 @@ function wrapCellCount(text: string, width: number): number {
     let lineLen = 0;
     let lines = 1;
     for (const word of para.split(' ')) {
-      const add = lineLen === 0 ? word.length : lineLen + 1 + word.length;
+      const wordWidth = stringWidth(word);
+      const add = lineLen === 0 ? wordWidth : lineLen + 1 + wordWidth;
       if (add <= w) {
         lineLen = add;
       } else {
         lines++;
-        if (word.length > w) {
-          lines += Math.floor(word.length / w) - 1;
-          lineLen = word.length % w || w;
+        if (wordWidth > w) {
+          lines += Math.floor(wordWidth / w) - 1;
+          lineLen = wordWidth % w || w;
         } else {
-          lineLen = word.length;
+          lineLen = wordWidth;
         }
       }
     }

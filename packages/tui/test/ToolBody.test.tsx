@@ -244,6 +244,37 @@ describe('renderToolBody', () => {
         expect(longest).toBeLessThanOrEqual(narrowCtx.width);
       });
 
+      function boxedFrame(entry: ScrollbackEntry, boxCtx: typeof ctx): string {
+        const els = renderToolBody(entry, boxCtx);
+        const { lastFrame, unmount } = render(
+          <Box flexDirection="column" width={boxCtx.width}>
+            {els}
+          </Box>,
+        );
+        const out = lastFrame() ?? '';
+        unmount();
+        return out;
+      }
+
+      it('pads wide-character hunk rows to the box without truncating them', () => {
+        const narrowCtx = { width: 30, prefixLen: 2, theme: defaultTheme };
+        const out = boxedFrame(
+          hunkEntry({ old: '中文字', new: 'ＡＢＣ', startLine: 1 }),
+          narrowCtx,
+        );
+        expect(out).toContain('- 中文字');
+        expect(out).toContain('+ ＡＢＣ');
+        expect(out).not.toContain('…');
+      });
+
+      it('keeps a hunk row of emoji ZWJ sequences whole when it fits', () => {
+        const narrowCtx = { width: 30, prefixLen: 2, theme: defaultTheme };
+        const coders = '👩‍💻'.repeat(8);
+        const out = boxedFrame(hunkEntry({ old: coders, new: 'x', startLine: 1 }), narrowCtx);
+        expect(out).toContain(`- ${coders}`);
+        expect(out).not.toContain('…');
+      });
+
       it('omits leading rows when contextBefore is empty (top-of-file match)', () => {
         const out = frame(
           hunkEntry({

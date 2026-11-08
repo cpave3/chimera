@@ -108,4 +108,39 @@ describe('renderMarkdown', () => {
     expect(out).toContain('└');
     expect(out).not.toContain('| ----');
   });
+
+  it('sizes table columns by terminal cells, not code units', () => {
+    const out = frame(['| 名前 | Age |', '| --- | --- |', '| 中文字 | 30 |'].join('\n'));
+    expect(out.split('\n').map((line) => line.trimEnd())).toEqual([
+      '┌────────┬─────┐',
+      '│ 名前   │ Age │',
+      '├────────┼─────┤',
+      '│ 中文字 │ 30  │',
+      '└────────┴─────┘',
+    ]);
+  });
+
+  it('sizes an emoji ZWJ sequence as the two cells it occupies', () => {
+    const out = frame(['| A |', '| - |', '| 👩‍💻 |'].join('\n'));
+    expect(out.split('\n').map((line) => line.trimEnd())).toEqual([
+      '┌────┐',
+      '│ A  │',
+      '├────┤',
+      '│ 👩‍💻 │',
+      '└────┘',
+    ]);
+  });
+
+  it('stretches the borders of a row whose wide characters wrap', () => {
+    const out = frame(
+      ['| Word | Note |', '| --- | --- |', '| 中文字 中文字 中文字 | x |'].join('\n'),
+      20,
+    );
+    const rows = out.split('\n').filter((line) => !/^[┌├└]/.test(line));
+    expect(rows.length).toBeGreaterThan(2);
+    for (const row of rows) {
+      expect(row.trimEnd()).toMatch(/^│.*│$/);
+      expect(row.trimEnd().split('│')).toHaveLength(4);
+    }
+  });
 });

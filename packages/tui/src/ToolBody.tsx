@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import React from 'react';
+import stringWidth from 'string-width';
 import { lineDiff } from './diff';
 import type { ScrollbackEntry, ToolEntry } from './scrollback';
 import type { Theme } from './theme/types';
@@ -330,7 +331,7 @@ function hunkRow(
         : undefined;
   const gutter = String(row.lineNumber).padStart(gutterWidth - 1, ' ');
   const clipped = clip(row.content, innerWidth);
-  const padded = clipped.padEnd(innerWidth, ' ');
+  const padded = clipped + ' '.repeat(Math.max(0, innerWidth - stringWidth(clipped)));
   return (
     <Box key={key} paddingLeft={prefixLen}>
       <Text wrap="truncate">
@@ -373,7 +374,17 @@ function bodyInnerWidth(width: number, prefixLen: number, gutter: number): numbe
   return Math.max(4, width - prefixLen - gutter);
 }
 
+const graphemeSegmenter = new Intl.Segmenter();
+
 function clip(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, Math.max(0, max - 1))}…`;
+  if (stringWidth(s) <= max) return s;
+  let kept = '';
+  let keptWidth = 0;
+  for (const { segment } of graphemeSegmenter.segment(s)) {
+    const segmentWidth = stringWidth(segment);
+    if (keptWidth + segmentWidth > max - 1) break;
+    kept += segment;
+    keptWidth += segmentWidth;
+  }
+  return `${kept}…`;
 }
