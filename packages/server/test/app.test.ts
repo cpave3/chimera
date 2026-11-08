@@ -1972,6 +1972,8 @@ describe('server app', () => {
       expect(response.status).toBe(409);
       const body = await response.json();
       expect(body.error).toBe('run already in progress');
+      // The run still writes to the session; let it finish before the home is removed.
+      await waitForIdle(sessionId, registry);
     });
 
     it('POST /rewind rewinds to middle of conversation', async () => {
