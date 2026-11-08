@@ -12,13 +12,14 @@ import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import chalk from 'chalk';
 import { render } from 'ink';
-import { App, type OverlayHandlers } from './App';
+import { App } from './App';
 import type { Peer } from './ContextPanel';
 import { clipboardSequence, writeClipboardText } from './clipboard';
 import { MOUSE_DISABLE, MOUSE_ENABLE, MouseBus, type MouseEvent } from './input/mouse';
 import { PasteRegistry } from './input/paste';
 import { type Region, ScreenSelection } from './input/screen-selection';
 import { createFilteredStdin } from './input/stdin-filter';
+import type { MountOptions, TuiHandle } from './mount';
 import {
   decideNotification,
   FOCUS_REPORTS_DISABLE,
@@ -32,95 +33,6 @@ import type { Formatter } from './scrollback';
 import { toLegacyTheme } from './theme/legacy';
 import { resolveTheme, type TuiLayout } from './theme/loader';
 import { ThemeProvider } from './theme/ThemeProvider';
-
-export interface MountOptions {
-  client: ChimeraClient;
-  sessionId: SessionId;
-  modelRef: string;
-  /**
-   * Resolved model configuration — required so that `/new` and `/fork`
-   * can create new sessions with the same model defaults as the current one.
-   */
-  model: ModelConfig;
-  cwd: string;
-  commands?: CommandRegistry;
-  skills?: SkillRegistry;
-  modes?: ModeRegistry;
-  cycleModes?: string[];
-  initialMode?: string;
-  sandboxMode?: SandboxMode;
-  /** Host commands run in the operating system's sandbox. */
-  osSandbox?: boolean;
-  overlay?: OverlayHandlers;
-  /**
-   * When provided, called by `/reload` to re-compose the system prompt
-   * (e.g., after AGENTS.md/AGENTS.local.md/CLAUDE.md changes). Returns the new prompt
-   * to send to the server.
-   */
-  reloadSystemPrompt?: (ctx: { cwd: string; sessionId: SessionId }) => Promise<string> | string;
-  /**
-   * Per-tool scrollback formatters keyed by tool name. Used by `Scrollback`
-   * to render tool entries during session rehydration (resume / fork /
-   * `/sessions` switch). Live tool calls already carry `display` on their
-   * events so they don't depend on this map.
-   */
-  formatters?: Record<string, Formatter>;
-  /**
-   * Initial message to submit when the TUI mounts (e.g. from `--prompt <text>`).
-   * Goes through the same handling as if the user typed it and pressed Enter,
-   * so slash commands are respected.
-   */
-  initialPrompt?: string;
-  checkSudo?: (request: {
-    requestId: string;
-    command: string;
-    signal?: AbortSignal;
-  }) => Promise<HostAuthenticationCheckResult>;
-  authenticateSudo?: (request: {
-    requestId: string;
-    command: string;
-    password: Uint8Array;
-    signal?: AbortSignal;
-  }) => Promise<HostAuthenticationResult>;
-  /**
-   * `fullscreen` (the default) owns the alternate screen; `inline` prints
-   * into the terminal's own scrollback. A terminal that cannot show a
-   * fullscreen program gets `inline` whatever is asked for.
-   */
-  layout?: TuiLayout;
-  /** False leaves the mouse to the terminal; the wheel then does not scroll the transcript. */
-  mouse?: boolean;
-  /** The other live Chimera instances, for the fullscreen context panel. */
-  listPeers?: () => Promise<Peer[]>;
-  /** Lines to show at the top of the transcript when the TUI starts. */
-  startupNotices?: string[];
-  /** The project's `MEMORY.md`, which `/memory` opens. */
-  memoryIndexPath?: string;
-  /**
-   * How to ask for attention when a run ends, a permission request opens or
-   * the agent needs input. `auto` (the default) notifies through the
-   * terminal when it is not focused; `bell` always rings; `off` is silent.
-   */
-  notifications?: NotificationSetting;
-}
-
-export interface TuiHandle {
-  waitUntilExit(): Promise<void>;
-  unmount(): void;
-  /** The layout in use, after the terminal had its say. */
-  layout: TuiLayout;
-  /** The session on screen now: `/new`, `/fork` and `/sessions` change it. */
-  activeSessionId(): SessionId;
-}
-
-/** The layout to use: fullscreen needs a terminal that can show one. */
-export function resolveLayout(
-  requested: TuiLayout | undefined,
-  terminal: { isTTY: boolean; term: string | undefined },
-): TuiLayout {
-  if (!terminal.isTTY || terminal.term === 'dumb') return 'inline';
-  return requested ?? 'fullscreen';
-}
 
 const SELECTION_FLASH_MS = 1_200;
 
@@ -193,12 +105,9 @@ function installSuspendHandlers(
  * screen and the mouse wheel; the inline layout takes neither, so the
  * terminal's native scrollback, selection and wheel all work as usual.
  */
-export function mountTui(opts: MountOptions): TuiHandle {
+/** The inline layout on Ink, until it moves to the new renderer. */
+export function mountInkTui(opts: MountOptions, layout: TuiLayout): TuiHandle {
   const { stdout } = process;
-  const layout = resolveLayout(opts.layout, {
-    isTTY: stdout.isTTY === true,
-    term: process.env.TERM,
-  });
   const fullscreen = layout === 'fullscreen';
   const captureMouse = fullscreen && opts.mouse !== false;
   const notifications = opts.notifications ?? 'auto';

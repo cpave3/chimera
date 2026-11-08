@@ -1,7 +1,7 @@
 import type { AgentEvent, CallId } from '@chimera/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Scrollback } from '../src/scrollback';
-import { fakeSession, mountFullscreen, plain, settle } from './fullscreen-helpers';
+import { type Mounted, mount } from './harness';
 
 const callId = 'CALL1' as CallId;
 const bashStart: AgentEvent = {
@@ -30,6 +30,12 @@ const reviewed = (
   ...over,
 });
 
+let mounted: Mounted | undefined;
+afterEach(async () => {
+  await mounted?.unmount();
+  mounted = undefined;
+});
+
 describe('reviewer decisions in the transcript', () => {
   it('marks the tool call the reviewer allowed, and no other', () => {
     const scrollback = new Scrollback();
@@ -56,21 +62,16 @@ describe('reviewer decisions in the transcript', () => {
     expect(notices[0]!.text).toMatch(/3 escalations in a row/);
   });
 
-  it('shows on the tool line that the reviewer approved the call', async () => {
-    const session = fakeSession();
-    const { lastFrame, unmount } = mountFullscreen({}, session);
-    for (const event of [bashStart, reviewed(), bashResult]) session.push(event);
-    await settle(200);
-    const frame = plain(lastFrame());
-    unmount();
+  it('shows on the tool row that the reviewer approved the call', async () => {
+    mounted = await mount();
+    await mounted.event(bashStart, reviewed(), bashResult);
 
-    expect(frame).toMatch(/pnpm install \(exit 0\) · approved by reviewer/);
+    expect(mounted.screen()).toMatch(/ {3}bash {2}pnpm install {2}0\.0s · approved by reviewer/);
   });
 
-  it('shows the reason of the reviewer in the prompt of an escalated request', async () => {
-    const session = fakeSession();
-    const { lastFrame, unmount } = mountFullscreen({}, session);
-    session.push({
+  it('shows the reason of the reviewer in the card of an escalated request', async () => {
+    mounted = await mount();
+    await mounted.event({
       type: 'permission_request',
       requestId: 'r1',
       tool: 'bash',
@@ -78,11 +79,10 @@ describe('reviewer decisions in the transcript', () => {
       command: 'git push origin main',
       reviewerReason: 'the user did not ask for a push',
     });
-    await settle(200);
-    const frame = plain(lastFrame());
-    unmount();
+    const screen = mounted.screen();
 
-    expect(frame).toContain('git push origin main');
-    expect(frame).toContain('Reviewer: the user did not ask for a push');
+    expect(screen).toContain('approval needed');
+    expect(screen).toContain('bash   git push origin main');
+    expect(screen).toContain('check  reviewer: the user did not ask for a push');
   });
 });

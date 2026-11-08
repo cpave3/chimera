@@ -300,6 +300,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     layout: opts.inline ? 'inline' : config.tui?.layout,
     mouse: config.tui?.mouse,
     notifications: config.tui?.notifications,
+    statusLine: config.statusLine,
     listPeers: () => listPeers({ home: opts.home }),
     client,
     sessionId,

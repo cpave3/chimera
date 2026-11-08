@@ -294,3 +294,30 @@ describe('picker cards', () => {
     expect(onResolve).toHaveBeenCalledWith({ paths: ['b.ts'] });
   });
 });
+
+describe('a multi-line command in the permission card', () => {
+  const multiLine: PendingPermission = {
+    requestId: 'r2',
+    command: Array.from({ length: 20 }, (_, i) => `echo step ${i + 1} of 20;`).join('\n'),
+  };
+
+  it('keeps the pattern row on one line, with the end of the pattern in view', () => {
+    const card = new PermissionCard(multiLine, vi.fn());
+    burst(card, 'g!');
+    const lines = draw(card, 60);
+    expect(lines.at(-1)).toMatch(/^└─+┘$/);
+    const row = lines.find((line) => line.includes('pattern ›'))!;
+    expect(row).toContain('echo step 20 of 20;!');
+    expect(row).toContain('↵');
+  });
+
+  it('keeps the remember row on one line', () => {
+    const card = new PermissionCard(multiLine, vi.fn());
+    burst(card, 'A');
+    const lines = draw(card, 60);
+    expect(lines.at(-1)).toMatch(/^└─+┘$/);
+    expect(lines.filter((line) => line.includes('echo step 2 of 20')).length).toBeLessThanOrEqual(
+      2,
+    );
+  });
+});

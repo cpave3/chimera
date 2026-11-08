@@ -19,6 +19,7 @@ import type { ModeRegistry } from '@chimera/modes';
 import type { SkillRegistry } from '@chimera/skills';
 import { useApp, useInput, useStdout } from 'ink';
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { OverlayHandlers } from './app/options';
 import { parseAttachTokens, readForAttach } from './attach-paths';
 import { runBangCommand } from './bang';
 import type { Peer } from './ContextPanel';
@@ -73,12 +74,6 @@ function isActiveRunConflict(error: unknown): error is ChimeraHttpError {
     'error' in error.body &&
     error.body.error === 'run already in progress'
   );
-}
-
-export interface OverlayHandlers {
-  diff(): Promise<{ modified: string[]; added: string[]; deleted: string[] }>;
-  apply(paths?: string[]): Promise<void>;
-  discard(): Promise<void>;
 }
 
 export interface AppProps {
@@ -993,7 +988,7 @@ export function App(props: AppProps): React.ReactElement | null {
 
   function handleSlash(raw: string): void {
     dispatchSlash(raw, {
-      props,
+      props: props as unknown as Parameters<typeof dispatchSlash>[1]['props'],
       scrollback,
       themeCtx,
       activeSession,

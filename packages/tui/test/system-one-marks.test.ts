@@ -1,7 +1,7 @@
 import type { AgentEvent, CallId } from '@chimera/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Scrollback } from '../src/scrollback';
-import { fakeSession, mountFullscreen, plain, settle } from './fullscreen-helpers';
+import { type Mounted, mount } from './harness';
 
 const callId = 'CALL1' as CallId;
 const bashStart: AgentEvent = {
@@ -32,6 +32,12 @@ const checked = (
   ...over,
 });
 
+let mounted: Mounted | undefined;
+afterEach(async () => {
+  await mounted?.unmount();
+  mounted = undefined;
+});
+
 describe('System One verdicts in the transcript', () => {
   it('marks the tool call the check approved, and no other', () => {
     const scrollback = new Scrollback();
@@ -46,21 +52,16 @@ describe('System One verdicts in the transcript', () => {
     expect(tools.map((entry) => entry.systemOneApproved === true)).toEqual([true, false]);
   });
 
-  it('shows on the tool line that System One approved the call', async () => {
-    const session = fakeSession();
-    const { lastFrame, unmount } = mountFullscreen({}, session);
-    for (const event of [bashStart, checked(), bashResult]) session.push(event);
-    await settle(200);
-    const frame = plain(lastFrame());
-    unmount();
+  it('shows on the tool row that System One approved the call', async () => {
+    mounted = await mount();
+    await mounted.event(bashStart, checked(), bashResult);
 
-    expect(frame).toMatch(/\.\/dev check \(exit 0\) · approved by System One/);
+    expect(mounted.screen()).toMatch(/ {3}bash {2}\.\/dev check {2}0\.0s · approved by System One/);
   });
 
-  it('says in the prompt that the System One model rejected the command', async () => {
-    const session = fakeSession();
-    const { lastFrame, unmount } = mountFullscreen({}, session);
-    session.push({
+  it('says in the card that the System One model rejected the command', async () => {
+    mounted = await mount();
+    await mounted.event({
       type: 'permission_request',
       requestId: 'r1',
       tool: 'bash',
@@ -68,12 +69,9 @@ describe('System One verdicts in the transcript', () => {
       command: 'vercel deploy --prod',
       systemOneNote: 'rejected: safety 0.31, needs 0.80, reads as "remote"',
     });
-    await settle(200);
-    const frame = plain(lastFrame());
-    unmount();
+    const screen = mounted.screen();
 
-    expect(frame).toContain('vercel deploy --prod');
-    // The prompt wraps the note; its start is on one line.
-    expect(frame).toContain('System One rejected: safety 0.31, needs 0.80');
+    expect(screen).toContain('bash   vercel deploy --prod');
+    expect(screen).toContain('check  System One rejected: safety 0.31, needs 0.80');
   });
 });

@@ -127,7 +127,26 @@ it unless the user asks. See `docs/evals.md`.
    rm -f tsconfig.tsbuildinfo
    ```
 
-## TUI testing conventions
+## TUI renderer
+
+The fullscreen layout runs on Chimera's own line renderer, not Ink:
+
+- `src/app/controller.ts` holds all TUI state in plain fields and handles
+  every input event; `src/app/fullscreen.ts` lays the transcript viewport
+  over the chrome; `src/mount.ts` wires them to the terminal.
+- Line components (`src/ledger/*`, `src/cards/*`) render state to string
+  lines for a width. Measure and clip with `src/terminal/width.ts` only.
+- `src/terminal/keys.ts` parses input into one event per key;
+  `src/terminal/host.ts` owns raw mode and the key, paste and mouse modes.
+- Test through `mountTui` with `test/harness.ts`: a fake client, scripted
+  bytes on a `VirtualInput`, and a `VirtualTerminal` as stdout whose
+  `screen()` is what the user sees. Do not assert a spinner frame; it moves
+  every 80 ms.
+
+The inline layout still runs on Ink until it moves too; the Ink notes below
+apply to it only.
+
+## TUI testing conventions (Ink, inline layout)
 
 Uses `ink-testing-library` + `vitest`. Two things catch people:
 

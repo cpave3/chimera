@@ -14,6 +14,8 @@ export interface Card {
   handleKey(event: InputEvent): void;
   /** Scroll a card taller than its rows; false when all of it is in view. */
   scroll?(lines: number): boolean;
+  /** PgUp/PgDn: scroll by the card's own page; false when all of it is in view. */
+  scrollPages?(pages: number): boolean;
 }
 
 export interface CardFrame {
@@ -114,9 +116,38 @@ export function choiceRow(
   return `${marker}${style.fg(tone, key.padEnd(2))} ${text}${detail ? `  ${style.fg('dim', detail)}` : ''}`;
 }
 
-/** A row of text being typed inside a card, with the cursor at its end. */
-export function inputRow(label: string, text: string, style: Style): string {
-  return `${style.fg('muted', label)} ${style.fg('accent', '›')} ${text}${style.inverse(' ')}`;
+/** Text on one row: line breaks shown as `↵`. */
+export function oneLine(text: string): string {
+  return text.replace(/\r?\n/g, '↵');
+}
+
+/**
+ * A row of text being typed inside a card, with the cursor at its end. Text
+ * longer than the row keeps its end in view, where the typing happens.
+ */
+export function inputRow(
+  label: string,
+  text: string,
+  style: Style,
+  width = Number.POSITIVE_INFINITY,
+): string {
+  const lead = `${label} › `;
+  const room = Math.max(1, width - displayWidth(lead) - 1);
+  let shown = oneLine(text);
+  if (displayWidth(shown) > room) {
+    const kept: string[] = [];
+    let used = 1;
+    for (const grapheme of [...new Intl.Segmenter().segment(shown)]
+      .map((part) => part.segment)
+      .reverse()) {
+      const cells = displayWidth(grapheme);
+      if (used + cells > room) break;
+      kept.unshift(grapheme);
+      used += cells;
+    }
+    shown = `…${kept.join('')}`;
+  }
+  return `${style.fg('muted', label)} ${style.fg('accent', '›')} ${shown}${style.inverse(' ')}`;
 }
 
 /** A labelled fact row: `label  value`, the label padded to `labelWidth`. */

@@ -11,10 +11,11 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | --- | --- |
 | `Enter` | Send. During a run: steer the agent. |
 | `Tab` | During a run: hold the message for the next turn. |
-| `\` then `Enter` | New line (also `Shift+Enter` or `Alt+Enter` where the terminal supports it). |
+| `Shift+Enter` | New line where the terminal reports it; `Alt+Enter`, or `\` then `Enter`, everywhere. |
 | `Ctrl+G` | Edit the prompt in `$EDITOR`. |
 | `Ctrl+V` | Paste an image from the clipboard. |
 | `Ctrl+T` | Open the full transcript in a pager. |
+| `Ctrl+O` | Expand or collapse every tool output and thought. |
 | `Up` / `Down` | Prompt history. |
 | `Shift+Tab` | Cycle the mode. |
 | `/` | Commands; `Tab` completes. |
@@ -23,9 +24,8 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | `Esc` | Interrupt the run. |
 | `Ctrl+C` | Interrupt; press it twice to exit. |
 | `Ctrl+Z` | Suspend. |
-| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen), or a permission request too tall for the screen. |
-| `Ctrl+B` | Show or hide the context panel (fullscreen). |
-| Drag | Select text; it is copied when you release the button (fullscreen). |
+| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen), or a card too tall for the screen. |
+| `Ctrl+Home` / `Ctrl+End` | Jump to the top of the transcript, and back to the newest output (fullscreen). |
 
 A `!command` runs in your shell with your rights. It does not go through the
 approval rules or the sandbox, because you typed it.
@@ -61,10 +61,10 @@ and modes in [Modes](MODES.md).
 
 ## The screen
 
-The TUI has two layouts. **Fullscreen** is the default: it takes the
-terminal's alternate screen and keeps a context panel beside the transcript.
-**Inline** prints into the terminal's own scrollback and repaints only a few
-rows under it; use it on a slow link (for example SSH with high latency) or
+The TUI has two layouts that look the same. **Fullscreen** is the default:
+it takes the terminal's alternate screen and scrolls the transcript itself.
+**Inline** prints into the terminal's own scrollback and repaints only the
+rows that changed; use it on a slow link (for example SSH with high latency) or
 when you want the session to stay in your scrollback.
 
 ```
@@ -83,69 +83,45 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
 
 ### Fullscreen layout
 
+The transcript fills the screen; the prompt box and the status line stay
+pinned to the bottom.
+
 ```
-  › add a --json flag to yg list and cover it with a test          ◆ chimera v0.1.0
-                                                                    model        manticore/gpt
-  ● read 1 file · 1 search                                          session           8AWWBRGC
-    src/yg/commands/list.ts (120 lines), "formatWorktree" · 3 …     cwd     ~/Projects/yggdrasil
-  ● edit src/yg/commands/list.ts (1 replacement)                    sandbox                 os
-    ╭──────────────────────────────────────────────────────────╮    loaded  60 skills · 9 cmds
-    │ 44 +   if (opts.json) return print(JSON.stringify(trees… │
-    │ 45     const rows = trees.map(formatWorktree)            │    CONTEXT · 76k / 200k   38%
-    ╰──────────────────────────────────────────────────────────╯    ▄▄▄▄▄▄▄▄▄▄▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
-  ● bash pnpm vitest run yg/list (exit 0) · 4.2s                    ■ system ■ skills ■ history
-    ✓ 14 passed
-                                                                    PLAN · 2/4
-  ◆ Added --json to yg list. Writing a snapshot test next.          ✓ locate list command
-                                                                    ✓ add --json option
-  ○ write src/yg/commands/list.test.ts                              ▸ snapshot test for JSON shape
-                                                                    ○ update README usage
+chimera  v0.4.0 · manticore/gpt-5 · ~/Projects/yggdrasil
+         60 skills · 9 commands
 
-                                                                    WORKTREE
-                                                                    yg/json-flag            ↑1
-  ⠹ write src/yg/commands/list.test.ts · 12s · step 6 · esc to …    M list.ts           +18 −3
-                                                                    A list.test.ts
+    you  add a --json flag to `yg list` and cover it with a test
+  think  The list command lives in src/yg/commands/list.ts. Other commands…
+   read  src/yg/commands/list.ts  120 lines
+   grep  "json" in src/yg  4 matches
 
-                                                                    PEERS
-                                                                    ● api          plan · idle
-                                                                    total                 3.8k
-    › message chimera                                               in      3.2k  out      640
-   BUILD   enter steer · tab queue · esc interrupt                  cache                  81%
+         `status` already prints JSON through `printJson`, so `list` can reuse it.
+   edit  src/yg/commands/list.ts  +2 −1
+           43   export function list(opts: ListOptions) {
+           44 - const trees = readWorktrees();
+           44 + const trees = readWorktrees(opts.root);
+ ✗ bash  pnpm vitest run yg/list  exit 1 · 4.2s
+         FAIL  test/list.test.ts > list > prints a table
+         AssertionError: snapshot mismatch
+         - Snapshot  -1
+         … 5 more · ctrl+o
+⠋ write  src/yg/commands/list.test.ts  writing…
+  tasks  2/4 ✓ ✓ ▸ snapshot test for the JSON shape ○
+╭─ build ─────────────────────────────── ⠋ 12s · esc interrupt · tab queue ─╮
+│ ›                                                                          │
+╰─ manticore/gpt-5 · 38%/200k ────────────── ~/Projects/yggdrasil · main ↑1 ─╯
+   8AWWBRGC · os sandbox
 ```
 
-- **Transcript pane.** It follows the newest output. `PgUp`, `PgDn` and the
-  mouse wheel scroll it; while you are scrolled away, new output does not
-  move what you read. `PgDn` to the end, or sending a message, follows the
-  newest output again. A long session mounts the newest entries only and
-  loads earlier ones when you scroll up from the top.
-- **Context panel.** Model, session, working directory, sandbox (`os` when host
-  commands run in the OS sandbox, a Docker mode, or `off`), and what was
-  loaded; context use as a bar split into system prompt, skills index and
-  history (the split is an estimate; the total is the provider's count); the
-  goal, when one is set (see [Goals](goals.md)); the
-  plan (the model's task list); the working tree (branch, commits ahead and
-  behind, changed files with lines added and removed); other live Chimera
-  instances on this machine with their mode and state; and the session's
-  tokens: the total, then `in` and `out` side by side, then the cached share
-  of the last prompt. `Ctrl+B` hides and
-  shows the panel. Under 100 columns the panel is dropped, and the hints row
-  shows the model and the context percentage instead.
-- **Prompt box and hints row.** The row under the prompt shows the mode as a
-  badge and the keys that matter in the current state.
-- **Mouse.** The wheel scrolls the transcript. Drag with the left button to
-  select text: the selection is copied to the clipboard when you release the
-  button, and the hints row says how much was copied. A selection stays in
-  the column it starts in, so a copy from the transcript never takes the
-  panel along, and code keeps its shape (later lines lose the indent the
-  first line starts at). The copy goes through the system clipboard tool
-  (`wl-copy`, `xclip`, `xsel`, `pbcopy`) and through the terminal's own
-  clipboard sequence (OSC 52), which is what reaches your machine over SSH.
-  In tmux, OSC 52 needs `set -g set-clipboard on`; the system tool needs
-  nothing. A selection covers what is on screen; for more, scroll and copy
-  again, or open the transcript with `Ctrl+T`. `Shift`+drag still gives you
-  the terminal's own selection (`Option` in iTerm2). Set `tui.mouse` to
-  `false` to leave the mouse to the terminal entirely; the wheel then does
-  not scroll.
+- **Following.** The transcript follows the newest output. `PgUp`, `PgDn` and
+  the mouse wheel scroll it; while you are scrolled away, new output does not
+  move what you read. `Ctrl+Home` jumps to the top; `Ctrl+End`, or sending a
+  message, follows the newest output again.
+- **Mouse.** The wheel scrolls the transcript, or a card too tall for the
+  screen. Set `tui.mouse` to `false` to leave the mouse to the terminal.
+- **Handing over.** `Ctrl+G` (your editor), `Ctrl+T` (the pager) and `Ctrl+Z`
+  (suspend) give the terminal back to the program or the shell, and the TUI
+  redraws everything when it gets it back.
 - **Exit.** The alternate screen takes the session with it, so Chimera prints
   the session id and the `chimera --session <id>` command that resumes it.
   `Ctrl+T` opens the full transcript in a pager at any time.
@@ -190,41 +166,44 @@ build · anthropic/claude-opus-4-7 · sandbox os    ▰▰▰▰▱▱▱▱▱�
 
 ### In both layouts
 
-- **Transcript lines.** A user message starts with `›` and assistant text
-  with `◆`. A tool call starts with a glyph for its state (`○` running, `●`
-  returned, `✗` failed or exited non-zero) and shows a one-line summary
-  instead of raw JSON args, with the duration when the call took a second or
-  more. Tool calls that follow each other sit together. When a Docker
-  sandbox is active the line also says `[host]` or `[sandbox]`. Consecutive successful
-  `read`, `glob`, `find`, `ls` and `grep` calls collapse into one line. An
-  edit, a patch or a written file is drawn in a border. Fenced code blocks
-  with a known language are syntax-highlighted.
-- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
-  tokens in and out, and the cached share.
+- **Label column.** Each entry is named in a right-aligned column: `you` for
+  your messages, `think` for the model's reasoning (one dim line; `Ctrl+O`
+  shows all of it), and the tool's name for a tool call. The assistant's text
+  has no label.
+- **Tool rows.** A call is one row, `label  argument  facts`: line counts,
+  matches, the exit code of a failed command, how long it took. A running
+  call has a spinner in its label, a failed one `✗` and its facts in the
+  error colour. Output is cut to three rows plus `… N more · ctrl+o`; an edit
+  shows `+N −M` and its numbered diff rows. Reads and searches that follow
+  each other stack without blank lines. When a Docker sandbox is active the
+  row also says `[host]` or `[sandbox]`.
+- **Notices.** Errors, goal results, background agents, compactions, mode
+  changes and the run summary are rows of their own (`✗ error`, `goal`,
+  `agent`, `compact`, `mode`, `done`, `note`), wrapped between words.
+- **Task row.** During a run the task list is one row above the prompt box:
+  `tasks  2/4 ✓ ✓ ▸ task in progress ○`.
+- **Prompt box.** Its top border shows the mode, and on the right the spinner,
+  elapsed time and the keys that matter during a run, or `? help` when idle.
+  Its bottom border holds the [status line](#status-line).
+- **Cards.** Permission requests, questions, the sudo password, pickers, the
+  slash and file menus and the key list (`?` at an empty prompt) are cards
+  above the prompt box. While a card waits for your answer, the prompt box
+  says so.
+- **Approvals.** A permission request card lists the command, why it needs
+  approval and what the reviewer or System One found, then the choices, one
+  per row. Press a choice's key, or `↑`/`↓` and `Enter`; `Esc` denies.
+  Feedback, patterns and prefixes are typed in a row inside the card. A
+  request too tall for the screen scrolls inside the card (`PgUp`, `PgDn`,
+  the wheel), and the choices stay in view. For an OS sandbox bypass, choose
+  **Allow once**, **Allow exact command…**, or **Allow command prefix…**,
+  then the session, project or global scope. See
+  [OS sandbox](sandbox.md#os-sandbox) for the limits.
+- **Reviewer and System One marks.** A tool row that the approval reviewer or
+  the System One check allowed ends with `approved by reviewer` or
+  `approved by System One`. See
+  [Host bash command policy](bash-command-policy.md#approval-reviewer).
 - **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
   else `less`): every tool call on its own line, with its full output.
-- **Activity line.** While a run is active, one line says what the agent is
-  doing (thinking, writing, running a tool, waiting for approval, compacting,
-  retrying a provider error), for how long, on which step, and how many
-  tokens it has produced.
-- **Help.** `?` at an empty prompt lists the key bindings.
-- **Reviewer mark.** A tool line that the approval reviewer allowed ends with
-  `approved by reviewer`. See
-  [Host bash command policy](bash-command-policy.md#approval-reviewer).
-- **System One mark.** A tool line that the System One check approved ends
-  with `approved by System One`. The approval prompt of a command that the
-  check rejected has a line that starts with `System One rejected`. See
-  [Host bash command policy](bash-command-policy.md#system-one-check).
-- **Notices.** Results of goal checks, background agents and compactions are
-  one line each, wrapped between words.
-- **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
-  digit, or the letter shown next to each choice. `Esc` denies.
-  A request too tall for the screen scrolls above the choices, which stay in
-  view: `PgUp` and `PgDn` move it, and so does the mouse wheel in the
-  fullscreen layout. A line under the request says which lines are showing.
-  For an OS sandbox bypass, choose **Allow once**, **Allow exact command…**, or
-  **Allow command prefix…**. Review the pattern and choose session, project, or
-  global scope. See [OS sandbox](sandbox.md#os-sandbox) for the limits.
 
 Each built-in tool ships with a `formatScrollback` hook in its definition
 that produces an args-only summary at call start and a result-aware summary
@@ -361,19 +340,18 @@ nothing. For anything else (a sound, a phone push), use a `Stop` hook; see
 
 ## Token usage
 
-- **Context use.** The context panel (the first footer row in the inline
-  layout) shows how full the model's context window is after the latest
-  step: a bar or gauge with a percentage, and the tokens used over the window
-  size (`84k / 200k`). The numbers are the provider's count, not an estimate.
+- **Context use.** The status line's `context` item shows how full the
+  model's context window is after the latest step, as a share of the window
+  (`38%/200k`). The numbers are the provider's count, not an estimate.
   `/context` has a breakdown by category.
-- **Session totals.** The bottom of the context panel shows the `total`
-  tokens of the session, then `in` and `out` side by side, then `cache`: the
-  share of the last prompt that the provider served from its cache. The
+- **Session totals.** The `tokens` item shows the session's tokens in and out
+  (`↑76k ↓3.7k`), and `cache` the share of the last prompt that the provider
+  served from its cache. Add them to a status line row to see them. The
   totals are saved with the session.
-- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
-  tokens in and out, and the cached share.
-- **Colours.** The percentage is gray under 80%, amber from 80% to 95%, and
-  red from 95%.
+- **Turn summary.** Each run ends with a `done` row: duration, steps, tool
+  calls, tokens in and out, and the cached share.
+- **Colours.** The context figure turns the warning colour above 70% and the
+  error colour above 90%.
 - **The window size.** Chimera knows the window of common Claude and GPT
   models. For another model, set `contextWindow` under `models` in
   `~/.chimera/config.json`; see [Providers](../PROVIDERS.md). Without that

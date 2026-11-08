@@ -74,11 +74,13 @@ export async function runAttach(opts: AttachOptions): Promise<void> {
   // Get the current mode from the server.
   const currentMode = await client.getMode(sessionId);
 
-  const tui = loadConfig(opts.home).tui;
+  const config = loadConfig(opts.home);
+  const tui = config.tui;
   const handle = mountTui({
     layout: opts.inline ? 'inline' : tui?.layout,
     mouse: tui?.mouse,
     notifications: tui?.notifications,
+    statusLine: config.statusLine,
     client,
     sessionId,
     modelRef: session.userModelOverride ?? `${session.model.providerId}/${session.model.modelId}`,

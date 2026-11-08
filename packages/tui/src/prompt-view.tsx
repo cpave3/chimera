@@ -2,10 +2,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 import { cursorLineCol, type MultilineBuffer } from './input/buffer';
 
-export function previewLine(text: string): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine;
-}
+export { previewLine } from './preview-line';
 
 export interface PromptStyle {
   /** Leads the first line of a message. */

@@ -10,6 +10,7 @@ import {
   choiceRow,
   factRow,
   inputRow,
+  oneLine,
   renderCard,
   scrollCard,
 } from './card';
@@ -211,6 +212,10 @@ export class PermissionCard implements Card {
     }
   }
 
+  scrollPages(pages: number): boolean {
+    return this.scroll(pages * Math.max(1, this.lastRoom - 1));
+  }
+
   scroll(lines: number): boolean {
     return scrollCard(this.scrollState, lines, this.lastBodyRows, this.lastRoom);
   }
@@ -276,15 +281,15 @@ export class PermissionCard implements Card {
     let footer: string[];
     let keys: string;
     if (mode.kind === 'feedback') {
-      footer = ['', inputRow('feedback', mode.text, style)];
+      footer = ['', inputRow('feedback', mode.text, style, inner)];
       keys = 'enter deny · esc back';
     } else if (mode.kind === 'pattern' || mode.kind === 'prefix') {
-      footer = ['', inputRow(mode.kind, mode.text, style)];
+      footer = ['', inputRow(mode.kind, mode.text, style, inner)];
       keys = 'enter confirm · esc back';
     } else if (mode.kind === 'scope') {
       footer = [
         '',
-        `${style.fg('muted', 'remember')} ${mode.patternKind} ${style.bold(mode.pattern)}`,
+        `${style.fg('muted', 'remember')} ${mode.patternKind} ${style.bold(oneLine(mode.pattern))}`,
         `${style.fg('accent', 's')} session  ${style.fg('accent', 'p')} project  ${style.fg('accent', 'g')} global`,
       ];
       keys = 's/p/g · esc back';

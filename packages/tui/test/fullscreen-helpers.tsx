@@ -1,10 +1,5 @@
 import type { ChimeraClient } from '@chimera/client';
 import type { AgentEvent, ContextBreakdown } from '@chimera/core';
-import { render } from 'ink-testing-library';
-import { App, type AppProps } from '../src/App';
-import { MouseBus } from '../src/input/mouse';
-import { ThemeProvider } from '../src/theme/ThemeProvider';
-import { fullscreenTheme } from '../src/theme/tokens';
 
 export const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -63,42 +58,4 @@ export function fakeSession(options: { breakdown?: Partial<ContextBreakdown> } =
     },
   } as unknown as ChimeraClient;
   return { client, push, sent };
-}
-
-export function mountFullscreen(overrides: Partial<AppProps> = {}, session = fakeSession()) {
-  const mouse = new MouseBus();
-  const rendered = render(
-    <ThemeProvider theme={fullscreenTheme} layout="fullscreen">
-      <App
-        client={session.client}
-        sessionId="01ABCDEFGH8AWWBRGC"
-        modelRef="manticore/gpt"
-        model={{ providerId: 'manticore', modelId: 'gpt', maxSteps: 50 }}
-        cwd="/tmp/project"
-        layout="fullscreen"
-        terminalSize={{ columns: 100, rows: 30 }}
-        readWorktree={async () => null}
-        mouse={mouse}
-        {...overrides}
-      />
-    </ThemeProvider>,
-  );
-  return { ...rendered, session, mouse };
-}
-
-export function usage(usedContextTokens: number, contextWindow = 200_000): AgentEvent {
-  return {
-    type: 'usage_updated',
-    usage: {
-      inputTokens: 3_200,
-      outputTokens: 640,
-      cachedInputTokens: 0,
-      totalTokens: 3_840,
-      stepCount: 1,
-      lastStep: { inputTokens: usedContextTokens, outputTokens: 640, cachedInputTokens: 0 },
-    },
-    contextWindow,
-    usedContextTokens,
-    unknownWindow: false,
-  } as unknown as AgentEvent;
 }
