@@ -20,6 +20,7 @@ import {
   type OverlayHandlers,
 } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
+import { startBackgroundUpdates, updateStatus } from '../background-updates';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import {
   checkCompactionInvariant,
@@ -43,6 +44,7 @@ import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
+import { Updater } from '../updater';
 import { VERSION } from '../version';
 
 export interface InteractiveOptions {
@@ -328,11 +330,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       return prompt;
     },
   });
+  const updater = new Updater();
+  const stopUpdates = startBackgroundUpdates({
+    mode: config.updates?.mode ?? 'auto',
+    updater,
+    onNotice: (notice) => handle.updateStatus(updateStatus(updater), notice),
+    onChange: () => handle.updateStatus(updateStatus(updater)),
+  });
   try {
     await handle.waitUntilExit();
     // The transcript stays in the scrollback; say how to get back to it.
     process.stdout.write(formatExitSummary(handle.activeSessionId()));
   } finally {
+    stopUpdates();
     stopLockfileCleanup();
     removeLockfile(process.pid, opts.home);
     (commands as Partial<ReloadingCommandRegistry>).close?.();

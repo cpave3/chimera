@@ -6,6 +6,7 @@ import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
+import { startBackgroundUpdates } from '../background-updates';
 import {
   checkCompactionInvariant,
   compactionCallOptions,
@@ -27,6 +28,7 @@ import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
+import { Updater } from '../updater';
 import { VERSION } from '../version';
 
 export interface ServeOptions {
@@ -263,7 +265,17 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     opts.home,
   );
 
+  // A subagent's server (--machine-handshake) belongs to a parent that updates.
+  const stopUpdates = opts.machineHandshake
+    ? () => {}
+    : startBackgroundUpdates({
+        mode: config.updates?.mode ?? 'auto',
+        updater: new Updater(),
+        onNotice: (notice) => process.stderr.write(`chimera: ${notice}\n`),
+      });
+
   const shutdown = async () => {
+    stopUpdates();
     removeLockfile(process.pid, opts.home);
     await factory.dispose();
     await server.close();

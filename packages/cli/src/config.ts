@@ -260,6 +260,12 @@ export interface ChimeraConfig {
     rows?: Array<{ left?: string[]; right?: string[] }>;
     command?: string | null;
   };
+  /**
+   * Background updates of a release build, in the TUI and `chimera serve`:
+   * `auto` (the default) installs new releases, `ask` only says one is out,
+   * `off` never checks.
+   */
+  updates?: { mode?: 'auto' | 'ask' | 'off' };
   /** How the interactive TUI uses the terminal. */
   tui?: {
     /**
@@ -360,6 +366,8 @@ const STATUS_LINE_ITEMS = [
   'update',
 ] as const;
 const statusItemsSchema = z.array(z.enum(STATUS_LINE_ITEMS)).optional();
+const updatesSchema = z.object({ mode: z.enum(['auto', 'ask', 'off']).optional() }).strict();
+
 const statusLineSchema = z
   .object({
     rows: z
@@ -505,6 +513,12 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   const goal = goalSchema.safeParse(config.goal ?? {});
   if (!goal.success) {
     throw new Error(`Invalid goal in ${path}: ${goal.error.message}`);
+  }
+  const updates = updatesSchema.safeParse(config.updates ?? {});
+  if (!updates.success) {
+    throw new Error(
+      `Invalid ${path}: ${updates.error.issues.map((issue) => `updates.${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+    );
   }
   const statusLine = statusLineSchema.safeParse(config.statusLine ?? {});
   if (!statusLine.success) {

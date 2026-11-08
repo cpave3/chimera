@@ -774,6 +774,13 @@ export class TuiController {
     return [...above, ...card, ...prompt];
   }
 
+  /** The updater's state for the status line, and a notice for the transcript. */
+  setUpdateStatus(status: string | null, notice?: string): void {
+    this.updateNotice = status;
+    if (notice) this.scrollback.addInfo(notice);
+    this.changed();
+  }
+
   showNotice(text: string, ms = 2_000): void {
     this.notice = text;
     clearTimeout(this.noticeTimer);

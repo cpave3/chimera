@@ -50,6 +50,12 @@ export interface TuiHandle {
   layout: TuiLayout;
   /** The session on screen now: `/new`, `/fork` and `/sessions` change it. */
   activeSessionId(): SessionId;
+  /**
+   * What the updater has to say. A notice (`updated to vX.Y.Z, restart to
+   * use`) shows once as a dim row; the status text feeds the `update` status
+   * line item. Null clears the item.
+   */
+  updateStatus(status: string | null, notice?: string): void;
 }
 
 /** The layout to use: fullscreen needs a terminal that can show one. */
@@ -305,6 +311,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
   return {
     layout,
     activeSessionId: () => controller.activeSession.sessionId,
+    updateStatus: (status, notice) => controller.setUpdateStatus(status, notice),
     waitUntilExit: () => exited,
     unmount: () => finish(),
   };

@@ -29,3 +29,24 @@ chimera update --check --json       # {"current", "latest", "available", "url"}
 - With `--json`, an install prints the same object plus `"updated"`. The
   output follows `st update --json`, so a tool that keeps `st` current can
   drive `chimera` the same way.
+
+### Background updates
+
+The TUI and `chimera serve` look for a newer release a minute after they
+start, then every six hours. `updates.mode` in `~/.chimera/config.json`
+decides what they do with one:
+
+```json
+{ "updates": { "mode": "auto" } }
+```
+
+| `mode` | What happens |
+| --- | --- |
+| `auto` (default) | The new release is installed in the background. The TUI shows `updated to vX.Y.Z, restart to use` in the transcript and in the status line; `chimera serve` prints it to stderr. |
+| `ask` | Nothing is installed. The TUI shows `vX.Y.Z available · chimera update`. |
+| `off` | No check is made. |
+
+- No check is made by a build from source, when `CI` is set, by
+  `chimera run`, or by the server of a subagent (its parent checks).
+- A failed check or install is shown in the status line and tried again at
+  the next check.

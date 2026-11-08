@@ -190,6 +190,9 @@ that point. See [Sessions and files](docs/sessions.md).
   | `fallbackModel` | Finishes a run when the session model stays unavailable after its retries. |
   | `defaultVisionModel` | Takes a turn that has an image when the session model cannot read images. |
 
+- **Updates.** A release build keeps itself current in the background;
+  `updates.mode` is `auto`, `ask` or `off`. See
+  [Background updates](docs/install.md#background-updates).
 - **Failures that are not your task.** Chimera retries temporary provider
   errors, compacts and tries again when a prompt is too long, and asks the
   model to continue when an answer is cut off. The response timeout measures
