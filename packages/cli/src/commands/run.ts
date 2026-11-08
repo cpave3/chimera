@@ -37,6 +37,7 @@ import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
 import { CHIMERA_CLI_VERSION } from '../program';
+import { RunRows } from '../run-rows';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 
@@ -293,6 +294,13 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     };
     process.once('SIGINT', sigintHandler);
 
+    const rows = new RunRows({
+      write: (text) => process.stderr.write(text),
+      color: process.stderr.isTTY === true,
+      width:
+        process.stderr.isTTY && process.stderr.columns > 0 ? process.stderr.columns : undefined,
+      sandboxActive: sandboxMode !== 'off',
+    });
     for await (const ev of client.send(activeSessionId, effectivePrompt)) {
       if (opts.json) {
         process.stdout.write(`${JSON.stringify(ev)}\n`);
@@ -300,17 +308,10 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         process.stdout.write(ev.delta);
       } else if (ev.type === 'assistant_text_done') {
         finalText = ev.text;
-      } else if (ev.type === 'tool_call_start') {
-        process.stderr.write(`[tool] ${ev.name} ${formatArgsShort(ev.args)}\n`);
-      } else if (ev.type === 'tool_call_error') {
-        process.stderr.write(`[tool error] ${ev.error}\n`);
-      } else if (ev.type === 'user_input_required') {
-        process.stderr.write(`[waiting for input] ${ev.request}\n`);
+      } else {
+        rows.apply(ev);
       }
-      if (ev.type === 'goal_updated') {
-        goalChange = ev.change;
-        if (!opts.json) process.stderr.write(`${goalLine(ev)}\n`);
-      }
+      if (ev.type === 'goal_updated') goalChange = ev.change;
       if (ev.type === 'run_finished') {
         exitReason = ev.reason;
         errorMessage = ev.error;
@@ -320,6 +321,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     process.removeListener('SIGINT', sigintHandler);
 
     if (!opts.json) {
+      rows.finish();
       if (finalText && !finalText.endsWith('\n')) process.stdout.write('\n');
       if (errorMessage) process.stderr.write(`${errorMessage}\n`);
     }
@@ -370,21 +372,6 @@ export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void
   await discardOverlay(input.sessionId);
 }
 
-/** What a `goal_updated` event says, as one line for the terminal. */
-function goalLine(event: Extract<AgentEvent, { type: 'goal_updated' }>): string {
-  const why = event.reason ? `: ${event.reason}` : '';
-  if (event.change === 'set') return `[goal] ${event.condition}`;
-  if (event.change === 'not_met') {
-    return `[goal] not met (${event.continuation} of ${event.maxContinuations})${why}`;
-  }
-  if (event.change === 'limit') {
-    return `[goal] limit of ${event.maxContinuations} continuations reached${why}`;
-  }
-  if (event.change === 'impossible') return `[goal] not possible${why}`;
-  if (event.change === 'unchecked') return `[goal] not checked${why}`;
-  return `[goal] ${event.change}${why}`;
-}
-
 /**
  * The exit code of a run. `goalChange` is the last word on the run's goal,
  * for a run that was given one.
@@ -397,9 +384,4 @@ function exitCodeFor(reason: RunFinishedReason, goalChange?: GoalChange): number
   if (reason === 'max_steps' || reason === 'output_limit') return 2;
   if (reason === 'interrupted') return 130;
   return 1;
-}
-
-function formatArgsShort(args: unknown): string {
-  const raw = JSON.stringify(args);
-  return raw.length > 80 ? `${raw.slice(0, 77)}...` : raw;
 }

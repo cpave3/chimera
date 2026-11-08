@@ -28,8 +28,16 @@ Events below are simplified (eventId / ts / sessionId stripped) to show the logi
 
 ## Rendered (human-readable) form
 
+stderr:
+
 ```
-[tool] bash {"command":"echo hello"}
+   bash  echo hello  0.0s
+         hello
+```
+
+stdout:
+
+```
 done.
 ```
 

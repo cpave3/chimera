@@ -14,10 +14,25 @@ chimera run --command review --args "src/auth.ts"
 chimera run --goal "pnpm test passes" "fix the failing tests"
 ```
 
-- **Output.** The assistant text goes to stdout. Tool calls and goal results
-  go to stderr, one line each. With `--json`, each event is one JSON object
-  on stdout and nothing else is printed. See
-  [an example transcript](session-transcript.md).
+- **Output.** The assistant text goes to stdout, exactly as the model wrote
+  it. Tool calls and goal results go to stderr as the same rows the TUI's
+  transcript draws: the label column, then the argument and the facts, then
+  up to three rows of output. A call is printed when it ends. On a terminal
+  the rows are coloured with your theme; piped or redirected, they have no
+  escape codes, so they stay easy to grep:
+
+  ```
+     read  src/list.ts  120 lines
+   ✗ bash  pnpm vitest run  exit 1 · 4.2s
+           FAIL  test/list.test.ts > list > prints a table
+           AssertionError: snapshot mismatch
+           - Snapshot  -1
+           … 5 more · ctrl+o
+     goal  goal not met (1 of 20): the tests still fail
+  ```
+
+  With `--json`, each event is one JSON object on stdout and nothing else is
+  printed. See [an example transcript](session-transcript.md).
 - **Prompt sources.** The arguments, `--stdin`, or a user command template
   with `--command <name>` and `--args`. See [User commands](COMMANDS.md).
 - **Session.** `--session <id>` continues a saved session. `--session-name`

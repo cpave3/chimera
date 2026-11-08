@@ -160,3 +160,21 @@ export function createStyle(tokens: ThemeTokens, level: ColorLevel): Style {
     underline: (text) => wrap('4', '24', text),
   };
 }
+
+/** No escape codes at all: for output that is piped or written to a file. */
+export function createPlainStyle(tokens: ThemeTokens): Style {
+  const same = (text: string) => text;
+  return {
+    level: 'none',
+    tokens,
+    hasDiffTints: false,
+    fg: (_token, text) => text,
+    color: (_value, text) => text,
+    diffBg: (_kind, text) => text,
+    bold: same,
+    dim: same,
+    italic: same,
+    inverse: same,
+    underline: same,
+  };
+}
