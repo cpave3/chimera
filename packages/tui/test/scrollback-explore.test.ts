@@ -42,15 +42,13 @@ describe('grouped exploration calls', () => {
     ]);
   });
 
-  it('keeps an open group out of the committed entries until something else follows', () => {
+  it('closes a group once something else follows it', () => {
     const scrollback = new Scrollback();
     feed(scrollback, [...toolCall('read', 'src/a.ts'), ...toolCall('read', 'src/b.ts')]);
-    expect(scrollback.splitSnapshot().committedCount).toBe(0);
-
     feed(scrollback, toolCall('edit', 'src/a.ts (1 replacement)'));
+    feed(scrollback, toolCall('read', 'src/c.ts'));
 
-    expect(kinds(scrollback.all())).toEqual(['explore', 'tool']);
-    expect(scrollback.splitSnapshot().committedCount).toBe(2);
+    expect(kinds(scrollback.all())).toEqual(['explore', 'tool', 'explore']);
   });
 
   it('starts a new group after any other entry', () => {
@@ -89,7 +87,7 @@ describe('grouped exploration calls', () => {
     expect(entries[0]!.text).toBe('read 2 files');
   });
 
-  it('commits the open group when the run ends', () => {
+  it('closes the open group when the run ends', () => {
     const scrollback = new Scrollback();
     feed(scrollback, [
       ...toolCall('read', 'src/a.ts'),
@@ -97,10 +95,9 @@ describe('grouped exploration calls', () => {
       { type: 'run_finished', reason: 'stop' },
     ]);
 
-    // The group and the run's closing summary line are both committed.
-    const { entries, committedCount } = scrollback.splitSnapshot();
+    const entries = scrollback.all();
     expect(kinds(entries)).toEqual(['explore', 'turn']);
-    expect(committedCount).toBe(2);
+    expect(entries[0]).toMatchObject({ kind: 'explore', closed: true });
   });
 
   it('keeps a skill read visible as its own line', () => {

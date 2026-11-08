@@ -39,19 +39,18 @@ large hosted model to a small local one.
 
 ## Install
 
-Chimera needs Node.js 20 or later. `corepack` selects the pinned `pnpm`
-version.
+On Linux (x86_64, aarch64) or a Mac with Apple silicon:
 
 ```bash
-corepack enable
-pnpm install
-pnpm -r build
-pnpm link --global      # puts `chimera` on your PATH
+curl -fsSL https://raw.githubusercontent.com/cpave3/chimera/main/install.sh | sh
 chimera --version
 ```
 
-`pnpm unlink --global` removes the link. Without a link, run
-`node packages/cli/dist/bin.js <args>`.
+The script puts one binary in `~/.local/bin/chimera`, after checking it
+against the release's checksums. It needs no Node.js. `chimera update`
+installs a newer release, and a release build keeps itself current in the
+background. Manual downloads, updates, running from source and uninstalling
+are in [docs/install.md](docs/install.md).
 
 On Linux, install `bubblewrap` to get the [OS sandbox](#safety). Without it
 Chimera shows one warning and runs commands unsandboxed.
@@ -190,6 +189,9 @@ that point. See [Sessions and files](docs/sessions.md).
   | `fallbackModel` | Finishes a run when the session model stays unavailable after its retries. |
   | `defaultVisionModel` | Takes a turn that has an image when the session model cannot read images. |
 
+- **Updates.** A release build keeps itself current in the background;
+  `updates.mode` is `auto`, `ask` or `off`. See
+  [Background updates](docs/install.md#background-updates).
 - **Failures that are not your task.** Chimera retries temporary provider
   errors, compacts and tries again when a prompt is too long, and asks the
   model to continue when an answer is cut off. The response timeout measures
@@ -342,6 +344,7 @@ so restart a session after a change.
 | `mcpServers` | — | MCP servers; `chimera mcp` writes this. |
 | `skills`, `commands`, `agents`, `modes` | on | Each has `enabled` and `claudeCompat`. |
 | `tui` | — | `layout` (`fullscreen` or `inline`), `mouse`, `notifications` (`auto`, `bell`, `off`). |
+| `statusLine` | model, context, cwd, branch; session, sandbox | `rows` of built-in items, or a `command`. [The TUI](docs/tui.md#status-line) |
 
 A value of the form `env:NAME` in an API key is read from the environment.
 
@@ -360,6 +363,8 @@ A value of the form `env:NAME` in an API key is read from the environment.
 | `chimera skills`, `commands`, `agents` | List what Chimera found in this directory. |
 | `chimera hooks list` | List the hooks. |
 | `chimera sandbox build` | Build the Docker sandbox image. |
+| `chimera version` | Print the version (`dev` for a build from source); `--json` gives `{"version", "release"}`. |
+| `chimera update` | Install the newest release; `--check`, `--version <tag>`, `--json`. [Install](docs/install.md#updating) |
 
 `chimera <command> --help` shows each flag.
 
@@ -367,6 +372,7 @@ A value of the form `env:NAME` in an API key is read from the environment.
 
 | Topic | Page |
 | --- | --- |
+| Install, update, uninstall | [docs/install.md](docs/install.md) |
 | Keys, commands, layouts, notifications, themes | [docs/tui.md](docs/tui.md) |
 | Sessions, resume, fork, rewind, files on disk | [docs/sessions.md](docs/sessions.md) |
 | One-shot runs, the server, the HTTP API | [docs/headless.md](docs/headless.md) |

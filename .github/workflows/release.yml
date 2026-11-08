@@ -1,0 +1,126 @@
+# Makes a release of Chimera: the next version (the newest vX.Y.Z tag,
+# bumped), tested, built as one binary per platform, smoke-tested, and
+# published as a GitHub release that Chimera's updater installs, with the
+# sandbox image pushed to GHCR under the same version.
+#
+#   gh workflow run release -f bump=patch     # or minor, major
+#   gh workflow run release -f bump=patch -f dry_run=true --ref <branch>
+#
+# A dry run builds and smoke-tests on any branch and publishes nothing.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      dry_run:
+        description: Build and check only; push no tag, image or release
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # the tag and the release
+  id-token: write # build provenance
+  attestations: write
+  packages: write # the sandbox image on GHCR
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  RCODESIGN_VERSION: 0.29.0
+  SANDBOX_IMAGE: ghcr.io/cpave3/chimera-sandbox
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' || inputs.dry_run
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # every tag, to find the newest release
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0 # packageManager in package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Next version
+        id: version
+        run: echo "version=$(bash scripts/next-version.sh '${{ inputs.bump }}')" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Install rcodesign
+        run: |
+          archive="apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/rcodesign.tar.gz" \
+            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/${archive}.tar.gz"
+          tar -xzf "$RUNNER_TEMP/rcodesign.tar.gz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/${archive}/rcodesign" /usr/local/bin/rcodesign
+          rcodesign --version
+
+      - name: Build the release binaries
+        run: bash scripts/build-release.sh '${{ steps.version.outputs.version }}'
+
+      - name: Smoke-test the Linux binary
+        run: node scripts/smoke-release.mjs dist/release/chimera-linux-amd64 '${{ steps.version.outputs.version }}'
+
+      - name: Check the checksums
+        working-directory: dist/release
+        run: sha256sum -c SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ !inputs.dry_run }}
+        with:
+          subject-path: dist/release/chimera-*
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: ${{ !inputs.dry_run }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/sandbox/docker
+          platforms: linux/amd64,linux/arm64
+          push: ${{ !inputs.dry_run }}
+          tags: |
+            ${{ env.SANDBOX_IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.SANDBOX_IMAGE }}:latest
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" dist/release/chimera-* dist/release/SHA256SUMS \
+            --target "$GITHUB_SHA" --title "$VERSION" --generate-notes

@@ -1,7 +1,7 @@
 import type { AgentEvent, QuestionRequest, Usage } from '@chimera/core';
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { mergePermissionQueue, type PendingPermission } from './permission-queue';
 import type { Scrollback } from './scrollback';
+import type { Ref, Setter } from './state';
 
 export interface SessionHydrationState {
   lifecycleEventObserved: boolean;
@@ -25,28 +25,28 @@ export interface UsageState {
 /** The pieces of App state a session event may touch. */
 export interface SessionEventContext {
   scrollback: Scrollback;
-  sessionHydrationRef: MutableRefObject<SessionHydrationState>;
-  subagentsRef: MutableRefObject<Map<string, ActiveSubagent>>;
-  setRunning: Dispatch<SetStateAction<boolean>>;
-  setStreaming: Dispatch<SetStateAction<boolean>>;
-  setPermissionQueue: Dispatch<SetStateAction<PendingPermission[]>>;
-  setVisionRouteRef: Dispatch<SetStateAction<string | null>>;
-  setUsageState: Dispatch<SetStateAction<UsageState | null>>;
-  setActiveModeName: Dispatch<SetStateAction<string>>;
-  setPendingModeName: Dispatch<SetStateAction<string | null>>;
-  setCurrentModelRef: Dispatch<SetStateAction<string>>;
-  setCompacting: Dispatch<SetStateAction<boolean>>;
-  setTasks: Dispatch<SetStateAction<{ content: string; status: string }[]>>;
+  sessionHydrationRef: Ref<SessionHydrationState>;
+  subagentsRef: Ref<Map<string, ActiveSubagent>>;
+  setRunning: Setter<boolean>;
+  setStreaming: Setter<boolean>;
+  setPermissionQueue: Setter<PendingPermission[]>;
+  setVisionRouteRef: Setter<string | null>;
+  setUsageState: Setter<UsageState | null>;
+  setActiveModeName: Setter<string>;
+  setPendingModeName: Setter<string | null>;
+  setCurrentModelRef: Setter<string>;
+  setCompacting: Setter<boolean>;
+  setTasks: Setter<{ content: string; status: string }[]>;
   /** The session's goal, or null. */
-  setGoal: Dispatch<SetStateAction<string | null>>;
+  setGoal: Setter<string | null>;
   /** The provider retry the run is waiting on, shown in the activity line. */
-  setRetry: Dispatch<SetStateAction<{ attempt: number; maxAttempts: number } | null>>;
+  setRetry: Setter<{ attempt: number; maxAttempts: number } | null>;
   /** Model steps finished in the run in progress. */
-  setRunSteps: Dispatch<SetStateAction<number>>;
+  setRunSteps: Setter<number>;
   /** The agent stopped to ask the user something. */
   onInputRequired?: () => void;
   /** Questions of `ask_question` calls that wait for the user. */
-  setQuestionQueue: Dispatch<SetStateAction<QuestionRequest[]>>;
+  setQuestionQueue: Setter<QuestionRequest[]>;
 }
 
 /**

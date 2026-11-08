@@ -1,6 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
 import type {
   CommandPolicyFinding,
   CommandPolicyStage,
@@ -8,12 +6,8 @@ import type {
   CommandPolicyStageResult,
 } from '@chimera/core';
 import * as TreeSitter from 'web-tree-sitter';
+import { bashGrammarPath } from './grammar';
 
-const require = createRequire(import.meta.url);
-const grammarPath = join(
-  dirname(require.resolve('@aslamplr/pi-safe-shell/package.json')),
-  'src/tree-sitter-bash.wasm',
-);
 let parserInitialization: Promise<TreeSitter.Parser> | undefined;
 
 interface SudoInvocation {
@@ -77,7 +71,7 @@ async function analyzeSudo(command: string): Promise<SudoAnalysis> {
 async function getParser(): Promise<TreeSitter.Parser> {
   parserInitialization ??= (async () => {
     await TreeSitter.Parser.init();
-    const language = await TreeSitter.Language.load(readFileSync(grammarPath));
+    const language = await TreeSitter.Language.load(readFileSync(bashGrammarPath()));
     const parser = new TreeSitter.Parser();
     parser.setLanguage(language);
     return parser;

@@ -11,10 +11,11 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | --- | --- |
 | `Enter` | Send. During a run: steer the agent. |
 | `Tab` | During a run: hold the message for the next turn. |
-| `\` then `Enter` | New line (also `Shift+Enter` or `Alt+Enter` where the terminal supports it). |
+| `Shift+Enter` | New line where the terminal reports it (in tmux: `set -s extended-keys on`); `Alt+Enter`, or `\` then `Enter`, everywhere. |
 | `Ctrl+G` | Edit the prompt in `$EDITOR`. |
 | `Ctrl+V` | Paste an image from the clipboard. |
 | `Ctrl+T` | Open the full transcript in a pager. |
+| `Ctrl+O` | Expand or collapse every tool output and thought. |
 | `Up` / `Down` | Prompt history. |
 | `Shift+Tab` | Cycle the mode. |
 | `/` | Commands; `Tab` completes. |
@@ -23,8 +24,10 @@ screen, the keys, the commands, the prompt, notifications and themes.
 | `Esc` | Interrupt the run. |
 | `Ctrl+C` | Interrupt; press it twice to exit. |
 | `Ctrl+Z` | Suspend. |
-| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen), or a permission request too tall for the screen. |
-| `Ctrl+B` | Show or hide the context panel (fullscreen). |
+| `PgUp` / `PgDn`, mouse wheel | Scroll the transcript (fullscreen), or a card too tall for the screen. |
+| `Ctrl+Home` / `Ctrl+End` | Jump to the top of the transcript, and back to the newest output (fullscreen). |
+| `Ctrl+F` | Search the transcript (fullscreen). |
+| Click | Expand or collapse one tool call or thought (fullscreen). |
 | Drag | Select text; it is copied when you release the button (fullscreen). |
 
 A `!command` runs in your shell with your rights. It does not go through the
@@ -61,10 +64,10 @@ and modes in [Modes](MODES.md).
 
 ## The screen
 
-The TUI has two layouts. **Fullscreen** is the default: it takes the
-terminal's alternate screen and keeps a context panel beside the transcript.
-**Inline** prints into the terminal's own scrollback and repaints only a few
-rows under it; use it on a slow link (for example SSH with high latency) or
+The TUI has two layouts that look the same. **Fullscreen** is the default:
+it takes the terminal's alternate screen and scrolls the transcript itself.
+**Inline** prints into the terminal's own scrollback and repaints only the
+rows that changed; use it on a slow link (for example SSH with high latency) or
 when you want the session to stay in your scrollback.
 
 ```
@@ -83,154 +86,200 @@ Chimera uses the inline layout whatever is set. `resume`, `continue` and
 
 ### Fullscreen layout
 
+The transcript fills the screen; the prompt box and the status line stay
+pinned to the bottom.
+
 ```
-  › add a --json flag to yg list and cover it with a test          ◆ chimera v0.1.0
-                                                                    model        manticore/gpt
-  ● read 1 file · 1 search                                          session           8AWWBRGC
-    src/yg/commands/list.ts (120 lines), "formatWorktree" · 3 …     cwd     ~/Projects/yggdrasil
-  ● edit src/yg/commands/list.ts (1 replacement)                    sandbox                 os
-    ╭──────────────────────────────────────────────────────────╮    loaded  60 skills · 9 cmds
-    │ 44 +   if (opts.json) return print(JSON.stringify(trees… │
-    │ 45     const rows = trees.map(formatWorktree)            │    CONTEXT · 76k / 200k   38%
-    ╰──────────────────────────────────────────────────────────╯    ▄▄▄▄▄▄▄▄▄▄▄▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
-  ● bash pnpm vitest run yg/list (exit 0) · 4.2s                    ■ system ■ skills ■ history
-    ✓ 14 passed
-                                                                    PLAN · 2/4
-  ◆ Added --json to yg list. Writing a snapshot test next.          ✓ locate list command
-                                                                    ✓ add --json option
-  ○ write src/yg/commands/list.test.ts                              ▸ snapshot test for JSON shape
-                                                                    ○ update README usage
+chimera  v0.4.0 · manticore/gpt-5 · ~/Projects/yggdrasil
+         60 skills · 9 commands
 
-                                                                    WORKTREE
-                                                                    yg/json-flag            ↑1
-  ⠹ write src/yg/commands/list.test.ts · 12s · step 6 · esc to …    M list.ts           +18 −3
-                                                                    A list.test.ts
+    you  add a --json flag to `yg list` and cover it with a test
+  think  The list command lives in src/yg/commands/list.ts. Other commands…
+   read  src/yg/commands/list.ts  120 lines
+   grep  "json" in src/yg  4 matches
 
-                                                                    PEERS
-                                                                    ● api          plan · idle
-                                                                    total                 3.8k
-    › message chimera                                               in      3.2k  out      640
-   BUILD   enter steer · tab queue · esc interrupt                  cache                  81%
+         `status` already prints JSON through `printJson`, so `list` can reuse it.
+   edit  src/yg/commands/list.ts  +2 −1
+           43   export function list(opts: ListOptions) {
+           44 - const trees = readWorktrees();
+           44 + const trees = readWorktrees(opts.root);
+ ✗ bash  pnpm vitest run yg/list  exit 1 · 4.2s
+         FAIL  test/list.test.ts > list > prints a table
+         AssertionError: snapshot mismatch
+         - Snapshot  -1
+         … 5 more · ctrl+o
+⠋ write  src/yg/commands/list.test.ts  writing…
+  tasks  2/4 ✓ ✓ ▸ snapshot test for the JSON shape ○
+╭─ build ─────────────────────────────── ⠋ 12s · esc interrupt · tab queue ─╮
+│ ›                                                                          │
+╰─ manticore/gpt-5 · 38%/200k ────────────── ~/Projects/yggdrasil · main ↑1 ─╯
+   8AWWBRGC · os sandbox
 ```
 
-- **Transcript pane.** It follows the newest output. `PgUp`, `PgDn` and the
-  mouse wheel scroll it; while you are scrolled away, new output does not
-  move what you read. `PgDn` to the end, or sending a message, follows the
-  newest output again. A long session mounts the newest entries only and
-  loads earlier ones when you scroll up from the top.
-- **Context panel.** Model, session, working directory, sandbox (`os` when host
-  commands run in the OS sandbox, a Docker mode, or `off`), and what was
-  loaded; context use as a bar split into system prompt, skills index and
-  history (the split is an estimate; the total is the provider's count); the
-  goal, when one is set (see [Goals](goals.md)); the
-  plan (the model's task list); the working tree (branch, commits ahead and
-  behind, changed files with lines added and removed); other live Chimera
-  instances on this machine with their mode and state; and the session's
-  tokens: the total, then `in` and `out` side by side, then the cached share
-  of the last prompt. `Ctrl+B` hides and
-  shows the panel. Under 100 columns the panel is dropped, and the hints row
-  shows the model and the context percentage instead.
-- **Prompt box and hints row.** The row under the prompt shows the mode as a
-  badge and the keys that matter in the current state.
-- **Mouse.** The wheel scrolls the transcript. Drag with the left button to
-  select text: the selection is copied to the clipboard when you release the
-  button, and the hints row says how much was copied. A selection stays in
-  the column it starts in, so a copy from the transcript never takes the
-  panel along, and code keeps its shape (later lines lose the indent the
-  first line starts at). The copy goes through the system clipboard tool
-  (`wl-copy`, `xclip`, `xsel`, `pbcopy`) and through the terminal's own
-  clipboard sequence (OSC 52), which is what reaches your machine over SSH.
-  In tmux, OSC 52 needs `set -g set-clipboard on`; the system tool needs
-  nothing. A selection covers what is on screen; for more, scroll and copy
-  again, or open the transcript with `Ctrl+T`. `Shift`+drag still gives you
-  the terminal's own selection (`Option` in iTerm2). Set `tui.mouse` to
-  `false` to leave the mouse to the terminal entirely; the wheel then does
-  not scroll.
-- **Exit.** The alternate screen takes the session with it, so Chimera prints
-  the session id and the `chimera --session <id>` command that resumes it.
-  `Ctrl+T` opens the full transcript in a pager at any time.
+- **Following.** The transcript follows the newest output. `PgUp`, `PgDn` and
+  the mouse wheel scroll it; while you are scrolled away, new output does not
+  move what you read. `Ctrl+Home` jumps to the top; `Ctrl+End`, or sending a
+  message, follows the newest output again.
+- **Where you are.** A thin scrollbar at the right edge shows your place in
+  the session. When there is more above, the top row says `▲ N earlier
+  lines`; when you have scrolled away from the newest output, the bottom row
+  says `▼ N newer lines · jump to latest · ctrl+end`.
+- **Mouse.** The wheel scrolls the transcript, or a card too tall for the
+  screen. A click on a tool call or a thought expands or collapses just that
+  entry. Drag with the left button to select text: it is copied when you
+  release the button, and the prompt box's top border says how much. A
+  selection stays inside the transcript; the indent it starts in is left
+  out, and code copied from a block leaves out the `┆` gutter, so it keeps
+  its shape. The copy goes through the system clipboard tool (`wl-copy`,
+  `xclip`, `xsel`, `pbcopy`) and through the terminal's clipboard sequence
+  (OSC 52), which is what reaches your machine over SSH. In tmux, OSC 52
+  needs `set -g set-clipboard on`; the system tool needs nothing.
+  `Shift`+drag still gives you the terminal's own selection in most
+  terminals. Set `tui.mouse` to `false` to leave the mouse to the terminal.
+- **Search.** `Ctrl+F` opens a search row above the prompt box. Matches are
+  highlighted in the transcript, including in collapsed output, which opens
+  when you get to a match inside it. `Enter` goes to the next match back
+  from the newest, `Shift+Enter` or `Ctrl+P` to the one after it, and `Esc`
+  closes the search.
+- **Handing over.** `Ctrl+G` (your editor), `Ctrl+T` (the pager) and `Ctrl+Z`
+  (suspend) give the terminal back to the program or the shell, and the TUI
+  redraws everything when it gets it back.
+- **Exit.** Chimera leaves the alternate screen and prints the whole
+  transcript in the inline form, so the session stays in your shell's and
+  tmux's scrollback, then the `chimera --session <id>` command that resumes
+  it. `Ctrl+T` opens the full transcript in a pager at any time.
 
 ### Inline layout
 
-```
-› add retry logic to the provider client
+The inline layout draws the same rows into the terminal's own scrollback:
+the transcript, then the task row, any card, the prompt box and the status
+line right under it. Your terminal (or tmux) scrolls it and selects text in
+it; Chimera never captures the mouse here.
 
-◆ I will add backoff to the stream call. Then I will add a test.
-
-● read 3 files · 1 search
-  src/agent.ts (2409 lines), src/events.ts (217 lines), retry (4 matches), …
-● edit packages/core/src/agent.ts (1 replacement)
-  ╭──────────────────────────────────────────────────────────────────────────╮
-  │ 1481 -           const stream = streamText({                             │
-  │ 1481 +           const stream = this.startStep({                         │
-  ╰──────────────────────────────────────────────────────────────────────────╯
-✗ bash pnpm --filter @chimera/core test (exit 1) · 8.2s
-
-─── 1m 12s · 6 steps · 7 tool calls · ↑ 114k ↓ 3.7k tokens · cache 78%
-
-tasks 2/4
-◼ Add a test for mid-stream errors
-◻ Update README
-⠹ running pnpm --filter @chimera/core test · 12s · step 3 · 3.1k tokens · esc to interrupt
-────────────────────────────────────────────────────────────────────────────────
-> _
-build · anthropic/claude-opus-4-7 · sandbox os    ▰▰▰▰▱▱▱▱▱▱ 42% · 84k/200k · cache 81%
-~/Projects/chimera · session 12345678 · tasks 2/4 · ◼ Add a test…      enter steer
-```
-
-- **Task panel.** During a run the task list shows above the prompt, from the
-  task in progress onward, at most six lines.
-- **Footer.** Row 1: mode, model and sandbox on the left; a context gauge with
-  percentage, used/window tokens and the cached share of the last prompt on
-  the right. Row 2: working directory, session id, task count and the task in
-  progress on the left; the keys that matter in the current state on the
-  right. On a narrow terminal each row drops its least important items first.
-- **Start banner.** Version, model, working directory, session, mode, sandbox,
-  and the number of skills and commands loaded.
+- **Redraws.** Only the rows that changed are written, inside synchronized
+  output, so streaming does not flicker. A change to a row that has already
+  scrolled off the screen (such as `Ctrl+O`) or a new terminal width clears
+  the screen and the scrollback and prints the transcript again, laid out
+  for the new width. In tmux this clears the pane's history; the transcript
+  printed again replaces it.
+- **Spinners.** The prompt box's top border shows the spinner; a running tool
+  row shows `○`, so a row that scrolled away is never redrawn on every tick.
+- **Exit.** The transcript stays in the scrollback without the prompt box,
+  followed by the `chimera --session <id>` command that resumes it.
 
 ### In both layouts
 
-- **Transcript lines.** A user message starts with `›` and assistant text
-  with `◆`. A tool call starts with a glyph for its state (`○` running, `●`
-  returned, `✗` failed or exited non-zero) and shows a one-line summary
-  instead of raw JSON args, with the duration when the call took a second or
-  more. Tool calls that follow each other sit together. When a Docker
-  sandbox is active the line also says `[host]` or `[sandbox]`. Consecutive successful
-  `read`, `glob`, `find`, `ls` and `grep` calls collapse into one line. An
-  edit, a patch or a written file is drawn in a border. Fenced code blocks
-  with a known language are syntax-highlighted.
-- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
-  tokens in and out, and the cached share.
+- **Label column.** Each entry is named in a right-aligned column: `you` for
+  your messages, `think` for the model's reasoning (one dim line; `Ctrl+O`
+  shows all of it), and the tool's name for a tool call. The assistant's text
+  has no label.
+- **Tool rows.** A call is one row, `label  argument  facts`: line counts,
+  matches, the exit code of a failed command, how long it took. A running
+  call has a spinner in its label, a failed one `✗` and its facts in the
+  error colour. Output is cut to three rows plus `… N more · ctrl+o`; an edit
+  shows `+N −M` and its numbered diff rows. Reads and searches that follow
+  each other stack without blank lines. When a Docker sandbox is active the
+  row also says `[host]` or `[sandbox]`.
+- **Notices.** Errors, goal results, background agents, compactions, mode
+  changes and the run summary are rows of their own (`✗ error`, `goal`,
+  `agent`, `compact`, `mode`, `done`, `note`), wrapped between words.
+- **Task row.** During a run the task list is one row above the prompt box:
+  `tasks  2/4 ✓ ✓ ▸ task in progress ○`.
+- **Prompt box.** Its top border shows the mode, and on the right the spinner,
+  elapsed time and the keys that matter during a run, or `? help` when idle.
+  Its bottom border holds the [status line](#status-line).
+- **Cards.** Permission requests, questions, the sudo password, pickers, the
+  slash and file menus and the key list (`?` at an empty prompt) are cards
+  above the prompt box. While a card waits for your answer, the prompt box
+  says so.
+- **Approvals.** A permission request card lists the command, why it needs
+  approval and what the reviewer or System One found, then the choices, one
+  per row. Press a choice's key, or `↑`/`↓` and `Enter`; `Esc` denies.
+  Feedback, patterns and prefixes are typed in a row inside the card. A
+  request too tall for the screen scrolls inside the card (`PgUp`, `PgDn`,
+  the wheel), and the choices stay in view. For an OS sandbox bypass, choose
+  **Allow once**, **Allow exact command…**, or **Allow command prefix…**,
+  then the session, project or global scope. See
+  [OS sandbox](sandbox.md#os-sandbox) for the limits.
+- **Reviewer and System One marks.** A tool row that the approval reviewer or
+  the System One check allowed ends with `approved by reviewer` or
+  `approved by System One`. See
+  [Host bash command policy](bash-command-policy.md#approval-reviewer).
 - **Full transcript.** `Ctrl+T` opens the whole session in a pager (`$PAGER`,
   else `less`): every tool call on its own line, with its full output.
-- **Activity line.** While a run is active, one line says what the agent is
-  doing (thinking, writing, running a tool, waiting for approval, compacting,
-  retrying a provider error), for how long, on which step, and how many
-  tokens it has produced.
-- **Help.** `?` at an empty prompt lists the key bindings.
-- **Reviewer mark.** A tool line that the approval reviewer allowed ends with
-  `approved by reviewer`. See
-  [Host bash command policy](bash-command-policy.md#approval-reviewer).
-- **System One mark.** A tool line that the System One check approved ends
-  with `approved by System One`. The approval prompt of a command that the
-  check rejected has a line that starts with `System One rejected`. See
-  [Host bash command policy](bash-command-policy.md#system-one-check).
-- **Notices.** Results of goal checks, background agents and compactions are
-  one line each, wrapped between words.
-- **Approvals.** A permission request is a list: `↑`/`↓` and `Enter`, a
-  digit, or the letter shown next to each choice. `Esc` denies.
-  A request too tall for the screen scrolls above the choices, which stay in
-  view: `PgUp` and `PgDn` move it, and so does the mouse wheel in the
-  fullscreen layout. A line under the request says which lines are showing.
-  For an OS sandbox bypass, choose **Allow once**, **Allow exact command…**, or
-  **Allow command prefix…**. Review the pattern and choose session, project, or
-  global scope. See [OS sandbox](sandbox.md#os-sandbox) for the limits.
 
 Each built-in tool ships with a `formatScrollback` hook in its definition
 that produces an args-only summary at call start and a result-aware summary
 once the tool returns. Plugin tools authored via `defineTool` from
 `@chimera/tools` opt in by passing `formatScrollback`; tools without one
 fall back to a `<name> <truncated-JSON>` rendering.
+
+## Status line
+
+The status line sits in the prompt box's bottom border, with any further
+rows dim under the box. By default it shows the model and the context used
+on the left, the working directory and the git branch on the right, and the
+session id and the sandbox in a row under the box:
+
+```
+╰─ anthropic/claude-sonnet · 38%/200k ──────── ~/Projects/app · main ↑2 ─╯
+   8AWWBRGC · os sandbox
+```
+
+The context figure turns the warning colour above 70% and the error colour
+above 90%.
+
+Set your own rows in `~/.chimera/config.json`. Each row has a `left` and a
+`right` list of built-in items; the first row goes in the border:
+
+```json
+{
+  "statusLine": {
+    "rows": [
+      { "left": ["model", "context"], "right": ["cwd", "branch"] },
+      { "left": ["session", "sandbox"] }
+    ]
+  }
+}
+```
+
+| Item | Shows |
+| --- | --- |
+| `model` | the model, and the vision model a turn with images is routed to |
+| `context` | context used, as a share of the window: `38%/200k` |
+| `tokens` | session tokens in and out: `↑76k ↓3.7k` |
+| `cost` | the session's cost, when the provider reports prices |
+| `cache` | the share of the last prompt served from the provider's cache |
+| `cwd` | the working directory |
+| `branch` | the git branch, with commits ahead `↑` and behind `↓` |
+| `session` | the session id |
+| `sandbox` | the sandbox commands run in |
+| `goal` | the session's goal |
+| `update` | the updater's notice |
+
+An item with nothing to say is left out. When a row does not fit, items
+drop from the end of its lists: the right list first, then whichever list
+has more.
+
+### A status line command
+
+To draw the status line with a script instead (ccstatusline and other
+Claude Code status line scripts work), set `command`:
+
+```json
+{ "statusLine": { "command": "npx ccstatusline" } }
+```
+
+The command runs with `sh -c` in the working directory, with `COLUMNS` set
+to the terminal width. On stdin it gets Claude Code's statusLine JSON where
+Chimera has the same fact (`session_id`, `cwd`, `model`, `workspace`,
+`version`, `output_style`, `cost`, `context_window`), and Chimera's own facts
+under `chimera` (`mode`, `sandbox`, `branch`, `goal`, `context_percent`,
+...). Its first output line goes in the border and the others under the box.
+
+It runs again on session events, 300 ms after the last one; a new event
+cancels a run still going, and a run is killed after 2 seconds. When a run
+fails or is killed, the last good output stays.
 
 ## Multi-line prompt composition
 
@@ -294,19 +343,18 @@ nothing. For anything else (a sound, a phone push), use a `Stop` hook; see
 
 ## Token usage
 
-- **Context use.** The context panel (the first footer row in the inline
-  layout) shows how full the model's context window is after the latest
-  step: a bar or gauge with a percentage, and the tokens used over the window
-  size (`84k / 200k`). The numbers are the provider's count, not an estimate.
+- **Context use.** The status line's `context` item shows how full the
+  model's context window is after the latest step, as a share of the window
+  (`38%/200k`). The numbers are the provider's count, not an estimate.
   `/context` has a breakdown by category.
-- **Session totals.** The bottom of the context panel shows the `total`
-  tokens of the session, then `in` and `out` side by side, then `cache`: the
-  share of the last prompt that the provider served from its cache. The
+- **Session totals.** The `tokens` item shows the session's tokens in and out
+  (`↑76k ↓3.7k`), and `cache` the share of the last prompt that the provider
+  served from its cache. Add them to a status line row to see them. The
   totals are saved with the session.
-- **Turn summary.** Each run ends with one line: duration, steps, tool calls,
-  tokens in and out, and the cached share.
-- **Colours.** The percentage is gray under 80%, amber from 80% to 95%, and
-  red from 95%.
+- **Turn summary.** Each run ends with a `done` row: duration, steps, tool
+  calls, tokens in and out, and the cached share.
+- **Colours.** The context figure turns the warning colour above 70% and the
+  error colour above 90%.
 - **The window size.** Chimera knows the window of common Claude and GPT
   models. For another model, set `contextWindow` under `models` in
   `~/.chimera/config.json`; see [Providers](../PROVIDERS.md). Without that
@@ -315,44 +363,61 @@ nothing. For anything else (a sound, a phone push), use a `Stop` hook; see
 
 ## Themes
 
-The TUI loads a user theme from `~/.chimera/theme.json`, alongside the rest of Chimera's user state (sessions, config, logs). Create the file to override any subset of the default colour tokens:
+Chimera draws in foreground colours only and never paints the background, so
+it sits on your terminal's own theme, light or dark. Two themes ship:
+
+- `default`: the terminal's 16-colour palette. It is what you get with no
+  `theme.json`.
+- `chimera`: tuned explicit colours, with faint tints behind added and
+  removed diff rows.
+
+A theme is a flat set of semantic tokens:
+
+| Token | Used for |
+| --- | --- |
+| `text` | body text |
+| `muted` | tool rows, labels, borders |
+| `dim` | hints, the status line, gutters |
+| `accent` | your messages, the mode, inline code |
+| `info` | notices and links |
+| `success`, `warning`, `error` | outcomes; context use above 70% and 90% |
+| `diffAdd`, `diffRemove` | added and removed diff rows |
+| `diffAddBg`, `diffRemoveBg` | optional tints behind diff rows; set both or neither |
+| `keyword`, `string`, `number`, `comment`, `function`, `type` | code blocks |
+
+Each value is an ANSI colour name (`black`, `red`, `green`, `yellow`, `blue`,
+`magenta`, `cyan`, `white`, and `brightBlack` to `brightWhite`), `default`
+for the terminal's own foreground, or `#rrggbb`. On a terminal without
+truecolor (no `COLORTERM=truecolor`), a hex colour is drawn as the nearest
+256-colour entry. `NO_COLOR` turns colour off; the hierarchy stays, with
+bold and dim.
+
+To override a few tokens, write them to `~/.chimera/theme.json`; the rest
+keep the default theme's colours:
 
 ```json
 {
-  "accent": {
-    "primary": "green",
-    "secondary": "cyanBright"
-  },
-  "status": {
-    "error": "redBright"
-  },
-  "text": {
-    "muted": "gray"
-  }
+  "accent": "brightGreen",
+  "error": "#ff5f5f"
 }
 ```
 
-Only specify the tokens you want to override; the rest inherit from the default theme. Available token groups:
+Keys starting with `_` are notes (`_comment`). A file in the grouped format
+of earlier versions (`{ "accent": { "primary": ... } }`), an unknown token or
+a value that is not a colour is refused: the TUI prints `theme: ...` on
+stderr at start and uses the default theme.
 
-- `base` — `foreground`, `background`
-- `accent` — `primary`, `secondary`, `tertiary`
-- `status` — `success`, `warning`, `error`, `info`, `successBg`, `errorBg` (diff rows)
-- `text` — `primary`, `secondary`, `muted`, `dim`
-- `ui` — `badge`, `accent`
-- `syntax` — `keyword`, `string`, `comment`, `number`, `function`, `type` (fenced code blocks)
-- `surface` — `panel`, `raised`, `sunken`, `border` (fills and lines of the fullscreen layout)
-
-The two layouts start from different defaults. The fullscreen layout paints its own background, so its default theme is a set of explicit colours (background `#1f1d27`, accent `#b79cf7`) with fills for the panel and the prompt box. The inline layout sits on your terminal's background, so its default theme uses ANSI colour names and no fills. Your `theme.json` merges over whichever applies. A surface with no colour is drawn without a fill; set `base.background` and the `surface` colours together when you re-skin the fullscreen layout. `NO_COLOR` gives both layouts a plain theme with no fills.
-
-JSON has no native comments, so the loader strips unknown top-level keys — you can leave a `_comment` field in the file as a note. If the JSON is malformed, the TUI prints `theme: ...` on stderr at startup and falls back to the default theme.
-
-See [`theme.json.example`](theme.json.example) for an annotated partial-override sample, or [`theme-dracula.json`](theme-dracula.json) for a full re-skin.
+See [`theme.json.example`](theme.json.example) for a partial override, or
+[`theme-dracula.json`](theme-dracula.json) for a full theme.
 
 ### Switching between themes
 
-The TUI ships a few bundled presets: `default`, `tokyo-night-moon`, and `cyberpunk`. From inside the TUI:
+- `/theme` lists the themes; the active one is marked with a leading `*`.
+- `/theme <name>` writes that theme into `~/.chimera/theme.json` (with a
+  `_themeName` marker so `/theme` can show which is active) and applies it
+  without a restart.
 
-- `/theme` — list available themes; the active one is marked with a leading `*`.
-- `/theme <name>` — write the chosen preset into `~/.chimera/theme.json` (with a `_themeName` marker so `/theme` can show which is active) and live-reload without restarting.
-
-Drop additional partial themes into `~/.chimera/themes/<name>.json` to extend the list; user files shadow bundled presets of the same name. Hand-edits to `~/.chimera/theme.json` always take effect on next start, but running `/theme <name>` overwrites them.
+Drop more themes into `~/.chimera/themes/<name>.json` to extend the list; a
+user file shadows a shipped theme of the same name. Hand-edits to
+`~/.chimera/theme.json` take effect on the next start, but `/theme <name>`
+overwrites them.

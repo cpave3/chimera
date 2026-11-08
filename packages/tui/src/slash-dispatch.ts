@@ -1,14 +1,13 @@
 import { resolve as resolvePath } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
 import type { Checkpoint, SessionId, SessionInfo } from '@chimera/core';
-import type { Dispatch, SetStateAction } from 'react';
-import type { AppProps } from './App';
-import type { OverlayDiffEntry } from './OverlayPicker';
-import { buildSessionTreeRows, formatRelativeTime } from './SessionPicker';
+import type { TuiOptions as AppProps } from './app/options';
+import type { OverlayChange as OverlayDiffEntry } from './cards/simple-cards';
 import type { Scrollback } from './scrollback';
+import { buildSessionTreeRows, formatRelativeTime } from './session-tree';
 import { BUILTIN_COMMANDS, findClosestCommand } from './slash-commands';
+import type { Setter } from './state';
 import { applyThemeByName, listThemes } from './theme/loader';
-import type { useThemeContext } from './theme/ThemeProvider';
 
 export interface ActiveSession {
   client: ChimeraClient;
@@ -20,26 +19,26 @@ export interface ActiveSession {
 export interface SlashContext {
   props: AppProps;
   scrollback: Scrollback;
-  themeCtx: ReturnType<typeof useThemeContext>;
+  themeCtx: { reload(): void };
   activeSession: ActiveSession;
-  setActiveSession: Dispatch<SetStateAction<ActiveSession>>;
+  setActiveSession: Setter<ActiveSession>;
   running: boolean;
   /** A run, a compaction or a `!` command is in flight. */
   busy: boolean;
-  setRunning: Dispatch<SetStateAction<boolean>>;
-  setStreaming: Dispatch<SetStateAction<boolean>>;
-  setCompacting: Dispatch<SetStateAction<boolean>>;
-  setQueue: Dispatch<SetStateAction<string[]>>;
+  setRunning: Setter<boolean>;
+  setStreaming: Setter<boolean>;
+  setCompacting: Setter<boolean>;
+  setQueue: Setter<string[]>;
   activeModeName: string;
   pendingModeName: string | null;
-  setPendingModeName: Dispatch<SetStateAction<string | null>>;
+  setPendingModeName: Setter<string | null>;
   currentModelRef: string;
   /** The session's goal, or null when none is set. */
   goal: string | null;
   overlayMode: boolean;
-  setOverlayPicker: Dispatch<SetStateAction<OverlayDiffEntry[] | null>>;
-  setSessionPicker: Dispatch<SetStateAction<SessionInfo[] | null>>;
-  setRewindPicker: Dispatch<SetStateAction<Checkpoint[] | null>>;
+  setOverlayPicker: Setter<OverlayDiffEntry[] | null>;
+  setSessionPicker: Setter<SessionInfo[] | null>;
+  setRewindPicker: Setter<Checkpoint[] | null>;
   /** Throw the transcript away, on screen and in the store. */
   resetTranscript: () => void;
   /** Open the project's memory index in the user's editor. */

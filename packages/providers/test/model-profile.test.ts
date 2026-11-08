@@ -6,7 +6,14 @@ describe('resolveModelProfile', () => {
     resolveModelProfile({ modelId, contextWindow });
 
   it('gives GPT and Codex models the patch edit format and the lean prompt', () => {
-    for (const modelId of ['gpt-5-codex', 'gpt-4.1', 'o3-mini', 'openai/gpt-5', 'codex-mini', 'gpt']) {
+    for (const modelId of [
+      'gpt-5-codex',
+      'gpt-4.1',
+      'o3-mini',
+      'openai/gpt-5',
+      'codex-mini',
+      'gpt',
+    ]) {
       expect(profileOf(modelId)).toMatchObject({ editFormat: 'patch', promptStyle: 'lean' });
     }
   });

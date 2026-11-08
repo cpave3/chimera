@@ -462,4 +462,24 @@ describe('tui settings', () => {
     const home = await homeWith({ tui: { layout: 'wide' } });
     expect(() => loadConfig(home)).toThrow(/config\.json.*tui\.layout/);
   });
+
+  it('reads status line rows and a status line command', async () => {
+    const statusLine = {
+      rows: [{ left: ['model', 'cost'], right: ['branch'] }],
+      command: 'ccstatusline',
+    };
+    const home = await homeWith({ statusLine });
+    expect(loadConfig(home).statusLine).toEqual(statusLine);
+  });
+
+  it('reads the updates mode, and rejects one that does not exist', async () => {
+    expect(loadConfig(await homeWith({ updates: { mode: 'ask' } })).updates?.mode).toBe('ask');
+    const home = await homeWith({ updates: { mode: 'sometimes' } });
+    expect(() => loadConfig(home)).toThrow(/config\.json.*updates\.mode/);
+  });
+
+  it('rejects a status line item that does not exist, naming it', async () => {
+    const home = await homeWith({ statusLine: { rows: [{ left: ['weather'] }] } });
+    expect(() => loadConfig(home)).toThrow(/config\.json.*statusLine\.rows\.0\.left\.0/);
+  });
 });

@@ -149,11 +149,22 @@ chimera --sandbox --sandbox-mode overlay --sandbox-strict
 In overlay mode, the TUI exposes `/overlay` (list pending changes), `/apply`
 (interactive picker → rsync), and `/discard`.
 
-The default image is `chimera-sandbox:dev`, built locally from
-`packages/sandbox/docker/`. Pre-build it with `pnpm sandbox:build` (or
-`chimera sandbox build`); otherwise the first `--sandbox` invocation
-auto-builds it once. Pass `--sandbox-image <ref>` to use a different image
-— there's no auto-build for non-default tags, so a typo errors immediately.
+The default image depends on how Chimera was built:
+
+- **A release** uses `ghcr.io/cpave3/chimera-sandbox:<its version>`, which
+  the release workflow publishes with the binaries. The first `--sandbox`
+  run pulls it. Without the registry (offline, say) it builds the image
+  locally under that name instead, from the Dockerfile and entrypoint that
+  ship inside the binary.
+- **A build from source** (`dev`) uses `chimera-sandbox:dev`, built locally
+  from `packages/sandbox/docker/`. Pre-build it with `pnpm sandbox:build`
+  (or `chimera sandbox build`); otherwise the first `--sandbox` run builds
+  it once.
+
+`chimera sandbox build` writes the embedded build context to a temporary
+directory and builds `chimera-sandbox:dev` from it, so it works from a
+release binary too. Pass `--sandbox-image <ref>` to use a different image:
+it is pulled if it is missing, but never built, so a typo errors at once.
 
 Overlay/ephemeral modes need `CAP_SYS_ADMIN` and `--security-opt
 apparmor=unconfined` on `docker run`. See [`SECURITY.md`](../SECURITY.md).

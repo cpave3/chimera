@@ -439,12 +439,13 @@ describe('DockerExecutor host user mapping', () => {
 });
 
 describe('DockerExecutor.ensureImage', () => {
-  it('errors when the image is missing and dockerfileDir is not set', async () => {
+  it('errors when the image is missing, cannot be pulled, and no build context is given', async () => {
     const runner = new FakeRunner();
     runner.on((a) => a[0] === 'image' && a[1] === 'inspect', {
       exitCode: 1,
       stderr: 'No such image',
     });
+    runner.on((a) => a[0] === 'pull', { exitCode: 1, stderr: 'manifest unknown' });
     const exec = new DockerExecutor({
       runner,
       image: 'someone-else/chimera-sandbox:weird',
@@ -452,10 +453,60 @@ describe('DockerExecutor.ensureImage', () => {
       sessionId: SESSION,
       hostCwd: cwd,
     });
-    await expect(exec.start()).rejects.toThrow(/not present locally/);
+    await expect(exec.start()).rejects.toThrow(
+      /not present locally and 'docker pull' failed: manifest unknown/,
+    );
   });
 
-  it('auto-builds the bundled image when dockerfileDir is set', async () => {
+  it('pulls a published image on first use, and builds nothing', async () => {
+    const runner = new FakeRunner();
+    runner.on((a) => a[0] === 'image' && a[1] === 'inspect', {
+      exitCode: 1,
+      stderr: 'No such image',
+    });
+    runner.on((a) => a[0] === 'pull', { exitCode: 0 });
+    const exec = new DockerExecutor({
+      runner,
+      image: 'ghcr.io/cpave3/chimera-sandbox:v1.2.3',
+      mode: 'bind',
+      sessionId: SESSION,
+      hostCwd: cwd,
+      buildContext: () => '/fake/docker',
+    });
+    await exec.start();
+    expect(runner.calls.find((c) => c.args[0] === 'pull')!.args).toEqual([
+      'pull',
+      'ghcr.io/cpave3/chimera-sandbox:v1.2.3',
+    ]);
+    expect(runner.calls.find((c) => c.args[0] === 'build')).toBeUndefined();
+  });
+
+  it('builds the default image from the build context when it cannot be pulled', async () => {
+    const runner = new FakeRunner();
+    runner.on((a) => a[0] === 'image' && a[1] === 'inspect', {
+      exitCode: 1,
+      stderr: 'No such image',
+    });
+    runner.on((a) => a[0] === 'pull', { exitCode: 1, stderr: 'offline' });
+    runner.on((a) => a[0] === 'build', { exitCode: 0 });
+    const exec = new DockerExecutor({
+      runner,
+      image: 'ghcr.io/cpave3/chimera-sandbox:v1.2.3',
+      mode: 'bind',
+      sessionId: SESSION,
+      hostCwd: cwd,
+      buildContext: () => '/fake/docker',
+    });
+    await exec.start();
+    expect(runner.calls.find((c) => c.args[0] === 'build')!.args).toEqual([
+      'build',
+      '-t',
+      'ghcr.io/cpave3/chimera-sandbox:v1.2.3',
+      '/fake/docker',
+    ]);
+  });
+
+  it('auto-builds the bundled image from the build context', async () => {
     const runner = new FakeRunner();
     let inspectCalls = 0;
     const origRun = runner.run.bind(runner);
@@ -492,7 +543,7 @@ describe('DockerExecutor.ensureImage', () => {
       mode: 'bind',
       sessionId: SESSION,
       hostCwd: cwd,
-      dockerfileDir: '/fake/docker',
+      buildContext: () => '/fake/docker',
       warn: (m) => warnings.push(m),
     });
     await exec.start();
@@ -512,7 +563,7 @@ describe('DockerExecutor.ensureImage', () => {
       mode: 'bind',
       sessionId: SESSION,
       hostCwd: cwd,
-      dockerfileDir: '/fake/docker',
+      buildContext: () => '/fake/docker',
     });
     await exec.start();
     expect(runner.calls.find((c) => c.args[0] === 'build')).toBeUndefined();
@@ -536,7 +587,7 @@ describe('DockerExecutor.ensureImage', () => {
       mode: 'bind',
       sessionId: SESSION,
       hostCwd: cwd,
-      dockerfileDir: '/fake/docker',
+      buildContext: () => '/fake/docker',
     });
     await expect(exec.start()).rejects.toThrow(/'docker build .* failed/);
   });

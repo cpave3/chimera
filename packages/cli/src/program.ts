@@ -28,8 +28,8 @@ import {
   runSessionsRm,
 } from './commands/sessions';
 import { runSkillsList } from './commands/skills';
-
-export const CHIMERA_CLI_VERSION = '0.1.0';
+import { runUpdate } from './commands/update';
+import { VERSION, versionReport } from './version';
 
 function applySubagentOptions(cmd: Command): Command {
   return cmd
@@ -99,7 +99,23 @@ function applyPathOptions(cmd: Command): Command {
 
 export function buildProgram(): Command {
   const program = new Command('chimera');
-  program.version(CHIMERA_CLI_VERSION);
+  program.version(VERSION);
+  program
+    .command('update')
+    .description('Install the newest release of chimera over this one (a release build only)')
+    .option('--check', 'only report whether a newer release exists')
+    .option('--json', 'print {"current", "latest", "available", "url"} (and "updated") as JSON')
+    .option('--version <tag>', 'install this release, e.g. to go back after a bad one')
+    .action(async (options: { check?: boolean; json?: boolean; version?: string }) => {
+      await runUpdate(options);
+    });
+  program
+    .command('version')
+    .description('Print the version of this build; --json for {version, release}. Reads no config.')
+    .option('--json', 'print {"version", "release"} as JSON')
+    .action((options: { json?: boolean }) => {
+      process.stdout.write(options.json ? `${JSON.stringify(versionReport())}\n` : `${VERSION}\n`);
+    });
   // Required so `--sandbox-mode <value>` registered on subcommands doesn't get
   // shadowed by the same option on the program (default action). See
   // https://github.com/tj/commander.js#parsing-and-positional-options.

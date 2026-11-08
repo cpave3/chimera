@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
+import { basename } from 'node:path';
 import * as TreeSitter from 'web-tree-sitter';
+import { bashGrammarPath } from './grammar';
 
-const require = createRequire(import.meta.url);
 let parserInitialization: Promise<TreeSitter.Parser> | undefined;
 const executionWrappers = new Set([
   'bash',
@@ -66,11 +65,7 @@ export async function matchesCommandPrefix(command: string, prefix: string): Pro
 async function getParser(): Promise<TreeSitter.Parser> {
   parserInitialization ??= (async () => {
     await TreeSitter.Parser.init();
-    const grammarPath = join(
-      dirname(require.resolve('@aslamplr/pi-safe-shell/package.json')),
-      'src/tree-sitter-bash.wasm',
-    );
-    const language = await TreeSitter.Language.load(readFileSync(grammarPath));
+    const language = await TreeSitter.Language.load(readFileSync(bashGrammarPath()));
     const parser = new TreeSitter.Parser();
     parser.setLanguage(language);
     return parser;

@@ -98,29 +98,29 @@ describe('chimera run --goal', () => {
     expect(exitCode).toBe(0);
     expect(asked).toHaveLength(2);
     expect(asked[0]).toContain('all tests pass');
-    expect(stderr).toContain('[goal] not met (1 of 2): the tests were not run');
-    expect(stderr).toContain('[goal] met: the test run passed');
+    expect(stderr).toContain('   goal  goal not met (1 of 2): the tests were not run');
+    expect(stderr).toContain('   goal  goal met: the test run passed');
   });
 
   it('exits 2 when the run ends at the continuation limit', { timeout: 20000 }, async () => {
     const { exitCode, stderr } = await run([notMet]);
 
     expect(exitCode).toBe(2);
-    expect(stderr).toMatch(/\[goal\] limit of 2 continuations reached/);
+    expect(stderr).toMatch(/ {3}goal {2}goal: limit of 2 continuations reached/);
   });
 
   it('exits 3 when the goal is not possible', { timeout: 20000 }, async () => {
     const { exitCode, stderr } = await run([impossible]);
 
     expect(exitCode).toBe(3);
-    expect(stderr).toContain('[goal] not possible: there is no test command');
+    expect(stderr).toContain('✗ error  goal not possible: there is no test command');
   });
 
   it('exits 1 when the goal could not be checked', { timeout: 20000 }, async () => {
     const { exitCode, stderr } = await run([new Error('503 overloaded')]);
 
     expect(exitCode).toBe(1);
-    expect(stderr).toMatch(/\[goal\] not checked: the checker failed: 503 overloaded/);
+    expect(stderr).toMatch(/✗ error {2}goal not checked: the checker failed: 503 overloaded/);
   });
 
   it('asks no checker and exits as before without --goal', { timeout: 20000 }, async () => {

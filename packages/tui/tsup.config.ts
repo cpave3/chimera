@@ -6,9 +6,5 @@ export default defineConfig({
   entry: ['src/index.ts'],
   format: ['esm'],
   tsconfig: './tsconfig.json',
-  dts: {
-    compilerOptions: {
-      jsx: 'react-jsx',
-    },
-  },
+  dts: true,
 });

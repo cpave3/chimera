@@ -7,7 +7,7 @@ import type { AgentFactory } from '@chimera/server';
 import { buildTools, LocalExecutor } from '@chimera/tools';
 import type { LanguageModel } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runOneShot } from '../src/commands/run';
 
 function textOnlyModel(text: string): LanguageModel {
@@ -288,5 +288,108 @@ describe('chimera run E2E (stub provider)', () => {
       modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
     });
     expect(res.exitCode).toBe(0);
+  });
+
+  describe('what chimera run prints', () => {
+    function bashFactory(): AgentFactory {
+      return {
+        build: async (init) => {
+          const executor = new LocalExecutor({ cwd: init.cwd });
+          const built = buildTools({
+            sandboxExecutor: executor,
+            hostExecutor: executor,
+            sandboxMode: 'off',
+          });
+          const agent = new Agent({
+            cwd: init.cwd,
+            model: init.model,
+            languageModel: bashThenStopModel(
+              'printf "one\\ntwo\\nthree\\nfour\\nfive\\n"',
+              'All done.',
+            ),
+            tools: built.tools,
+            sandboxMode: init.sandboxMode,
+            home,
+            contextWindow: 200_000,
+          });
+          agent.setToolFormatters(built.formatters);
+          return { agent };
+        },
+      };
+    }
+
+    async function captured(json: boolean) {
+      const stderr: string[] = [];
+      const stdout: string[] = [];
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr.push(String(chunk));
+        return true;
+      });
+      const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdout.push(String(chunk));
+        return true;
+      });
+      try {
+        const result = await runOneShot({
+          prompt: 'print five lines',
+          cwd: workspace,
+          home,
+          json,
+          factoryOverride: bashFactory(),
+          modelOverride: { providerId: 'mock', modelId: 'm', maxSteps: 5 },
+        });
+        return { exitCode: result.exitCode, stderr: stderr.join(''), stdout: stdout.join('') };
+      } finally {
+        errSpy.mockRestore();
+        outSpy.mockRestore();
+      }
+    }
+
+    it('prints tool rows on piped stderr in the Ledger layout, without escape codes', {
+      timeout: 20000,
+    }, async () => {
+      const { exitCode, stderr, stdout } = await captured(false);
+      expect(exitCode).toBe(0);
+      expect(stderr).not.toContain('\x1b');
+      const rows = stderr.split('\n');
+      const header = rows.findIndex((row) => row.startsWith('   bash  printf'));
+      expect(header).toBeGreaterThanOrEqual(0);
+      expect(rows[header]).toMatch(/^ {3}bash {2}printf .* {2}\d+\.\ds$/);
+      expect(rows.slice(header + 1, header + 5)).toEqual([
+        '         one',
+        '         two',
+        '         three',
+        '         … 2 more · ctrl+o',
+      ]);
+      expect(stdout).toBe('All done.\n');
+    });
+
+    it('keeps --json output as one event per line, with no rows on stderr', {
+      timeout: 20000,
+    }, async () => {
+      const { exitCode, stderr, stdout } = await captured(true);
+      expect(exitCode).toBe(0);
+      expect(stderr).not.toContain('bash  printf');
+      const events = stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { type: string });
+      const types = events.map((event) => event.type);
+      expect(types).toContain('tool_call_start');
+      expect(types).toContain('tool_call_result');
+      expect(types.at(-1)).toBe('run_finished');
+      const start = events.find((event) => event.type === 'tool_call_start') as Record<
+        string,
+        unknown
+      >;
+      expect(Object.keys(start).sort()).toEqual([
+        'args',
+        'callId',
+        'display',
+        'name',
+        'target',
+        'type',
+      ]);
+    });
   });
 });

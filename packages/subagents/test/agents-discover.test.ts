@@ -155,6 +155,8 @@ describe('built-in agents', () => {
     const explore = agents.find((agent) => agent.name === 'explore');
 
     expect(explore?.source).toBe('builtin');
+    // From the code: a single binary has no agents directory on disk.
+    expect(explore?.path).not.toContain(join('packages', 'subagents'));
     expect(parseToolsCsv(explore?.frontmatter.tools)).toEqual([
       'read',
       'glob',

@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
-import { LOCAL_DEV_IMAGE, sandboxDockerDir } from '@chimera/sandbox';
+import { LOCAL_DEV_IMAGE, writeSandboxBuildContext } from '@chimera/sandbox';
 
 export interface SandboxBuildResult {
   exitCode: number;
 }
 
 export async function runSandboxBuild(): Promise<SandboxBuildResult> {
-  const dir = sandboxDockerDir();
+  const dir = writeSandboxBuildContext();
   process.stderr.write(`building ${LOCAL_DEV_IMAGE} from ${dir}\n`);
   const code = await new Promise<number>((resolve) => {
     const child = spawn('docker', ['build', '-t', LOCAL_DEV_IMAGE, dir], {

@@ -83,6 +83,13 @@ skip otherwise. They live in `packages/cli/test/e2e-sandbox.test.ts` and
 `CHIMERA_TEST_SANDBOX_IMAGE` to override the default `chimera-sandbox:dev`)
 to run them.
 
+tmux E2E tests are gated on `CHIMERA_TEST_TMUX=1` (and skip without tmux
+on the PATH) and live in `packages/cli/test/e2e-tmux.test.ts`. They run the
+**built** CLI (`pnpm -r build` first) against
+`packages/cli/test/fixtures/fake-model-server.mjs` in a private tmux server
+(`tmux -L chimera-test-<pid> -f /dev/null`), never the user's server or
+config. Any new tmux test must do the same.
+
 Subagent E2E tests are gated on `CHIMERA_TEST_E2E=1` and live in
 `packages/subagents/test/e2e-spawn.test.ts`. They spawn real `chimera serve`
 processes; no provider credentials needed.
@@ -107,15 +114,52 @@ it unless the user asks. See `docs/evals.md`.
 - The planned small-model work, with the findings of the first pass, is in
   `docs/scratch/small-model-tuning.md`.
 
+## Release builds
+
+A release is a `bun build --compile` single file per platform. Bun is
+pinned in `.bun-version`. To build and check one locally:
+
+```
+pnpm -r build
+scripts/build-release.sh v0.0.0-local           # dist/release/chimera-* + SHA256SUMS
+node scripts/smoke-release.mjs dist/release/chimera-linux-amd64 v0.0.0-local
+```
+
+- `CHIMERA_RELEASE_TARGETS=linux-amd64` builds one target only. The script
+  cross-builds every target from one machine (Bun downloads each runtime),
+  and re-signs the darwin binary when `rcodesign` is on the PATH.
+- The build stamps `__CHIMERA_VERSION__`, sets `NODE_ENV=production`,
+  turns off `.env` and `bunfig.toml` autoload, and embeds the two
+  tree-sitter `.wasm` files beside the bundle, where the permissions module
+  and web-tree-sitter look for them.
+- The smoke test runs the binary with a scratch HOME against
+  `packages/cli/test/fixtures/fake-model-server.mjs`: version, help, the
+  built-in modes, skills and agents, a `spawn_agent` child, a bash command
+  through the tree-sitter policy, and a project `.env` that must not reach
+  the agent. It exits non-zero naming each failed check.
+- A binary is about 110 MB. If `/tmp` is a small tmpfs, set `TMPDIR` to
+  a directory on a larger disk for the build.
+- **Cutting a release:** `gh workflow run release -f bump=patch` (or
+  `minor`, `major`), on `main` only. `.github/workflows/release.yml` takes
+  the next version from the newest stable `vX.Y.Z` tag
+  (`scripts/next-version.sh`; the first release is `v0.0.1` or `v0.1.0`),
+  runs `pnpm -r build` and `pnpm -r test`, builds the binaries, installs a
+  pinned `rcodesign` for the darwin one, smoke-tests linux-amd64, attests
+  build provenance, pushes the sandbox image to
+  `ghcr.io/cpave3/chimera-sandbox` as `:vX.Y.Z` and `:latest`, and runs
+  `gh release create` with generated notes. Nothing is committed back to
+  `main`: the tag is the version. `-f dry_run=true` builds and checks on
+  any branch and publishes nothing. Asset names carry no version, so
+  `releases/latest/download/chimera-linux-amd64` is always the newest.
+- Code that only a single file can get wrong (paths beside a module,
+  `process.argv[1]`, files read from a package directory) needs a check in
+  the smoke test: the unit suites run from source and cannot see it.
+
 ## `pnpm typecheck` has known noise
 
-`tsc -b` is run from the root for typechecking, but:
-
-1. It emits pre-existing JSX errors in `packages/tui/src/*.tsx` because the
-   root tsconfig doesn't set `jsx`. Harmless — `tsup` builds fine with its own
-   per-package tsconfig.
-2. It can leak compiled artifacts (`*.js`, `*.d.ts`, `*.cjs`) **into `src/`
-   directories**. Clean up after yourself:
+`tsc -b` is run from the root for typechecking, but it can leak compiled
+artifacts (`*.js`, `*.d.ts`, `*.cjs`) **into `src/` directories**. Clean up
+after yourself:
 
    ```
    find packages -path '*/node_modules' -prune -o \
@@ -127,26 +171,42 @@ it unless the user asks. See `docs/evals.md`.
    rm -f tsconfig.tsbuildinfo
    ```
 
+## TUI renderer
+
+The TUI runs on Chimera's own line renderer; there is no React or Ink.
+
+- `src/app/controller.ts` holds all TUI state in plain fields and handles
+  every input event. `src/app/fullscreen.ts` lays the transcript viewport
+  over the chrome on the alternate screen; `src/app/inline.ts` writes the
+  transcript and the chrome into the terminal's scrollback. `src/mount.ts`
+  wires either to the terminal.
+- Line components (`src/ledger/*`, `src/cards/*`) render state to string
+  lines for a width. Measure, clip and pad with `src/terminal/width.ts`
+  only, never `.length`. A component keeps no state of its own except a
+  card, whose state is plain fields read on every key.
+- `src/terminal/keys.ts` parses each read into one event per key, in order;
+  `src/terminal/host.ts` owns raw mode and the key, paste and mouse modes,
+  and restores them on exit, suspend and hand-off.
+- The screen writers (`src/terminal/inline-screen.ts`,
+  `src/terminal/alt-screen.ts`) rewrite only changed rows, inside
+  synchronized output.
+
 ## TUI testing conventions
 
-Uses `ink-testing-library` + `vitest`. Two things catch people:
-
-- **Per-char sleeps when feeding stdin.** React state updates for each
-  keystroke race with follow-up keys (e.g. Enter after typing a command).
-  Use the `type()` helper pattern already in
-  `packages/tui/test/slash-dispatch.test.tsx`:
-
-  ```ts
-  for (const ch of text) {
-    stdin.write(ch);
-    await new Promise((r) => setTimeout(r, 1));
-  }
-  await new Promise((r) => setTimeout(r, 20));
-  ```
-
-- **Raw escape sequences for special keys.** `\x03` = Ctrl+C, `\x1b` = Esc,
-  `\x1b[A/B/C/D` = arrows, `\x1b[5~`/`\x1b[6~` = PageUp/PageDown,
-  `\x1b[<64;x;yM` = wheel-up (SGR mouse). Tab = `\t`, Enter = `\r`.
+- Test through `mountTui` with `test/harness.ts`: a fake client, scripted
+  bytes on a `VirtualInput`, and a `VirtualTerminal` as stdout.
+  `term.screen()` is what the user sees; `term.history()` adds the
+  scrollback; `term.takeOutput()` is what was written since the last look.
+- Send a burst of keys as one read: `keys('/goal x\r')`. No per-character
+  sleeps are needed; keys act in order. A lone Esc waits for the escape
+  timeout, so give it ~60 ms: `keys('\x1b', 120)`.
+- Raw sequences: `\x03` Ctrl+C, `\x1b[A`–`D` arrows, `\x1b[5~`/`\x1b[6~`
+  PgUp/PgDn, `\x1b[13;2u` Shift+Enter, `\x1b[Z` Shift+Tab, `\x1b[<64;x;yM`
+  wheel up (SGR mouse), `\x1b[200~…\x1b[201~` a paste. Tab `\t`, Enter `\r`.
+- Line components have `render(width)` tests of their own
+  (`test/ledger-*.test.ts`, `test/cards.test.ts`); check display width with
+  `displayWidth`, not `.length`.
+- Do not assert a spinner frame: it moves every 80 ms.
 
 ## Agent construction in tests
 
@@ -160,26 +220,6 @@ so the TUI can flag the window value as approximate.
 warnings in module-level state. Tests asserting on warning counts must call
 `__resetContextWindowWarnings()` (imported from `../src/context-window`,
 not the package barrel) at the start of each case.
-
-## Ink (v7) specifics
-
-- **`<Static>` is positional and append-only.** It renders
-  `items.slice(prevLength)` and never re-renders or backfills. The TUI
-  therefore commits scrollback entries through a monotonic cursor owned by
-  the `Scrollback` store (`splitSnapshot()`): an entry commits only when it
-  is finalized AND everything before it is committed. Never classify
-  committed/in-flight per entry in the React layer — out-of-order tool
-  results or mid-stream info lines will insert before `<Static>`'s cursor,
-  printing duplicates and dropping entries. Tests:
-  `packages/tui/test/scrollback-commit.test.ts`.
-
-- `render()` options we rely on: `exitOnCtrlC: false` (so our handler
-  interrupts instead of exiting) and `stdin` (custom stream — see
-  `packages/tui/src/mouse.ts`).
-- A custom stdin stream must implement `isTTY`, `setRawMode`, `setEncoding`,
-  `pause`, `resume`, **and `ref`/`unref`** — Ink calls ref/unref for event
-  loop lifetime management. `PassThrough` doesn't provide those; delegate to
-  the upstream source.
 
 ## Planning: wayfinder and Burnlite
 

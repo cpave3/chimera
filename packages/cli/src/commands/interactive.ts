@@ -20,6 +20,7 @@ import {
   type OverlayHandlers,
 } from '@chimera/tui';
 import { loadReloadingAgentsFromConfig } from '../agents-loader';
+import { startBackgroundUpdates, updateStatus } from '../background-updates';
 import { loadReloadingCommandsFromConfig } from '../commands-loader';
 import {
   checkCompactionInvariant,
@@ -40,11 +41,11 @@ import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
-import { listPeers } from '../peers';
-import { CHIMERA_CLI_VERSION } from '../program';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
+import { Updater } from '../updater';
+import { VERSION } from '../version';
 
 export interface InteractiveOptions {
   cwd: string;
@@ -103,7 +104,7 @@ export function formatExitSummary(sessionId: string): string {
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const sandboxOpts = opts.sandboxFlags
-    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: CHIMERA_CLI_VERSION })
+    ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
@@ -225,7 +226,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     instance: {
       pid: process.pid,
       cwd: opts.cwd,
-      version: '0.1.0',
+      version: VERSION,
       sandboxMode,
     },
     loadCommands: () => commands.list(),
@@ -271,7 +272,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       cwd: opts.cwd,
       sessionId,
       startedAt: Date.now(),
-      version: '0.1.0',
+      version: VERSION,
       url: server.url,
     },
     opts.home,
@@ -300,7 +301,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     layout: opts.inline ? 'inline' : config.tui?.layout,
     mouse: config.tui?.mouse,
     notifications: config.tui?.notifications,
-    listPeers: () => listPeers({ home: opts.home }),
+    statusLine: config.statusLine,
+    version: VERSION,
     client,
     sessionId,
     modelRef: ref,
@@ -328,13 +330,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       return prompt;
     },
   });
+  const updater = new Updater();
+  const stopUpdates = startBackgroundUpdates({
+    mode: config.updates?.mode ?? 'auto',
+    updater,
+    onNotice: (notice) => handle.updateStatus(updateStatus(updater), notice),
+    onChange: () => handle.updateStatus(updateStatus(updater)),
+  });
   try {
     await handle.waitUntilExit();
-    // The alternate screen takes the session with it; say how to get back.
-    if (handle.layout === 'fullscreen') {
-      process.stdout.write(formatExitSummary(handle.activeSessionId()));
-    }
+    // The transcript stays in the scrollback; say how to get back to it.
+    process.stdout.write(formatExitSummary(handle.activeSessionId()));
   } finally {
+    stopUpdates();
     stopLockfileCleanup();
     removeLockfile(process.pid, opts.home);
     (commands as Partial<ReloadingCommandRegistry>).close?.();

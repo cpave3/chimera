@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseSSE } from '../src/sse';
 
+// Array.fromAsync needs Node 22; Chimera supports Node 20.
+async function drain(events: AsyncIterable<unknown>): Promise<void> {
+  for await (const _event of events);
+}
+
 function makeMockStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
 ): ReadableStream<Uint8Array> {
@@ -31,7 +36,7 @@ describe('parseSSE', () => {
     const error = Object.assign(new Error('foo'), { name: 'AbortError' });
     const reader = makeMockReader({ cancelError: error });
     const stream = makeMockStream(reader);
-    await Array.fromAsync(parseSSE(stream, () => {}));
+    await drain(parseSSE(stream, () => {}));
     expect(debugSpy).not.toHaveBeenCalled();
     debugSpy.mockRestore();
   });
@@ -42,7 +47,7 @@ describe('parseSSE', () => {
     const error = new Error('This operation was aborted');
     const reader = makeMockReader({ cancelError: error });
     const stream = makeMockStream(reader);
-    await Array.fromAsync(parseSSE(stream, () => {}));
+    await drain(parseSSE(stream, () => {}));
     expect(debugSpy).not.toHaveBeenCalled();
     debugSpy.mockRestore();
   });
@@ -53,7 +58,7 @@ describe('parseSSE', () => {
     const error = { name: 'AbortError', message: 'The operation was aborted' };
     const reader = makeMockReader({ releaseLockError: error });
     const stream = makeMockStream(reader);
-    await Array.fromAsync(parseSSE(stream, () => {}));
+    await drain(parseSSE(stream, () => {}));
     expect(debugSpy).not.toHaveBeenCalled();
     debugSpy.mockRestore();
   });
@@ -63,7 +68,7 @@ describe('parseSSE', () => {
     const error = new Error('some other failure');
     const reader = makeMockReader({ cancelError: error, releaseLockError: error });
     const stream = makeMockStream(reader);
-    await Array.fromAsync(parseSSE(stream, () => {}));
+    await drain(parseSSE(stream, () => {}));
     expect(debugSpy).toHaveBeenCalledTimes(2);
     debugSpy.mockRestore();
   });

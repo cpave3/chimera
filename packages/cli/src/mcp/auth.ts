@@ -91,7 +91,8 @@ export class McpAuth implements OAuthClientProvider {
     const client = (await this.load()).client;
     if (
       this.callbackUrl &&
-      client?.redirect_uris &&
+      client &&
+      'redirect_uris' in client &&
       !client.redirect_uris.includes(String(this.callbackUrl))
     ) {
       return undefined;

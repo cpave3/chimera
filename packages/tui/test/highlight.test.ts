@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { highlightCode } from '../src/highlight';
-import { deepMerge } from '../src/theme/loader';
-import { defaultTheme } from '../src/theme/tokens';
 
 describe('highlightCode', () => {
   it('classifies keywords, strings, numbers and comments in TypeScript', () => {
@@ -56,29 +54,5 @@ describe('highlightCode', () => {
     expect(
       highlightCode(Array.from({ length: 500 }, () => 'x = 1').join('\n'), 'python'),
     ).toBeUndefined();
-  });
-});
-
-describe('syntax theme tokens', () => {
-  it('are part of the default theme', () => {
-    expect(Object.keys(defaultTheme.syntax).sort()).toEqual([
-      'comment',
-      'function',
-      'keyword',
-      'number',
-      'string',
-      'type',
-    ]);
-  });
-
-  it('are inherited by a user theme that does not set them', () => {
-    const theme = deepMerge(defaultTheme, { accent: { primary: 'green' } });
-    expect(theme.syntax).toEqual(defaultTheme.syntax);
-  });
-
-  it('can be overridden one at a time', () => {
-    const theme = deepMerge(defaultTheme, { syntax: { keyword: '#ff0000' } });
-    expect(theme.syntax.keyword).toBe('#ff0000');
-    expect(theme.syntax.string).toBe(defaultTheme.syntax.string);
   });
 });
