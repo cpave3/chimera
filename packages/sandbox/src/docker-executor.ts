@@ -1,5 +1,6 @@
 import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { type DockerRunner, SpawnDockerRunner } from './docker-runner';
+import { isLocalDevImage } from './image';
 import { ensureOverlayDirs, overlayPaths, removeOverlayDirs } from './overlay';
 import type { SandboxConfig, SandboxRunMode } from './types';
 
@@ -9,12 +10,12 @@ export interface DockerExecutorOptions extends SandboxConfig {
   runner?: DockerRunner;
   warn?: (message: string) => void;
   /**
-   * If set, `start()` auto-builds the configured image from this directory
-   * when `docker image inspect` reports it missing. Pass it only for the
-   * bundled image — passing it for a user-supplied `--sandbox-image` would
+   * If set, `start()` builds the configured image from the directory this
+   * returns when the image is neither present nor pullable. Pass it only for
+   * the default image: for a user-supplied `--sandbox-image` it would
    * silently turn a typo into a 5-minute build.
    */
-  dockerfileDir?: string;
+  buildContext?: () => string;
   /**
    * Host UID/GID to map into the container so files written by the agent
    * land on the host owned by the invoking user, not root. Default is
@@ -35,7 +36,7 @@ export class DockerExecutor implements Executor {
   private readonly config: SandboxConfig;
   private readonly warn: (message: string) => void;
   private readonly containerName: string;
-  private readonly dockerfileDir: string | undefined;
+  private readonly buildContext: (() => string) | undefined;
   private readonly hostUid: number | null;
   private readonly hostGid: number | null;
   private effectiveMode: SandboxRunMode;
@@ -48,7 +49,7 @@ export class DockerExecutor implements Executor {
     this.config = opts;
     this.warn = opts.warn ?? ((m) => process.stderr.write(`${m}\n`));
     this.containerName = `chimera-${opts.sessionId}`;
-    this.dockerfileDir = opts.dockerfileDir;
+    this.buildContext = opts.buildContext;
     this.hostUid = resolveHostId(opts.hostUid, process.getuid?.bind(process));
     this.hostGid = resolveHostId(opts.hostGid, process.getgid?.bind(process));
     this.effectiveMode = opts.mode;
@@ -167,15 +168,28 @@ export class DockerExecutor implements Executor {
     const inspect = await this.runner.run(['image', 'inspect', ref]);
     if (inspect.exitCode === 0) return;
 
-    if (!this.dockerfileDir) {
+    // A published image (a release's default) is pulled on first use.
+    if (!isLocalDevImage(ref)) {
+      this.warn(`sandbox: image '${ref}' missing — pulling it (one-time)`);
+      const pull = await this.runner.run(['pull', ref], { timeoutMs: 30 * 60_000 });
+      if (pull.exitCode === 0) return;
+      if (!this.buildContext) {
+        throw new Error(
+          `sandbox: image '${ref}' is not present locally and 'docker pull' failed: ${(pull.stderr || pull.stdout).trim()}`,
+        );
+      }
+    }
+
+    if (!this.buildContext) {
       throw new Error(
         `sandbox: image '${ref}' not present locally. Pull it, or run ` +
           `'chimera sandbox build' (or 'pnpm sandbox:build') to produce the bundled image.`,
       );
     }
 
-    this.warn(`sandbox: image '${ref}' missing — building from ${this.dockerfileDir} (one-time)`);
-    const build = await this.runner.run(['build', '-t', ref, this.dockerfileDir], {
+    const context = this.buildContext();
+    this.warn(`sandbox: image '${ref}' missing — building from ${context} (one-time)`);
+    const build = await this.runner.run(['build', '-t', ref, context], {
       timeoutMs: 30 * 60_000,
     });
     if (build.exitCode !== 0) {

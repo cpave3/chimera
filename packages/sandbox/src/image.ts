@@ -1,19 +1,19 @@
-/**
- * Local image tag produced by `chimera sandbox build` (or the `pnpm
- * sandbox:build` shortcut). Until a published GHCR registry exists
- * (tracked in spec.md §20), this is the default image — `start()`
- * auto-builds it on first use if it's missing.
- */
+/** The image `chimera sandbox build` produces, and the default of a build from source. */
 export const LOCAL_DEV_IMAGE = 'chimera-sandbox:dev';
 
+/** Where release builds find the sandbox image, tagged with the release's version. */
+export const RELEASE_IMAGE_REPOSITORY = 'ghcr.io/cpave3/chimera-sandbox';
+
+const STABLE = /^v\d+\.\d+\.\d+$/;
+
 /**
- * The default image reference used when the user does not pass
- * `--sandbox-image`. Returns `chimera-sandbox:dev` regardless of CLI
- * version while we have no published image. Once GHCR ownership is
- * decided this can switch to a versioned remote tag.
+ * The image used when the user names none: a release uses the published
+ * image of its own version, a build from source (`dev`) the local one.
  */
-export function defaultImageRef(_chimeraVersion: string): string {
-  return LOCAL_DEV_IMAGE;
+export function defaultImageRef(chimeraVersion: string): string {
+  return STABLE.test(chimeraVersion)
+    ? `${RELEASE_IMAGE_REPOSITORY}:${chimeraVersion}`
+    : LOCAL_DEV_IMAGE;
 }
 
 /** True if `ref` is the bundled local image (eligible for auto-build). */

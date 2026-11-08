@@ -69,7 +69,7 @@ import {
   resolveModelSettings,
 } from '@chimera/providers';
 import { RecallStore } from '@chimera/recall';
-import { DockerExecutor, sandboxDockerDir } from '@chimera/sandbox';
+import { DockerExecutor, writeSandboxBuildContext } from '@chimera/sandbox';
 import type { AgentFactory, BuildResult, MessageDelivery, SessionInit } from '@chimera/server';
 import { buildSkillActivationLookup, type SkillRegistry } from '@chimera/skills';
 import {
@@ -822,7 +822,7 @@ export class CliAgentFactory implements AgentFactory {
         warn: this.warn,
         // Auto-build only when the user is using the bundled image. A typo
         // in `--sandbox-image` should error loudly, not trigger a build.
-        dockerfileDir: this.sandbox.imageIsDefault ? sandboxDockerDir() : undefined,
+        buildContext: this.sandbox.imageIsDefault ? () => writeSandboxBuildContext() : undefined,
       });
       await docker.start();
       this.liveSandboxes.set(agent.session.id, docker);

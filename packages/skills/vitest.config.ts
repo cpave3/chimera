@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitest/config';
-import { markdownAsText } from '../../vitest.markdown-text';
+import { textImports } from '../../vitest.text-imports';
 
 export default defineConfig({
-  plugins: [markdownAsText()],
+  plugins: [textImports()],
   test: {
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
