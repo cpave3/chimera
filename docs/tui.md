@@ -232,6 +232,73 @@ once the tool returns. Plugin tools authored via `defineTool` from
 `@chimera/tools` opt in by passing `formatScrollback`; tools without one
 fall back to a `<name> <truncated-JSON>` rendering.
 
+## Status line
+
+The status line sits in the prompt box's bottom border, with any further
+rows dim under the box. By default it shows the model and the context used
+on the left, the working directory and the git branch on the right, and the
+session id and the sandbox in a row under the box:
+
+```
+╰─ anthropic/claude-sonnet · 38%/200k ──────── ~/Projects/app · main ↑2 ─╯
+   8AWWBRGC · os sandbox
+```
+
+The context figure turns the warning colour above 70% and the error colour
+above 90%.
+
+Set your own rows in `~/.chimera/config.json`. Each row has a `left` and a
+`right` list of built-in items; the first row goes in the border:
+
+```json
+{
+  "statusLine": {
+    "rows": [
+      { "left": ["model", "context"], "right": ["cwd", "branch"] },
+      { "left": ["session", "sandbox"] }
+    ]
+  }
+}
+```
+
+| Item | Shows |
+| --- | --- |
+| `model` | the model, and the vision model a turn with images is routed to |
+| `context` | context used, as a share of the window: `38%/200k` |
+| `tokens` | session tokens in and out: `↑76k ↓3.7k` |
+| `cost` | the session's cost, when the provider reports prices |
+| `cache` | the share of the last prompt served from the provider's cache |
+| `cwd` | the working directory |
+| `branch` | the git branch, with commits ahead `↑` and behind `↓` |
+| `session` | the session id |
+| `sandbox` | the sandbox commands run in |
+| `goal` | the session's goal |
+| `update` | the updater's notice |
+
+An item with nothing to say is left out. When a row does not fit, items
+drop from the end of its lists: the right list first, then whichever list
+has more.
+
+### A status line command
+
+To draw the status line with a script instead (ccstatusline and other
+Claude Code status line scripts work), set `command`:
+
+```json
+{ "statusLine": { "command": "npx ccstatusline" } }
+```
+
+The command runs with `sh -c` in the working directory, with `COLUMNS` set
+to the terminal width. On stdin it gets Claude Code's statusLine JSON where
+Chimera has the same fact (`session_id`, `cwd`, `model`, `workspace`,
+`version`, `output_style`, `cost`, `context_window`), and Chimera's own facts
+under `chimera` (`mode`, `sandbox`, `branch`, `goal`, `context_percent`,
+...). Its first output line goes in the border and the others under the box.
+
+It runs again on session events, 300 ms after the last one; a new event
+cancels a run still going, and a run is killed after 2 seconds. When a run
+fails or is killed, the last good output stays.
+
 ## Multi-line prompt composition
 
 The TUI prompt is multi-line. Three triggers insert a newline at the cursor

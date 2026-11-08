@@ -251,6 +251,15 @@ export interface ChimeraConfig {
    * prompt. Default true.
    */
   memory?: { enabled?: boolean };
+  /**
+   * The status line in the prompt box's bottom border and under it. `rows`
+   * lists built-in items per row; `command` replaces the rows with the
+   * output of a script that reads Claude Code's statusLine JSON on stdin.
+   */
+  statusLine?: {
+    rows?: Array<{ left?: string[]; right?: string[] }>;
+    command?: string | null;
+  };
   /** How the interactive TUI uses the terminal. */
   tui?: {
     /**
@@ -334,6 +343,29 @@ const tuiSchema = z
     layout: z.enum(['fullscreen', 'inline']).optional(),
     mouse: z.boolean().optional(),
     notifications: z.enum(['auto', 'bell', 'off']).optional(),
+  })
+  .strict();
+
+const STATUS_LINE_ITEMS = [
+  'model',
+  'context',
+  'tokens',
+  'cost',
+  'cache',
+  'cwd',
+  'branch',
+  'session',
+  'sandbox',
+  'goal',
+  'update',
+] as const;
+const statusItemsSchema = z.array(z.enum(STATUS_LINE_ITEMS)).optional();
+const statusLineSchema = z
+  .object({
+    rows: z
+      .array(z.object({ left: statusItemsSchema, right: statusItemsSchema }).strict())
+      .optional(),
+    command: z.string().min(1).nullable().optional(),
   })
   .strict();
 
@@ -473,6 +505,12 @@ export function loadConfig(home = homedir()): ChimeraConfig {
   const goal = goalSchema.safeParse(config.goal ?? {});
   if (!goal.success) {
     throw new Error(`Invalid goal in ${path}: ${goal.error.message}`);
+  }
+  const statusLine = statusLineSchema.safeParse(config.statusLine ?? {});
+  if (!statusLine.success) {
+    throw new Error(
+      `Invalid ${path}: ${statusLine.error.issues.map((issue) => `statusLine.${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+    );
   }
   const tui = tuiSchema.safeParse(config.tui ?? {});
   if (!tui.success) {

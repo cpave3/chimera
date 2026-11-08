@@ -342,6 +342,7 @@ so restart a session after a change.
 | `mcpServers` | — | MCP servers; `chimera mcp` writes this. |
 | `skills`, `commands`, `agents`, `modes` | on | Each has `enabled` and `claudeCompat`. |
 | `tui` | — | `layout` (`fullscreen` or `inline`), `mouse`, `notifications` (`auto`, `bell`, `off`). |
+| `statusLine` | model, context, cwd, branch; session, sandbox | `rows` of built-in items, or a `command`. [The TUI](docs/tui.md#status-line) |
 
 A value of the form `env:NAME` in an API key is read from the environment.
 
