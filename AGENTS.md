@@ -114,6 +114,35 @@ it unless the user asks. See `docs/evals.md`.
 - The planned small-model work, with the findings of the first pass, is in
   `docs/scratch/small-model-tuning.md`.
 
+## Release builds
+
+A release is a `bun build --compile` single file per platform. Bun is
+pinned in `.bun-version`. To build and check one locally:
+
+```
+pnpm -r build
+scripts/build-release.sh v0.0.0-local           # dist/release/chimera-* + SHA256SUMS
+node scripts/smoke-release.mjs dist/release/chimera-linux-amd64 v0.0.0-local
+```
+
+- `CHIMERA_RELEASE_TARGETS=linux-amd64` builds one target only. The script
+  cross-builds every target from one machine (Bun downloads each runtime),
+  and re-signs the darwin binary when `rcodesign` is on the PATH.
+- The build stamps `__CHIMERA_VERSION__`, sets `NODE_ENV=production`,
+  turns off `.env` and `bunfig.toml` autoload, and embeds the two
+  tree-sitter `.wasm` files beside the bundle, where the permissions module
+  and web-tree-sitter look for them.
+- The smoke test runs the binary with a scratch HOME against
+  `packages/cli/test/fixtures/fake-model-server.mjs`: version, help, the
+  built-in modes, skills and agents, a `spawn_agent` child, a bash command
+  through the tree-sitter policy, and a project `.env` that must not reach
+  the agent. It exits non-zero naming each failed check.
+- A binary is about 110 MB. If `/tmp` is a small tmpfs, set `TMPDIR` to
+  a directory on a larger disk for the build.
+- Code that only a single file can get wrong (paths beside a module,
+  `process.argv[1]`, files read from a package directory) needs a check in
+  the smoke test: the unit suites run from source and cannot see it.
+
 ## `pnpm typecheck` has known noise
 
 `tsc -b` is run from the root for typechecking, but it can leak compiled
