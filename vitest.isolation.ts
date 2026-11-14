@@ -24,6 +24,8 @@ const retained = new Set([
   'CHIMERA_TEST_DOCKER',
   'CHIMERA_TEST_TMUX',
   'CHIMERA_TEST_E2E',
+  'CHIMERA_TEST_MOD_BINARY',
+  'CHIMERA_TEST_RELEASE_BIN',
   'CHIMERA_TEST_SANDBOX_IMAGE',
 ]);
 for (const key of Object.keys(process.env)) {

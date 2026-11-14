@@ -27,6 +27,11 @@ The probe uses no real mod, broker or provider. The fixture tests also assert
 that deliberately loaded local mods still receive lifecycle events, and that
 child processes have no inherited launching identity.
 
+Explicit nonsecret test gates survive isolation, including
+`CHIMERA_TEST_MOD_BINARY=1` for the compiled mod host and
+`CHIMERA_TEST_RELEASE_BIN` for a locally built release fixture. The latter must
+point to your scratch binary, not a production installation.
+
 On a shared worker, acquire its shared heavy-build lock before a test runner
 changes HOME. For the integration worker:
 
