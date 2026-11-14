@@ -1226,7 +1226,13 @@ describe('server app', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ content: 'look at this', images: ['/path/to/img.png'] }),
       });
-      expect(response.status).toBe(202);
+      try {
+        expect(response.status).toBe(202);
+      } finally {
+        // A 202 only accepts the run; its persistence must settle before home is removed.
+        await registry.get(sessionId)!.activeRun;
+      }
+      expect(registry.get(sessionId)!.runActive).toBe(false);
     });
 
     it('POST /v1/sessions/:id/messages?append=true accepts images array', async () => {
