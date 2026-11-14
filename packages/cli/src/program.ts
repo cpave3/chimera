@@ -16,7 +16,7 @@ import {
   runMcpRemove,
   runMcpTools,
 } from './commands/mcp';
-import { runModTypes } from './commands/mod';
+import { runModList, runModTypes, runModValidate } from './commands/mod';
 import { runBashPolicyReview } from './commands/policy-review';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
@@ -30,6 +30,7 @@ import {
 } from './commands/sessions';
 import { runSkillsList } from './commands/skills';
 import { runUpdate } from './commands/update';
+import { loadConfig } from './config';
 import { readServerSecret } from './server-secret';
 import { VERSION, versionReport } from './version';
 
@@ -321,6 +322,29 @@ export function buildProgram(): Command {
     });
 
   const mod = program.command('mod').description('Inspect and test Chimera mods');
+  mod
+    .command('list')
+    .option('--json', 'JSON output')
+    .option(
+      '--mod-dir <directory>',
+      'Load a mod folder',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option('--no-mods', 'Disable all mods')
+    .action(async (options) => {
+      process.exitCode = await runModList({
+        ...options,
+        modDirs: options.modDir,
+        disabled: loadConfig().mods?.disabled,
+      });
+    });
+  mod
+    .command('validate <directory>')
+    .option('--json', 'JSON output')
+    .action(async (directory: string, options) => {
+      process.exitCode = await runModValidate(directory, options);
+    });
   mod.command('types').action(async () => {
     process.exitCode = await runModTypes();
   });
