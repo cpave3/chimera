@@ -38,8 +38,10 @@ twice or cancelled by a mod timeout.
 `$.process.spawn({argv, env?, cwd?})` returns a synchronous handle with `write(text)`,
 `close()`, `kill(signal?)`, `output` (an async iterable of `{stream, text}`), and
 `exitPromise` (`{code, signal}`). Children inherit Chimera's environment and run outside
-the command sandbox. After the application's end-hook window, `host.shutdown()` sends
-SIGTERM and, after two seconds, SIGKILL to children still running.
+the command sandbox. Failed stdin writes reject instead of terminating Chimera.
+After the application's end-hook window, `host.shutdown()` sends SIGTERM and, after
+two seconds, SIGKILL to each helper's process group on POSIX. Cleanup closes output
+pipes after a final one-second deadline so inherited pipes cannot hold shutdown open.
 
 `$.store.get(key)`, `set(key, value)` and `delete(key)` persist JSON per mod under
 `~/.chimera/mod-data/<name>/`. `$.store.directory` is a writable folder. **Sandboxed
