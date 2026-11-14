@@ -895,6 +895,7 @@ export class CliAgentFactory implements AgentFactory {
 
     // Set once the tool surfaces exist; `tool_search` calls it at run time.
     let activateMcpTools: (entries: McpToolEntry[]) => void = () => {};
+    let mcpInstructions = '';
     if (Object.keys(this.mcpServers).length > 0) {
       if (init.sandboxMode !== 'off') {
         this.warn('MCP tools run on the host, outside the Docker sandbox');
@@ -925,6 +926,9 @@ export class CliAgentFactory implements AgentFactory {
       if (deferred) {
         extraSnippets.tool_search = 'Find and enable tools of the connected MCP servers.';
       }
+      mcpInstructions = Object.entries(manager.getInstructions())
+        .map(([name, instructions]) => `\n\n## MCP server: ${name}\n\n${instructions}`)
+        .join('');
     }
 
     this.liveAgents.set(agent.session.id, agent);
@@ -1051,7 +1055,7 @@ export class CliAgentFactory implements AgentFactory {
       if (this.systemPromptOverride !== undefined) {
         return `${this.systemPromptOverride}\n\n${renderToolsSection(promptTools, {
           osSandbox: osSandboxForPrompt !== undefined,
-        })}`;
+        })}${mcpInstructions}`;
       }
       return composeSystemPrompt({
         cwd: init.cwd,
@@ -1059,6 +1063,7 @@ export class CliAgentFactory implements AgentFactory {
         sandboxMode: init.sandboxMode,
         osSandbox: osSandboxForPrompt,
         extensions: [
+          () => mcpInstructions || null,
           ...(skillIndexFor(contextWindow) ?? []),
           ...(memoryDirectory
             ? [

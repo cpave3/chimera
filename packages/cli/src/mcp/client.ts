@@ -162,6 +162,15 @@ export class McpClientManager {
     }
   }
 
+  getInstructions(): Record<string, string> {
+    return Object.fromEntries(
+      [...this.clients].flatMap(([name, client]) => {
+        const instructions = client.getInstructions();
+        return instructions ? [[name, instructions]] : [];
+      }),
+    );
+  }
+
   async close(): Promise<void> {
     await Promise.all([...this.clients.values()].map((client) => client.close()));
     this.clients.clear();
