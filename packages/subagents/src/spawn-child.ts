@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { ChimeraClient } from '@chimera/client';
 import type { SessionId } from '@chimera/core';
 import type { AutoApproveLevel } from '@chimera/permissions';
@@ -15,6 +15,8 @@ const INTERRUPT_GRACE_MS = 5_000;
 const STDERR_BUF_MAX = 4096;
 
 export interface SpawnChildArgs {
+  modDirs?: string[];
+  mods?: boolean;
   modelSettings?: import('@chimera/core').ModelSettings;
   /** The executable to spawn (e.g. `/usr/local/bin/chimera` or `node`). */
   chimeraBin: string;
@@ -92,6 +94,8 @@ export function buildChildArgv(
   if (args.tools && args.tools.length > 0) {
     argv.push('--tools', args.tools.join(','));
   }
+  for (const directory of args.modDirs ?? []) argv.push('--mod-dir', resolve(directory));
+  if (args.mods === false) argv.push('--no-mods');
   return argv;
 }
 
@@ -108,7 +112,14 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
   const proc = spawn(args.chimeraBin, argv, {
     cwd: args.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CHIMERA_SERVER_SECRET: randomBytes(32).toString('hex') },
+    env: {
+      ...process.env,
+      CHIMERA_MOD_DIRS: process.env.CHIMERA_MOD_DIRS?.split(delimiter)
+        .filter(Boolean)
+        .map((directory) => resolve(directory))
+        .join(delimiter),
+      CHIMERA_SERVER_SECRET: randomBytes(32).toString('hex'),
+    },
     detached: false,
   });
 

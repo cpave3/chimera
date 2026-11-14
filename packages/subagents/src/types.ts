@@ -74,6 +74,8 @@ export type InProcessAgentBuilder = (init: {
 }>;
 
 export interface SpawnAgentToolContext {
+  modDirs?: string[];
+  mods?: boolean;
   getParentModel?: () => { ref: string; settings?: import('@chimera/core').ModelSettings };
   /** Emit an event into the parent's event stream. */
   emit: (event: AgentEvent) => void;

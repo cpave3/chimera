@@ -120,6 +120,8 @@ const SKILL_INDEX_SHARE = 0.02;
 
 export interface CliAgentFactoryOptions {
   mods?: ModHost;
+  modDirs?: string[];
+  noMods?: boolean;
   providersConfig: ProvidersConfig;
   autoApprove: AutoApproveLevel;
   hostBashPolicy?: HostBashPolicyConfig;
@@ -257,6 +259,8 @@ export interface CliAgentFactoryOptions {
 
 export class CliAgentFactory implements AgentFactory {
   private readonly mods: ModHost | undefined;
+  private readonly modDirs: string[] | undefined;
+  private readonly noMods: boolean | undefined;
   private readonly registry: ReturnType<typeof loadProviders>;
   private readonly autoApprove: AutoApproveLevel;
   private readonly hostBashPolicy: HostBashPolicyConfig;
@@ -314,6 +318,8 @@ export class CliAgentFactory implements AgentFactory {
 
   constructor(opts: CliAgentFactoryOptions) {
     this.mods = opts.mods;
+    this.modDirs = opts.modDirs;
+    this.noMods = opts.noMods;
     this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
     this.autoApprove = opts.autoApprove;
     // The CLI commands pass the policy of the user's config, where the OS
@@ -866,6 +872,8 @@ export class CliAgentFactory implements AgentFactory {
           return agent.signal;
         },
         parentSessionId: agent.session.id,
+        modDirs: this.modDirs,
+        mods: this.noMods ? false : undefined,
         cwd: init.cwd,
         defaultModelRef,
         getParentModel: () =>

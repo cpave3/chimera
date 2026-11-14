@@ -188,6 +188,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   );
   const factory = new CliAgentFactory({
     mods: modRuntime.host,
+    modDirs: opts.modDirs,
+    noMods: opts.mods === false,
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),

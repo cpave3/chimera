@@ -261,6 +261,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           handle = await spawnChimeraChild({
             chimeraBin: ctx.chimeraBin,
             chimeraBinArgs: ctx.chimeraBinArgs,
+            modDirs: ctx.modDirs,
+            mods: ctx.mods,
             cwd: childCwd,
             parentSessionId: ctx.parentSessionId,
             modelRef,

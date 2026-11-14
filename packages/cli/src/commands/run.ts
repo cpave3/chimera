@@ -180,7 +180,9 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 
     cliFactory = new CliAgentFactory({
       mods: modRuntime.host,
-          providersConfig: resolved.providersConfig,
+      modDirs: opts.modDirs,
+      noMods: opts.mods === false,
+      providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       hostBashPolicy: resolveHostBashPolicy(config, opts.home),
       mcpServers,

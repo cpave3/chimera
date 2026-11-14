@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { type LifecycleEvent, Logger, lifecycleSource, type SessionId } from '@chimera/core';
 import { type ModEvent, ModHost, SessionEnded } from '@chimera/mods';
 import type { AgentRegistry } from '@chimera/server';
@@ -11,6 +12,8 @@ export class ModRuntime {
   host!: ModHost;
   private registry?: AgentRegistry;
   private unsubscribe = () => {};
+  private readonly turns = new Map<string, string>();
+  private readonly background = new Map<string, { description: string; background: boolean }>();
 
   static async create(
     options: ModOptions & { home?: string },
@@ -31,6 +34,7 @@ export class ModRuntime {
       await runtime.host
         .observe(mapped)
         .catch((error) => logger.warn(`Mod observer failed: ${error}`));
+      if (mapped.type === 'session.end') runtime.host.endSession(event.sessionId);
     });
     return runtime;
   }
@@ -42,17 +46,84 @@ export class ModRuntime {
   private context(id: string): Record<string, unknown> {
     const entry = this.registry?.get(id as SessionId);
     if (!entry) throw new SessionEnded(id);
-    return { session: { id, cwd: entry.agent.snapshot().cwd } };
+    const snapshot = entry.agent.snapshot();
+    return { session: { id, name: snapshot.name, cwd: snapshot.cwd,
+      parentId: snapshot.parentId ?? this.registry!.getInstanceInfo().parentId ?? null,
+      isSubagent: !!this.registry!.getInstanceInfo().parentId,
+    } };
   }
 
   private map(event: LifecycleEvent): ModEvent | undefined {
-    if (event.type !== 'run_finished') return undefined;
-    return {
-      type: 'turn.complete',
-      sessionId: event.sessionId,
-      reason: event.reason,
-      error: event.error,
-    };
+    const sessionId = event.sessionId;
+    const payload = event as LifecycleEvent & Record<string, unknown>;
+    switch (event.type) {
+      case 'SessionStart':
+        return {
+          ...payload,
+          type: 'session.start',
+          sessionId,
+          name: payload.session_name ?? payload.name,
+          parentSessionId: payload.parentSessionId,
+        };
+      case 'SessionEnd':
+        return { ...payload, type: 'session.end', sessionId, reason: payload.reason ?? 'delete' };
+      case 'user_message': {
+        const turnId = randomUUID();
+        this.turns.set(sessionId, turnId);
+        return { type: 'turn.start', sessionId, turnId, source: payload.source ?? 'user' };
+      }
+      case 'run_finished': {
+        return {
+          type: 'turn.complete',
+          sessionId,
+          turnId: this.turns.get(sessionId),
+          reason: event.reason,
+          error: event.error,
+          model: payload.model,
+          usage: payload.usage,
+          contextFill: payload.contextFill,
+        };
+      }
+      case 'permission_request':
+        return { ...payload, type: 'permission.request', sessionId };
+      case 'permission_resolved':
+        return { ...payload, type: 'permission.resolved', sessionId };
+      case 'question_request':
+        return { ...payload, type: 'question.request', sessionId };
+      case 'question_resolved':
+        return { ...payload, type: 'question.resolved', sessionId };
+      case 'compaction_started':
+        return { ...payload, type: 'compaction.start', sessionId };
+      case 'compaction_finished':
+        return { ...payload, type: 'compaction.end', sessionId, success: true };
+      case 'compaction_failed':
+        return { ...payload, type: 'compaction.end', sessionId, success: false };
+      case 'message_appended':
+        return { type: 'message.append', sessionId, text: payload.text };
+      case 'background_process_started':
+        return { ...payload, type: 'background.start', sessionId, jobId: payload.shellId };
+      case 'background_process_exited':
+        return { ...payload, type: 'background.exit', sessionId, jobId: event.shellId };
+      case 'subagent_spawned': {
+        const child = { description: event.purpose, background: !!event.background };
+        this.background.set(event.subagentId, child);
+        return { type: 'agent.spawn', sessionId, agentId: event.subagentId, ...child };
+      }
+      case 'subagent_finished': {
+        const child = this.background.get(event.subagentId);
+        this.background.delete(event.subagentId);
+        return {
+          type: 'agent.finish',
+          sessionId,
+          agentId: event.subagentId,
+          ...child,
+          background: payload.background ?? child?.background,
+          reason: event.reason,
+          result: event.result,
+        };
+      }
+    }
+    return undefined;
   }
 
   async shutdown(): Promise<void> {
