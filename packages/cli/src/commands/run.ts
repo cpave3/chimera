@@ -309,7 +309,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     if (opts.goal) await client.setGoal(sessionId, opts.goal);
 
     let finalText = '';
-    let exitReason: RunFinishedReason = 'stop';
+    let exitReason: RunFinishedReason | 'prompt_dropped' = 'stop';
     let errorMessage: string | undefined;
     let goalChange: GoalChange | undefined;
 
@@ -335,6 +335,9 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       if (ev.type === 'run_finished') {
         exitReason = ev.reason;
         errorMessage = ev.error;
+      } else if (ev.type === 'prompt_dropped') {
+        exitReason = 'prompt_dropped';
+        errorMessage = `prompt dropped: ${ev.reason}`;
       }
     }
 
@@ -370,7 +373,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 export interface FinalizeOverlayInput {
   sessionId: string;
   cwd: string;
-  exitReason: RunFinishedReason;
+  exitReason: RunFinishedReason | 'prompt_dropped';
   applyOnSuccess: boolean;
 }
 
@@ -390,7 +393,10 @@ export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void
  * The exit code of a run. `goalChange` is the last word on the run's goal,
  * for a run that was given one.
  */
-function exitCodeFor(reason: RunFinishedReason, goalChange?: GoalChange): number {
+function exitCodeFor(
+  reason: RunFinishedReason | 'prompt_dropped',
+  goalChange?: GoalChange,
+): number {
   if (reason === 'stop' && goalChange === 'impossible') return 3;
   // The run ended cleanly, but nothing says that the goal is met.
   if (reason === 'stop' && goalChange === 'unchecked') return 1;

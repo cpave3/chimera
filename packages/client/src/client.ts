@@ -416,7 +416,7 @@ export class ChimeraClient {
   /**
    * Subscribe to the event stream first to avoid missing events, POST the
    * message once the SSE connection is established, then yield events until
-   * `run_finished`.
+   * `run_finished` or a terminal `prompt_dropped` submission outcome.
    */
   async *send(
     sessionId: SessionId,
@@ -453,7 +453,7 @@ export class ChimeraClient {
         lastEventId = id;
       })) {
         yield stripEnvelopeMeta(envelope);
-        if (envelope.type === 'run_finished') return;
+        if (envelope.type === 'run_finished' || envelope.type === 'prompt_dropped') return;
       }
     } finally {
       // lastEventId unused here; kept in case future logic wants to resume.

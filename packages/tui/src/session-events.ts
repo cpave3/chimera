@@ -97,7 +97,8 @@ export function applySessionEvent(
     ev.type === 'tool_call_result' ||
     ev.type === 'permission_request' ||
     ev.type === 'permission_resolved' ||
-    ev.type === 'run_finished'
+    ev.type === 'run_finished' ||
+    ev.type === 'prompt_dropped'
   ) {
     sessionHydrationRef.current.lifecycleEventObserved = true;
   }
@@ -191,6 +192,13 @@ export function applySessionEvent(
   } else if (ev.type === 'user_input_required') {
     scrollback.addInfo(`Waiting for input: ${ev.request}`);
     context.onInputRequired?.();
+  } else if (ev.type === 'prompt_dropped') {
+    setRunning(false);
+    setStreaming(false);
+    setVisionRouteRef(null);
+    setRetry(null);
+    setRunSteps(0);
+    scrollback.addInfo(`prompt dropped: ${ev.reason}`);
   } else if (ev.type === 'run_finished') {
     setRunning(false);
     setStreaming(false);

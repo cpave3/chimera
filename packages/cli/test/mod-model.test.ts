@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentRegistry } from '@chimera/server';
+import { ChimeraClient } from '@chimera/client';
+import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
 import { ModRuntime } from '../src/mod-runtime';
@@ -186,6 +187,40 @@ it('drops before a run starts and rewrites accepted prompts without changing pri
       { role: 'user', content: 'rewritten: again' },
     ]);
   } finally {
+    await test.close();
+  }
+});
+
+it('HTTP send completes a mod-dropped submission and can submit again', async () => {
+  const test = await fixture([
+    `export function register(on) {
+      on('prompt.submit', ($, event, next) => event.text === 'drop me'
+        ? {decision: 'drop', reason: 'filtered'} : next());
+    }`,
+  ]);
+  const server = await startServer({ app: buildApp({ registry: test.registry }) });
+  try {
+    const client = new ChimeraClient({ baseUrl: server.url });
+    const dropped = [];
+    for await (const event of client.send(test.sessionId, 'drop me', {
+      signal: AbortSignal.timeout(2000),
+    })) {
+      dropped.push(event);
+    }
+    expect(dropped).toEqual([{ type: 'prompt_dropped', reason: 'filtered' }]);
+    expect(test.requests).toEqual([]);
+    expect(await client.getSession(test.sessionId)).toMatchObject({ status: 'idle', messages: [] });
+
+    const accepted = [];
+    for await (const event of client.send(test.sessionId, 'hello')) accepted.push(event);
+    expect(accepted).toContainEqual({
+      type: 'assistant_text_done',
+      id: expect.any(String),
+      text: 'done',
+    });
+    expect(accepted.at(-1)).toMatchObject({ type: 'run_finished', reason: 'stop' });
+  } finally {
+    await server.close();
     await test.close();
   }
 });

@@ -33,8 +33,10 @@ function textOnlyModel(text: string): LanguageModel {
 describe('ChimeraClient end-to-end', () => {
   let home: string;
   let server: ChimeraServer;
+  let dropPrompt = false;
 
   beforeEach(async () => {
+    dropPrompt = false;
     home = await mkdtemp(join(tmpdir(), 'chimera-client-'));
     const registry = new AgentRegistry({
       factory: {
@@ -47,6 +49,8 @@ describe('ChimeraClient end-to-end', () => {
             sandboxMode: init.sandboxMode,
             home,
             contextWindow: 200_000,
+            interceptPrompt: async (_prompt, next) =>
+              dropPrompt ? { decision: 'drop', reason: 'Blocked by prompt policy' } : next(),
             sessionId: init.requestedSessionId ?? init.sessionId,
             sessionName: init.name,
           }),
@@ -126,6 +130,26 @@ describe('ChimeraClient end-to-end', () => {
     }
     expect(types[types.length - 1]).toBe('run_finished');
     expect(types).toContain('assistant_text_done');
+  });
+
+  it('send completes a dropped submission without inventing a run', async () => {
+    dropPrompt = true;
+    const client = new ChimeraClient({ baseUrl: server.url });
+    const { sessionId } = await client.createSession({ cwd: '/tmp', model, sandboxMode: 'off' });
+    const events = [];
+    for await (const event of client.send(sessionId, 'blocked', {
+      signal: AbortSignal.timeout(1000),
+    })) {
+      events.push(event);
+    }
+    expect(events).toEqual([{ type: 'prompt_dropped', reason: 'Blocked by prompt policy' }]);
+    expect((await client.getSession(sessionId)).messages).toEqual([]);
+
+    dropPrompt = false;
+    const nextEvents = [];
+    for await (const event of client.send(sessionId, 'allowed')) nextEvents.push(event.type);
+    expect(nextEvents).toContain('assistant_text_done');
+    expect(nextEvents.at(-1)).toBe('run_finished');
   });
 
   it('routes fetch through a custom impl when provided', async () => {
