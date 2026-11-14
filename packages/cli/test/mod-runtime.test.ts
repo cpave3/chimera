@@ -7,7 +7,7 @@ import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { expect, it } from 'vitest';
 import { runOneShot } from '../src/commands/run';
 
-it('loads a folder mod in a real run and delivers turn.complete', async () => {
+it('loads a mod folder in a real run and delivers lifecycle plus a usable server URL', async () => {
   const home = await mkdtemp(join(tmpdir(), 'chimera-mod-run-'));
   try {
     const directory = join(home, 'observer');
@@ -26,11 +26,16 @@ it('loads a folder mod in a real run and delivers turn.complete', async () => {
       `
       import {appendFile} from 'node:fs/promises';
       export function register(on) {
-        for (const type of ['turn.complete']) {
+        for (const type of ['session.start','turn.start','turn.complete','session.end']) {
           on(type, async ($, event) => {
-            $.ui.log('observed turn completion', {to: 'debug'});
+            const serverUrl = $.server.url();
+            if (type === 'session.start') {
+              const response = await $.http.fetch(serverUrl + '/v1/instance');
+              if (!response.ok) throw new Error('server URL unavailable');
+            }
             await appendFile(${JSON.stringify(join(home, 'received.jsonl'))}, JSON.stringify({
-              ...event,
+              ...event, serverUrl, cwd: $.session.cwd, version: $.chimera.version,
+              apiVersion: $.api.version,
             }) + '\\n');
           });
         }
@@ -79,8 +84,14 @@ it('loads a folder mod in a real run and delivers turn.complete', async () => {
       .trim()
       .split('\n')
       .map(JSON.parse);
-    expect(events.map((event) => event.type)).toEqual(['turn.complete']);
-    expect(events[0]).toMatchObject({ reason: 'stop' });
+    expect(events.map((event) => event.type)).toEqual([
+      'session.start',
+      'turn.start',
+      'turn.complete',
+      'session.end',
+    ]);
+    expect(events[0]).toMatchObject({ reason: 'new', cwd: home, apiVersion: 1 });
+    expect(events[2]).toMatchObject({ reason: 'stop' });
   } finally {
     await rm(home, { recursive: true, force: true });
   }

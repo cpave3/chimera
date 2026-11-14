@@ -3,15 +3,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Agent } from '@chimera/core';
-
-type PromptResult = { accepted: true } | { queued: true } | { dropped: true; reason: string };
-interface ModContext {
-  session: Omit<ReturnType<Agent['snapshot']>, 'messages'> & {
-    isSubagent: boolean;
-    messages(): readonly Record<string, unknown>[];
-  };
-}
+import type { ModContext, PromptResult } from '@chimera/mod-api';
 import { AgentRegistry } from '@chimera/server';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { CliAgentFactory } from '../src/factory';

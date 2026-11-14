@@ -100,6 +100,7 @@ export interface InstanceInfo {
   pid: number;
   cwd: string;
   version: string;
+  modApi: number[];
   sandboxMode: SandboxMode;
   parentId?: string;
 }
@@ -150,7 +151,7 @@ export type ModelsLoader = () => ModelListEntry[] | Promise<ModelListEntry[]>;
 
 export interface AgentRegistryOptions {
   factory: AgentFactory;
-  instance: InstanceInfo;
+  instance: Omit<InstanceInfo, 'modApi'>;
   /** Optional hook to load user commands at session-creation time. */
   loadCommands?: CommandsLoader;
   /** Optional hook to load skills at session-creation time. */
@@ -214,7 +215,7 @@ export class AgentRegistry {
 
   constructor(opts: AgentRegistryOptions) {
     this.factory = opts.factory;
-    this.instance = opts.instance;
+    this.instance = { ...opts.instance, modApi: [1] };
     this.loadCommands = opts.loadCommands;
     this.loadSkills = opts.loadSkills;
     this.loadModes = opts.loadModes;

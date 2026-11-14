@@ -216,6 +216,7 @@ describe('server app', () => {
     const instanceBody = await instanceResponse.json();
     expect(instanceBody.pid).toBe(42);
     expect(instanceBody.sandboxMode).toBe('off');
+    expect(instanceBody.modApi).toEqual([1]);
   });
 
   it('full session lifecycle: create, fetch, message, delete', async () => {

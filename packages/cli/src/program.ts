@@ -16,6 +16,7 @@ import {
   runMcpRemove,
   runMcpTools,
 } from './commands/mcp';
+import { runModTypes } from './commands/mod';
 import { runBashPolicyReview } from './commands/policy-review';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
@@ -318,6 +319,11 @@ export function buildProgram(): Command {
     .action(async (opts) => {
       await runHooksList({ cwd: opts.cwd, json: opts.json });
     });
+
+  const mod = program.command('mod').description('Inspect and test Chimera mods');
+  mod.command('types').action(async () => {
+    process.exitCode = await runModTypes();
+  });
 
   program
     .command('skills')
