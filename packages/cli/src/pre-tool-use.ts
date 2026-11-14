@@ -1,4 +1,4 @@
-import type { HookRunner } from '@chimera/hooks';
+import type { LifecycleDecision, LifecycleHookData } from '@chimera/core';
 import type { ToolCallInterceptor } from '@chimera/tools';
 
 /**
@@ -7,15 +7,19 @@ import type { ToolCallInterceptor } from '@chimera/tools';
  * the permission gate, never runs. The hook sees the input and cannot change
  * it: what runs is what the model asked for.
  */
-export function preToolUseHook(runner: HookRunner): ToolCallInterceptor {
+export function preToolUseHook(
+  dispatch: (
+    payload: Extract<LifecycleHookData, { type: 'PreToolUse' }>,
+  ) => Promise<LifecycleDecision>,
+): ToolCallInterceptor {
   return {
     async before(call) {
       const toolInput =
         typeof call.args === 'object' && call.args !== null && !Array.isArray(call.args)
           ? (call.args as Record<string, unknown>)
           : { value: call.args };
-      const result = await runner.fire({
-        event: 'PreToolUse',
+      const result = await dispatch({
+        type: 'PreToolUse',
         tool_name: call.name,
         tool_input: toolInput,
       });

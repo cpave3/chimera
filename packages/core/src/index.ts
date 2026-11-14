@@ -22,3 +22,5 @@ export { type PromptTool, renderToolsSection } from './prompts/role';
 export * from './questions';
 export * from './types';
 export * from './workspace-checkpoints';
+
+export * from './lifecycle';

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Agent, type AgentOptions } from '../src/agent';
 import type { AgentEvent } from '../src/events';
 import { parseGoalMessage } from '../src/goal';
+import { LifecycleSource } from '../src/lifecycle';
 import { loadSession } from '../src/persistence';
 
 type GoalEvent = Extract<AgentEvent, { type: 'goal_updated' }>;
@@ -148,6 +149,9 @@ describe('a goal that is not met', () => {
 
     const { reason, goalEvents, events } = await run(agent);
 
+    expect(
+      events.filter((event) => event.type === 'user_message').map((event) => event.source),
+    ).toEqual(['user', 'goal']);
     expect(turns.turns).toBe(2);
     expect(reason).toBe('stop');
     expect(goalEvents.map((event) => event.change)).toEqual(['not_met', 'met']);
@@ -292,14 +296,15 @@ describe('the goal check and the Stop hook', () => {
   it('lets the Stop hook of the user speak first, and checks the goal when the hook lets the run end', async () => {
     const order: string[] = [];
     let fired = 0;
+    const lifecycle = new LifecycleSource();
+    lifecycle.subscribe(async (event) => {
+      if (event.type !== 'Stop') return;
+      fired += 1;
+      order.push(`hook ${fired}`);
+      return fired === 1 ? { blocked: true, reason: 'lint failed' } : { blocked: false };
+    });
     const { agent, turns } = agentWith([met], {
-      stopHook: {
-        async fire() {
-          fired += 1;
-          order.push(`hook ${fired}`);
-          return fired === 1 ? { blocked: true, reason: 'lint failed' } : { blocked: false };
-        },
-      },
+      lifecycle,
       goalCheck: {
         ask: async () => {
           order.push('goal check');

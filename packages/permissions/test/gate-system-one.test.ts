@@ -7,7 +7,6 @@ import type {
   PermissionRequest,
   PermissionResolution,
 } from '@chimera/core';
-import type { HookRunner } from '@chimera/hooks';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DefaultPermissionGate, type GateOptions } from '../src/gate';
 import type { ApprovalReview } from '../src/reviewer';
@@ -215,8 +214,8 @@ describe('the System One check in the gate', () => {
   });
 
   it('does not ask the check about a command that a hook blocks', async () => {
-    const hookRunner = { fire: async () => ({ blocked: true }) } as unknown as HookRunner;
-    const { gate: built, checked } = gate(approved, { hookRunner });
+    const permissionRequest = async () => ({ blocked: true });
+    const { gate: built, checked } = gate(approved, { permissionRequest });
 
     expect(await built.request(request())).toMatchObject({
       decision: 'deny',
@@ -274,14 +273,12 @@ describe('the System One check in the gate', () => {
       const hookEntered = new Promise<void>((resolve) => {
         enterHook = resolve;
       });
-      const hookRunner = {
-        fire: async () => {
-          lifecycle.push('waiting');
-          return { blocked };
-        },
-      } as unknown as HookRunner;
+      const permissionRequest = async () => {
+        lifecycle.push('waiting');
+        return { blocked };
+      };
       const { gate: built, asked } = gate(approved, {
-        hookRunner,
+        permissionRequest,
         emitResolved: async (requestId, decision, remembered) => {
           enterHook();
           await hookBlocked;
@@ -318,8 +315,8 @@ describe('the System One check in the gate', () => {
     });
 
     it('does not retry an approved command that a hook blocks', async () => {
-      const hookRunner = { fire: async () => ({ blocked: true }) } as unknown as HookRunner;
-      const { gate: built } = gate(approved, { hookRunner });
+      const permissionRequest = async () => ({ blocked: true });
+      const { gate: built } = gate(approved, { permissionRequest });
 
       expect(await built.requestRememberedBypass(retry())).toMatchObject({
         decision: 'deny',

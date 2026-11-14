@@ -4,6 +4,7 @@ import {
   type AgentEvent,
   type ModelConfig,
   type PermissionGate,
+  type PromptSource,
   type SandboxMode,
   type Session,
   type SessionId,
@@ -13,7 +14,7 @@ import type { HookRunner } from '@chimera/hooks';
 import type { Mode } from '@chimera/modes';
 import type { Skill } from '@chimera/skills';
 import { EventBus } from './event-bus';
-import { bridgeHooksToBus } from './hook-bridge';
+import { bridgeHooksToLifecycle } from './hook-bridge';
 
 export interface SessionInit {
   cwd: string;
@@ -38,10 +39,8 @@ export interface BuildResult {
   agent: Agent;
   gate?: PermissionGate;
   /**
-   * Lifecycle-hook runner for this session. The registry wires event-driven
-   * hooks into the bus, awaits OnError at the terminal-run boundary, and fires
-   * SessionCreated / SessionEnd directly. Optional — factories that don't
-   * supply one (e.g., subagent test factories) skip hook integration entirely.
+   * Shell-hook consumer for this session. The registry subscribes it to the
+   * agent's lifecycle source. Optional for factories without shell hooks.
    */
   hookRunner?: HookRunner;
 }
@@ -58,6 +57,7 @@ export interface AgentEntry {
   agent: Agent;
   gate?: PermissionGate;
   hookRunner?: HookRunner;
+  detachHooks?: () => void;
   bus: EventBus;
   runActive: boolean;
   /**
@@ -233,7 +233,7 @@ export class AgentRegistry {
 
   private async fireOnError(entry: AgentEntry, error: string): Promise<void> {
     try {
-      await entry.hookRunner?.fire({ event: 'OnError', error });
+      await entry.agent.dispatchLifecycle({ type: 'OnError', error });
     } catch (err) {
       console.debug(
         `[agent-registry] run(${entry.agent.session.id}): OnError hook rejection swallowed:`,
@@ -277,7 +277,7 @@ export class AgentRegistry {
       subagents,
     };
     if (hookRunner) {
-      bridgeHooksToBus(bus, hookRunner);
+      entry.detachHooks = bridgeHooksToLifecycle(agent.lifecycle, agent.session.id, hookRunner);
     }
     bus.subscribe((env) => {
       if (env.type === 'subagent_spawned') {
@@ -295,9 +295,9 @@ export class AgentRegistry {
     });
     this.entries.set(agent.session.id, entry);
     bus.publish({ type: 'session_started', sessionId: agent.session.id });
-    if (hookRunner && !init.sessionId) {
-      await hookRunner.fire({
-        event: 'SessionCreated',
+    if (!init.sessionId) {
+      await agent.dispatchLifecycle({
+        type: 'SessionCreated',
         session_name: agent.session.name,
       });
     }
@@ -344,17 +344,16 @@ export class AgentRegistry {
         );
       }
     }
-    if (entry.hookRunner) {
-      try {
-        await entry.hookRunner.fire({ event: 'SessionEnd' });
-      } catch (err) {
-        // Hook failures must not abort the session lifecycle.
-        console.debug(
-          `[agent-registry] delete(${id}): SessionEnd hook rejection swallowed:`,
-          err instanceof Error ? err.message : String(err),
-        );
-      }
+    try {
+      await entry.agent.dispatchLifecycle({ type: 'SessionEnd' });
+    } catch (err) {
+      // Hook failures must not abort the session lifecycle.
+      console.debug(
+        `[agent-registry] delete(${id}): SessionEnd hook rejection swallowed:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
+    entry.detachHooks?.();
     await this.factory.disposeSession?.(id);
     this.entries.delete(id);
     return true;
@@ -370,6 +369,7 @@ export class AgentRegistry {
     id: SessionId,
     content: string,
     images?: string[],
+    source: PromptSource = 'user',
   ): Promise<'queued' | 'already-running' | 'missing'> {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
@@ -378,10 +378,7 @@ export class AgentRegistry {
     entry.activeRun = (async () => {
       try {
         await this.snapshotWorkspace(entry, content);
-        for await (const event of entry.agent.run(content, images)) {
-          if (event.type === 'run_finished' && event.reason === 'error') {
-            await this.fireOnError(entry, event.error ?? 'unknown');
-          }
+        for await (const event of entry.agent.run(content, images, source)) {
           entry.bus.publish(event);
           if (event.type === 'run_finished') break;
         }
@@ -420,7 +417,7 @@ export class AgentRegistry {
         entry.agent.injectRunMessage(content);
         return 'injected';
       }
-      const started = await this.run(id, content);
+      const started = await this.run(id, content, undefined, 'background');
       if (started === 'queued') return 'started';
       if (started === 'missing') return 'missing';
       await new Promise((resolve) => setTimeout(resolve, DELIVERY_RETRY_MS));

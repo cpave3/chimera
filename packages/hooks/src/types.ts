@@ -1,4 +1,4 @@
-import type { CommandPolicyAnalysis } from '@chimera/core';
+import type { CommandPolicyAnalysis, PromptSource } from '@chimera/core';
 
 export type HookEvent =
   | 'SessionCreated'
@@ -49,6 +49,7 @@ export interface SessionCreatedPayload extends HookPayloadBase {
 export interface UserPromptSubmitPayload extends HookPayloadBase {
   event: 'UserPromptSubmit';
   user_message: string;
+  source: PromptSource;
 }
 
 export interface PreToolUsePayload extends HookPayloadBase {
@@ -140,7 +141,7 @@ export type HookPayload =
 
 export type FirePayload =
   | { event: 'SessionCreated'; session_name?: string }
-  | { event: 'UserPromptSubmit'; user_message: string }
+  | { event: 'UserPromptSubmit'; user_message: string; source: PromptSource }
   | { event: 'PreToolUse'; tool_name: string; tool_input: Record<string, unknown> }
   | {
       event: 'PostToolUse';

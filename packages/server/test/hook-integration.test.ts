@@ -9,9 +9,10 @@ import {
   type HookFireResult,
   type HookRunner,
 } from '@chimera/hooks';
-import type { LanguageModel, ToolSet } from 'ai';
+import { type LanguageModel, type ToolSet, tool } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { type AgentFactory, AgentRegistry } from '../src/agent-registry';
 
 function quietModel(): LanguageModel {
@@ -50,6 +51,7 @@ function makeFactory(
   home: string,
   runnerFactory: (sessionId: string, cwd: string) => HookRunner,
   languageModel: LanguageModel = quietModel(),
+  tools: ToolSet = {},
 ): AgentFactory {
   return {
     build: async (init) => {
@@ -57,7 +59,7 @@ function makeFactory(
         cwd: init.cwd,
         model,
         languageModel,
-        tools: {} as ToolSet,
+        tools,
         sandboxMode: 'off',
         sessionId: init.requestedSessionId ?? init.sessionId,
         sessionName: init.name,
@@ -100,6 +102,66 @@ describe('hook integration via registry', () => {
     await chmod(path, 0o755);
     return path;
   }
+
+  it('queues a slow prompt before Stop without holding up the model', async () => {
+    const order = join(cwd, 'order.txt');
+    const modelStarted = join(cwd, 'model-started');
+    await dropScript(
+      'UserPromptSubmit',
+      'slow.sh',
+      `#!/bin/sh
+cat > /dev/null
+sleep 0.1
+test -f ${JSON.stringify(modelStarted)} || exit 2
+echo prompt >> ${JSON.stringify(order)}
+`,
+    );
+    await dropScript(
+      'Stop',
+      'stop.sh',
+      `#!/bin/sh
+cat > /dev/null
+echo stop >> ${JSON.stringify(order)}
+`,
+    );
+    const languageModel = new MockLanguageModelV3({
+      doStream: async () => {
+        await writeFile(modelStarted, 'started');
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'finish',
+                finishReason: 'stop',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              },
+            ],
+          }),
+        };
+      },
+    }) as unknown as LanguageModel;
+    const registry = new AgentRegistry({
+      factory: makeFactory(
+        home,
+        (sessionId, theCwd) =>
+          new DefaultHookRunner({
+            sessionId,
+            cwd: theCwd,
+            globalRoot,
+            timeoutMs: 5_000,
+            log: () => {},
+          }),
+        languageModel,
+      ),
+      instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
+    await registry.run(sessionId, 'hello');
+    await entry.activeRun;
+    expect((await readFile(order, 'utf8')).trim().split('\n')).toEqual(['prompt', 'stop']);
+    await registry.delete(sessionId);
+  });
 
   it('fires SessionCreated for a fresh custom ID with the session name payload', async () => {
     const captured = join(cwd, 'session-created.json');
@@ -204,7 +266,7 @@ cat > ${JSON.stringify(captured)}
     await expect(readFile(captured, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('runs a PostToolUse script when tool_call_result is published, with the expected payload', async () => {
+  it('runs a PostToolUse script after a real tool call, with the expected payload', async () => {
     const captured = join(cwd, 'captured.json');
     await dropScript(
       'PostToolUse',
@@ -215,6 +277,37 @@ exit 1
 `,
     );
 
+    let calls = 0;
+    const languageModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks:
+            ++calls === 1
+              ? [
+                  { type: 'stream-start', warnings: [] },
+                  {
+                    type: 'tool-call',
+                    toolCallId: 'c1',
+                    toolName: 'bash',
+                    input: JSON.stringify({ command: 'echo hi' }),
+                  },
+                  {
+                    type: 'finish',
+                    finishReason: 'tool-calls',
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  },
+                ]
+              : [
+                  { type: 'stream-start', warnings: [] },
+                  {
+                    type: 'finish',
+                    finishReason: 'stop',
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  },
+                ],
+        }),
+      }),
+    }) as unknown as LanguageModel;
     const registry = new AgentRegistry({
       factory: makeFactory(
         home,
@@ -227,27 +320,20 @@ exit 1
             timeoutMs: 5_000,
             log: () => {},
           }),
+        languageModel,
+        {
+          bash: tool({
+            inputSchema: z.object({ command: z.string() }),
+            execute: async () => ({ stdout: 'hi', exitCode: 0 }),
+          }),
+        },
       ),
       instance: { pid: 1, cwd, version: '0.1.0', sandboxMode: 'off' },
     });
     const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
 
-    entry.bus.publish({
-      type: 'tool_call_start',
-      callId: 'c1',
-      name: 'bash',
-      args: { command: 'echo hi' },
-      target: 'host',
-    });
-    entry.bus.publish({
-      type: 'tool_call_result',
-      callId: 'c1',
-      result: { stdout: 'hi', exitCode: 0 },
-      durationMs: 5,
-    });
-
-    // Wait for the fire-and-forget hook to land.
-    await waitForFile(captured, 2_000);
+    await registry.run(sessionId, 'echo hi');
+    await entry.activeRun;
     const body = JSON.parse(await readFile(captured, 'utf8'));
     expect(body).toMatchObject({
       event: 'PostToolUse',
@@ -362,6 +448,7 @@ exit 1
     });
     const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
     entry.agent.run = async function* (): AsyncGenerator<AgentEvent> {
+      await entry.agent.dispatchLifecycle({ type: 'OnError', error: 'terminated' }).catch(() => {});
       yield { type: 'run_finished', reason: 'error', error: 'terminated' };
     } as typeof entry.agent.run;
 
@@ -390,6 +477,7 @@ exit 1
     });
     const { sessionId, entry } = await registry.create({ cwd, model, sandboxMode: 'off' });
     entry.agent.run = async function* (): AsyncGenerator<AgentEvent> {
+      await entry.agent.dispatchLifecycle({ type: 'OnError', error: 'unknown' });
       yield { type: 'run_finished', reason: 'error' };
     } as typeof entry.agent.run;
 
@@ -471,16 +559,3 @@ exit 0
     expect(body.trim()).toBe('end');
   });
 });
-
-async function waitForFile(path: string, timeoutMs: number): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      await readFile(path);
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 25));
-    }
-  }
-  throw new Error(`timeout waiting for ${path}`);
-}

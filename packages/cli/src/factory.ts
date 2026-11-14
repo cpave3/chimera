@@ -19,16 +19,12 @@ import {
   type AskModelOptions,
   askModel,
   composeSystemPrompt,
-  type InterruptHook,
   loadSession,
   newSessionId,
   projectMemoryDir,
   readMemoryIndex,
   renderMemorySection,
   renderToolsSection,
-  type StopHook,
-  type TimeoutHook,
-  type UserInputRequiredHook,
   validateModelSettings,
   writeSessionMetadata,
 } from '@chimera/core';
@@ -587,51 +583,6 @@ export class CliAgentFactory implements AgentFactory {
       globalRoot: this.home ? join(this.home, '.chimera', 'hooks') : undefined,
     });
 
-    const stopHook: StopHook = {
-      async fire(payload) {
-        const result = await hookRunner.fire({ event: 'Stop', reason: payload.reason });
-        return {
-          blocked: result.blocked,
-          reason: result.reason,
-          additionalContext: result.parsedDecision?.additionalContext,
-        };
-      },
-    };
-
-    const timeoutHook: TimeoutHook = {
-      async fire() {
-        await hookRunner.fire({ event: 'Timeout' });
-      },
-    };
-    const interruptHook: InterruptHook = {
-      async fire() {
-        await hookRunner.fire({ event: 'Interrupt' });
-      },
-    };
-    const userInputRequiredHook: UserInputRequiredHook = {
-      async fire(request) {
-        await hookRunner.fire({ event: 'UserInputRequired', ...request });
-      },
-    };
-    const permissionResolvedHook = {
-      async fire(resolution: {
-        requestId: string;
-        decision: 'allow' | 'deny';
-        remembered: boolean;
-        sessionStatus: 'running' | 'waiting_for_permission';
-        remainingPending: number;
-      }) {
-        await hookRunner.fire({
-          event: 'PermissionResolved',
-          request_id: resolution.requestId,
-          decision: resolution.decision,
-          remembered: resolution.remembered,
-          session_status: resolution.sessionStatus,
-          remaining_pending: resolution.remainingPending,
-        });
-      },
-    };
-
     const agent: Agent = new Agent({
       cwd: init.cwd,
       model: init.model,
@@ -650,7 +601,6 @@ export class CliAgentFactory implements AgentFactory {
       initialMode: activeMode?.name ?? requestedMode,
       compaction: this.compaction,
       compactor: this.compactor,
-      stopHook,
       // A subagent serves its parent's request; a goal is the user's.
       ...((this.subagents.currentDepth ?? 0) === 0
         ? {
@@ -661,10 +611,6 @@ export class CliAgentFactory implements AgentFactory {
             },
           }
         : {}),
-      timeoutHook,
-      interruptHook,
-      userInputRequiredHook,
-      permissionResolvedHook,
       responseTimeoutMs: this.responseTimeoutMs,
       providerOptions: initialGeneration.providerOptions,
     });
@@ -743,7 +689,7 @@ export class CliAgentFactory implements AgentFactory {
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
       mcpHeadlessAutoDeny: this.mcpHeadlessAutoDeny,
-      hookRunner,
+      permissionRequest: (payload) => agent.dispatchLifecycle(payload),
       emitResolved: (requestId, decision, remembered) =>
         agent.emitPermissionResolved(requestId, decision, remembered),
       ...(this.approvalReviewer
@@ -996,7 +942,7 @@ export class CliAgentFactory implements AgentFactory {
     // their state (the repeat counter) follows the session, not the surface.
     const toolInterceptors: ToolCallInterceptor[] = [
       // First: a hook that blocks a call stops it before anything else sees it.
-      preToolUseHook(hookRunner),
+      preToolUseHook((payload) => agent.dispatchLifecycle(payload)),
       outputBudget({
         budgetTokens: () =>
           agent.session.model.outputBudgetTokens ?? initialProfile.outputBudgetTokens,

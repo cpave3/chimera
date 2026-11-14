@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { Agent, type AgentOptions } from '../src/agent';
 import type { AgentEvent } from '../src/events';
+import { LifecycleSource } from '../src/lifecycle';
 import type { CompactorApi, ModelConfig } from '../src/types';
 
 const USAGE = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -109,6 +110,72 @@ describe('Agent loop', () => {
     const finished = events.find((event) => event.type === 'run_finished');
     return finished?.type === 'run_finished' ? finished.reason : undefined;
   }
+
+  it('starts the model without waiting for prompt observers and preserves observer order', async () => {
+    const lifecycle = new LifecycleSource();
+    const observed: string[] = [];
+    let releasePrompt!: () => void;
+    const promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+    let markModelStarted!: () => void;
+    const modelStarted = new Promise<void>((resolve) => {
+      markModelStarted = resolve;
+    });
+    lifecycle.subscribe(async (event) => {
+      if (event.type === 'user_message') await promptGate;
+      observed.push(`first:${event.type}`);
+    });
+    lifecycle.subscribe((event) => {
+      observed.push(`second:${event.type}`);
+    });
+    const { model } = scriptedModel([
+      () => {
+        markModelStarted();
+        return textStep('done');
+      },
+    ]);
+    const agent = buildAgent({ languageModel: model, lifecycle });
+    const running = collect(agent);
+    try {
+      await modelStarted;
+      expect(observed.some((entry) => entry.endsWith(':user_message'))).toBe(false);
+    } finally {
+      releasePrompt();
+    }
+    const events = await running;
+    const rawObserved = observed.filter((entry) => !entry.endsWith(':Stop'));
+    expect(rawObserved).toEqual(
+      events.flatMap((event) => [`first:${event.type}`, `second:${event.type}`]),
+    );
+  });
+
+  it('lets a terminal observer start the next run before the previous source drain completes', async () => {
+    const lifecycle = new LifecycleSource();
+    let nextRun: Promise<AgentEvent[]> | undefined;
+    let startError: unknown;
+    let completed = false;
+    const { model } = scriptedModel([textStep('first'), textStep('second')]);
+    const agent = buildAgent({ languageModel: model, lifecycle });
+    lifecycle.subscribe((event) => {
+      if (event.type !== 'run_finished' || completed) return;
+      completed = true;
+      try {
+        const stream = agent.run('next');
+        nextRun = (async () => {
+          const events: AgentEvent[] = [];
+          for await (const nextEvent of stream) events.push(nextEvent);
+          return events;
+        })();
+      } catch (error) {
+        startError = error;
+      }
+    });
+    await collect(agent);
+    expect(startError).toBeUndefined();
+    expect(nextRun).toBeDefined();
+    expect(finishReason(await nextRun!)).toBe('stop');
+  });
 
   describe('idle response timeout', () => {
     it('lets a tool run longer than responseTimeoutMs', async () => {
@@ -312,6 +379,34 @@ describe('Agent loop', () => {
       expect(calls).toHaveLength(1);
       expect(finishReason(events)).toBe('error');
     });
+  });
+
+  it.each([
+    'max_steps',
+    'output_limit',
+  ] as const)('dispatches Stop with %s without allowing another retry', async (reason) => {
+    const lifecycle = new LifecycleSource();
+    const stops: string[] = [];
+    lifecycle.subscribe((event) => {
+      if (event.type !== 'Stop') return;
+      stops.push(event.reason);
+      return { blocked: true, reason: 'must not retry a limit' };
+    });
+    const { model, calls } = scriptedModel(
+      Array.from({ length: 3 }, () => textStep('partial', 'length')),
+    );
+    const agent = buildAgent({
+      languageModel: model,
+      lifecycle,
+      model: { ...makeModel(), maxSteps: reason === 'max_steps' ? 0 : 10 },
+    });
+    const events = await collect(agent);
+    expect(stops).toEqual([reason]);
+    expect(finishReason(events)).toBe(reason);
+    expect(calls).toHaveLength(reason === 'max_steps' ? 1 : 3);
+    expect(
+      events.filter((event) => event.type === 'user_message').map((event) => event.source),
+    ).toEqual(reason === 'max_steps' ? ['user'] : ['user', 'continuation', 'continuation']);
   });
 
   describe('output cutoff', () => {

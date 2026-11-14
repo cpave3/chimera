@@ -31,9 +31,11 @@ export type RunFinishedReason =
   | 'waiting_for_input'
   | 'output_limit';
 
+export type PromptSource = 'user' | 'continuation' | 'background' | 'stop_retry' | 'goal';
+
 export type AgentEvent =
   | { type: 'session_started'; sessionId: SessionId }
-  | { type: 'user_message'; content: string; imageCount?: number }
+  | { type: 'user_message'; content: string; imageCount?: number; source?: PromptSource }
   | { type: 'assistant_text_delta'; id?: string; delta: string }
   | { type: 'assistant_text_done'; id?: string; text: string }
   /** Streaming delta for model reasoning content (o1, DeepSeek-R1, etc.). */

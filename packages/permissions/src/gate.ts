@@ -3,6 +3,8 @@ import type {
   CommandPolicyContext,
   CommandPolicyEvaluator,
   CommandPolicyFinding,
+  LifecycleDecision,
+  LifecycleHookData,
   McpPermissionCall,
   McpPermissionGate,
   PermissionDecisionSource,
@@ -11,7 +13,6 @@ import type {
   PermissionRule,
   RememberScope,
 } from '@chimera/core';
-import type { HookRunner } from '@chimera/hooks';
 import { matchRule } from './matching';
 import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
@@ -35,12 +36,14 @@ export interface GateOptions {
   /** Deny MCP prompts when no caller can answer them, without changing other tool policy. */
   mcpHeadlessAutoDeny?: boolean;
   /**
-   * Optional lifecycle-hook runner. When set, fired with `PermissionRequest`
+   * Optional lifecycle callback. When set, dispatched with `PermissionRequest`
    * between rule check and user prompt. A blocking hook (exit 2) denies the
    * call without raising the prompt; the executor renders this as
    * `{ error: "denied by hook" }`.
    */
-  hookRunner?: HookRunner;
+  permissionRequest?: (
+    payload: Extract<LifecycleHookData, { type: 'PermissionRequest' }>,
+  ) => Promise<LifecycleDecision>;
   /**
    * Optional callback invoked when the gate resolves a request without
    * routing through `raiseRequest` (e.g., the hook subsystem blocks the
@@ -128,7 +131,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private readonly raise: RaiseRequestFn;
   private readonly headlessAutoDeny: boolean;
   private readonly mcpHeadlessAutoDeny: boolean;
-  private readonly hookRunner: HookRunner | undefined;
+  private readonly permissionRequest: GateOptions['permissionRequest'];
   private readonly emitResolved:
     | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void | Promise<void>)
     | undefined;
@@ -145,7 +148,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     this.raise = opts.raiseRequest;
     this.headlessAutoDeny = opts.headlessAutoDeny ?? false;
     this.mcpHeadlessAutoDeny = opts.mcpHeadlessAutoDeny ?? false;
-    this.hookRunner = opts.hookRunner;
+    this.permissionRequest = opts.permissionRequest;
     this.emitResolved = opts.emitResolved;
     this.commandPolicy = opts.commandPolicy;
     this.audit = opts.audit;
@@ -169,8 +172,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
    * Full gate semantics:
    * 1. If auto-approve level admits the call, return allow.
    * 2. If a rule matches, return the rule's resolution.
-   * 3. If a hookRunner is configured, fire PermissionRequest. A pre-hook
-   *    block (exit 2) denies without raising the user prompt — the executor
+   * 3. If a permissionRequest callback is configured, dispatch PermissionRequest.
+   *    A pre-hook block (exit 2) denies without raising the user prompt — the executor
    *    renders this denial as `{ error: "denied by hook" }`.
    * 4. If a System One check is configured and the request is its to decide,
    *    its `allow` allows the call. Its rejection goes to the user with its
@@ -308,9 +311,9 @@ export class DefaultPermissionGate implements McpPermissionGate {
 
   /** The denial of a blocking `PermissionRequest` hook, or null when no hook blocks. */
   private async deniedByHook(req: PermissionRequest): Promise<PermissionResolution | null> {
-    if (!this.hookRunner) return null;
-    const result = await this.hookRunner.fire({
-      event: 'PermissionRequest',
+    if (!this.permissionRequest) return null;
+    const result = await this.permissionRequest({
+      type: 'PermissionRequest',
       tool_name: req.tool,
       tool_input: req.mcp
         ? { mcp: req.mcp }

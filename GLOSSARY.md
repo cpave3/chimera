@@ -2,6 +2,11 @@
 
 A single-agent coding tool with a terminal UI, a server and a headless mode.
 
+## Extensions
+
+**Mod**:
+A module that Chimera loads into its own process to observe the agent, intercept it, and act on it.
+
 ## TUI
 
 **Status line**:

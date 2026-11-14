@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Agent, buildPermissionRequest, type VisionModelResolution } from '../src/agent';
 import type { AgentEvent } from '../src/events';
 import { newSessionId } from '../src/ids';
+import { type LifecycleEvent, LifecycleSource, lifecycleSource } from '../src/lifecycle';
 import { emptyUsage, type ModelConfig, type Session } from '../src/types';
 
 function makeModel(): ModelConfig {
@@ -60,6 +61,33 @@ describe('Agent', () => {
     expect(agent.session.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(agent.session.status).toBe('idle');
     expect(agent.session.messages).toEqual([]);
+  });
+
+  it('publishes runs to the process lifecycle source by default', async () => {
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hello'),
+      tools: {},
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+    });
+    const observed: LifecycleEvent[] = [];
+    const unsubscribe = lifecycleSource.subscribe((event) => {
+      if (event.sessionId === agent.session.id) observed.push(event);
+    });
+    try {
+      for await (const _event of agent.run('hi')) {
+        /* consume */
+      }
+      expect(observed.filter((event) => event.type === 'Stop')).toEqual([
+        { type: 'Stop', reason: 'stop', sessionId: agent.session.id, cwd: '/tmp' },
+      ]);
+      expect(observed.at(-1)).toMatchObject({ type: 'run_finished', reason: 'stop' });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('uses the requested custom session id and name for a fresh session', () => {
@@ -273,6 +301,13 @@ describe('Agent', () => {
         };
       },
     }) as unknown as LanguageModel;
+    const lifecycle = new LifecycleSource();
+    lifecycle.subscribe(async (event) => {
+      if (event.type !== 'UserInputRequired') return;
+      hookCalls.push({ request: event.request, kind: event.kind });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      hookCalls.push('completed');
+    });
     agent = new Agent({
       cwd: '/tmp',
       model: makeModel(),
@@ -281,13 +316,7 @@ describe('Agent', () => {
       sandboxMode: 'off',
       home,
       contextWindow: 200_000,
-      userInputRequiredHook: {
-        async fire(request) {
-          hookCalls.push(request);
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          hookCalls.push('completed');
-        },
-      },
+      lifecycle,
     });
 
     const events: AgentEvent[] = [];
@@ -1239,12 +1268,24 @@ describe('Agent', () => {
   it('reports the resulting permission state before the suspended caller resumes', async () => {
     const order: string[] = [];
     const resolutions: Array<{
-      requestId: string;
+      request_id: string;
       decision: 'allow' | 'deny';
       remembered: boolean;
-      sessionStatus: 'running' | 'waiting_for_permission';
-      remainingPending: number;
+      session_status: 'running' | 'waiting_for_permission';
+      remaining_pending: number;
     }> = [];
+    const lifecycle = new LifecycleSource();
+    lifecycle.subscribe(async (event) => {
+      if (event.type !== 'PermissionResolved') return;
+      resolutions.push({
+        request_id: event.request_id,
+        decision: event.decision,
+        remembered: event.remembered,
+        session_status: event.session_status,
+        remaining_pending: event.remaining_pending,
+      });
+      order.push('hook');
+    });
     const agent = new Agent({
       cwd: '/tmp',
       model: makeModel(),
@@ -1253,12 +1294,7 @@ describe('Agent', () => {
       sandboxMode: 'off',
       home,
       contextWindow: 200_000,
-      permissionResolvedHook: {
-        async fire(resolution) {
-          resolutions.push(resolution);
-          order.push('hook');
-        },
-      },
+      lifecycle,
     });
     const first = buildPermissionRequest({ tool: 'bash', command: 'rm first', cwd: '/tmp' });
     const second = buildPermissionRequest({ tool: 'bash', command: 'rm second', cwd: '/tmp' });
@@ -1270,11 +1306,11 @@ describe('Agent', () => {
 
     expect(resolutions).toEqual([
       {
-        requestId: first.requestId,
+        request_id: first.requestId,
         decision: 'deny',
         remembered: false,
-        sessionStatus: 'waiting_for_permission',
-        remainingPending: 1,
+        session_status: 'waiting_for_permission',
+        remaining_pending: 1,
       },
     ]);
     expect(order).toEqual(['hook', 'resumed']);
@@ -1282,11 +1318,11 @@ describe('Agent', () => {
     await agent.resolvePermission(second.requestId, 'allow');
     await secondResolution;
     expect(resolutions[1]).toEqual({
-      requestId: second.requestId,
+      request_id: second.requestId,
       decision: 'allow',
       remembered: false,
-      sessionStatus: 'running',
-      remainingPending: 0,
+      session_status: 'running',
+      remaining_pending: 0,
     });
   });
 
@@ -1295,6 +1331,18 @@ describe('Agent', () => {
     true,
   ])('reports automatic completion without clearing an outstanding prompt (pending=%s)', async (hasPendingPrompt) => {
     const resolutions: unknown[] = [];
+    const lifecycle = new LifecycleSource();
+    lifecycle.subscribe(async (event) => {
+      if (event.type !== 'PermissionResolved') return;
+      await Promise.resolve();
+      resolutions.push({
+        request_id: event.request_id,
+        decision: event.decision,
+        remembered: event.remembered,
+        session_status: event.session_status,
+        remaining_pending: event.remaining_pending,
+      });
+    });
     const agent = new Agent({
       cwd: '/tmp',
       model: makeModel(),
@@ -1303,12 +1351,7 @@ describe('Agent', () => {
       sandboxMode: 'off',
       home,
       contextWindow: 200_000,
-      permissionResolvedHook: {
-        async fire(resolution) {
-          await Promise.resolve();
-          resolutions.push(resolution);
-        },
-      },
+      lifecycle,
     });
     const request = buildPermissionRequest({ tool: 'bash', command: 'rm file', cwd: '/tmp' });
     let answered = false;
@@ -1322,11 +1365,11 @@ describe('Agent', () => {
 
     expect(resolutions).toEqual([
       {
-        requestId: 'automatic-retry',
+        request_id: 'automatic-retry',
         decision: 'allow',
         remembered: false,
-        sessionStatus: hasPendingPrompt ? 'waiting_for_permission' : 'running',
-        remainingPending: hasPendingPrompt ? 1 : 0,
+        session_status: hasPendingPrompt ? 'waiting_for_permission' : 'running',
+        remaining_pending: hasPendingPrompt ? 1 : 0,
       },
     ]);
     expect(agent.hasPendingPermission(request.requestId)).toBe(hasPendingPrompt);
@@ -1345,6 +1388,12 @@ describe('Agent', () => {
     const firstHookBlocked = new Promise<void>((resolve) => {
       releaseFirstHook = resolve;
     });
+    const lifecycle = new LifecycleSource();
+    lifecycle.subscribe(async (event) => {
+      if (event.type !== 'PermissionResolved') return;
+      hookStates.push(`${event.session_status}:${event.remaining_pending}`);
+      if (hookStates.length === 1) await firstHookBlocked;
+    });
     const agent = new Agent({
       cwd: '/tmp',
       model: makeModel(),
@@ -1353,12 +1402,7 @@ describe('Agent', () => {
       sandboxMode: 'off',
       home,
       contextWindow: 200_000,
-      permissionResolvedHook: {
-        async fire(resolution) {
-          hookStates.push(`${resolution.sessionStatus}:${resolution.remainingPending}`);
-          if (hookStates.length === 1) await firstHookBlocked;
-        },
-      },
+      lifecycle,
     });
     const first = buildPermissionRequest({ tool: 'bash', command: 'rm first', cwd: '/tmp' });
     const second = buildPermissionRequest({ tool: 'bash', command: 'rm second', cwd: '/tmp' });
@@ -1388,6 +1432,11 @@ describe('Agent', () => {
   });
 
   it('resumes a permission when the resolution hook fails', async () => {
+    const lifecycle = new LifecycleSource();
+    lifecycle.subscribe(async (event) => {
+      if (event.type !== 'PermissionResolved') return;
+      throw new Error('observer unavailable');
+    });
     const agent = new Agent({
       cwd: '/tmp',
       model: makeModel(),
@@ -1396,11 +1445,7 @@ describe('Agent', () => {
       sandboxMode: 'off',
       home,
       contextWindow: 200_000,
-      permissionResolvedHook: {
-        async fire() {
-          throw new Error('observer unavailable');
-        },
-      },
+      lifecycle,
     });
     const request = buildPermissionRequest({ tool: 'bash', command: 'rm file', cwd: '/tmp' });
     const resolution = agent.raisePermissionRequest(request);
@@ -1821,7 +1866,10 @@ describe('Agent.pushEvent', () => {
     });
 
     const events: import('../src/events').AgentEvent[] = [];
-    for await (const ev of agent.run('go')) events.push(ev);
+    for await (const ev of agent.run('go')) {
+      events.push(ev);
+      if (ev.type === 'subagent_event') agent.interrupt();
+    }
 
     const wrapped = events.find(
       (e): e is Extract<import('../src/events').AgentEvent, { type: 'subagent_event' }> =>
@@ -1882,18 +1930,101 @@ describe('Agent.signal', () => {
     expect(finished?.reason).toBe('interrupted');
   });
 
+  it('labels a registry-started background run without changing the user default', async () => {
+    const lifecycle = new LifecycleSource();
+    const sources: string[] = [];
+    lifecycle.subscribe((event) => {
+      if (event.type === 'user_message') sources.push(event.source!);
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hello'),
+      tools: {},
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      lifecycle,
+    });
+    for await (const _event of agent.run('hi')) {
+      /* consume */
+    }
+    for await (const _event of agent.run('child finished', undefined, 'background')) {
+      /* consume */
+    }
+    expect(sources).toEqual(['user', 'background']);
+  });
+
+  it('orders lifecycle observers and retries a blocked stop exactly once', async () => {
+    const lifecycle = new LifecycleSource();
+    const observed: string[] = [];
+    let stops = 0;
+    lifecycle.subscribe(async (event) => {
+      if (event.type === 'user_message') {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        observed.push(`prompt:${event.source}`);
+      }
+      if (event.type === 'Stop') {
+        observed.push(`stop:${event.reason}`);
+        stops++;
+        return { blocked: stops === 1, reason: 'try again' };
+      }
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hello'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      lifecycle,
+    });
+    const events: AgentEvent[] = [];
+    for await (const event of agent.run('hi')) events.push(event);
+    expect(observed).toEqual(['prompt:user', 'stop:stop', 'prompt:stop_retry', 'stop:stop']);
+    expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
+  });
+
+  it('observes the final clean Stop after the retry cap without blocking again', async () => {
+    const lifecycle = new LifecycleSource();
+    const reasons: string[] = [];
+    lifecycle.subscribe((event) => {
+      if (event.type !== 'Stop') return;
+      reasons.push(event.reason);
+      return { blocked: true, reason: 'try again' };
+    });
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hello'),
+      tools: {},
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      lifecycle,
+    });
+    const events: AgentEvent[] = [];
+    for await (const event of agent.run('hi')) events.push(event);
+    expect(reasons).toEqual(['stop', 'stop', 'stop', 'stop', 'stop', 'max_steps']);
+    expect(events.filter((event) => event.type === 'user_message')).toHaveLength(6);
+    expect(events.at(-1)).toMatchObject({ type: 'run_finished', reason: 'max_steps' });
+  });
+
   describe('stop hook', () => {
     it('blocks stop and retries with a user_message when stop hook returns blocked', async () => {
       let fireCount = 0;
-      const stopHook = {
-        async fire() {
-          fireCount++;
-          if (fireCount === 1) {
-            return { blocked: true, reason: 'lint failed' };
-          }
-          return { blocked: false };
-        },
+      const stopObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Stop') return;
+        fireCount++;
+        if (fireCount === 1) {
+          return { blocked: true, reason: 'lint failed' };
+        }
+        return { blocked: false };
       };
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(stopObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -1903,7 +2034,7 @@ describe('Agent.signal', () => {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        stopHook,
+        lifecycle,
       });
 
       const events: string[] = [];
@@ -1920,19 +2051,21 @@ describe('Agent.signal', () => {
 
     it('includes additionalContext in the retry user_message when provided', async () => {
       let fireCount = 0;
-      const stopHook = {
-        async fire() {
-          fireCount++;
-          if (fireCount === 1) {
-            return {
-              blocked: true,
-              reason: 'lint failed',
-              additionalContext: 'Run pnpm biome:lint',
-            };
-          }
-          return { blocked: false };
-        },
+      const stopObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Stop') return;
+        fireCount++;
+        if (fireCount === 1) {
+          return {
+            blocked: true,
+            reason: 'lint failed',
+            additionalContext: 'Run pnpm biome:lint',
+          };
+        }
+        return { blocked: false };
       };
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(stopObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -1942,7 +2075,7 @@ describe('Agent.signal', () => {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        stopHook,
+        lifecycle,
       });
 
       const userMessages: { content: string }[] = [];
@@ -1958,11 +2091,13 @@ describe('Agent.signal', () => {
     });
 
     it('emits run_finished normally when stop hook allows', async () => {
-      const stopHook = {
-        async fire() {
-          return { blocked: false };
-        },
+      const stopObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Stop') return;
+        return { blocked: false };
       };
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(stopObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -1972,7 +2107,7 @@ describe('Agent.signal', () => {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        stopHook,
+        lifecycle,
       });
 
       const events: string[] = [];
@@ -1986,11 +2121,10 @@ describe('Agent.signal', () => {
 
     it('skips stop hook on error terminal reason', async () => {
       let fireCount = 0;
-      const stopHook = {
-        async fire() {
-          fireCount++;
-          return { blocked: true, reason: 'should not fire' };
-        },
+      const stopObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Stop') return;
+        fireCount++;
+        return { blocked: true, reason: 'should not fire' };
       };
 
       const model = new MockLanguageModelV3({
@@ -1998,6 +2132,9 @@ describe('Agent.signal', () => {
           throw new Error('model failure');
         },
       }) as unknown as LanguageModel;
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(stopObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -2007,7 +2144,7 @@ describe('Agent.signal', () => {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        stopHook,
+        lifecycle,
       });
 
       const events: string[] = [];
@@ -2019,14 +2156,16 @@ describe('Agent.signal', () => {
       expect(events[events.length - 1]).toBe('run_finished');
     });
 
-    it('caps retries at MAX_STOP_RETRIES and emits run_finished with max_steps', async () => {
+    it('caps stop retries and reports the existing max_steps outcome', async () => {
       let fireCount = 0;
-      const stopHook = {
-        async fire() {
-          fireCount++;
-          return { blocked: true, reason: 'always blocked' };
-        },
+      const stopObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Stop') return;
+        fireCount++;
+        return { blocked: true, reason: 'always blocked' };
       };
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(stopObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -2036,7 +2175,7 @@ describe('Agent.signal', () => {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        stopHook,
+        lifecycle,
       });
 
       const events: { type: string; reason?: string }[] = [];
@@ -2046,7 +2185,7 @@ describe('Agent.signal', () => {
 
       const finished = events.find((e) => e.type === 'run_finished');
       expect(finished?.reason).toBe('max_steps');
-      expect(fireCount).toBe(5);
+      expect(fireCount).toBe(6);
     });
   });
 
@@ -2164,13 +2303,15 @@ describe('Agent.signal', () => {
       expect(events[events.length - 1]).toBe('run_finished');
     });
 
-    it('fires timeoutHook when step times out', async () => {
+    it('fires Timeout observer when step times out', async () => {
       let timeoutFired = false;
-      const timeoutHook = {
-        async fire() {
-          timeoutFired = true;
-        },
+      const timeoutObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Timeout') return;
+        timeoutFired = true;
       };
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(timeoutObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -2181,7 +2322,7 @@ describe('Agent.signal', () => {
         home,
         contextWindow: 200_000,
         responseTimeoutMs: 50,
-        timeoutHook,
+        lifecycle,
       });
 
       const events = [] as { type: string; reason?: string }[];
@@ -2222,20 +2363,22 @@ describe('Agent.signal', () => {
       expect(drained[drained.length - 1]?.reason).toBe('interrupted');
     });
 
-    it('fires timeoutHook but not stopHook on timeout', async () => {
+    it('fires Timeout observer but not Stop observer on timeout', async () => {
       let timeoutFired = false;
       let stopFired = false;
-      const timeoutHook = {
-        async fire() {
-          timeoutFired = true;
-        },
+      const timeoutObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Timeout') return;
+        timeoutFired = true;
       };
-      const stopHook = {
-        async fire() {
-          stopFired = true;
-          return { blocked: false };
-        },
+      const stopObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Stop') return;
+        stopFired = true;
+        return { blocked: false };
       };
+
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(timeoutObserver);
+      lifecycle.subscribe(stopObserver);
 
       const agent = new Agent({
         cwd: '/tmp',
@@ -2246,8 +2389,7 @@ describe('Agent.signal', () => {
         home,
         contextWindow: 200_000,
         responseTimeoutMs: 50,
-        timeoutHook,
-        stopHook,
+        lifecycle,
       });
 
       for await (const ev of agent.run('hi')) {
@@ -2260,12 +2402,11 @@ describe('Agent.signal', () => {
   });
 
   describe('interrupt hook', () => {
-    it('fires interruptHook on manual interrupt()', async () => {
+    it('fires Interrupt observer on manual interrupt()', async () => {
       let interruptFired = false;
-      const interruptHook = {
-        async fire() {
-          interruptFired = true;
-        },
+      const interruptObserver = async (event: LifecycleEvent) => {
+        if (event.type !== 'Interrupt') return;
+        interruptFired = true;
       };
       // A long stream so we can interrupt mid-flight.
       const model = new MockLanguageModelV3({
@@ -2282,6 +2423,9 @@ describe('Agent.signal', () => {
         }),
       }) as unknown as LanguageModel;
 
+      const lifecycle = new LifecycleSource();
+      lifecycle.subscribe(interruptObserver);
+
       const agent = new Agent({
         cwd: '/tmp',
         model: makeModel(),
@@ -2290,7 +2434,7 @@ describe('Agent.signal', () => {
         sandboxMode: 'off',
         home,
         contextWindow: 200_000,
-        interruptHook,
+        lifecycle,
       });
 
       // Drain async generator in background so we can interrupt.
@@ -3358,7 +3502,12 @@ describe('vision routing', () => {
     expect(step2Prompt).toContain('CORRECTION: use uppercase');
     // A user_message event was emitted for the injection.
     expect(
-      events.some((ev) => ev.type === 'user_message' && ev.content === 'CORRECTION: use uppercase'),
+      events.some(
+        (ev) =>
+          ev.type === 'user_message' &&
+          ev.content === 'CORRECTION: use uppercase' &&
+          ev.source === 'background',
+      ),
     ).toBe(true);
     // The model's final text reflects acting on the correction.
     const dones = events

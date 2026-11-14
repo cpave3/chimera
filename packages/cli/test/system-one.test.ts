@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentEvent } from '@chimera/core';
+import { bridgeHooksToLifecycle } from '@chimera/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SystemOneSettings } from '../src/config';
 import { CliAgentFactory } from '../src/factory';
@@ -156,16 +157,23 @@ describe('the System One check in a session', () => {
       warn: () => {},
       subagents: { enabled: false, headlessAutoDeny: scenario.headless ?? false },
     });
-    const { agent } = await factory.build({
+    const { agent, hookRunner } = await factory.build({
       cwd,
       model: { providerId: 'direct', modelId: 'coder', maxSteps: 5 },
       sandboxMode: 'off',
     });
     const events: AgentEvent[] = [];
-    for await (const event of agent.run('Write made.txt next to the project.')) {
-      events.push(event);
-      if (event.type === 'permission_request')
-        void agent.resolvePermission(event.requestId, 'deny');
+    const detachHooks = bridgeHooksToLifecycle(agent.lifecycle, agent.session.id, hookRunner);
+    try {
+      for await (const event of agent.run('Write made.txt next to the project.')) {
+        events.push(event);
+        if (event.type === 'permission_request')
+          void agent.resolvePermission(event.requestId, 'deny');
+      }
+    } finally {
+      await agent.lifecycle.drain(agent.session.id);
+      detachHooks();
+      hookRunner.dispose?.();
     }
     const writeResult = JSON.stringify(
       sessionCalls
@@ -202,8 +210,9 @@ describe('the System One check in a session', () => {
     ['headless denial', 0.2, true, 'deny'],
     ['human denial', 0.2, false, 'deny'],
   ] as const)('finishes the integration lifecycle after %s', async (_name, benign, headless, decision) => {
-    const { lifecycle, of } = await run({ benign, headless, captureLifecycle: true });
+    const { lifecycle, of, target } = await run({ benign, headless, captureLifecycle: true });
 
+    expect(existsSync(target)).toBe(decision === 'allow');
     expect(lifecycle.map((entry) => entry.event)).toEqual([
       'PermissionRequest',
       'PermissionResolved',
@@ -214,6 +223,7 @@ describe('the System One check in a session', () => {
       remaining_pending: 0,
     });
     expect(of('permission_resolved')).toHaveLength(1);
+    expect(of('permission_resolved')[0]).toMatchObject({ decision });
     expect(of('permission_request')).toHaveLength(!headless && benign < 0.8 ? 1 : 0);
   });
 

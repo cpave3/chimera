@@ -47,7 +47,7 @@ function guarded(hookRunner: HookRunner) {
         },
       },
     } as unknown as ToolSet,
-    [preToolUseHook(hookRunner)],
+    [preToolUseHook(({ type, ...payload }) => hookRunner.fire({ event: type, ...payload }))],
   );
   const call = (args: unknown) =>
     (

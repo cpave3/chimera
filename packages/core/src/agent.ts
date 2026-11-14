@@ -5,10 +5,11 @@ import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type To
 import { type ContextBreakdown, computeContextBreakdown } from './context-breakdown';
 import { ContextTracker, shouldCompact } from './context-tracker';
 import { EventQueue } from './event-queue';
-import { type AgentEvent, type ToolDisplay } from './events';
+import { type AgentEvent, type PromptSource, type ToolDisplay } from './events';
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
 import { readImageDimensions } from './image-header';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
+import { type LifecycleHookData, type LifecycleSource, lifecycleSource } from './lifecycle';
 import { elideImageToolResults } from './message-parts';
 import {
   type ModelSettings,
@@ -71,14 +72,6 @@ import {
 } from './types';
 import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
-export interface StopHook {
-  fire(payload: { reason: string }): Promise<{
-    blocked: boolean;
-    reason?: string;
-    additionalContext?: string;
-  }>;
-}
-
 export interface GoalCheck {
   /** One question to the checker's model: the text of its reply. */
   ask(prompt: { system: string; prompt: string }, signal: AbortSignal): Promise<string>;
@@ -88,34 +81,13 @@ export interface GoalCheck {
   timeoutMs?: number;
 }
 
-export interface TimeoutHook {
-  fire(): Promise<void>;
-}
-
-export interface InterruptHook {
-  fire(): Promise<void>;
-}
-
 export interface UserInputRequest {
   request: string;
   kind?: 'information' | 'action';
 }
 
-export interface UserInputRequiredHook {
-  fire(request: UserInputRequest): Promise<void>;
-}
-
-export interface PermissionResolvedHook {
-  fire(resolution: {
-    requestId: string;
-    decision: 'allow' | 'deny';
-    remembered: boolean;
-    sessionStatus: 'running' | 'waiting_for_permission';
-    remainingPending: number;
-  }): Promise<void>;
-}
-
 export interface AgentOptions {
+  lifecycle?: LifecycleSource;
   cwd: string;
   model: ModelConfig;
   languageModel: LanguageModel;
@@ -166,34 +138,10 @@ export interface AgentOptions {
    */
   compactor?: CompactorApi;
   /**
-   * Optional stop hook. When provided, fired synchronously before the agent
-   * emits `run_finished` with reason `"stop"`. If the hook returns
-   * `blocked: true`, the agent appends a user message containing the block
-   * reason and loops into a fresh LLM turn instead of finishing.
-   */
-  stopHook?: StopHook;
-  /**
    * Checks the session's goal at each clean stop, after the Stop hook let
    * the run end. Without it a goal is kept but never checked.
    */
   goalCheck?: GoalCheck;
-  /**
-   * Optional timeout hook. When provided, fired synchronously when a step
-   * exceeds `responseTimeoutMs` and the agent aborts. Purely observational;
-   * the agent always proceeds to emit `run_finished { reason: "timeout" }`
-   * after the hook resolves.
-   */
-  timeoutHook?: TimeoutHook;
-  /**
-   * Optional interrupt hook. When provided, fired synchronously when the
-   * run terminates with reason `"interrupted"` (e.g. from `Agent.interrupt()`
-   * or Ctrl+C in the TUI). Purely observational.
-   */
-  interruptHook?: InterruptHook;
-  /** Awaited before a user-input handoff emits its terminal run event. */
-  userInputRequiredHook?: UserInputRequiredHook;
-  /** Awaited after permission state changes and before the suspended tool resumes. */
-  permissionResolvedHook?: PermissionResolvedHook;
   /**
    * Idle timeout for a model step (ms): how long the model may produce no
    * stream output. Tool execution time does not count. A value of `0`
@@ -230,6 +178,20 @@ export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<Permiss
 
 export class Agent {
   readonly session: Session;
+  get lifecycle(): LifecycleSource {
+    return this.opts.lifecycle ?? lifecycleSource;
+  }
+
+  dispatchLifecycle(event: LifecycleHookData) {
+    return this.lifecycle.dispatch({ ...event, sessionId: this.session.id, cwd: this.session.cwd });
+  }
+
+  private observeEvent(event: AgentEvent): AgentEvent {
+    void this.lifecycle
+      .dispatch({ ...event, sessionId: this.session.id, cwd: this.session.cwd })
+      .catch((error) => console.error('[lifecycle] observer failed:', error));
+    return event;
+  }
   private opts: AgentOptions;
   private abortController: AbortController;
   private pendingQuestions = new Map<
@@ -598,7 +560,7 @@ export class Agent {
     this.pendingPermissions.delete(requestId);
     const remainingPending = this.pendingPermissions.size;
     this.session.status = remainingPending > 0 ? 'waiting_for_permission' : 'running';
-    await this.firePermissionResolvedHook(requestId, decision, !!remember);
+    await this.dispatchPermissionResolved(requestId, decision, !!remember);
 
     pending.resolve({
       decision,
@@ -630,22 +592,23 @@ export class Agent {
     return this.pendingPermissions.has(requestId);
   }
 
-  private async firePermissionResolvedHook(
+  private async dispatchPermissionResolved(
     requestId: string,
     decision: 'allow' | 'deny',
     remembered: boolean,
   ): Promise<void> {
     const remainingPending = this.pendingPermissions.size;
     try {
-      await this.opts.permissionResolvedHook?.fire({
-        requestId,
+      await this.dispatchLifecycle({
+        type: 'PermissionResolved',
+        request_id: requestId,
         decision,
         remembered,
-        sessionStatus: remainingPending > 0 ? 'waiting_for_permission' : 'running',
-        remainingPending,
+        session_status: remainingPending > 0 ? 'waiting_for_permission' : 'running',
+        remaining_pending: remainingPending,
       });
-    } catch {
-      // Observational hook failures must not strand the caller.
+    } catch (error) {
+      console.error('[lifecycle] observer failed:', error);
     }
   }
 
@@ -667,7 +630,7 @@ export class Agent {
     decision: 'allow' | 'deny',
     remembered: boolean,
   ): Promise<void> {
-    await this.firePermissionResolvedHook(requestId, decision, remembered);
+    await this.dispatchPermissionResolved(requestId, decision, remembered);
     this.currentQueue?.push({
       type: 'permission_resolved',
       requestId,
@@ -1137,14 +1100,14 @@ export class Agent {
   async *compactSession(): AsyncIterable<AgentEvent> {
     const compactor = this.opts.compactor;
     if (!compactor) {
-      yield { type: 'compaction_failed', error: 'not configured' };
+      yield this.observeEvent({ type: 'compaction_failed', error: 'not configured' });
       return;
     }
-    yield { type: 'compaction_started', reason: 'manual' };
+    yield this.observeEvent({ type: 'compaction_started', reason: 'manual' });
     try {
       const result = await compactor.compact(this.session, 'manual');
       this.contextTracker.noteCompaction();
-      yield {
+      yield this.observeEvent({
         type: 'compaction_finished',
         summary: result.summary,
         tokensBefore: result.tokensBefore,
@@ -1153,10 +1116,10 @@ export class Agent {
         strategy: result.strategy,
         prunedCount: result.prunedCount,
         prunedTokensSaved: result.prunedTokensSaved,
-      };
+      });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      yield { type: 'compaction_failed', error };
+      yield this.observeEvent({ type: 'compaction_failed', error });
     }
   }
 
@@ -1282,7 +1245,11 @@ export class Agent {
     this.pendingInjectMessages.push({ content, images });
   }
 
-  run(userMessage: string, imagePaths?: string[]): AsyncIterable<AgentEvent> {
+  run(
+    userMessage: string,
+    imagePaths?: string[],
+    source: PromptSource = 'user',
+  ): AsyncIterable<AgentEvent> {
     if (this.running || this.updatingModelSettings) {
       throw new Error('Agent is already running');
     }
@@ -1293,14 +1260,24 @@ export class Agent {
     this.modelOverride = null;
     this.visionUnavailableEmitted = false;
 
-    const queue = new EventQueue<AgentEvent>();
+    const queue = new EventQueue<AgentEvent>((event) => {
+      if (event.type === 'run_finished') {
+        // Both lifecycle observers and stream consumers may start the next run.
+        this.currentQueue = null;
+        this.running = false;
+      }
+      this.observeEvent(event);
+    });
     this.currentQueue = queue;
 
     // Start the engine in the background; consumer drains the queue.
-    void this.runInternal(userMessage, queue, imagePaths).finally(() => {
+    void this.runInternal(userMessage, queue, imagePaths, source).finally(async () => {
+      if (this.currentQueue === queue) {
+        this.currentQueue = null;
+        this.running = false;
+      }
+      await this.lifecycle.drain(this.session.id);
       queue.close();
-      this.currentQueue = null;
-      this.running = false;
     });
 
     return queue.drain();
@@ -1480,6 +1457,7 @@ export class Agent {
     userMessage: string,
     queue: EventQueue<AgentEvent>,
     imagePaths?: string[],
+    source: PromptSource = 'user',
   ): Promise<void> {
     this.session.status = 'running';
     this.pendingUserInputRequest = null;
@@ -1556,6 +1534,10 @@ export class Agent {
         if (settingsState) queue.push({ type: 'model_settings_changed', settingsState });
       } catch (error) {
         this.session.status = 'error';
+        await this.dispatchLifecycle({
+          type: 'OnError',
+          error: `Model settings: ${(error as Error).message}`,
+        });
         queue.push({
           type: 'run_finished',
           reason: 'error',
@@ -1605,7 +1587,12 @@ export class Agent {
           `in ~/.chimera/config.json to a model with verified image support, or use ` +
           `/model to switch to a vision-capable model.`;
         queue.push({ type: 'session_started', sessionId: this.session.id });
-        queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
+        queue.push({
+          type: 'user_message',
+          content: userMessage,
+          imageCount: imagePaths?.length,
+          source,
+        });
         this.session.status = 'error';
         try {
           await persistSession(
@@ -1616,6 +1603,7 @@ export class Agent {
         } catch {
           // best-effort persistence
         }
+        await this.dispatchLifecycle({ type: 'OnError', error });
         queue.push({ type: 'run_finished', reason: 'error', error });
         return;
       }
@@ -1638,7 +1626,12 @@ export class Agent {
       });
     }
 
-    queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
+    queue.push({
+      type: 'user_message',
+      content: userMessage,
+      imageCount: imagePaths?.length,
+      source,
+    });
 
     if (this.modelOverride && this.modelOverride.trigger !== 'fallback') {
       queue.push({
@@ -2376,7 +2369,7 @@ export class Agent {
             this.session.pendingPermissionFeedback = [];
             for (const feedback of feedbackMessages) {
               this.session.messages.push(await buildUserMessage(feedback));
-              queue.push({ type: 'user_message', content: feedback });
+              queue.push({ type: 'user_message', content: feedback, source: 'continuation' });
             }
             injectedThisStep = true;
             this.abortController = new AbortController();
@@ -2400,6 +2393,7 @@ export class Agent {
                 type: 'user_message',
                 content: inject.content,
                 imageCount: inject.images?.length,
+                source: 'background',
               });
             }
             injectedThisStep = true;
@@ -2448,6 +2442,11 @@ export class Agent {
             if (outputContinuations < Agent.MAX_OUTPUT_CONTINUATIONS) {
               outputContinuations += 1;
               this.session.messages.push({ role: 'user', content: OUTPUT_CONTINUATION_NOTE });
+              queue.push({
+                type: 'user_message',
+                content: OUTPUT_CONTINUATION_NOTE,
+                source: 'continuation',
+              });
               queue.push({
                 type: 'output_continued',
                 attempt: outputContinuations,
@@ -2510,34 +2509,26 @@ export class Agent {
         }
       }
 
-      if (timedOut && this.opts.timeoutHook) {
-        await this.opts.timeoutHook.fire();
-      }
-      if (terminalReason === 'interrupted' && this.opts.interruptHook) {
-        await this.opts.interruptHook.fire();
-      }
-      if (
-        terminalReason === 'waiting_for_input' &&
-        this.pendingUserInputRequest &&
-        this.opts.userInputRequiredHook
-      ) {
-        await this.opts.userInputRequiredHook.fire(this.pendingUserInputRequest);
+      if (timedOut) await this.dispatchLifecycle({ type: 'Timeout' });
+      if (terminalReason === 'interrupted') await this.dispatchLifecycle({ type: 'Interrupt' });
+      const userInputRequest = this.pendingUserInputRequest as UserInputRequest | null;
+      if (terminalReason === 'waiting_for_input' && userInputRequest) {
+        await this.dispatchLifecycle({
+          type: 'UserInputRequired',
+          ...userInputRequest,
+        });
       }
 
       // Stop hook: only for clean "stop", not error/interrupted/timeout.
-      if (
-        terminalReason === 'stop' &&
-        this.opts.stopHook &&
-        stopRetryCount < Agent.MAX_STOP_RETRIES
-      ) {
-        const hookResult = await this.opts.stopHook.fire({ reason: terminalReason });
+      if (terminalReason === 'stop' && stopRetryCount < Agent.MAX_STOP_RETRIES) {
+        const hookResult = await this.dispatchLifecycle({ type: 'Stop', reason: terminalReason });
         if (hookResult.blocked) {
           const parts: string[] = [];
           if (hookResult.reason) parts.push(hookResult.reason);
           if (hookResult.additionalContext) parts.push(hookResult.additionalContext);
           const blockMessage = parts.length > 0 ? parts.join('\n\n') : 'Blocked by stop hook';
           this.session.messages.push({ role: 'user', content: blockMessage });
-          queue.push({ type: 'user_message', content: blockMessage });
+          queue.push({ type: 'user_message', content: blockMessage, source: 'stop_retry' });
           stopRetryCount++;
           // Fresh abort controller for the next turn.
           this.abortController = new AbortController();
@@ -2560,7 +2551,7 @@ export class Agent {
           if (outcome.message !== undefined) {
             goalContinuations++;
             this.session.messages.push({ role: 'user', content: outcome.message });
-            queue.push({ type: 'user_message', content: outcome.message });
+            queue.push({ type: 'user_message', content: outcome.message, source: 'goal' });
             // Fresh abort controller for the next turn.
             this.abortController = new AbortController();
             continue;
@@ -2570,6 +2561,15 @@ export class Agent {
       }
 
       break; // No more retries.
+    }
+
+    if (terminalReason === 'max_steps' || terminalReason === 'output_limit') {
+      await this.dispatchLifecycle({ type: 'Stop', reason: terminalReason });
+    }
+    if (terminalReason === 'error') {
+      await this.dispatchLifecycle({ type: 'OnError', error: errorMessage ?? 'unknown' }).catch(
+        (error) => console.error('[lifecycle] observer failed:', error),
+      );
     }
 
     this.session.status =
