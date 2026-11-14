@@ -18,14 +18,46 @@ before the context window overflows. It runs in two tiers:
 
 | trigger | how |
 |---------|-----|
-| **Threshold** (automatic) | The agent projects the next prompt size as the provider's last reported `inputTokens` plus a char/4 estimate of messages appended since (pure estimate before the first usage report). When the projection crosses `min(contextWindow × thresholdPercent, contextWindow − reserve)` — where the reserve covers `maxOutputTokens` plus a growth margin — compaction runs. The check happens **at run start and between steps inside tool loops**, so a long agentic run compacts mid-run instead of dying on a window overflow. |
+| **Threshold** (automatic) | The agent projects the next prompt size as the provider's last reported `inputTokens` plus a char/4 estimate of messages appended since (pure estimate before the first usage report). When the projection crosses `min(contextWindow × thresholdPercent, contextWindow − reserve)` — where the reserve covers `maxOutputTokens` plus a growth margin — compaction runs. The check happens **before every model request**, including tool loops, output continuations, stop-hook retries, and goal continuations. The full prompt estimate includes system text and tool schemas and provides a floor when provider usage is underreported. |
 | **Manual** | Type `/compact` in the TUI (or call `POST /v1/sessions/:id/compact`). Manual compactions always run the full prune + summarize pipeline. |
-| **Overflow** (automatic) | The provider rejected a step because the prompt exceeds the context window — the size estimate or the configured window was wrong. The agent runs the full prune + summarize pipeline once and sends the step again. `compaction_started` carries `reason: "overflow"`. |
+| **Overflow** (automatic) | The provider rejected a step because the prompt exceeds the context window — the size estimate or the configured window was wrong. The agent forces the full prune + summarize pipeline with a smaller history budget and sends the step again. Each rejected step gets at most eight recovery attempts, stopping earlier if history cannot shrink further. `compaction_started` carries `reason: "overflow"`. |
 
-A failed threshold compaction emits `compaction_failed` and the run continues
-(degraded beats dead); further attempts are latched off until the next user
-turn. If compaction is disabled via config or `--no-compaction`, an oversized
-prompt surfaces the provider's error and ends the run.
+## Recovery and limits
+
+Compaction uses the active session window, including model switches and subagents.
+The summary request uses its own model's window and reserves output space.
+The summary output is capped at 2,048 tokens, or less for a small window.
+Image payloads are not serialized into summary text.
+
+When history fits the summary input budget, the summarizer receives the whole old region.
+Otherwise, the request uses a bounded excerpt and reports the omitted context.
+A failed request gets one retry after 250 ms, with bounded input.
+If a distinct utility model is configured, compaction tries that model next.
+Each model attempt has a 30-second deadline, including model and settings resolution.
+
+If no summary model succeeds, compaction uses an explicitly labeled recovery excerpt.
+If the summary or kept tail still exceeds the budget, compaction replaces the oversized region
+with a smaller excerpt. Tool-pair expansion cannot defeat this final size reduction.
+The latest user request remains visible; oversized text can be truncated with a warning.
+These are lossy recovery paths, not normal summaries.
+
+Recall archival errors do not prevent summarization. Pruning works on copied message containers.
+Interrupts cancel summary work without committing partial changes.
+Manual compaction excludes concurrent runs and persists its snapshot before reporting success.
+
+The TUI shows retry, fallback, truncation, and storage warnings.
+Use `/context` to inspect the budget. Check the compaction log before restating missing detail.
+When recovery omits context, the log retains the original messages in `recoveryMessages`.
+Treat that file as private session data.
+
+Compaction cannot repair invalid credentials, an unavailable conversation provider, or a full/read-only disk.
+It also cannot shrink system text, tool schemas, or the conversation model's output reservation.
+If those alone exceed the provider limit, reduce them or select a larger window with `/model`.
+The same session can continue after that change.
+
+A failed or ineffective compaction suppresses repeated threshold attempts for that turn.
+Explicit provider-overflow recovery still runs, with progressively smaller history budgets.
+If compaction is disabled, oversized prompts return the provider error and recovery guidance.
 
 ## Summary format
 
@@ -105,7 +137,7 @@ All keys live under `compaction` in `~/.chimera/config.json`:
 | `thresholdPercent` | number | `85` | Compact when the projected prompt crosses this percentage of the window (must be 50–95). |
 | `reserveTokens` | number | `16384` | Absolute safety floor below `contextWindow`. |
 | `keepRecentTokens` | number | `20000` | Budget for the trailing verbatim tail. |
-| `model` | string | *(session model)* | Model used to generate summaries, in `providerId/modelId` format. |
+| `model` | string | *(utility model, else session model)* | Model used to generate summaries, in `providerId/modelId` format. |
 
 The prune tier is configured under `recall` (see [Context management](context.md#context-management)): `enabled`
 (default true), `archiveThresholdTokens` (default 500 — tool results above
@@ -120,7 +152,7 @@ Disable for a single invocation with `--no-compaction`.
 
 ## Compaction log
 
-Each successful compaction appends one JSON line to
+Each completed compaction appends one JSON line to
 `~/.chimera/sessions/<sessionId>.compactions.jsonl`:
 
 ```json
@@ -134,7 +166,10 @@ Each successful compaction appends one JSON line to
 }
 ```
 
-The file is append-only; it is never rewritten in place.
+The file is append-only; it is never rewritten in place. Entries also include `warnings`.
+Recovery entries can include `recoveryMessages`, the original history before pruning or truncation.
+A log write failure reaches the TUI as a warning. A snapshot write failure warns that recovery
+exists only in memory, so fix disk space and permissions before restarting.
 
 ## Trade-offs
 
@@ -145,5 +180,8 @@ a per-message overhead. You may compact slightly early. A per-provider
 estimator can be swapped in later without changing the API.
 - **Summary itself consumes tokens** → each compaction inputs the previous
 summary and asks the model to merge. There is no unbounded append-only growth.
-- **No raw tool-output recall** → the summary is lossy. If you need to recall
-pruned tool content later, that requires a separate feature (not in scope).
+- **Recovery can omit context** → inspect `recoveryMessages` in the compaction log.
+Normal recall pruning keeps archived tool output available through the `recall` tool.
+
+A faster checkpoint-based design is [proposed separately](faster-compaction-proposal.md).
+It is not part of this recovery implementation.
