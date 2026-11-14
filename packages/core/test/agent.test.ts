@@ -3516,39 +3516,49 @@ describe('vision routing', () => {
     expect(dones).toContain('OK UPPERCASE');
   });
 
-  it('drops pending mid-run injects when the run is interrupted', async () => {
-    // An interrupted step must not carry injects into the next run — the
-    // drain sits after the terminalReason !== 'stop' break, and a fresh run
-    // clears the buffer. Verify by injecting during a tool call that aborts,
-    // then asserting a subsequent run starts clean.
+  it('keeps pending appends for the next turn when the run is interrupted', async () => {
     let agentRef: Agent | undefined;
     const slowTool = tool({
       description: 'slow',
       inputSchema: z.object({}),
       execute: async () => {
-        agentRef?.injectRunMessage('should be dropped');
+        agentRef?.injectRunMessage('retained correction', undefined, 'append');
         // Abort the run from within the tool.
         agentRef?.interrupt();
         return { ok: true };
       },
     });
+    let streamCalls = 0;
     const model = new MockLanguageModelV3({
       doStream: async () => ({
         stream: simulateReadableStream({
-          chunks: [
-            { type: 'stream-start', warnings: [] },
-            {
-              type: 'tool-call',
-              toolCallId: 'c1',
-              toolName: 'slow',
-              input: JSON.stringify({}),
-            },
-            {
-              type: 'finish',
-              finishReason: 'tool-calls',
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ],
+          chunks:
+            streamCalls++ > 0
+              ? [
+                  { type: 'stream-start', warnings: [] },
+                  { type: 'text-start', id: 't1' },
+                  { type: 'text-delta', id: 't1', delta: 'done' },
+                  { type: 'text-end', id: 't1' },
+                  {
+                    type: 'finish',
+                    finishReason: 'stop',
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  },
+                ]
+              : [
+                  { type: 'stream-start', warnings: [] },
+                  {
+                    type: 'tool-call',
+                    toolCallId: 'c1',
+                    toolName: 'slow',
+                    input: JSON.stringify({}),
+                  },
+                  {
+                    type: 'finish',
+                    finishReason: 'tool-calls',
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                  },
+                ],
         }),
       }),
     }) as unknown as LanguageModel;
@@ -3569,25 +3579,12 @@ describe('vision routing', () => {
     }
     expect(agent.session.status).toBe('idle');
 
-    // A fresh run should not see the dropped injection in its prompt.
-    const cleanModel = textOnlyModel('done');
-    const cleanAgent = new Agent({
-      cwd: '/tmp',
-      model: makeModel(),
-      languageModel: cleanModel,
-      tools: {} as ToolSet,
-      sandboxMode: 'off',
-      home,
-      contextWindow: 200_000,
-      session: agent.session,
-    });
-    for await (const _ev of cleanAgent.run('next')) {
+    for await (const _event of agent.run('next')) {
       // drain
     }
-    const promptJson = JSON.stringify(
-      (cleanModel as unknown as { doStreamCalls: Array<{ prompt: unknown }> }).doStreamCalls[0]
-        .prompt,
-    );
-    expect(promptJson).not.toContain('should be dropped');
+    const calls = (model as unknown as MockLanguageModelV3).doStreamCalls;
+    expect(
+      calls.slice(1).some((call) => JSON.stringify(call.prompt).includes('retained correction')),
+    ).toBe(true);
   });
 });

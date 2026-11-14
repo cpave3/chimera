@@ -7,11 +7,12 @@ import {
   lifecycleSource,
   loadSession,
   type ModelConfig,
+  WorkspaceCheckpoints,
   writeSessionMetadata,
 } from '@chimera/core';
 import type { LanguageModel, ToolSet } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AgentFactory, AgentRegistry } from '../src/agent-registry';
 import { buildApp } from '../src/app';
 
@@ -1041,6 +1042,68 @@ describe('server app', () => {
     expect(body.compactionActive).toBe(false);
   });
 
+  it('delivers a 204 append accepted while the run is taking its workspace snapshot', async () => {
+    const snapshotEntered = Promise.withResolvers<void>();
+    const releaseSnapshot = Promise.withResolvers<void>();
+    const snapshot = vi
+      .spyOn(WorkspaceCheckpoints.prototype, 'snapshot')
+      .mockImplementation(async () => {
+        snapshotEntered.resolve();
+        await releaseSnapshot.promise;
+        return null;
+      });
+    const languageModel = textOnlyModel('done');
+    const registry = new AgentRegistry({
+      factory: {
+        build: async (init) => ({
+          agent: new Agent({
+            cwd: init.cwd,
+            model,
+            languageModel,
+            tools: {} as ToolSet,
+            sandboxMode: 'off',
+            home,
+            contextWindow: 200_000,
+          }),
+        }),
+      },
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      home,
+      workspaceCheckpoints: true,
+    });
+    const app = buildApp({ registry, home });
+    const created = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/tmp', model, sandboxMode: 'off' }),
+    });
+    const { sessionId } = await created.json();
+    const post = (content: string, append = false) =>
+      app.request(`/v1/sessions/${sessionId}/messages${append ? '?append=true' : ''}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+    try {
+      expect((await post('start')).status).toBe(202);
+      await snapshotEntered.promise;
+      expect((await post('correction')).status).toBe(409);
+      expect((await post('correction', true)).status).toBe(204);
+      const activeRun = registry.get(sessionId)!.activeRun;
+      releaseSnapshot.resolve();
+      await activeRun;
+      const calls = (languageModel as unknown as MockLanguageModelV3).doStreamCalls;
+      expect(calls.some((call) => JSON.stringify(call.prompt).includes('correction'))).toBe(true);
+      expect(registry.get(sessionId)!.bus.snapshot()).toContainEqual(
+        expect.objectContaining({ type: 'user_message', content: 'correction', append: true }),
+      );
+    } finally {
+      releaseSnapshot.resolve();
+      await registry.get(sessionId)!.activeRun;
+      snapshot.mockRestore();
+    }
+  });
+
   describe('negative input validation', () => {
     async function createSession(app: ReturnType<typeof buildApp>): Promise<string> {
       const response = await app.request('/v1/sessions', {
@@ -1163,7 +1226,13 @@ describe('server app', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ content: 'look at this', images: ['/path/to/img.png'] }),
       });
-      expect(response.status).toBe(202);
+      try {
+        expect(response.status).toBe(202);
+      } finally {
+        // A 202 only accepts the run; its persistence must settle before home is removed.
+        await registry.get(sessionId)!.activeRun;
+      }
+      expect(registry.get(sessionId)!.runActive).toBe(false);
     });
 
     it('POST /v1/sessions/:id/messages?append=true accepts images array', async () => {
