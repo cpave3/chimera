@@ -16,7 +16,7 @@ import {
   runMcpRemove,
   runMcpTools,
 } from './commands/mcp';
-import { runModList, runModTypes, runModValidate } from './commands/mod';
+import { runModList, runModTest, runModTypes, runModValidate } from './commands/mod';
 import { runBashPolicyReview } from './commands/policy-review';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
@@ -347,6 +347,9 @@ export function buildProgram(): Command {
     });
   mod.command('types').action(async () => {
     process.exitCode = await runModTypes();
+  });
+  mod.command('test <directory>').action(async (directory: string) => {
+    process.exitCode = await runModTest(directory);
   });
 
   program

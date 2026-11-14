@@ -73,7 +73,8 @@ Configured MCP servers win over bundled ones; first loaded mod wins between
 bundles. MCP servers start in subagents unless `subagents: false`. `${MOD_DIR}`
 expands in commands and paths, and the mod folder is the server's working directory.
 Without an explicit `env` map, only `HOME LOGNAME PATH SHELL TERM USER` are passed.
-Explicit maps can refer to `env:NAME` or `${NAME}`; missing variables are errors.
+An explicit map inherits Chimera's secret-scrubbed environment and overlays its
+entries. Values can refer to `env:NAME` or `${NAME}`; missing variables are errors.
 
 ## JavaScript and strict TypeScript
 
@@ -167,6 +168,9 @@ Process handles expose `write(text)`, `close()` (stdin), `kill(signal?)`,
 server secret already removed. At shutdown Chimera terminates mod children, then
 kills survivors after two seconds. Store files are readable from sandboxed bash:
 do not persist secrets there. Calls on an ended session fail with `SessionEnded`.
+Already-created process handles survive session switches and stay usable until
+process shutdown. Refresh your saved `$` on each session event for subsequent
+session-bound calls, including logging; an old `$` cannot spawn another helper.
 
 ## Versions and declarations
 
@@ -210,3 +214,50 @@ Validate checks the manifest/API, strict Node module rules, imports, `register`
 It executes module initialization/registration: validation is not a sandbox.
 JSON output includes `valid` and `error`; exit code is zero only for a valid mod.
 
+## Test a mod without a model
+
+Put `.test.mjs` files directly in `tests/`. Each exports `test(harness)` and may
+use Node's assertion library. Chimera passes the harness in; no runtime Chimera
+import is needed. For the example mod above:
+
+```js
+// tests/hooks.test.mjs
+import assert from 'node:assert/strict';
+
+export async function test(harness) {
+  await harness.emit({
+    type: 'session.start', sessionId: 'test', name: 'demo', reason: 'new',
+  });
+  assert.deepEqual(harness.calls.find(call => call.path === 'ui.log').args,
+    ['Started demo (new)', { to: 'debug' }]);
+
+  const result = await harness.emit({
+    type: 'tool.call', sessionId: 'test', toolName: 'bash',
+    args: { command: 'forbidden' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.equal(harness.results.at(-1).result.reason, 'Blocked by example policy');
+}
+```
+
+Harness API:
+
+- `$`: fake session/API. Calls are recorded, not sent to a real agent.
+- `setResult('http.fetch', new Response('fixture'))`, or another dotted `$` method
+  path: supply that method's return value for subsequent calls. Promises work too.
+  Value fields can also be configured, e.g. `setResult('session.isSubagent', true)`.
+- `emit(event, terminalResult?)`: dispatch to the mod's handlers, returning the
+  interception result. `next()` reaches `terminalResult` unless another handler
+  intercepts it. Observer handlers run even if earlier observers ignore `next()`.
+- `calls`: ordered `{path, args}` records for `$` methods.
+- `results`: `{event, result}` records for completed emissions.
+- `processes`: recorded spawn options; no processes are actually started. Fake
+  handles record operations as `process[0].write`, `.close`, `.kill`, etc.
+  Configure `setResult('process[0].write', promise)` to stall or reject writes,
+  or `setResult('process.spawn', customHandle)` to supply a complete fake handle.
+
+Fake fetch returns an empty response unless configured; environment/store are
+in-memory; the clock starts at zero and sleep resolves immediately. Each test file
+gets a fresh harness and registration. Files run alphabetically; assertions/import
+errors print `FAIL <file>: <message>` and make the command exit nonzero. Other files
+still run. Empty test suites and missing `test(harness)` exports fail clearly.
