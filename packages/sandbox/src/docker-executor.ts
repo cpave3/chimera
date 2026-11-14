@@ -1,3 +1,6 @@
+import { readlink, realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, join, posix, resolve } from 'node:path';
 import type { DirEntry, ExecOptions, ExecResult, Executor, StatResult } from '@chimera/core';
 import { type DockerRunner, SpawnDockerRunner } from './docker-runner';
 import { isLocalDevImage } from './image';
@@ -8,6 +11,8 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 
 export interface DockerExecutorOptions extends SandboxConfig {
   runner?: DockerRunner;
+  /** User home, for protecting globally loaded mods. Defaults to homedir(). */
+  home?: string;
   warn?: (message: string) => void;
   /**
    * If set, `start()` builds the configured image from the directory this
@@ -39,6 +44,7 @@ export class DockerExecutor implements Executor {
   private readonly buildContext: (() => string) | undefined;
   private readonly hostUid: number | null;
   private readonly hostGid: number | null;
+  private readonly modsPath: string;
   private effectiveMode: SandboxRunMode;
   private started = false;
   private stopped = false;
@@ -52,6 +58,7 @@ export class DockerExecutor implements Executor {
     this.buildContext = opts.buildContext;
     this.hostUid = resolveHostId(opts.hostUid, process.getuid?.bind(process));
     this.hostGid = resolveHostId(opts.hostGid, process.getgid?.bind(process));
+    this.modsPath = resolve(opts.home ?? homedir(), '.chimera', 'mods');
     this.effectiveMode = opts.mode;
   }
 
@@ -348,6 +355,7 @@ export class DockerExecutor implements Executor {
   async writeFile(path: string, content: string): Promise<void> {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);
+    await this.assertWritable(containerPath);
     const dir = posixDirname(containerPath);
     const tmp = `${containerPath}.${process.pid}.${Date.now()}.tmp`;
     const cmd = `mkdir -p ${shellQuote(dir)} && cat > ${shellQuote(tmp)} && mv ${shellQuote(tmp)} ${shellQuote(containerPath)}`;
@@ -365,6 +373,7 @@ export class DockerExecutor implements Executor {
   async removeFile(path: string): Promise<void> {
     this.assertStarted();
     const containerPath = this.toContainerPath(path);
+    await this.assertWritable(containerPath);
     const removeResult = await this.runner.run([
       ...this.execPrefix(),
       this.containerName,
@@ -436,6 +445,43 @@ export class DockerExecutor implements Executor {
     };
   }
 
+  private async assertWritable(containerPath: string): Promise<void> {
+    if (containerPath !== '/workspace' && !containerPath.startsWith('/workspace/')) return;
+    const hostPath = resolve(this.config.hostCwd, posix.relative('/workspace', containerPath));
+    const effectivePath = await this.resolveWorkspacePath(hostPath);
+    const effectiveMods = await resolveWritePath(this.modsPath);
+    for (const root of [this.modsPath, effectiveMods]) {
+      for (const candidate of [hostPath, effectivePath]) {
+        if (candidate === root || candidate.startsWith(`${root}/`)) {
+          throw new Error(
+            `Path '${containerPath}' is protected: global mods can only be changed by the user`,
+          );
+        }
+      }
+    }
+  }
+
+  private async resolveWorkspacePath(path: string, links = 0): Promise<string> {
+    if (links > 40) throw new Error(`Too many symbolic links resolving '${path}'`);
+    const parent = dirname(path);
+    if (parent === path) return path;
+    const candidate = join(await this.resolveWorkspacePath(parent, links), basename(path));
+    let target: string;
+    try {
+      target = await readlink(candidate);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EINVAL' || code === 'ENOENT') return candidate;
+      throw error;
+    }
+    // Absolute /workspace symlinks are meaningful in the container, not on the host.
+    const destination =
+      target === '/workspace' || target.startsWith('/workspace/')
+        ? resolve(this.config.hostCwd, posix.relative('/workspace', target))
+        : resolve(dirname(candidate), target);
+    return this.resolveWorkspacePath(destination, links + 1);
+  }
+
   private assertStarted(): void {
     if (!this.started) {
       throw new Error('DockerExecutor: start() must be called before use');
@@ -450,7 +496,8 @@ export class DockerExecutor implements Executor {
    * to its container counterpart under `/workspace`.
    */
   private toContainerPath(path: string): string {
-    if (path.startsWith('/workspace')) return path;
+    path = posix.normalize(path);
+    if (path === '/workspace' || path.startsWith('/workspace/')) return path;
     if (path.startsWith('/')) {
       // Absolute host path: rewrite the prefix iff it sits under hostCwd.
       const cwd = this.config.hostCwd;
@@ -462,7 +509,17 @@ export class DockerExecutor implements Executor {
       return path;
     }
     if (path === '' || path === '.') return '/workspace';
-    return `/workspace/${path}`;
+    return posix.resolve('/workspace', path);
+  }
+}
+
+/** Resolve existing ancestors too, so new files cannot bypass protection via a symlink. */
+async function resolveWritePath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return join(await resolveWritePath(dirname(path)), basename(path));
   }
 }
 
