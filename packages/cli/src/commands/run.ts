@@ -29,6 +29,7 @@ import {
 } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
+import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { RunRows } from '../run-rows';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
@@ -37,7 +38,7 @@ import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../se
 import { loadSkillsFromConfig } from '../skills-loader';
 import { VERSION } from '../version';
 
-export interface RunOptions {
+export interface RunOptions extends ModOptions {
   prompt: string;
   json?: boolean;
   model?: string;
@@ -107,6 +108,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   let factory: AgentFactory;
   let cliFactory: CliAgentFactory | undefined;
   const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);
+  const modRuntime = await ModRuntime.create(opts);
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
   const mcpServers = resolveMcpServers(config, opts.mcpConfig);
@@ -177,7 +179,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     }
 
     cliFactory = new CliAgentFactory({
-
+      mods: modRuntime.host,
           providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -260,12 +262,13 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   });
   const app = buildApp({ registry, home: opts.home, secret });
   const server = await startServer({ app, secret });
+  modRuntime.bind(registry, server.url);
 
   const client = new ChimeraClient({ baseUrl: server.url });
   let closing: Promise<void> | undefined;
   const shutdown = (reason: ShutdownReason) => {
     closing ??= (async () => {
-      await shutdownLifecycle(registry, reason);
+      await shutdownLifecycle(registry, modRuntime, reason);
       if (cliFactory) await cliFactory.dispose();
       await server.close();
     })();

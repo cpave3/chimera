@@ -29,6 +29,7 @@
     "@chimera/core": "workspace:*",
     "@chimera/hooks": "workspace:*",
     "@chimera/modes": "workspace:*",
+    "@chimera/mods": "workspace:*",
     "@chimera/permissions": "workspace:*",
     "@chimera/providers": "workspace:*",
     "@chimera/recall": "workspace:*",

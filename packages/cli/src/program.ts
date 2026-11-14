@@ -52,10 +52,18 @@ function applyModeOptions(cmd: Command): Command {
 }
 
 function applyMcpOptions(cmd: Command): Command {
-  return cmd.option(
-    '--mcp-config <json|@file>',
-    'MCP servers for this session only: {"mcpServers": {...}} as JSON, or @path to a JSON file. Merged over the global config; same names replace it',
-  );
+  return cmd
+    .option(
+      '--mod-dir <directory>',
+      'Load a mod folder (repeatable)',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option('--no-mods', 'Disable all mods')
+    .option(
+      '--mcp-config <json|@file>',
+      'MCP servers for this session only: {"mcpServers": {...}} as JSON, or @path to a JSON file. Merged over the global config; same names replace it',
+    );
 }
 
 function applyCompactionOptions(cmd: Command): Command {
@@ -208,6 +216,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
     });
     process.exit(exitCode);
   });
@@ -414,6 +424,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
     });
   });
 
@@ -554,6 +566,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
       inline: opts.inline,
     });
   });
@@ -609,6 +623,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
       inline: opts.inline,
     });
   });
@@ -745,6 +761,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
       inline: opts.inline,
     });
   });

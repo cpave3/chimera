@@ -40,6 +40,7 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
+import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { readServerSecret } from '../server-secret';
@@ -49,7 +50,7 @@ import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
 import { Updater } from '../updater';
 import { VERSION } from '../version';
 
-export interface InteractiveOptions {
+export interface InteractiveOptions extends ModOptions {
   cwd: string;
   model?: string;
   modelSettings?: string;
@@ -112,6 +113,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
   const config = loadConfig(opts.home);
+  const modRuntime = await ModRuntime.create(opts);
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
   const mcpServers = resolveMcpServers(config, opts.mcpConfig);
@@ -185,7 +187,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     ({ password, signal }) => authenticateSudoPassword({ password, signal }),
   );
   const factory = new CliAgentFactory({
-
+    mods: modRuntime.host,
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -261,6 +263,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     },
   });
   const server = await startServer({ app, secret });
+  modRuntime.bind(registry, server.url);
 
   let stopUpdates = () => {};
   let stopLockfileCleanup = () => {};
@@ -273,7 +276,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       removeLockfile(process.pid, opts.home);
       (commands as Partial<ReloadingCommandRegistry>).close?.();
       (agents as Partial<ReloadingAgentRegistry>).close?.();
-      await shutdownLifecycle(registry, reason);
+      await shutdownLifecycle(registry, modRuntime, reason);
       await factory.dispose();
       await server.close();
     })();

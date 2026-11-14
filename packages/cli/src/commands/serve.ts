@@ -25,6 +25,7 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
+import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { readServerSecret } from '../server-secret';
@@ -33,7 +34,7 @@ import { loadSkillsFromConfig } from '../skills-loader';
 import { Updater } from '../updater';
 import { VERSION } from '../version';
 
-export interface ServeOptions {
+export interface ServeOptions extends ModOptions {
   port?: number;
   host?: string;
   machineHandshake?: boolean;
@@ -95,6 +96,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
   const config = loadConfig(opts.home);
+  const modRuntime = await ModRuntime.create(opts);
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
   const mcpServers = resolveMcpServers(config, opts.mcpConfig);
@@ -175,7 +177,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   }
 
   const factory = new CliAgentFactory({
-
+    mods: modRuntime.host,
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -252,6 +254,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     },
   });
   const server = await startServer({ app, port: opts.port, host: opts.host, secret });
+  modRuntime.bind(registry, server.url);
 
   let stopUpdates = () => {};
   let closing: Promise<void> | undefined;
@@ -259,7 +262,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     closing ??= (async () => {
       stopUpdates();
       removeLockfile(process.pid, opts.home);
-      await shutdownLifecycle(registry, reason);
+      await shutdownLifecycle(registry, modRuntime, reason);
       await factory.dispose();
       await server.close();
       process.exit(0);

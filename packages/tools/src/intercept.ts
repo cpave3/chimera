@@ -5,6 +5,11 @@ export interface ToolCall {
   args: unknown;
 }
 
+export type ToolMiddleware = (
+  call: ToolCall,
+  next: (call?: ToolCall) => Promise<unknown>,
+) => Promise<unknown>;
+
 /** What a tool call produced: the value handed to the model, or the error. */
 export type ToolOutcome = { result: unknown } | { error: Error };
 
@@ -20,12 +25,15 @@ type ExecutableTool = {
 };
 
 /**
- * Wrap every tool's `execute` so the interceptors see each call. This is the
- * one place cross-cutting behaviour around tool execution hangs: every tool
- * (built-in, MCP, spawn_agent) passes through it, in every model profile.
+ * Wrap every tool's execute, including MCP and subagents. Middleware runs
+ * outside hooks so its rewritten input is what validation and permissions see.
  */
-export function interceptTools(tools: ToolSet, interceptors: ToolCallInterceptor[]): ToolSet {
-  if (interceptors.length === 0) return tools;
+export function interceptTools(
+  tools: ToolSet,
+  interceptors: ToolCallInterceptor[],
+  middleware?: ToolMiddleware,
+): ToolSet {
+  if (interceptors.length === 0 && !middleware) return tools;
   const wrapped: ToolSet = {};
   for (const [name, definition] of Object.entries(tools)) {
     const original = (definition as ExecutableTool).execute;
@@ -36,24 +44,28 @@ export function interceptTools(tools: ToolSet, interceptors: ToolCallInterceptor
     wrapped[name] = {
       ...definition,
       execute: async (args: unknown, options: unknown) => {
-        const call: ToolCall = { name, args };
-        let outcome: ToolOutcome | undefined;
-        for (const interceptor of interceptors) {
-          outcome = await interceptor.before?.(call);
-          if (outcome) break;
-        }
-        if (!outcome) {
-          try {
-            outcome = { result: await original.call(definition, args, options) };
-          } catch (error) {
-            outcome = { error: error instanceof Error ? error : new Error(String(error)) };
+        const initial: ToolCall = { name, args };
+        const execute = async (call = initial) => {
+          if (call.name !== name) throw new Error('Tool middleware cannot change the tool name');
+          let outcome: ToolOutcome | undefined;
+          for (const interceptor of interceptors) {
+            outcome = await interceptor.before?.(call);
+            if (outcome) break;
           }
-        }
-        for (const interceptor of interceptors) {
-          if (interceptor.after) outcome = await interceptor.after(call, outcome);
-        }
-        if ('error' in outcome) throw outcome.error;
-        return outcome.result;
+          if (!outcome) {
+            try {
+              outcome = { result: await original.call(definition, call.args, options) };
+            } catch (error) {
+              outcome = { error: error instanceof Error ? error : new Error(String(error)) };
+            }
+          }
+          for (const interceptor of interceptors) {
+            if (interceptor.after) outcome = await interceptor.after(call, outcome);
+          }
+          if ('error' in outcome) throw outcome.error;
+          return outcome.result;
+        };
+        return middleware ? middleware(initial, execute) : execute();
       },
     } as ToolSet[string];
   }

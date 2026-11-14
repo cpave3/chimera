@@ -37,6 +37,7 @@ import {
   type Mode,
   type ModeRegistry,
 } from '@chimera/modes';
+import type { ModHost } from '@chimera/mods';
 import {
   type AutoApproveLevel,
   BalancedPolicyEvaluator,
@@ -107,6 +108,7 @@ import type {
 import { McpAuth } from './mcp/auth';
 import { McpClientManager } from './mcp/client';
 import { type McpToolEntry, registerMcpTools } from './mcp/tools';
+import { modToolMiddleware } from './mod-tool-call';
 import { preToolUseHook } from './pre-tool-use';
 import type { CliSandboxOptions } from './sandbox-config';
 
@@ -117,6 +119,7 @@ const TOOLS_WITH_LIMITS = new Set(['spawn_agent']);
 const SKILL_INDEX_SHARE = 0.02;
 
 export interface CliAgentFactoryOptions {
+  mods?: ModHost;
   providersConfig: ProvidersConfig;
   autoApprove: AutoApproveLevel;
   hostBashPolicy?: HostBashPolicyConfig;
@@ -253,6 +256,7 @@ export interface CliAgentFactoryOptions {
 }
 
 export class CliAgentFactory implements AgentFactory {
+  private readonly mods: ModHost | undefined;
   private readonly registry: ReturnType<typeof loadProviders>;
   private readonly autoApprove: AutoApproveLevel;
   private readonly hostBashPolicy: HostBashPolicyConfig;
@@ -309,6 +313,7 @@ export class CliAgentFactory implements AgentFactory {
   private lastFormatters: Record<string, FormatScrollback<any, any>> = {};
 
   constructor(opts: CliAgentFactoryOptions) {
+    this.mods = opts.mods;
     this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
     this.autoApprove = opts.autoApprove;
     // The CLI commands pass the policy of the user's config, where the OS
@@ -1000,7 +1005,11 @@ export class CliAgentFactory implements AgentFactory {
         surfaceTools = allowed;
       }
       const surface: ToolSurface = {
-        tools: interceptTools(surfaceTools, toolInterceptors),
+        tools: interceptTools(
+          surfaceTools,
+          toolInterceptors,
+          this.mods ? modToolMiddleware(this.mods, sessionId) : undefined,
+        ),
         snippets: { ...built.snippets, ...extraSnippets },
       };
       surfaces.set(key, surface);
@@ -1036,7 +1045,11 @@ export class CliAgentFactory implements AgentFactory {
       const allowed = this.toolsAllowlist
         ? applyAllowlist(added, new Set(this.toolsAllowlist))
         : added;
-      const intercepted = interceptTools(allowed, toolInterceptors);
+      const intercepted = interceptTools(
+        allowed,
+        toolInterceptors,
+        this.mods ? modToolMiddleware(this.mods, sessionId) : undefined,
+      );
       for (const surface of surfaces.values()) Object.assign(surface.tools, intercepted);
       agent.setToolFormatters(formatters);
       const mode = modesReg ? modesReg.find(agent.session.mode) : undefined;

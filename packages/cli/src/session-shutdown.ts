@@ -2,9 +2,11 @@ export type ShutdownReason = 'exit' | 'signal';
 
 export async function shutdownLifecycle(
   registry: { shutdown(reason: ShutdownReason, timeoutMs: number): Promise<void> },
+  mods: { shutdown(): Promise<void> },
   reason: ShutdownReason,
 ): Promise<void> {
   await registry.shutdown(reason, 2000);
+  await mods.shutdown();
 }
 
 export function onShutdownSignals(shutdown: (reason: ShutdownReason) => Promise<void>): () => void {
