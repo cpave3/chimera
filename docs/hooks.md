@@ -21,6 +21,7 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 
 | Event              | When it fires                                                                 | Class |
 |--------------------|--------------------------------------------------------------------------------|-------|
+| `SessionStart`    | A session starts: new, resume, fork, or switch.                                  | post  |
 | `SessionCreated`   | A fresh session is registered; it does not fire when resuming a session.        | post  |
 | `UserPromptSubmit` | A prompt or continuation is accepted (with its source).                       | post  |
 | `PreToolUse`       | A tool call is about to run, before the permission gate.                       | pre   |
@@ -34,7 +35,7 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 | `Interrupt`        | An active run is interrupted.                                                   | post  |
 | `CompactionStart`  | Session compaction begins.                                                      | post  |
 | `CompactionEnd`    | Session compaction succeeds or fails.                                           | post  |
-| `SessionEnd`       | A session is disposed by the server (shutdown, explicit close, etc.).           | post  |
+| `SessionEnd`       | A session exits, receives a signal, is deleted, or is switched away from.           | post  |
 
 ## Discovery
 
@@ -52,6 +53,10 @@ A "hook" is any regular file (or symlink to one) with at least one execute bit s
 Each hook receives one JSON payload on stdin. All payloads include `event`, `session_id`, and `cwd`. Scripts can parse stdin for event-specific fields and use `CHIMERA_SESSION_ID` directly when they only need the session ID. Per-event additions:
 
 ```jsonc
+// SessionStart (reason: new, resume, fork, switch)
+{ "event": "SessionStart", "session_id": "...", "cwd": "...", "reason": "resume",
+  "session_name": "...", "parentSessionId": "..." }
+
 // SessionCreated (session_name is optional)
 { "event": "SessionCreated", "session_id": "...", "cwd": "...", "session_name": "..." }
 
@@ -107,7 +112,7 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
   "success": false, "error": "..." }
 
 // SessionEnd
-{ "event": "SessionEnd", "session_id": "...", "cwd": "..." }
+{ "event": "SessionEnd", "session_id": "...", "cwd": "...", "reason": "exit" }
 ```
 
 Three environment variables are also set, for scripts that prefer not to parse JSON:
@@ -206,3 +211,13 @@ hold each other up.
 `UserPromptSubmit.source` is `user`, `continuation`, `background`, `stop_retry`,
 or `goal`. `Stop.reason` is `stop`, `max_steps`, or `output_limit`; only a clean
 `stop` may be blocked to request a retry. Limit stops are notifications.
+
+`SessionStart` fires for new sessions, explicit and latest-session resumes,
+forks, and TUI switches. `SessionCreated` remains the fresh-session notification.
+`SessionStart.parentSessionId` is present for forks and subagent children.
+`SessionEnd.reason` is `exit`, `signal`, `delete`, or `switch`. `/exit` and
+Ctrl+C end the active session; SIGHUP and SIGTERM use `signal`. Shutdown allows
+at most two seconds total for end observers and scripts across all sessions;
+sleeping shell hooks are terminated when that window expires. A TUI switch ends
+the old activation without deleting the saved session, then starts the selected
+session. SIGKILL cannot run end hooks.

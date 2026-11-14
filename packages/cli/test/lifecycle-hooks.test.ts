@@ -91,6 +91,10 @@ it('routes factory tool, permission and terminal hooks through the ordered sourc
   });
   await registry.run(sessionId, 'say hello');
   await entry.activeRun;
+  expect(entry.bus.snapshot().at(-1), JSON.stringify(entry.bus.snapshot().at(-1))).toMatchObject({
+    type: 'run_finished',
+    reason: 'stop',
+  });
   const payloads = (await readFile(recorded, 'utf8'))
     .trim()
     .split('\n')

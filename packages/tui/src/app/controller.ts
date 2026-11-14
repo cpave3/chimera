@@ -1449,7 +1449,7 @@ export class TuiController {
     }
     void (async () => {
       try {
-        await this.options.client.resumeSession(selectedId);
+        await this.options.client.resumeSession(selectedId, this.activeSession.sessionId);
         this.resetTranscript();
         this.activeSession = {
           client: this.options.client,
@@ -1508,6 +1508,7 @@ export class TuiController {
           this.activeSession.sessionId,
           undefined,
           checkpoint.index,
+          this.activeSession.sessionId,
         );
         this.resetTranscript();
         this.activeSession = { client: this.options.client, sessionId: childId, label: 'forked' };

@@ -28,6 +28,7 @@ import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { readServerSecret } from '../server-secret';
+import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../session-shutdown';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { Updater } from '../updater';
 import { VERSION } from '../version';
@@ -174,6 +175,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   }
 
   const factory = new CliAgentFactory({
+
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -232,6 +234,17 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     registry,
     secret,
     home: opts.home,
+    onSessionChange: (activeSessionId) => {
+      writeLockfile(
+        {
+          ...lockfile,
+          sessionId: activeSessionId,
+          parentId:
+            opts.parent ?? registry.get(activeSessionId)?.agent.session.parentId ?? undefined,
+        },
+        opts.home,
+      );
+    },
     onFork: async (parent, childId) => {
       if (parent.sandboxMode === 'overlay') {
         await forkOverlay(parent.id, childId, {});
@@ -239,6 +252,21 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     },
   });
   const server = await startServer({ app, port: opts.port, host: opts.host, secret });
+
+  let stopUpdates = () => {};
+  let closing: Promise<void> | undefined;
+  const shutdown = (reason: ShutdownReason) => {
+    closing ??= (async () => {
+      stopUpdates();
+      removeLockfile(process.pid, opts.home);
+      await shutdownLifecycle(registry, reason);
+      await factory.dispose();
+      await server.close();
+      process.exit(0);
+    })();
+    return closing;
+  };
+  onShutdownSignals(shutdown);
 
   const client = new ChimeraClient({ baseUrl: server.url });
   const { sessionId } = await launchSession(
@@ -255,37 +283,26 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     { sessionExists: opts.sessionExists },
   );
 
-  writeLockfile(
-    {
-      pid: process.pid,
-      port: server.port,
-      cwd: opts.cwd,
-      sessionId,
-      startedAt: Date.now(),
-      version: VERSION,
-      url: new URL(server.url).origin,
-    },
-    opts.home,
-  );
+  const lockfile = {
+    pid: process.pid,
+    port: server.port,
+    cwd: opts.cwd,
+    sessionId,
+    parentId: opts.parent ?? registry.get(sessionId)?.agent.session.parentId ?? undefined,
+    startedAt: Date.now(),
+    version: VERSION,
+    url: new URL(server.url).origin,
+  };
+  writeLockfile(lockfile, opts.home);
 
   // A subagent's server (--machine-handshake) belongs to a parent that updates.
-  const stopUpdates = opts.machineHandshake
+  stopUpdates = opts.machineHandshake
     ? () => {}
     : startBackgroundUpdates({
         mode: config.updates?.mode ?? 'auto',
         updater: new Updater(),
         onNotice: (notice) => process.stderr.write(`chimera: ${notice}\n`),
       });
-
-  const shutdown = async () => {
-    stopUpdates();
-    removeLockfile(process.pid, opts.home);
-    await factory.dispose();
-    await server.close();
-    process.exit(0);
-  };
-  process.once('SIGINT', () => void shutdown());
-  process.once('SIGTERM', () => void shutdown());
 
   if (opts.machineHandshake) {
     process.stdout.write(

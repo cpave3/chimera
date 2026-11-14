@@ -1,6 +1,12 @@
-import type { CommandPolicyAnalysis, PromptSource } from '@chimera/core';
+import type {
+  CommandPolicyAnalysis,
+  PromptSource,
+  SessionEndReason,
+  SessionStartReason,
+} from '@chimera/core';
 
 export type HookEvent =
+  | 'SessionStart'
   | 'SessionCreated'
   | 'UserPromptSubmit'
   | 'PreToolUse'
@@ -19,6 +25,7 @@ export type HookEvent =
 export const PRE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(['PreToolUse', 'PermissionRequest']);
 
 export const ALL_HOOK_EVENTS: readonly HookEvent[] = [
+  'SessionStart',
   'SessionCreated',
   'UserPromptSubmit',
   'PreToolUse',
@@ -39,6 +46,13 @@ export interface HookPayloadBase {
   event: HookEvent;
   session_id: string;
   cwd: string;
+}
+
+export interface SessionStartPayload extends HookPayloadBase {
+  event: 'SessionStart';
+  reason: SessionStartReason;
+  session_name?: string;
+  parentSessionId?: string;
 }
 
 export interface SessionCreatedPayload extends HookPayloadBase {
@@ -91,6 +105,7 @@ export interface StopPayload extends HookPayloadBase {
 
 export interface SessionEndPayload extends HookPayloadBase {
   event: 'SessionEnd';
+  reason: SessionEndReason;
 }
 
 export interface TimeoutPayload extends HookPayloadBase {
@@ -124,6 +139,7 @@ export interface CompactionEndPayload extends HookPayloadBase {
 }
 
 export type HookPayload =
+  | SessionStartPayload
   | SessionCreatedPayload
   | UserPromptSubmitPayload
   | PreToolUsePayload
@@ -140,6 +156,12 @@ export type HookPayload =
   | CompactionEndPayload;
 
 export type FirePayload =
+  | {
+      event: 'SessionStart';
+      reason: SessionStartReason;
+      session_name?: string;
+      parentSessionId?: string;
+    }
   | { event: 'SessionCreated'; session_name?: string }
   | { event: 'UserPromptSubmit'; user_message: string; source: PromptSource }
   | { event: 'PreToolUse'; tool_name: string; tool_input: Record<string, unknown> }
@@ -167,7 +189,7 @@ export type FirePayload =
       remaining_pending: number;
     }
   | { event: 'Stop'; reason: string }
-  | { event: 'SessionEnd' }
+  | { event: 'SessionEnd'; reason: SessionEndReason }
   | { event: 'Timeout' }
   | { event: 'Interrupt' }
   | { event: 'OnError'; error: string }
@@ -208,6 +230,7 @@ export interface HookFireResult {
 }
 
 export interface HookRunner {
+  dispose?(): void;
   fire(payload: FirePayload): Promise<HookFireResult>;
 }
 

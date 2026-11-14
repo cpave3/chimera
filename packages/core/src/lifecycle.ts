@@ -1,7 +1,16 @@
 import type { CommandPolicyAnalysis } from './command-policy';
 import type { AgentEvent, PromptSource } from './events';
 
+export type SessionStartReason = 'new' | 'resume' | 'fork' | 'switch';
+export type SessionEndReason = 'exit' | 'signal' | 'delete' | 'switch';
+
 export type LifecycleHookData =
+  | {
+      type: 'SessionStart';
+      reason: SessionStartReason;
+      session_name?: string;
+      parentSessionId?: string;
+    }
   | { type: 'SessionCreated'; session_name?: string }
   | { type: 'UserPromptSubmit'; user_message: string; source: PromptSource }
   | { type: 'PreToolUse'; tool_name: string; tool_input: Record<string, unknown> }
@@ -29,7 +38,7 @@ export type LifecycleHookData =
       remaining_pending: number;
     }
   | { type: 'Stop'; reason: string }
-  | { type: 'SessionEnd' }
+  | { type: 'SessionEnd'; reason: SessionEndReason }
   | { type: 'Timeout' }
   | { type: 'Interrupt' }
   | { type: 'OnError'; error: string }

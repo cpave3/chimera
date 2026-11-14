@@ -39,6 +39,7 @@ export async function startServer(opts: StartOptions): Promise<ChimeraServer> {
           close: () =>
             new Promise<void>((r) => {
               server?.close(() => r());
+              if (server && 'closeAllConnections' in server) server.closeAllConnections();
             }),
         });
       });

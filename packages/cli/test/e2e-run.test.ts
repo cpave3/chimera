@@ -1,4 +1,3 @@
-// Session files may be cleaned up after run, so no fs assertions needed.
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -112,9 +111,6 @@ describe('chimera run E2E (stub provider)', () => {
     });
 
     expect(result.exitCode).toBe(0);
-    // runOneShot now deletes the session in its finally block so SessionEnd
-    // hooks fire; the session file may or may not be present on disk.
-    // The real assertion is that the run completed cleanly.
   });
 
   it('exits 2 when the answer keeps hitting the output limit', { timeout: 20000 }, async () => {

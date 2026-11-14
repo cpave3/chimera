@@ -69,6 +69,64 @@ describe('lockfile', () => {
     expect(existsSync(lockfilePath(2 ** 30, home))).toBe(false);
   });
 
+  it('publishes complete lockfiles atomically while a discovery process reads them', async () => {
+    const lock = {
+      pid: process.pid,
+      port: 12345,
+      cwd: 'x'.repeat(100_000),
+      sessionId: 'first',
+      parentId: 'parent',
+      startedAt: 1,
+      version: 'test',
+      url: 'http://localhost:12345',
+    };
+    writeLockfile(lock as never, home);
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        `
+      const {readFileSync} = require('node:fs');
+      const path = process.argv[1];
+      process.stdout.write('ready\\n');
+      const end = Date.now() + 500;
+      let reads = 0;
+      while (Date.now() < end) {
+        try { JSON.parse(readFileSync(path, 'utf8')); reads++; }
+        catch (error) { process.stderr.write(error.message); process.exit(1); }
+      }
+      process.stdout.write(String(reads));
+    `,
+        lockfilePath(process.pid, home),
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    let error = '';
+    child.stderr.on('data', (chunk) => {
+      error += chunk;
+    });
+    await new Promise<void>((resolve) =>
+      child.stdout.once('data', (chunk) => {
+        output += chunk;
+        resolve();
+      }),
+    );
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+    });
+    const exited = new Promise<number | null>((resolve) => child.once('exit', resolve));
+    for (let index = 0; index < 500; index++) {
+      writeLockfile({ ...lock, sessionId: `session-${index}` } as never, home);
+    }
+    expect(await exited, error).toBe(0);
+    expect(Number(output.split('\n')[1])).toBeGreaterThan(0);
+    expect(JSON.parse(await readFile(lockfilePath(process.pid, home), 'utf8'))).toMatchObject({
+      sessionId: 'session-499',
+      parentId: 'parent',
+    });
+  });
+
   describe('listVerifiedInstances', () => {
     // A live process that is not a Chimera instance: what a reused PID looks like.
     const REUSED_PID = process.ppid;
@@ -171,7 +229,7 @@ describe('lockfile', () => {
   });
 
   describe('removeLockfileOnExit', () => {
-    it('removes the lockfile of a process that is told to terminate', async () => {
+    it('removes the lockfile without bypassing the signal owner’s asynchronous cleanup', async () => {
       // The home comes through the environment and is checked before anything
       // is written: a child that missed it would write into the real home.
       // Compiled to JS first: Node 20 cannot import a .ts file.
@@ -187,6 +245,7 @@ describe('lockfile', () => {
         if (!home) process.exit(2);
         writeLockfile({ pid: process.pid, port: 1, cwd: '/tmp', startedAt: 0, version: '0', url: 'http://127.0.0.1:1' }, home);
         removeLockfileOnExit(process.pid, home);
+        process.on('SIGTERM', () => setTimeout(() => process.exit(0), 50));
         process.stdout.write(String(process.pid) + '\\n');
         setInterval(() => {}, 1000);
       `;
@@ -204,7 +263,7 @@ describe('lockfile', () => {
         const exited = new Promise<number | null>((resolve) => child.once('exit', resolve));
         child.kill('SIGTERM');
 
-        expect(await exited).toBe(128 + 15);
+        expect(await exited).toBe(0);
         expect(existsSync(lockfilePath(pid, home))).toBe(false);
       } finally {
         child.kill('SIGKILL');

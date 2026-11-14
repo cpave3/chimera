@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   Agent,
   buildPermissionRequest,
+  lifecycleSource,
   loadSession,
   type ModelConfig,
   writeSessionMetadata,
@@ -98,6 +99,69 @@ describe('server app', () => {
     const healthResponse = await app.request('/healthz');
     expect(healthResponse.status).toBe(200);
     expect(await healthResponse.text()).toBe('ok');
+  });
+
+  it('ends the old session before starting a new TUI session without deleting its history', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+      home,
+    });
+    const app = buildApp({ registry, home });
+    const events: Array<{ type: string; sessionId: string; reason?: string }> = [];
+    const unsubscribe = lifecycleSource.subscribe((event) => {
+      if (event.type === 'SessionStart' || event.type === 'SessionEnd') {
+        events.push({ type: event.type, sessionId: event.sessionId, reason: event.reason });
+      }
+    });
+    try {
+      const first = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model }),
+      });
+      const { sessionId: oldId } = await first.json();
+      const second = await app.request('/v1/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cwd: '/tmp', model, previousSessionId: oldId }),
+      });
+      expect(second.status).toBe(201);
+      const { sessionId: newId } = await second.json();
+      expect(events).toEqual([
+        { type: 'SessionStart', sessionId: oldId, reason: 'new' },
+        { type: 'SessionEnd', sessionId: oldId, reason: 'switch' },
+        { type: 'SessionStart', sessionId: newId, reason: 'switch' },
+      ]);
+      expect((await app.request(`/v1/sessions/${oldId}`)).status).toBe(200);
+      expect((await loadSession(oldId, home)).id).toBe(oldId);
+      events.length = 0;
+      const resumed = await app.request(`/v1/sessions/${oldId}/resume`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ previousSessionId: newId }),
+      });
+      expect(resumed.status).toBe(200);
+      expect(events).toEqual([
+        { type: 'SessionEnd', sessionId: newId, reason: 'switch' },
+        { type: 'SessionStart', sessionId: oldId, reason: 'switch' },
+      ]);
+      events.length = 0;
+      const forked = await app.request(`/v1/sessions/${oldId}/fork`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ previousSessionId: oldId }),
+      });
+      expect(forked.status).toBe(201);
+      const { sessionId: childId } = await forked.json();
+      expect(events).toEqual([
+        { type: 'SessionEnd', sessionId: oldId, reason: 'switch' },
+        { type: 'SessionStart', sessionId: childId, reason: 'fork' },
+      ]);
+      expect(registry.get(childId)!.agent.session.parentId).toBe(oldId);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('accepts a settings-only patch and returns authoritative state', async () => {

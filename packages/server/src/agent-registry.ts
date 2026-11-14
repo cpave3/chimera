@@ -7,7 +7,9 @@ import {
   type PromptSource,
   type SandboxMode,
   type Session,
+  type SessionEndReason,
   type SessionId,
+  type SessionStartReason,
   WorkspaceCheckpoints,
 } from '@chimera/core';
 import type { HookRunner } from '@chimera/hooks';
@@ -17,6 +19,7 @@ import { EventBus } from './event-bus';
 import { bridgeHooksToLifecycle } from './hook-bridge';
 
 export interface SessionInit {
+  startReason?: SessionStartReason;
   cwd: string;
   model: ModelConfig;
   sandboxMode: SandboxMode;
@@ -58,6 +61,8 @@ export interface AgentEntry {
   gate?: PermissionGate;
   hookRunner?: HookRunner;
   detachHooks?: () => void;
+  lifecycleActive: boolean;
+  lifecycleEnding: boolean;
   bus: EventBus;
   runActive: boolean;
   /**
@@ -165,6 +170,7 @@ export interface AgentRegistryOptions {
 }
 
 const DEFAULT_DELETE_TIMEOUT_MS = 10_000;
+const DEFAULT_SWITCH_TIMEOUT_MS = 10_000;
 // A compaction usually ends within a minute; a delivery waits that long for it.
 const DELIVERY_ATTEMPTS = 120;
 const DELIVERY_RETRY_MS = 500;
@@ -204,6 +210,7 @@ export class AgentRegistry {
   private readonly loadModels?: ModelsLoader;
   private readonly home?: string;
   private readonly workspaceCheckpoints: boolean;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(opts: AgentRegistryOptions) {
     this.factory = opts.factory;
@@ -261,6 +268,8 @@ export class AgentRegistry {
       agent,
       gate,
       hookRunner,
+      lifecycleActive: false,
+      lifecycleEnding: false,
       bus,
       runActive: false,
       activeRun: null,
@@ -301,6 +310,10 @@ export class AgentRegistry {
         session_name: agent.session.name,
       });
     }
+    await this.startSession(
+      agent.session.id,
+      init.startReason ?? (init.sessionId ? 'resume' : 'new'),
+    );
     return { sessionId: agent.session.id, entry };
   }
 
@@ -310,6 +323,79 @@ export class AgentRegistry {
 
   list(): Session[] {
     return Array.from(this.entries.values()).map((e) => e.agent.session);
+  }
+
+  async startSession(id: SessionId, reason: SessionStartReason): Promise<boolean> {
+    const entry = this.entries.get(id);
+    if (!entry || entry.lifecycleActive || entry.lifecycleEnding) return false;
+    entry.lifecycleActive = true;
+    await entry.agent.dispatchLifecycle({
+      type: 'SessionStart',
+      reason,
+      session_name: entry.agent.session.name,
+      parentSessionId: entry.agent.session.parentId ?? this.instance.parentId,
+    });
+    return true;
+  }
+
+  async endSession(id: SessionId, reason: SessionEndReason): Promise<boolean> {
+    const entry = this.entries.get(id);
+    if (!entry?.lifecycleActive) return false;
+    entry.lifecycleEnding = true;
+    try {
+      if (reason === 'switch') {
+        entry.agent.interrupt();
+        if (entry.activeRun) {
+          await withTimeout(entry.activeRun, DEFAULT_SWITCH_TIMEOUT_MS, `switch(${id}) activeRun`);
+          if (!entry.lifecycleActive) return false;
+        }
+      }
+      entry.lifecycleActive = false;
+      try {
+        await entry.agent.dispatchLifecycle({ type: 'SessionEnd', reason });
+      } catch (error) {
+        console.error('[lifecycle] session end observer failed:', error);
+      }
+      return true;
+    } finally {
+      entry.lifecycleEnding = false;
+    }
+  }
+
+  shutdown(reason: 'exit' | 'signal', timeoutMs = 2_000): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    const entries = [...this.entries.values()];
+    for (const entry of entries) {
+      entry.lifecycleEnding = true;
+      entry.agent.interrupt();
+    }
+    this.shutdownPromise = (async () => {
+      try {
+        await withTimeout(
+          Promise.all(
+            entries.map(async (entry) => {
+              if (entry.activeRun) {
+                try {
+                  // Reserve half the shared window for SessionEnd, even if a
+                  // provider ignores interruption and never settles its run.
+                  await withTimeout(entry.activeRun, timeoutMs / 2, 'shutdown activeRun');
+                } catch (error) {
+                  console.debug('[lifecycle] ending run failed:', error);
+                }
+              }
+              await this.endSession(entry.agent.session.id, reason);
+            }),
+          ),
+          timeoutMs,
+          'session shutdown',
+        );
+      } catch (error) {
+        console.debug('[lifecycle] shutdown window ended:', error);
+      } finally {
+        for (const entry of entries) entry.hookRunner?.dispose?.();
+      }
+    })();
+    return this.shutdownPromise;
   }
 
   async delete(id: SessionId): Promise<boolean> {
@@ -344,15 +430,7 @@ export class AgentRegistry {
         );
       }
     }
-    try {
-      await entry.agent.dispatchLifecycle({ type: 'SessionEnd' });
-    } catch (err) {
-      // Hook failures must not abort the session lifecycle.
-      console.debug(
-        `[agent-registry] delete(${id}): SessionEnd hook rejection swallowed:`,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    await this.endSession(id, 'delete');
     entry.detachHooks?.();
     await this.factory.disposeSession?.(id);
     this.entries.delete(id);

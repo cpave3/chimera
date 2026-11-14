@@ -1,12 +1,6 @@
 import { ChimeraClient } from '@chimera/client';
 import { Compactor } from '@chimera/compaction';
-import type {
-  AgentEvent,
-  GoalChange,
-  ModelConfig,
-  RunFinishedReason,
-  SandboxMode,
-} from '@chimera/core';
+import type { GoalChange, ModelConfig, RunFinishedReason, SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import {
@@ -39,6 +33,7 @@ import { loadModesFromConfig } from '../modes-loader';
 import { RunRows } from '../run-rows';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { readServerSecret } from '../server-secret';
+import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../session-shutdown';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { VERSION } from '../version';
 
@@ -182,7 +177,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     }
 
     cliFactory = new CliAgentFactory({
-      providersConfig: resolved.providersConfig,
+
+          providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       hostBashPolicy: resolveHostBashPolicy(config, opts.home),
       mcpServers,
@@ -266,6 +262,19 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   const server = await startServer({ app, secret });
 
   const client = new ChimeraClient({ baseUrl: server.url });
+  let closing: Promise<void> | undefined;
+  const shutdown = (reason: ShutdownReason) => {
+    closing ??= (async () => {
+      await shutdownLifecycle(registry, reason);
+      if (cliFactory) await cliFactory.dispose();
+      await server.close();
+    })();
+    return closing;
+  };
+  const stopSignals = onShutdownSignals(async (reason) => {
+    await shutdown(reason);
+    process.exit(reason === 'exit' ? 130 : 0);
+  });
   let sessionId: string | undefined;
   try {
     const sessionResult = await launchSession(
@@ -291,11 +300,6 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     let goalChange: GoalChange | undefined;
 
     const activeSessionId = sessionId;
-    const sigintHandler = () => {
-      void client.interrupt(activeSessionId);
-    };
-    process.once('SIGINT', sigintHandler);
-
     const rows = new RunRows({
       write: (text) => process.stderr.write(text),
       color: process.stderr.isTTY === true,
@@ -319,8 +323,6 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
         errorMessage = ev.error;
       }
     }
-
-    process.removeListener('SIGINT', sigintHandler);
 
     if (!opts.json) {
       rows.finish();
@@ -346,12 +348,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 
     return { exitCode: exitCodeFor(exitReason, opts.goal ? goalChange : undefined) };
   } finally {
-    // Best-effort delete the session so SessionEnd hooks fire.
-    if (sessionId) await client.deleteSession(sessionId).catch(() => {});
-    if (cliFactory) {
-      await cliFactory.dispose();
-    }
-    await server.close();
+    await shutdown('exit');
+    stopSignals();
   }
 }
 

@@ -33,7 +33,12 @@ async function mountWith(methods: Record<string, unknown>) {
 function sessionClient(checkpoints: Checkpoint[] = [], sessions: SessionInfo[] = []) {
   const calls = {
     created: [] as unknown[],
-    forked: [] as Array<{ id: string; purpose?: string; rewindIndex?: number }>,
+    forked: [] as Array<{
+      id: string;
+      purpose?: string;
+      rewindIndex?: number;
+      previousSessionId?: string;
+    }>,
     rewound: [] as Array<{ id: string; index: number }>,
     listedCheckpoints: 0,
     compacted: [] as string[],
@@ -43,8 +48,13 @@ function sessionClient(checkpoints: Checkpoint[] = [], sessions: SessionInfo[] =
       calls.created.push(options);
       return { sessionId: NEW_ID };
     },
-    forkSession: async (id: string, purpose?: string, rewindIndex?: number) => {
-      calls.forked.push({ id, purpose, rewindIndex });
+    forkSession: async (
+      id: string,
+      purpose?: string,
+      rewindIndex?: number,
+      previousSessionId?: string,
+    ) => {
+      calls.forked.push({ id, purpose, rewindIndex, previousSessionId });
       return { sessionId: CHILD_ID, parentId: id };
     },
     listSessions: async () => sessions,
@@ -71,6 +81,32 @@ function sessionClient(checkpoints: Checkpoint[] = [], sessions: SessionInfo[] =
 }
 
 describe('/new', () => {
+  it('passes the previous session to the server when switching to a new session', async () => {
+    const { methods } = sessionClient();
+    const session = fakeSession();
+    const order: unknown[] = [];
+    Object.assign(session.client, methods, {
+      createSession: async (options: unknown) => {
+        order.push(options);
+        return { sessionId: NEW_ID };
+      },
+    });
+    mounted = await mount({
+      client: session.client,
+    });
+    order.length = 0;
+    await mounted.keys('/new\r');
+    expect(order).toEqual([
+      {
+        cwd: '/tmp/project',
+        model: { providerId: 'manticore', modelId: 'gpt', maxSteps: 50 },
+        sandboxMode: 'off',
+        previousSessionId: PARENT_ID,
+      },
+    ]);
+    expect(mounted.handle.activeSessionId()).toBe(NEW_ID);
+  });
+
   it('creates a session with the model, cwd and sandbox of this one and switches to it', async () => {
     const { calls, methods } = sessionClient();
     const { mounted } = await mountWith(methods);
@@ -81,6 +117,7 @@ describe('/new', () => {
         cwd: '/tmp/project',
         model: { providerId: 'manticore', modelId: 'gpt', maxSteps: 50 },
         sandboxMode: 'off',
+        previousSessionId: PARENT_ID,
       },
     ]);
     expect(mounted.screen()).toContain('   note  new session 00000000');
@@ -116,6 +153,25 @@ describe('/sessions', () => {
     expect(mounted.screen()).toContain('AAAAAAAA');
   });
 
+  it('passes the old session when selecting a saved session', async () => {
+    const { methods } = sessionClient([], [saved]);
+    const session = fakeSession();
+    const calls: string[] = [];
+    Object.assign(session.client, methods, {
+      resumeSession: async (id: string, previousSessionId: string) => {
+        calls.push(`${previousSessionId}->${id}`);
+        return { sessionId: id };
+      },
+    });
+    mounted = await mount({
+      client: session.client,
+    });
+    await mounted.keys('/sessions\r');
+    await mounted.keys('\r');
+    expect(calls).toEqual([`${PARENT_ID}->${saved.id}`]);
+    expect(mounted.handle.activeSessionId()).toBe(saved.id);
+  });
+
   it('says when no session was saved in this directory', async () => {
     const { methods } = sessionClient([], [{ ...saved, cwd: '/elsewhere' }]);
     const { mounted } = await mountWith(methods);
@@ -133,7 +189,12 @@ describe('/fork', () => {
     await mounted.keys('/fork try alternative\r');
 
     expect(calls.forked).toEqual([
-      { id: PARENT_ID, purpose: 'try alternative', rewindIndex: undefined },
+      {
+        id: PARENT_ID,
+        purpose: 'try alternative',
+        rewindIndex: undefined,
+        previousSessionId: PARENT_ID,
+      },
     ]);
     expect(mounted.screen()).toContain(
       '   note  forked session 00000000 from 8AWWBRGC (try alternative)',
@@ -145,7 +206,9 @@ describe('/fork', () => {
     const { mounted } = await mountWith(methods);
     await mounted.keys('/fork\r');
 
-    expect(calls.forked).toEqual([{ id: PARENT_ID, purpose: undefined, rewindIndex: undefined }]);
+    expect(calls.forked).toEqual([
+      { id: PARENT_ID, purpose: undefined, rewindIndex: undefined, previousSessionId: PARENT_ID },
+    ]);
   });
 });
 
@@ -230,7 +293,9 @@ describe('/rewind', () => {
     await mounted.keys('\x1b[B');
     await mounted.keys('\x1b[13;2u');
 
-    expect(calls.forked).toEqual([{ id: PARENT_ID, purpose: undefined, rewindIndex: 7 }]);
+    expect(calls.forked).toEqual([
+      { id: PARENT_ID, purpose: undefined, rewindIndex: 7, previousSessionId: PARENT_ID },
+    ]);
     expect(calls.rewound).toEqual([]);
     expect(mounted.screen()).toContain('   note  forked from checkpoint 7 into session 00000000');
     expect(mounted.screen()).toMatch(/^│ › second prompt +│$/m);

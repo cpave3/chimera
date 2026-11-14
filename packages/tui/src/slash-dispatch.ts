@@ -167,6 +167,7 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
         try {
           const { sessionId: newId } = await props.client.createSession({
             cwd: props.cwd,
+            previousSessionId: activeSession.sessionId,
             model: props.model,
             sandboxMode: props.sandboxMode ?? 'off',
           });
@@ -267,6 +268,8 @@ export function dispatchSlash(raw: string, context: SlashContext): void {
           const { sessionId: childId, parentId } = await props.client.forkSession(
             activeSession.sessionId,
             purpose.length > 0 ? purpose : undefined,
+            undefined,
+            activeSession.sessionId,
           );
           resetTranscript();
           setActiveSession({

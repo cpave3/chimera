@@ -43,6 +43,7 @@ import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
 import { readServerSecret } from '../server-secret';
+import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../session-shutdown';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
 import { Updater } from '../updater';
@@ -184,6 +185,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     ({ password, signal }) => authenticateSudoPassword({ password, signal }),
   );
   const factory = new CliAgentFactory({
+
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -242,6 +244,16 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     registry,
     secret,
     home: opts.home,
+    onSessionChange: (activeSessionId) => {
+      writeLockfile(
+        {
+          ...lockfile,
+          sessionId: activeSessionId,
+          parentId: registry.get(activeSessionId)?.agent.session.parentId ?? undefined,
+        },
+        opts.home,
+      );
+    },
     onFork: async (parent, childId) => {
       if (parent.sandboxMode === 'overlay') {
         await forkOverlay(parent.id, childId, {});
@@ -249,6 +261,30 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     },
   });
   const server = await startServer({ app, secret });
+
+  let stopUpdates = () => {};
+  let stopLockfileCleanup = () => {};
+  let unmount = () => {};
+  let closing: Promise<void> | undefined;
+  const shutdown = (reason: ShutdownReason) => {
+    closing ??= (async () => {
+      stopUpdates();
+      stopLockfileCleanup();
+      removeLockfile(process.pid, opts.home);
+      (commands as Partial<ReloadingCommandRegistry>).close?.();
+      (agents as Partial<ReloadingAgentRegistry>).close?.();
+      await shutdownLifecycle(registry, reason);
+      await factory.dispose();
+      await server.close();
+    })();
+    return closing;
+  };
+  const stopSignals = onShutdownSignals(async (reason) => {
+    const closing = shutdown(reason);
+    unmount();
+    await closing;
+    process.exit(0);
+  });
 
   const client = new ChimeraClient({ baseUrl: server.url });
   const { sessionId } = await launchSession(
@@ -268,20 +304,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   // Make this instance discoverable by `chimera attach` and `chimera ls`.
   // Same lockfile format as `chimera serve`; removed on exit so stale
   // lockfiles don't accumulate.
-  writeLockfile(
-    {
-      pid: process.pid,
-      port: server.port,
-      cwd: opts.cwd,
-      sessionId,
-      startedAt: Date.now(),
-      version: VERSION,
-      url: new URL(server.url).origin,
-    },
-    opts.home,
-  );
+  const lockfile = {
+    pid: process.pid,
+    port: server.port,
+    cwd: opts.cwd,
+    sessionId,
+    parentId: registry.get(sessionId)?.agent.session.parentId ?? undefined,
+    startedAt: Date.now(),
+    version: VERSION,
+    url: new URL(server.url).origin,
+  };
+  writeLockfile(lockfile, opts.home);
 
-  const stopLockfileCleanup = removeLockfileOnExit(process.pid, opts.home);
+  stopLockfileCleanup = removeLockfileOnExit(process.pid, opts.home);
 
   const overlay: OverlayHandlers | undefined =
     sandboxMode === 'overlay'
@@ -334,7 +369,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     },
   });
   const updater = new Updater();
-  const stopUpdates = startBackgroundUpdates({
+  unmount = () => handle.unmount();
+  stopUpdates = startBackgroundUpdates({
     mode: config.updates?.mode ?? 'auto',
     updater,
     onNotice: (notice) => handle.updateStatus(updateStatus(updater), notice),
@@ -345,12 +381,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // The transcript stays in the scrollback; say how to get back to it.
     process.stdout.write(formatExitSummary(handle.activeSessionId()));
   } finally {
-    stopUpdates();
-    stopLockfileCleanup();
-    removeLockfile(process.pid, opts.home);
-    (commands as Partial<ReloadingCommandRegistry>).close?.();
-    (agents as Partial<ReloadingAgentRegistry>).close?.();
-    await factory.dispose();
-    await server.close();
+    await shutdown('exit');
+    stopSignals();
   }
 }

@@ -10,6 +10,8 @@ export interface TerminalInputStream {
   removeListener(event: 'data', listener: (chunk: string | Buffer) => void): unknown;
   resume(): unknown;
   pause(): unknown;
+  ref?(): unknown;
+  unref?(): unknown;
 }
 
 /** Process signals, injectable so tests do not stop the test runner. */
@@ -152,6 +154,7 @@ export class TerminalHost {
 
   private takeTerminal(): void {
     const { stdin, stdout } = this.options;
+    stdin.ref?.();
     try {
       stdin.setRawMode?.(true);
     } catch {
@@ -173,6 +176,7 @@ export class TerminalHost {
       this.listening = false;
     }
     stdin.pause();
+    stdin.unref?.();
     if (this.modesOff) stdout.write(this.modesOff);
     try {
       stdin.setRawMode?.(false);
