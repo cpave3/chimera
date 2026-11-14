@@ -6,9 +6,29 @@ import {
 } from '@chimera/compaction';
 import type { CompactionConfig, Session } from '@chimera/core';
 import { validateModelSettings } from '@chimera/core';
-import { localCapabilities, type ProviderRegistry, resolveModelSettings } from '@chimera/providers';
+import {
+  localCapabilities,
+  type ProviderRegistry,
+  resolveContextWindow,
+  resolveModelSettings,
+} from '@chimera/providers';
 import { createRecallPruner, RecallStore } from '@chimera/recall';
 import type { ChimeraConfig } from './config';
+
+export function compactionModelOptions(config: ChimeraConfig, registry: ProviderRegistry) {
+  return {
+    fallbackModel: config.utilityModel,
+    resolveContextWindow: (ref: string) => {
+      const { provider, modelId } = registry.resolve(ref);
+      return resolveContextWindow({
+        providerId: provider.id,
+        modelId,
+        providerShape: config.providers![provider.id].shape,
+        override: config.models?.[ref]?.contextWindow,
+      }).value;
+    },
+  };
+}
 
 export function compactionCallOptions(config: ChimeraConfig, registry: ProviderRegistry) {
   return async (ref: string, session: Session) => {

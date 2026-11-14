@@ -551,7 +551,8 @@ export class AgentRegistry {
   compact(id: SessionId): 'queued' | 'already-running' | 'missing' {
     const entry = this.entries.get(id);
     if (!entry) return 'missing';
-    if (entry.runActive || entry.compactionActive || entry.rewindActive) return 'already-running';
+    if (entry.runActive || entry.compactionActive || entry.injectActive || entry.rewindActive)
+      return 'already-running';
     entry.compactionActive = true;
     entry.activeCompaction = (async () => {
       let success = false;

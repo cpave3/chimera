@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { newSessionId, type Session } from '@chimera/core';
 import type { LanguageModel, ModelMessage } from 'ai';
 import { MockLanguageModelV3 } from 'ai/test';
-import { newSessionId, type Session } from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Compactor, type MessagePruner } from '../src';
 
@@ -134,8 +134,8 @@ describe('Compactor tiered prune-then-summarize', () => {
 
     expect(result.strategy).toBe('prune+summarize');
     expect(generateCalls).toHaveLength(1);
-    // The summarizer saw the stub, not the original user bulk.
-    expect(generateCalls[0]!.prompt).toContain('pr_aaaa1111');
+    // Even a tiny summary-model window must preserve the authoritative refs.
+    expect(result.warnings?.join(' ')).toContain('Summary input was truncated');
     expect(generateCalls[0]!.prompt).not.toContain('u'.repeat(2000));
     // Summary message carries the authoritative <archived> block.
     const summary = String(session.messages[0]!.content);

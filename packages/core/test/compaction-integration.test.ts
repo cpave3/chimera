@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { tool, type LanguageModel, type ToolSet } from 'ai';
+import { type LanguageModel, type ToolSet, tool } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { Agent } from '../src/agent';
 import type { CompactorApi, Session } from '../src/types';
 
@@ -312,7 +312,11 @@ describe('compaction trigger', () => {
     }
 
     expect(compact).toHaveBeenCalledTimes(1);
-    expect(compact).toHaveBeenCalledWith(agent.session, 'threshold');
+    expect(compact).toHaveBeenCalledWith(
+      agent.session,
+      'threshold',
+      expect.objectContaining({ contextWindow: 10_000 }),
+    );
     const hasSummary = agent.session.messages.some(
       (m) => m.role === 'assistant' && m.content === 'summary',
     );
@@ -428,7 +432,11 @@ describe('Agent.compactSession', () => {
     }
 
     expect(compactFn).toHaveBeenCalledTimes(1);
-    expect(compactFn).toHaveBeenCalledWith(agent.session, 'manual');
+    expect(compactFn).toHaveBeenCalledWith(
+      agent.session,
+      'manual',
+      expect.objectContaining({ contextWindow: 200_000 }),
+    );
     expect(events).toContain('compaction_started');
     expect(events).toContain('compaction_finished');
   });
@@ -576,7 +584,11 @@ describe('mid-run auto-compaction', () => {
     }
 
     expect(compact).toHaveBeenCalledTimes(1);
-    expect(compact).toHaveBeenCalledWith(agent.session, 'threshold');
+    expect(compact).toHaveBeenCalledWith(
+      agent.session,
+      'threshold',
+      expect.objectContaining({ contextWindow: 10_000 }),
+    );
     // Compaction events landed mid-run: after the first step_finished and
     // before the run finished.
     const startedIdx = events.indexOf('compaction_started');

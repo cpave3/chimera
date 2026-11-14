@@ -1,5 +1,5 @@
-import type { ModelMessage } from 'ai';
 import type { FileOps, TaskItem } from '@chimera/core';
+import type { ModelMessage } from 'ai';
 import type { ArchivedRef } from './types';
 
 /**
@@ -94,7 +94,12 @@ export function buildCompactionPrompt(input: BuildPromptInput): string {
   parts.push('Conversation history:');
   parts.push('');
   for (const msg of input.toSummarize) {
-    const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    const text =
+      typeof msg.content === 'string'
+        ? msg.content
+        : JSON.stringify(msg.content, (key, value) =>
+            key === 'image' ? '[image omitted from summary request]' : value,
+          );
     parts.push(`--- ${msg.role} ---`);
     parts.push(text);
   }
@@ -106,4 +111,18 @@ export function buildCompactionPrompt(input: BuildPromptInput): string {
   parts.push('Produce the summary only, with no extra commentary.');
 
   return parts.join('\n');
+}
+
+export function boundText(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= maxBytes) return text;
+  const marker = '\n[Older context truncated for recovery]\n';
+  const remaining = Math.max(0, maxBytes - Buffer.byteLength(marker));
+  const head = Math.floor(remaining / 2);
+  const tail = remaining - head;
+  const bounded = bytes.subarray(0, head).toString() + marker + bytes.subarray(-tail).toString();
+  return Buffer.from(bounded)
+    .subarray(0, maxBytes)
+    .toString()
+    .replace(/\uFFFD$/, '');
 }

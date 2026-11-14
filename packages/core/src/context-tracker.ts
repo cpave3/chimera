@@ -84,11 +84,19 @@ export class ContextTracker {
     this.messageCountAtPrompt = 0;
   }
 
-  projectedNextPrompt(messages: ModelMessage[], opts?: EstimateOptions): number {
+  projectedNextPrompt(
+    messages: ModelMessage[],
+    opts?: EstimateOptions,
+    overheadTokens = 0,
+  ): number {
+    const estimated = overheadTokens + estimateTokens(messages, opts);
     if (this.lastInputTokens === null || messages.length < this.messageCountAtPrompt) {
-      return estimateTokens(messages, opts);
+      return estimated;
     }
-    return this.lastInputTokens + estimateTokens(messages.slice(this.messageCountAtPrompt), opts);
+    return Math.max(
+      estimated,
+      this.lastInputTokens + estimateTokens(messages.slice(this.messageCountAtPrompt), opts),
+    );
   }
 }
 

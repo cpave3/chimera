@@ -15,6 +15,7 @@ import { loadCommandsFromConfig } from '../commands-loader';
 import {
   checkCompactionInvariant,
   compactionCallOptions,
+  compactionModelOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
@@ -181,6 +182,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
           return target.provider.getModel(target.modelId, sessionId);
         },
         resolveCallOptions: compactionCallOptions(config, registry),
+        ...compactionModelOptions(config, registry),
         home: opts.home,
         createPruner: recallPrunerFactory(config, opts.home),
       });
