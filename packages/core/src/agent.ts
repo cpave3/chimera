@@ -300,9 +300,9 @@ export class Agent {
   }> = [];
   /**
    * Mid-run user messages queued via `injectRunMessage()` while a run is
-   * active. Drained at each clean step boundary (after the response messages
-   * are attached and after the `terminalReason !== 'stop'` check, so an
-   * interrupted/errored step drops pending injects — "interrupt means stop").
+   * active or starting. Drained at each clean step boundary (after the response
+   * messages are attached and after the `terminalReason !== 'stop'` check, so
+   * an interrupted/errored step leaves pending injects for the next run).
    * On an intermediate step the next `streamText` call sees them; on a
    * terminal step the loop continues so the model responds to them (still
    * subject to `maxTerminalSteps`).
@@ -1292,8 +1292,8 @@ export class Agent {
 
   /**
    * Queue a user message for injection into the active run at the next clean
-   * step boundary. No-op when no run is active (the caller should fall back to
-   * `appendMessage` for the idle case). Synchronous and safe to call from
+   * step boundary. Messages queued before startup or left by an interrupted
+   * run remain queued for the next run. Synchronous and safe to call from
    * another async context while `runInternal` is awaiting — the buffer is
    * only read at step boundaries where `session.messages` is not mid-mutation.
    */
@@ -1663,8 +1663,6 @@ export class Agent {
     // Fresh run: discard any stale pending images from a previous run that
     // was interrupted before they could be injected.
     this.pendingImageMessages = [];
-    // Likewise discard stale mid-run injects from a prior interrupted run.
-    this.pendingInjectMessages = [];
 
     // Vision routing: a turn carrying new images while the active model is
     // text-only runs entirely on the configured vision model (reverted at
@@ -2521,8 +2519,8 @@ export class Agent {
           }
 
           // Drain mid-run user injections queued via `injectRunMessage()`.
-          // Placed after the interrupt/error break so an interrupted run drops
-          // pending injects ("interrupt means stop"); a clean step drains them
+          // Placed after the interrupt/error break so an interrupted run keeps
+          // pending injects for the next run; a clean step drains them
           // whether it was intermediate (tool calls) or terminal. A fresh abort
           // controller is installed so the new turn is independently
           // interruptible, and `terminalStepCount` advances so a user spamming
