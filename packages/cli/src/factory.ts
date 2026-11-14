@@ -546,6 +546,7 @@ export class CliAgentFactory implements AgentFactory {
     const projectState = join(init.cwd, '.chimera');
     const local = new LocalExecutor({
       cwd: init.cwd,
+      home: userHome,
       readAllowDirs,
       writeAllowDirs: [
         tmpDir,

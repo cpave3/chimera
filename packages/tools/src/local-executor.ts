@@ -12,7 +12,8 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   CommandPolicyRoots,
   DirEntry,
@@ -38,6 +39,16 @@ function canonicalizeDir(path: string): string {
   }
 }
 
+/** Resolve symlinked ancestors even when a write's destination does not exist yet. */
+async function resolveWritePath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return join(await resolveWritePath(dirname(path)), basename(path));
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 const SIGKILL_DELAY_MS = 2_000;
 const PIPE_DRAIN_MS = 250;
@@ -45,6 +56,8 @@ const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface LocalExecutorOptions {
   cwd: string;
+  /** User home, for protecting globally loaded mods. Defaults to homedir(). */
+  home?: string;
   /**
    * Extra absolute directories that are permitted for READ operations only.
    * Used for out-of-cwd resources the agent legitimately needs (notably
@@ -86,7 +99,10 @@ export class LocalExecutor implements Executor {
     this.rootCwd = canonicalizeDir(opts.cwd);
     this.readAllowDirs = (opts.readAllowDirs ?? []).map((d) => canonicalizeDir(d));
     this.writeAllowDirs = (opts.writeAllowDirs ?? []).map((d) => canonicalizeDir(d));
-    this.writeDenyPaths = (opts.writeDenyPaths ?? []).map((path) => resolve(path));
+    this.writeDenyPaths = [
+      join(opts.home ?? homedir(), '.chimera', 'mods'),
+      ...(opts.writeDenyPaths ?? []),
+    ].map((path) => resolve(path));
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   }
 
@@ -153,17 +169,19 @@ export class LocalExecutor implements Executor {
    */
   private async resolveSafe(path: string): Promise<string> {
     const absolute = isAbsolute(path) ? resolve(path) : resolve(this.rootCwd, path);
-    const resolved = await realpath(absolute).catch((e: NodeJS.ErrnoException) => {
-      if (e.code === 'ENOENT') return null;
-      throw e;
-    });
-    const effective = resolved ?? absolute;
+    const effective = await resolveWritePath(absolute);
     for (const denied of this.writeDenyPaths) {
       // Both the path as written and where a symlink leads are checked.
-      for (const candidate of [absolute, effective]) {
-        const fromDenied = relative(denied, candidate);
-        if (fromDenied === '' || (!fromDenied.startsWith('..') && !isAbsolute(fromDenied))) {
-          throw new ProtectedPathError(path);
+      for (const deniedRoot of [denied, await resolveWritePath(denied)]) {
+        for (const candidate of [absolute, effective]) {
+          const fromDenied = relative(deniedRoot, candidate);
+          if (
+            fromDenied !== '..' &&
+            !fromDenied.startsWith(`..${sep}`) &&
+            !isAbsolute(fromDenied)
+          ) {
+            throw new ProtectedPathError(path);
+          }
         }
       }
     }
