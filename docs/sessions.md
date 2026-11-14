@@ -71,7 +71,7 @@ In your home directory:
 | Path | Contents |
 | --- | --- |
 | `~/.chimera/config.json` | The configuration, read at start. It also holds the MCP server definitions (`mcpServers`), not their tokens. |
-| `~/.chimera/sessions/<id>/session.json` | Session metadata: ids, cwd, model, mode, usage, task list, goal, granted paths. Written with a temp file and a rename. |
+| `~/.chimera/sessions/<id>/session.json` | Session metadata: ids, cwd, model, mode, usage, task list, goal, granted paths and bounded child lifecycle. Written with a temp file and a rename. |
 | `~/.chimera/sessions/<id>/events.jsonl` | Append-only event log, one JSON object for each line. Only `step_finished`, `message_appended`, `permission_resolved`, `run_finished` and `forked_from` are saved. Text deltas and tool starts are not. |
 | `~/.chimera/sessions/<id>/workspace.git` | Shadow git repository with the working tree snapshots that `/rewind` restores. |
 | `~/.chimera/sessions/<id>.compactions.jsonl` | One line for each compaction of the session. |

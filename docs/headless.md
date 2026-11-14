@@ -166,3 +166,18 @@ foreground versus background execution. `run_finished` includes snapshots of
 `model`, `usage`, and `contextFill` (a context-window fraction), including limit,
 interruption, and error outcomes. `user_message.append: true` marks context
 injected into an existing turn rather than a new prompt.
+
+Idle `?append=true` messages carry the same `append: true` marker: they add
+context without starting a turn. A client must preserve its current activity
+when it receives them. Background shell exits and child events continue on SSE
+after the parent run ends, and remain available for cursor replay.
+
+Session snapshots include `subagentStates` after a child is observed. Each record
+names the parent `sessionId`, `subagentId`, exact `parentCallId` and (after a
+successful handshake) `childSessionId`, purpose, background flag, status and
+timestamps. Status is `running`, `finished`, `error` or `interrupted`; finished
+records retain their reason. Endpoint URLs and full child event streams are not
+stored there. Completion history is bounded to 1,000 records without evicting
+active children. The normal session checkpoints save this metadata; resumed
+unfinished children are marked interrupted rather than advertised as live.
+`GET …/subagents` remains the active-child discovery endpoint.

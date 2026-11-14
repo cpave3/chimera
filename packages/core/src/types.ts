@@ -135,7 +135,22 @@ export interface TaskItem {
   status: TaskItemStatus;
 }
 
+export interface SubagentState {
+  subagentId: string;
+  sessionId: SessionId;
+  parentCallId: CallId;
+  childSessionId?: SessionId;
+  purpose?: string;
+  background?: boolean;
+  status: 'running' | 'finished' | 'error' | 'interrupted';
+  reason?: string;
+  startedAt?: number;
+  endedAt?: number;
+}
+
 export interface Session {
+  /** Retained child lifecycle for snapshot repair; contains no child endpoint URLs. */
+  subagentStates?: SubagentState[];
   initialModelRef?: string;
   modelSettingsOverrides?: Record<string, ModelSettings>;
   /** SDK creation defaults, separate from mutable effective settings and overrides. */

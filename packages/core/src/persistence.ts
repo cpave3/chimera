@@ -48,6 +48,7 @@ export function sessionImagesDir(sessionId: SessionId, home = homedir()): string
 }
 
 interface SessionMetadata {
+  subagentStates?: Session['subagentStates'];
   initialModelRef?: string;
   modelSettingsOverrides?: Session['modelSettingsOverrides'];
   modelCreationDefaults?: Session['modelCreationDefaults'];
@@ -79,6 +80,7 @@ interface SessionMetadata {
 
 function toMetadata(session: Session): SessionMetadata {
   return {
+    subagentStates: session.subagentStates,
     modelSettingsOverrides: session.modelSettingsOverrides,
     modelCreationDefaults: session.modelCreationDefaults,
     modelInputOverrides: session.modelInputOverrides,
@@ -165,6 +167,11 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
   }
 
   const session: Session = {
+    subagentStates: parsed.subagentStates?.map((child) =>
+      child.status === 'running'
+        ? { ...child, status: 'interrupted', reason: 'interrupted', endedAt: Date.now() }
+        : child,
+    ),
     id: sessionId,
     name: typeof parsed.name === 'string' ? parsed.name : undefined,
     parentId: typeof parsed.parentId === 'string' ? parsed.parentId : null,

@@ -110,7 +110,7 @@ Observer hooks:
 | `turn.complete` | `reason`, `error?`, `model`, `usage`, `contextFill` |
 | `permission.resolved` | `requestId`, `decision`, `remembered` |
 | `question.request`, `question.resolved` | `requestId`, questions or resolution status |
-| `agent.spawn`, `agent.finish` | `agentId`, `description`, `background` |
+| `agent.spawn`, `agent.finish` | `agentId`, `parentCallId`, `childSessionId` (after handshake), `description`, `background`; finish also has `reason` and `result` |
 | `background.start`, `background.exit` | `jobId`, `command`, exit information |
 | `compaction.start`, `compaction.end` | reason, success/summary or error |
 | `message.append` | text added without starting a turn |

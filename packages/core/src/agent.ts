@@ -206,6 +206,40 @@ export class Agent {
   }
 
   private observeEvent(event: AgentEvent): AgentEvent {
+    if (event.type === 'subagent_spawned' || event.type === 'subagent_finished') {
+      const children = (this.session.subagentStates ??= []);
+      const subagentId = event.subagentId;
+      let child = children.find((child) => child.subagentId === subagentId);
+      if (!child) {
+        child = {
+          subagentId: event.subagentId,
+          sessionId: this.session.id,
+          parentCallId: event.parentCallId,
+          status: 'running',
+        };
+        children.push(child);
+      }
+      if (event.type === 'subagent_spawned') {
+        child.childSessionId = event.childSessionId;
+        child.purpose = event.purpose;
+        child.background = event.background;
+        child.startedAt ??= Date.now();
+      } else {
+        child.status =
+          event.reason === 'stop'
+            ? 'finished'
+            : event.reason === 'interrupted'
+              ? 'interrupted'
+              : 'error';
+        child.reason = event.reason;
+        child.endedAt = Date.now();
+      }
+      while (children.length > 1000) {
+        const completed = children.findIndex((child) => child.status !== 'running');
+        if (completed < 0) break;
+        children.splice(completed, 1);
+      }
+    }
     if (event.type === 'user_message' && event.append) {
       event = { type: 'message_appended', text: event.content, imageCount: event.imageCount };
     }
@@ -229,6 +263,7 @@ export class Agent {
     }
   >();
   private currentQueue: EventQueue<AgentEvent> | null = null;
+  private readonly idleEventListeners = new Set<(event: AgentEvent) => void>();
   private pendingUserInputRequest: UserInputRequest | null = null;
   private running = false;
   private compacting = false;
@@ -820,7 +855,18 @@ export class Agent {
    */
   pushEvent(event: AgentEvent): void {
     if (this.currentQueue) this.currentQueue.push(event);
-    else this.observeEvent(event);
+    else {
+      this.observeEvent(event);
+      for (const listener of this.idleEventListeners) listener(event);
+    }
+  }
+
+  /** Events outside a run have no async iterator for an embedder to consume. */
+  subscribeIdleEvents(listener: (event: AgentEvent) => void): () => void {
+    this.idleEventListeners.add(listener);
+    return () => {
+      this.idleEventListeners.delete(listener);
+    };
   }
 
   /**

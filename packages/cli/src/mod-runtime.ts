@@ -20,7 +20,15 @@ export class ModRuntime {
   private readonly prompts = new Map<string, Promise<unknown>>();
   private ui?: (text: string, options: { to: 'status' | 'scrollback' }) => void;
   private readonly uiMessages: Array<{ text: string; to: 'status' | 'scrollback' }> = [];
-  private readonly background = new Map<string, { description: string; background: boolean }>();
+  private readonly background = new Map<
+    string,
+    {
+      description: string;
+      background: boolean;
+      parentCallId: string;
+      childSessionId: string;
+    }
+  >();
 
   static async create(
     options: ModOptions & { home?: string; disabled?: string[] },
@@ -238,7 +246,12 @@ export class ModRuntime {
       case 'background_process_exited':
         return { ...payload, type: 'background.exit', sessionId, jobId: event.shellId };
       case 'subagent_spawned': {
-        const child = { description: event.purpose, background: !!event.background };
+        const child = {
+          description: event.purpose,
+          background: !!event.background,
+          parentCallId: event.parentCallId,
+          childSessionId: event.childSessionId,
+        };
         this.background.set(event.subagentId, child);
         return { type: 'agent.spawn', sessionId, agentId: event.subagentId, ...child };
       }
@@ -250,6 +263,7 @@ export class ModRuntime {
           sessionId,
           agentId: event.subagentId,
           ...child,
+          parentCallId: event.parentCallId,
           background: payload.background ?? child?.background,
           reason: event.reason,
           result: event.result,

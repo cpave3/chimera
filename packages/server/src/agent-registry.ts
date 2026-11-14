@@ -61,6 +61,7 @@ export interface AgentEntry {
   gate?: PermissionGate;
   hookRunner?: HookRunner;
   detachHooks?: () => void;
+  detachIdleEvents: () => void;
   lifecycleActive: boolean;
   lifecycleEnding: boolean;
   bus: EventBus;
@@ -269,6 +270,7 @@ export class AgentRegistry {
       agent,
       gate,
       hookRunner,
+      detachIdleEvents: agent.subscribeIdleEvents((event) => bus.publish(event)),
       lifecycleActive: false,
       lifecycleEnding: false,
       bus,
@@ -434,6 +436,7 @@ export class AgentRegistry {
     await this.endSession(id, 'delete');
     entry.detachHooks?.();
     await this.factory.disposeSession?.(id);
+    entry.detachIdleEvents();
     this.entries.delete(id);
     return true;
   }
@@ -539,7 +542,7 @@ export class AgentRegistry {
     } finally {
       entry.injectActive = false;
     }
-    entry.bus.publish({ type: 'user_message', content });
+    entry.bus.publish({ type: 'user_message', content, append: true });
     return 'injected';
   }
 

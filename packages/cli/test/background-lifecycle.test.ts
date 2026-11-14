@@ -12,7 +12,7 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-it('publishes a real background shell start on SSE and its late exit on the lifecycle source', async () => {
+it('publishes a real background shell start and idle exit on SSE and the lifecycle source', async () => {
   root = await mkdtemp(join(tmpdir(), 'chimera-background-lifecycle-'));
   const cwd = join(root, 'cwd');
   const home = join(root, 'home');
@@ -99,6 +99,9 @@ it('publishes a real background shell start on SSE and its late exit on the life
     expect(observed.findIndex((event) => event.type === 'run_finished')).toBeLessThan(
       observed.findIndex((event) => event.type === 'background_process_exited'),
     );
+    expect(
+      entry.bus.snapshot().filter((event) => event.type === 'background_process_exited'),
+    ).toHaveLength(1);
     const app = buildApp({ registry, home });
     const response = await app.request(
       `/v1/sessions/${sessionId}/events?since=${entry.bus.snapshot()[0]!.eventId}`,
@@ -106,12 +109,13 @@ it('publishes a real background shell start on SSE and its late exit on the life
     const reader = response.body!.getReader();
     try {
       let received = '';
-      while (!received.includes('"type":"background_process_started"')) {
+      while (!received.includes('"type":"background_process_exited"')) {
         const { value, done } = await reader.read();
         if (done) break;
         received += new TextDecoder().decode(value);
       }
       expect(received).toContain('"type":"background_process_started"');
+      expect(received).toContain('"type":"background_process_exited"');
       expect(received).toContain('sleep 0.2');
     } finally {
       await reader.cancel();

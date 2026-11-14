@@ -102,6 +102,94 @@ describe('server app', () => {
     expect(await healthResponse.text()).toBe('ok');
   });
 
+  it('marks an idle HTTP append as context only on the native event stream', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: 'test', sandboxMode: 'off' },
+    });
+    const { sessionId, entry } = await registry.create({ cwd: '/tmp', model, sandboxMode: 'off' });
+    const app = buildApp({ registry, home });
+    const response = await app.request(`/v1/sessions/${sessionId}/messages?append=true`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'context-only-canary' }),
+    });
+    expect(response.status).toBe(204);
+    expect((await (await app.request(`/v1/sessions/${sessionId}`)).json()).status).toBe('idle');
+    expect(entry.bus.snapshot().filter((event) => event.type === 'user_message')).toEqual([
+      expect.objectContaining({
+        type: 'user_message',
+        content: 'context-only-canary',
+        append: true,
+      }),
+    ]);
+    await registry.delete(sessionId);
+  });
+
+  it('retains exact child lifecycle in snapshots after idle completion and resume', async () => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: 'test', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home });
+    const created = await app.request('/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/tmp', model }),
+    });
+    const { sessionId } = await created.json();
+    const { agent } = registry.get(sessionId)!;
+    // These are the public pushEvent payloads emitted by spawn_agent.
+    agent.pushEvent({
+      type: 'subagent_spawned',
+      subagentId: 'child',
+      parentCallId: 'call',
+      childSessionId: 'child-session',
+      url: 'http://127.0.0.1:1234',
+      purpose: 'check lifecycle',
+      background: true,
+    });
+    expect(await (await app.request(`/v1/sessions/${sessionId}`)).json()).toMatchObject({
+      subagentStates: [
+        {
+          subagentId: 'child',
+          parentCallId: 'call',
+          childSessionId: 'child-session',
+          status: 'running',
+        },
+      ],
+    });
+    agent.pushEvent({
+      type: 'subagent_finished',
+      subagentId: 'child',
+      parentCallId: 'call',
+      reason: 'stop',
+      result: 'completed',
+      background: true,
+    });
+    expect(await (await app.request(`/v1/sessions/${sessionId}/subagents`)).json()).toEqual([]);
+    const snapshot = await (await app.request(`/v1/sessions/${sessionId}`)).json();
+    expect(snapshot.subagentStates).toEqual([
+      expect.objectContaining({
+        subagentId: 'child',
+        sessionId,
+        childSessionId: 'child-session',
+        parentCallId: 'call',
+        purpose: 'check lifecycle',
+        status: 'finished',
+        reason: 'stop',
+        startedAt: expect.any(Number),
+        endedAt: expect.any(Number),
+      }),
+    ]);
+    expect(JSON.stringify(snapshot.subagentStates)).not.toContain('http://');
+    await registry.run(sessionId, 'save the completed result');
+    await registry.get(sessionId)!.activeRun;
+    const resumed = await loadSession(sessionId, home);
+    expect(resumed).toMatchObject({ subagentStates: snapshot.subagentStates });
+    await registry.delete(sessionId);
+  });
+
   it('ends the old session before starting a new TUI session without deleting its history', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),
