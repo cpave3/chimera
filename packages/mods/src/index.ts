@@ -1,4 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { ModProcesses } from './process';
+import { createStore } from './store';
 import { delimiter, extname, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -80,6 +83,7 @@ export class ModHost {
   private readonly ended = new Set<string>();
   private readonly epochs = new Map<string, number>();
   private stopped = false;
+  private readonly processes = new ModProcesses();
 
   private constructor(private readonly options: ModHostOptions) {}
 
@@ -152,20 +156,62 @@ export class ModHost {
     }
   }
 
-  private context(sessionId: string): ModContext {
-    const delegated = this.options.sessionContext(sessionId);
-    const epoch = this.epochs.get(sessionId) ?? 0;
+  private async context(
+    hook: Hook,
+    sessionId: string | undefined,
+    pause: () => void,
+    resume: () => void,
+  ): Promise<ModContext> {
+    const directory = join(
+      this.options.dataDirectory ?? join(homedir(), '.chimera', 'mod-data'),
+      hook.mod === '.' || hook.mod === '..'
+        ? hook.mod.replaceAll('.', '%2E')
+        : encodeURIComponent(hook.mod),
+    );
+    await mkdir(directory, { recursive: true });
+    const epoch = sessionId === undefined ? 0 : (this.epochs.get(sessionId) ?? 0);
+    const delegated = sessionId === undefined ? {} : this.options.sessionContext(sessionId);
     const context = {
       ...delegated,
+      chimera: { version: this.options.version ?? '0.1.0' },
+      api: { version: 1 },
       server: { url: () => this.options.serverUrl?.() },
+      process: { spawn: this.processes.spawn.bind(this.processes) },
+      store: createStore(directory),
+      env: {
+        get: (name: string) => process.env[name],
+        set: (name: string, value: string | undefined) => {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        },
+      },
+      clock: {
+        now: () => Date.now(),
+        sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      },
+      http: {
+        fetch: (input: string | URL | Request, init?: RequestInit) =>
+          fetch(input, {
+            ...init,
+            signal: init?.signal
+              ? AbortSignal.any([init.signal, AbortSignal.timeout(30_000)])
+              : AbortSignal.timeout(30_000),
+          }),
+      },
       ui: {
         log: (
           text: string,
           options: { to: 'debug' | 'status' | 'scrollback' } = { to: 'debug' },
-        ) => (this.options.ui ? this.options.ui(text, options, sessionId) : console.debug(text)),
+        ) => {
+          return this.options.ui ? this.options.ui(text, options, sessionId) : console.debug(text);
+        },
       },
     };
-    const wrap = (target: Record<string, unknown>): Record<string, unknown> => {
+    const wrap = (
+      target: Record<string, unknown>,
+      sessionBound = true,
+    ): Record<string, unknown> => {
+      // Frozen provider snapshots cannot be proxy targets when their methods are wrapped.
       const proxyTarget = Object.isFrozen(target)
         ? Array.isArray(target)
           ? [...target]
@@ -178,19 +224,41 @@ export class ModHost {
             return (...args: unknown[]) => {
               if (
                 this.stopped ||
-                this.ended.has(sessionId) ||
-                epoch !== (this.epochs.get(sessionId) ?? 0)
+                (sessionBound &&
+                  sessionId !== undefined &&
+                  (this.ended.has(sessionId) || epoch !== (this.epochs.get(sessionId) ?? 0)))
               )
-                throw new SessionEnded(sessionId);
-              return Reflect.apply(value, target, args);
+                throw new SessionEnded(sessionId ?? 'process');
+              pause();
+              let result: unknown;
+              try {
+                result = Reflect.apply(value, target, args);
+              } catch (error) {
+                resume();
+                throw error;
+              }
+              if (result instanceof Promise)
+                return result.then((value) => wrapValue(value, sessionBound)).finally(resume);
+              resume();
+              // Children belong to the process lifetime, not the spawning session's epoch.
+              return wrapValue(result, sessionBound && value !== context.process.spawn);
             };
-          if (value && typeof value === 'object') return wrap(value as Record<string, unknown>);
+          if (value instanceof Promise) {
+            pause();
+            return value.then((result) => wrapValue(result, sessionBound)).finally(resume);
+          }
+          if (value && typeof value === 'object')
+            return wrap(value as Record<string, unknown>, sessionBound);
           return value;
         },
         set: (_object, key, value) => Reflect.set(target, key, value),
         deleteProperty: (_object, key) => Reflect.deleteProperty(target, key),
       }) as Record<string, unknown>;
     };
+    const wrapValue = (value: unknown, sessionBound = true): unknown =>
+      value && typeof value === 'object'
+        ? wrap(value as Record<string, unknown>, sessionBound)
+        : value;
     return wrap(context);
   }
 
@@ -230,7 +298,16 @@ export class ModHost {
       const expired = new Promise<never>((_, reject) => {
         rejectTimeout = reject;
       });
+      let paused = 0;
+      const pause = () => {
+        if (paused++ === 0) {
+          clearTimeout(timer);
+          remaining -= performance.now() - started;
+        }
+      };
       const resume = () => {
+        if (paused > 0 && --paused > 0) return;
+        if (!active) return;
         started = performance.now();
         timer = setTimeout(
           () => rejectTimeout(new ModTimeout(`hook ${hook.mod}:${name}`)),
@@ -242,18 +319,18 @@ export class ModHost {
         if (!active) throw new Error(`Hook already completed: ${hook.mod}:${name}`);
         if (called) throw new Error(`next() called twice: ${hook.mod}:${name}`);
         called = true;
-        clearTimeout(timer);
-        remaining -= performance.now() - started;
+        pause();
         try {
           return await invoke(index + 1);
         } finally {
           if (active) resume();
         }
       };
+      const context = await this.context(hook, event.sessionId, pause, resume);
       resume();
       try {
         const result = await Promise.race([
-          Promise.resolve().then(() => hook.handler(this.context(event.sessionId), event, next)),
+          Promise.resolve().then(() => hook.handler(context, event, next)),
           expired,
         ]);
         if (observer && !called) {
@@ -277,5 +354,6 @@ export class ModHost {
 
   async shutdown(): Promise<void> {
     this.stopped = true;
+    await this.processes.shutdown();
   }
 }

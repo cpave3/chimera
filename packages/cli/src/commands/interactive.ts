@@ -375,6 +375,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
   const updater = new Updater();
   unmount = () => handle.unmount();
+  modRuntime.connectUi((text, options) => handle.modLog(text, options));
   stopUpdates = startBackgroundUpdates({
     mode: config.updates?.mode ?? 'auto',
     updater,

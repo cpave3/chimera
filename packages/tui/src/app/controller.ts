@@ -196,6 +196,7 @@ export class TuiController {
   notice: string | null = null;
   /** The updater's notice for the status line and the transcript. */
   updateNotice: string | null = null;
+  modStatus: string | null = null;
 
   private menuHighlight = 0;
   private menuDismissed = false;
@@ -668,16 +669,20 @@ export class TuiController {
   }
 
   statusLine(width: number, style: Style): StatusLine {
+    let rendered: StatusLine;
     if (this.statusCommand) {
       const [first = '', ...rest] = this.statusCommandLines;
-      return { border: { left: first, right: '' }, below: rest };
+      rendered = { border: { left: first, right: '' }, below: rest };
+    } else {
+      rendered = renderStatusLine(
+        this.options.statusLine?.rows ?? DEFAULT_STATUS_ROWS,
+        this.statusFacts(),
+        width,
+        style,
+      );
     }
-    return renderStatusLine(
-      this.options.statusLine?.rows ?? DEFAULT_STATUS_ROWS,
-      this.statusFacts(),
-      width,
-      style,
-    );
+    if (this.modStatus) rendered.below.push(clipToWidth(previewLine(this.modStatus), width));
+    return rendered;
   }
 
   /**
@@ -778,6 +783,12 @@ export class TuiController {
   setUpdateStatus(status: string | null, notice?: string): void {
     this.updateNotice = status;
     if (notice) this.scrollback.addInfo(notice);
+    this.changed();
+  }
+
+  modLog(text: string, options: { to: 'status' | 'scrollback' }): void {
+    if (options.to === 'status') this.modStatus = text;
+    else this.scrollback.addInfo(text);
     this.changed();
   }
 

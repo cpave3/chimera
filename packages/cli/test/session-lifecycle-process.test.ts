@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
 const BIN = new URL('../dist/bin.js', import.meta.url).pathname;
+const RELEASE_BIN = process.env.CHIMERA_TEST_RELEASE_BIN;
 let home: string;
 const children: ChildProcess[] = [];
 afterEach(async () => {
@@ -71,8 +72,8 @@ async function until(check: () => boolean | Promise<boolean>, description: strin
 
 function launch(args: string[]) {
   const child = spawn(
-    process.execPath,
-    [BIN, ...args, '--cwd', join(home, 'workspace'), '--no-compaction'],
+    RELEASE_BIN ?? process.execPath,
+    [...(RELEASE_BIN ? [] : [BIN]), ...args, '--cwd', join(home, 'workspace'), '--no-compaction'],
     {
       env: { ...process.env, HOME: home, CHIMERA_SERVER_SECRET: 'private-session-token' },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -208,4 +209,71 @@ it.each([
       reason: 'exit',
     });
   }
+}, 15000);
+
+it.each([
+  'SIGTERM',
+  'SIGHUP',
+] as const)('flushes session.end to a mod helper when an idle interactive process receives %s', async (signal) => {
+  await configure();
+  const modelServer = spawn(
+    process.execPath,
+    [new URL('./fixtures/fake-model-server.mjs', import.meta.url).pathname],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  children.push(modelServer);
+  const [ready] = await once(modelServer.stdout!, 'data');
+  const port = String(ready).trim().split(' ')[1];
+  const configPath = join(home, '.chimera/config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.providers.fake.baseUrl = `http://127.0.0.1:${port}/v1`;
+  await writeFile(configPath, JSON.stringify(config));
+  const mod = join(home, 'mod');
+  const capture = join(home, 'mod-events.jsonl');
+  await mkdir(mod);
+  await writeFile(
+    join(mod, 'chimera-mod.json'),
+    JSON.stringify({
+      name: 'capture',
+      version: '1',
+      apiVersion: 1,
+      module: 'index.mjs',
+    }),
+  );
+  const helper = `require('node:readline').createInterface({input:process.stdin}).on('line', line => require('node:fs').appendFileSync(${JSON.stringify(capture)}, line+'\\n'));`;
+  await writeFile(
+    join(mod, 'index.mjs'),
+    `
+export function register(on) {
+  let child;
+  for (const name of ['session.start', 'turn.complete', 'session.end']) {
+    on(name, async ($, event) => {
+      child ??= $.process.spawn({argv: [${JSON.stringify(process.execPath)}, '-e', ${JSON.stringify(helper)}]});
+      await child.write(JSON.stringify(event) + '\\n');
+    });
+  }
+}
+`,
+  );
+  const interactive = launch(['--inline', '--mod-dir', mod]);
+  await until(() => interactive.output().includes('fake/test'), 'interactive mount');
+  interactive.child.stdin!.write('hello\r');
+  const captured = async () => {
+    try {
+      return (await readFile(capture, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  };
+  await until(
+    async () => (await captured()).some((event) => event.type === 'turn.complete'),
+    'completed turn in helper',
+  );
+  interactive.child.kill(signal);
+  expect((await interactive.exited)[0], interactive.errors()).toBe(0);
+  expect((await captured()).at(-1)).toMatchObject({ type: 'session.end', reason: 'signal' });
 }, 15000);

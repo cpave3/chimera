@@ -15,6 +15,34 @@ async function folder(
 }
 
 describe('mod folder host', () => {
+  it('keeps child handles usable after the spawning session ends', async () => {
+    const results: unknown[] = [];
+    const directory = await folder(`let child;
+      export function register(on) {
+        on('session.start', ($) => {
+          child = $.process.spawn({ argv: [${JSON.stringify(process.execPath)}, '-e',
+            'process.stdin.pipe(process.stdout)'] });
+        });
+        on('turn.complete', async ($) => {
+          await child.write('still alive');
+          child.close();
+          let text = '';
+          for await (const chunk of child.output) text += chunk.text;
+          $.session.record({ text, exit: await child.exitPromise });
+        });
+      }
+    `);
+    const host = await ModHost.create({
+      folders: [directory],
+      sessionContext: () => ({ session: { record: (value: unknown) => results.push(value) } }),
+    });
+    await host.observe({ type: 'session.start', sessionId: 'one' });
+    host.endSession('one');
+    await host.observe({ type: 'turn.complete', sessionId: 'two' });
+    expect(results).toEqual([{ text: 'still alive', exit: { code: 0, signal: null } }]);
+    await host.shutdown();
+  });
+
   it('reactivates a switched-back session without reviving its old action handles', async () => {
     const recorded: unknown[] = [];
     const directory = await folder(`let old;
@@ -33,6 +61,121 @@ describe('mod folder host', () => {
     host.endSession('one');
     await host.observe({ type: 'session.start', sessionId: 'one' });
     expect(recorded).toEqual(['SessionEnded', 'new activation']);
+    await host.shutdown();
+  });
+
+  it('provides env, clock, HTTP, UI and persistent per-mod storage', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'chimera-mod-data-'));
+    const results: unknown[] = [];
+    const directory = await folder(`export function register(on) {
+      on('utility', async ($) => {
+        await $.clock.sleep(1);
+        await $.store.set('count', (await $.store.get('count') ?? 0) + 1);
+        const response = await $.http.fetch('data:text/plain,hello');
+        $.ui.log(await response.text(), { to: 'scrollback' });
+        $.session.record({ count: await $.store.get('count'),
+          env: $.env.get('PATH'), now: $.clock.now(), directory: $.store.directory });
+      });
+    }`);
+    for (let index = 0; index < 2; index++) {
+      const host = await ModHost.create({
+        folders: [directory],
+        dataDirectory,
+        sessionContext: () => ({ session: { record: (value: unknown) => results.push(value) } }),
+        ui: (text: string) => {
+          results.push(text);
+        },
+      });
+      await host.observe({ type: 'utility', sessionId: 'one' });
+      await host.shutdown();
+    }
+    expect(results).toEqual([
+      'hello',
+      {
+        count: 1,
+        env: process.env.PATH,
+        now: expect.any(Number),
+        directory: join(dataDirectory, 'example'),
+      },
+      'hello',
+      {
+        count: 2,
+        env: process.env.PATH,
+        now: expect.any(Number),
+        directory: join(dataDirectory, 'example'),
+      },
+    ]);
+  });
+
+  it('spawns a synchronous duplex child handle and reports output and exit', async () => {
+    const results: unknown[] = [];
+    const directory = await folder(`export function register(on) {
+      on('turn.complete', async ($) => {
+        const child = $.process.spawn({argv: [${JSON.stringify(process.execPath)}, '-e',
+          'process.stdin.on("data", text => { process.stdout.write(text); process.stderr.write("err"); });']});
+        child.write('hello\\n');
+        child.close();
+        const chunks = [];
+        for await (const chunk of child.output) chunks.push(chunk);
+        $.session.record({ chunks, exit: await child.exitPromise });
+      });
+    }`);
+    const host = await ModHost.create({
+      folders: [directory],
+      sessionContext: () => ({ session: { record: (value: unknown) => results.push(value) } }),
+    });
+    await host.observe({ type: 'turn.complete', sessionId: 'one' });
+    expect(results).toEqual([
+      {
+        chunks: expect.arrayContaining([
+          { stream: 'stdout', text: 'hello\n' },
+          { stream: 'stderr', text: 'err' },
+        ]),
+        exit: { code: 0, signal: null },
+      },
+    ]);
+    await host.shutdown();
+  });
+
+  it('terminates children left running at host shutdown', async () => {
+    const results: unknown[] = [];
+    const directory = await folder(`export function register(on) {
+      let child;
+      on('turn.complete', async ($) => {
+        child = $.process.spawn({argv: [${JSON.stringify(process.execPath)}, '-e', 'setInterval(() => {}, 1000)']});
+      });
+      on('message.append', async ($) => { $.session.record(child.exitPromise); });
+    }`);
+    const host = await ModHost.create({
+      folders: [directory],
+      sessionContext: () => ({ session: { record: (value: unknown) => results.push(value) } }),
+    });
+    await host.observe({ type: 'turn.complete', sessionId: 'one' });
+    await host.observe({ type: 'message.append', sessionId: 'one' });
+    await host.shutdown();
+    await expect(results[0]).resolves.toEqual({ code: null, signal: 'SIGTERM' });
+  });
+
+  it('delegates prompt and server actions and excludes asynchronous $ calls from own time', async () => {
+    const results: unknown[] = [];
+    const directory = await folder(`export function register(on) {
+      on('turn.complete', async ($) => {
+        await $.clock.sleep(40);
+        $.session.record($.server.url());
+        $.session.record(await $.prompt.submit({text: 'continue'}));
+      });
+    }`);
+    const host = await ModHost.create({
+      folders: [directory],
+      serverUrl: () => 'http://localhost/secret',
+      sessionContext: () => ({
+        session: { record: (value: unknown) => results.push(value) },
+        prompt: { submit: async ({ text }: { text: string }) => ({ accepted: text }) },
+      }),
+      timeouts: { hookMs: 20 },
+    });
+    await host.observe({ type: 'turn.complete', sessionId: 'one' });
+    expect(results).toEqual(['http://localhost/secret', { accepted: 'continue' }]);
     await host.shutdown();
   });
 

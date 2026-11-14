@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { type LifecycleEvent, Logger, lifecycleSource, type SessionId } from '@chimera/core';
 import { type ModEvent, ModHost, SessionEnded } from '@chimera/mods';
 import type { AgentRegistry } from '@chimera/server';
+import { VERSION } from './version';
 
 export interface ModOptions {
   modDirs?: string[];
@@ -15,6 +18,8 @@ export class ModRuntime {
   private unsubscribe = () => {};
   private readonly turns = new Map<string, string>();
   private readonly prompts = new Map<string, Promise<unknown>>();
+  private ui?: (text: string, options: { to: 'status' | 'scrollback' }) => void;
+  private readonly uiMessages: Array<{ text: string; to: 'status' | 'scrollback' }> = [];
   private readonly background = new Map<string, { description: string; background: boolean }>();
 
   static async create(
@@ -25,10 +30,17 @@ export class ModRuntime {
     runtime.host = await ModHost.create({
       folders: options.modDirs,
       noMods: options.mods === false,
+      dataDirectory: join(options.home ?? homedir(), '.chimera/mod-data'),
+      version: VERSION,
       serverUrl: () => runtime.url,
       sessionContext: (id) => runtime.context(id),
       warn: (message) => logger.warn(message),
-      ui: (text) => logger.debug(text),
+      ui: (text, options) => {
+        logger.debug(text);
+        if (options.to === 'debug') return;
+        if (runtime.ui) runtime.ui(text, { to: options.to });
+        else runtime.uiMessages.push({ text, to: options.to });
+      },
     });
     runtime.unsubscribe = lifecycleSource.subscribe(async (event) => {
       if (!runtime.registry?.get(event.sessionId as SessionId)) return;
@@ -70,6 +82,11 @@ export class ModRuntime {
     this.url = url;
   }
 
+  connectUi(ui: (text: string, options: { to: 'status' | 'scrollback' }) => void): void {
+    this.ui = ui;
+    for (const message of this.uiMessages.splice(0)) ui(message.text, { to: message.to });
+  }
+
   private context(id: string): Record<string, unknown> {
     const entry = this.registry?.get(id as SessionId);
     if (!entry) throw new SessionEnded(id);
@@ -108,7 +125,7 @@ export class ModRuntime {
   private submit(id: string, text: string): Promise<unknown> {
     const entry = this.registry?.get(id as SessionId);
     if (!entry) return Promise.reject(new SessionEnded(id));
-    const queued = (entry.runActive && entry.agent.snapshot().status === 'running') || this.prompts.has(id);
+    const queued = entry.runActive || this.prompts.has(id);
     const previous = this.prompts.get(id) ?? Promise.resolve();
     const submitted = previous.then(async () => {
       while (true) {
