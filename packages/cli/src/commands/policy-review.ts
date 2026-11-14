@@ -24,7 +24,7 @@ export async function runBashPolicyReview(options: {
   for (const command of report.commands) {
     process.stdout.write(`## ${command.currentPolicy.outcome}\n\n`);
     process.stdout.write(`\`${command.command.replaceAll('`', '\\`')}\`\n\n`);
-    if (command.currentPolicy.outcome === 'blocked') {
+    if (command.currentPolicy.outcome !== 'automatic') {
       process.stdout.write(
         `Rule: ${command.currentPolicy.ruleId} — ${command.currentPolicy.message}\n\n`,
       );

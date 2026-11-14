@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { matchScaryCommand } from './scary-command-stage';
+import { dirname } from 'node:path';
+import { ScaryCommandStage } from './scary-command-stage';
 
 export interface BashPolicyReviewOptions {
   eventsPath: string;
@@ -17,7 +18,7 @@ export interface BashPolicyReview {
     result?: unknown;
     error?: string;
     currentPolicy:
-      | { outcome: 'blocked'; ruleId: string; message: string }
+      | { outcome: 'blocked' | 'approval_required'; ruleId: string; message: string }
       | { outcome: 'automatic' };
     audit?: Record<string, unknown>;
   }>;
@@ -48,26 +49,48 @@ export async function reviewBashPolicy(
     }
   }
 
-  const commands = [...byCallId.values()]
-    .sort((left, right) => Number(left.startedAt) - Number(right.startedAt))
-    .map((call) => {
-      const args = isRecord(call.args) ? call.args : {};
-      const rawCommand = typeof args.command === 'string' ? args.command : '';
-      const scary = matchScaryCommand(rawCommand);
-      const audit = auditQueues.get(rawCommand)?.shift();
-      return {
-        callId: String(call.callId),
-        command: redactCommand(rawCommand),
-        target: typeof call.target === 'string' ? call.target : 'unknown',
-        startedAt: Number(call.startedAt),
-        ...(call.result === undefined ? {} : { result: call.result }),
-        ...(typeof call.error === 'string' ? { error: call.error } : {}),
-        currentPolicy: scary
-          ? { outcome: 'blocked' as const, ruleId: scary.ruleId, message: scary.message }
-          : { outcome: 'automatic' as const },
-        ...(audit ? { audit: redactAudit(audit) } : {}),
-      };
-    });
+  const commands = await Promise.all(
+    [...byCallId.values()]
+      .sort((left, right) => Number(left.startedAt) - Number(right.startedAt))
+      .map(async (call) => {
+        const args = isRecord(call.args) ? call.args : {};
+        const rawCommand = typeof args.command === 'string' ? args.command : '';
+        const audit = auditQueues.get(rawCommand)?.shift();
+        const cwd = typeof audit?.cwd === 'string' ? audit.cwd : dirname(options.eventsPath);
+        const result = await new ScaryCommandStage().evaluate({
+          command: rawCommand,
+          cwd,
+          target: 'host',
+          home: cwd,
+          projectRoot: cwd,
+          roots: { read: [], write: [] },
+          facts: [],
+        });
+        const scary =
+          result.status === 'findings'
+            ? result.findings.find(
+                (finding) => finding.kind === 'blocked' || finding.kind === 'approval',
+              )
+            : undefined;
+        return {
+          callId: String(call.callId),
+          command: redactCommand(rawCommand),
+          target: typeof call.target === 'string' ? call.target : 'unknown',
+          startedAt: Number(call.startedAt),
+          ...(call.result === undefined ? {} : { result: call.result }),
+          ...(typeof call.error === 'string' ? { error: call.error } : {}),
+          currentPolicy: scary
+            ? {
+                outcome:
+                  scary.kind === 'blocked' ? ('blocked' as const) : ('approval_required' as const),
+                ruleId: scary.ruleId,
+                message: scary.message,
+              }
+            : { outcome: 'automatic' as const },
+          ...(audit ? { audit: redactAudit(audit) } : {}),
+        };
+      }),
+  );
   return {
     summary: {
       total: commands.length,

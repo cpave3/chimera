@@ -251,11 +251,22 @@ export class DefaultPermissionGate implements McpPermissionGate {
         req,
       );
       evaluatedRequest = { ...req, policyAnalysis };
-      if (policyAnalysis.findings.some((finding) => finding.kind === 'blocked')) {
+      const blocked = policyAnalysis.findings.filter((finding) => finding.kind === 'blocked');
+      if (blocked.length > 0) {
         await this.emitResolved?.(req.requestId, 'deny', false);
         return this.audited(
           evaluatedRequest,
-          { decision: 'deny', remembered: false, denialSource: 'policy' },
+          {
+            decision: 'deny',
+            remembered: false,
+            denialSource: 'policy',
+            feedback: blocked
+              .map(
+                (finding) =>
+                  `[${finding.ruleId}] ${finding.message} Approval unavailable for this command.`,
+              )
+              .join('\n'),
+          },
           'policy',
         );
       }
@@ -295,7 +306,10 @@ export class DefaultPermissionGate implements McpPermissionGate {
         ) {
           return this.audited(evaluatedRequest, { decision: 'allow', remembered: true }, 'rule');
         }
-        if (rememberedBypassOnly) return this.retryApprovedBySystemOne(evaluatedRequest);
+        if (rememberedBypassOnly) {
+          if (policyAnalysis.findings.some((finding) => finding.kind === 'approval')) return null;
+          return this.retryApprovedBySystemOne(evaluatedRequest);
+        }
         const resolution = await this.prompt(evaluatedRequest);
         return resolution.decision === 'allow' && requiresSudoAuthentication(policyAnalysis)
           ? { ...resolution, authentication: 'sudo' }
@@ -380,11 +394,14 @@ export class DefaultPermissionGate implements McpPermissionGate {
     req: PermissionRequest,
     mcpArguments?: unknown,
   ): Promise<PermissionResolution> {
+    const operatorOnly = req.policyAnalysis?.findings.some(
+      (finding) => finding.kind === 'approval',
+    );
     const intercepted = await this.interceptedByMod(req, mcpArguments);
     if (intercepted) return intercepted;
     const hookDenial = await this.deniedByHook(req);
     if (hookDenial) return hookDenial;
-    const verdict = await this.checkedBySystemOne(req);
+    const verdict = operatorOnly ? undefined : await this.checkedBySystemOne(req);
     if (verdict?.decision === 'allow') {
       await this.emitResolved?.(req.requestId, 'allow', false);
       return this.audited(
@@ -398,7 +415,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     // A rejection is for the user. The reviewer gets only what the check had no opinion on.
     const rejected = verdict !== undefined && !verdict.failed;
     const review =
-      req.unsandboxed || rejected
+      operatorOnly || req.unsandboxed || rejected
         ? undefined
         : ((await this.reviewer?.review({
             request: req,
@@ -449,7 +466,16 @@ export class DefaultPermissionGate implements McpPermissionGate {
       }
       return this.audited(
         req,
-        { decision: 'deny', remembered: false, denialSource: 'headless' },
+        {
+          decision: 'deny',
+          remembered: false,
+          denialSource: 'headless',
+          ...(operatorOnly
+            ? {
+                feedback: 'Operator approval required, but this session has no approval responder.',
+              }
+            : {}),
+        },
         'headless',
         undefined,
         verdict,
@@ -475,6 +501,11 @@ export class DefaultPermissionGate implements McpPermissionGate {
     const result = await this.interceptPermission(request, args);
     const decision = typeof result === 'string' ? result : result.decision;
     if (decision === 'pass') return null;
+    if (
+      decision === 'allow' &&
+      request.policyAnalysis?.findings.some((finding) => finding.kind === 'approval')
+    )
+      return null;
     await this.emitResolved?.(request.requestId, decision, false);
     return this.audited(
       request,

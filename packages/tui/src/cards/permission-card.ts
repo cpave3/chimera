@@ -42,6 +42,7 @@ export function formatFinding(finding: NonNullable<PolicyAnalysis>['findings'][n
   }
   if (finding.kind === 'unresolved') return `unresolved: ${finding.message}`;
   if (finding.kind === 'elevation') return `elevation (${finding.ruleId}): ${finding.message}`;
+  if (finding.kind === 'approval') return `approval (${finding.ruleId}): ${finding.message}`;
   if (finding.kind === 'blocked') return `blocked (${finding.ruleId}): ${finding.message}`;
   return `analyzer error (${finding.stageId}): ${finding.message}`;
 }
