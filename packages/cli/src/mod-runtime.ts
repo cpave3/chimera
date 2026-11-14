@@ -23,13 +23,15 @@ export class ModRuntime {
   private readonly background = new Map<string, { description: string; background: boolean }>();
 
   static async create(
-    options: ModOptions & { home?: string },
+    options: ModOptions & { home?: string; disabled?: string[] },
   ): Promise<ModRuntime> {
     const runtime = new ModRuntime();
     const logger = new Logger({ home: options.home });
     runtime.host = await ModHost.create({
       folders: options.modDirs,
       noMods: options.mods === false,
+      disabled: options.disabled,
+      userDirectory: join(options.home ?? homedir(), '.chimera/mods'),
       dataDirectory: join(options.home ?? homedir(), '.chimera/mod-data'),
       version: VERSION,
       serverUrl: () => runtime.url,

@@ -84,7 +84,7 @@ it('retains process handles across a registry session switch and reaps them at s
   });
   runtime.bind(registry, 'http://127.0.0.1:1');
   try {
-    expect(runtime.host.registrations.length).toBeGreaterThan(0);
+    expect(runtime.host.mods).toMatchObject([{ status: 'loaded' }]);
     const actions = (await import(
       /* @vite-ignore */ pathToFileURL(join(folder, 'index.mjs')).href
     )) as {

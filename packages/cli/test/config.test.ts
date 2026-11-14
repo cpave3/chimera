@@ -12,6 +12,16 @@ import {
   resolveSystemOne,
 } from '../src/config';
 
+it('validates the disabled mod list instead of silently ignoring malformed config', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'chimera-mod-config-'));
+  await mkdir(join(home, '.chimera'));
+  const path = join(home, '.chimera/config.json');
+  await writeFile(path, JSON.stringify({ mods: { disabled: 'reporter' } }));
+  expect(() => loadConfig(home)).toThrow(/mods.*disabled|disabled.*mods/);
+  await writeFile(path, JSON.stringify({ mods: { disabled: ['reporter'] } }));
+  expect(loadConfig(home).mods?.disabled).toEqual(['reporter']);
+});
+
 it('rejects invalid MCP server configuration with config path and server name', async () => {
   const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-invalid-'));
   await mkdir(join(home, '.chimera'), { recursive: true });

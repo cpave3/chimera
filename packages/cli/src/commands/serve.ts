@@ -96,7 +96,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
   const config = loadConfig(opts.home);
-  const modRuntime = await ModRuntime.create(opts);
+  const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
   const mcpServers = resolveMcpServers(config, opts.mcpConfig);
