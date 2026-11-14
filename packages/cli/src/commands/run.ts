@@ -38,6 +38,7 @@ import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { loadModesFromConfig } from '../modes-loader';
 import { RunRows } from '../run-rows';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
+import { readServerSecret } from '../server-secret';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { VERSION } from '../version';
 
@@ -101,6 +102,7 @@ export interface RunResult {
 }
 
 export async function runOneShot(opts: RunOptions): Promise<RunResult> {
+  const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
@@ -260,8 +262,8 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });
-  const app = buildApp({ registry, home: opts.home });
-  const server = await startServer({ app });
+  const app = buildApp({ registry, home: opts.home, secret });
+  const server = await startServer({ app, secret });
 
   const client = new ChimeraClient({ baseUrl: server.url });
   let sessionId: string | undefined;

@@ -6,6 +6,7 @@ import { InMemorySkillRegistry } from '@chimera/skills';
 import { mountTui } from '@chimera/tui';
 import { loadConfig } from '../config';
 import { listLiveInstances } from '../lockfile';
+import { readServerSecret, withServerSecret } from '../server-secret';
 import { VERSION } from '../version';
 
 export interface AttachOptions {
@@ -36,8 +37,9 @@ export function resolveAttachTarget(target: string, home?: string): AttachTarget
 }
 
 export async function runAttach(opts: AttachOptions): Promise<void> {
+  const secret = readServerSecret();
   const { url, sessionId: lockfileSessionId } = resolveAttachTarget(opts.target, opts.home);
-  const client = new ChimeraClient({ baseUrl: url });
+  const client = new ChimeraClient({ baseUrl: withServerSecret(url, secret) });
 
   const instance = await client.getInstance();
 

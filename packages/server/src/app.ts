@@ -22,6 +22,7 @@ import type { AgentRegistry } from './agent-registry';
 
 export interface AppOptions {
   registry: AgentRegistry;
+  secret?: string;
   /** Home directory for session persistence; defaults to os.homedir(). */
   home?: string;
   /**
@@ -161,7 +162,13 @@ const permissionResolveSchema = z.discriminatedUnion('decision', [
 
 export function buildApp(opts: AppOptions): Hono {
   const { registry, home, onFork } = opts;
-  const app = new Hono();
+  // Match the encoded secret literally, rather than letting Hono decode routing metacharacters.
+  const root = new Hono(
+    opts.secret ? { getPath: (request) => new URL(request.url).pathname } : undefined,
+  );
+  const app = new Hono().basePath(
+    opts.secret ? `/${encodeURIComponent(opts.secret).replaceAll('*', '%2A')}` : '/',
+  );
 
   // In-memory cache of disk-scanned session metadata. Stored as the
   // in-flight promise (not the resolved array) so concurrent readers
@@ -173,7 +180,7 @@ export function buildApp(opts: AppOptions): Hono {
     listCache = null;
   };
 
-  app.get('/healthz', (c) => c.text('ok'));
+  root.get('/healthz', (c) => c.text('ok'));
 
   app.get('/v1/instance', (c) => c.json(registry.getInstanceInfo()));
 
@@ -888,5 +895,5 @@ export function buildApp(opts: AppOptions): Hono {
     });
   });
 
-  return app;
+  return root.route('/', app);
 }

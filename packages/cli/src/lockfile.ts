@@ -123,8 +123,8 @@ function connectionRefused(error: unknown): boolean {
  * crash the kernel gives the number to another process, or to a thread, and
  * the lockfile outlives the instance. So each lockfile's server is asked who
  * it is. A port that refuses the connection, or that answers as something
- * else, means the instance is gone, and its lockfile is removed. An instance
- * that does not answer in time is kept: it may only be busy.
+ * else, means the instance is gone, and its lockfile is removed. A 404 may
+ * hide a secret-protected instance, so it is kept, like one that times out.
  */
 export async function listVerifiedInstances(
   options: VerifyInstancesOptions = {},
@@ -137,6 +137,8 @@ export async function listVerifiedInstances(
         const response = await request(`${lock.url}/v1/instance`, {
           signal: AbortSignal.timeout(timeoutMs),
         });
+        // A protected instance deliberately hides this route from discovery.
+        if (response.status === 404) return { ...lock, responsive: false };
         const info = response.ok ? ((await response.json()) as { pid?: unknown }) : null;
         if (info?.pid === lock.pid) return { ...lock, responsive: true };
       } catch (error) {

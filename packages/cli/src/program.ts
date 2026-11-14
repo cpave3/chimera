@@ -29,6 +29,7 @@ import {
 } from './commands/sessions';
 import { runSkillsList } from './commands/skills';
 import { runUpdate } from './commands/update';
+import { readServerSecret } from './server-secret';
 import { VERSION, versionReport } from './version';
 
 function applySubagentOptions(cmd: Command): Command {
@@ -792,6 +793,7 @@ async function readStdin(): Promise<string> {
 }
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {
+  readServerSecret();
   const program = buildProgram();
   try {
     await program.parseAsync(argv);

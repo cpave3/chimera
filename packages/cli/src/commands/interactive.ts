@@ -42,6 +42,7 @@ import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
+import { readServerSecret } from '../server-secret';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
 import { Updater } from '../updater';
@@ -103,6 +104,7 @@ export function formatExitSummary(sessionId: string): string {
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
+  const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
@@ -238,6 +240,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
   const app = buildApp({
     registry,
+    secret,
     home: opts.home,
     onFork: async (parent, childId) => {
       if (parent.sandboxMode === 'overlay') {
@@ -245,7 +248,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       }
     },
   });
-  const server = await startServer({ app });
+  const server = await startServer({ app, secret });
 
   const client = new ChimeraClient({ baseUrl: server.url });
   const { sessionId } = await launchSession(
@@ -273,7 +276,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
       sessionId,
       startedAt: Date.now(),
       version: VERSION,
-      url: server.url,
+      url: new URL(server.url).origin,
     },
     opts.home,
   );

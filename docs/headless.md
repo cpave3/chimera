@@ -4,6 +4,22 @@ Chimera runs without the TUI in two ways: `chimera run` for one prompt, and
 `chimera serve` for a server that other clients drive. Both use the same
 agent, tools and configuration as the TUI.
 
+## Optional server secret
+
+Set `CHIMERA_SERVER_SECRET` before launching `chimera serve`, `chimera run`,
+or the TUI to serve the API only at `http://host:port/<secret>/v1/…`.
+Without it, the API remains open. `/healthz` stays public. Use a long,
+random secret and a trusted network or TLS proxy: the secret is a URL path,
+not transport encryption.
+
+Chimera reads and removes the variable before spawning tools, hooks or MCP
+servers. It never puts the secret in arguments or instance lockfiles. The
+owning TUI connects automatically; for `chimera attach <pid-or-session>`,
+set the same variable in the attaching process. For a URL target, provide
+the origin with that variable, or the full secret URL without it.
+Subagent child servers always get fresh secrets; their parents receive the
+full URLs through the private startup handshake.
+
 ## One prompt: `chimera run`
 
 ```

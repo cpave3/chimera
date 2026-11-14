@@ -140,12 +140,14 @@ describe('lockfile', () => {
       expect(existsSync(lockfilePath(REUSED_PID, home))).toBe(false);
     });
 
-    it('drops a lockfile whose port is served by something that is not Chimera', async () => {
+    it('preserves a live protected instance when the API returns 404 without its secret', async () => {
       const { url, port } = await listen((respond) => respond(404, { error: 'not found' }));
       lock(REUSED_PID, url, port);
 
-      expect(await listVerifiedInstances({ home })).toEqual([]);
-      expect(existsSync(lockfilePath(REUSED_PID, home))).toBe(false);
+      expect(await listVerifiedInstances({ home })).toMatchObject([
+        { pid: REUSED_PID, responsive: false },
+      ]);
+      expect(existsSync(lockfilePath(REUSED_PID, home))).toBe(true);
     });
 
     it('keeps an instance that is slow to answer, and its lockfile, as not responsive', async () => {

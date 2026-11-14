@@ -72,6 +72,23 @@ describe('server app', () => {
     await rm(home, { recursive: true, force: true });
   });
 
+  it.each([
+    ['private-token', '/private-token'],
+    ['not*a/path?', '/not%2Aa%2Fpath%3F'],
+  ])('exposes API routes only under the configured secret %s', async (secret, prefix) => {
+    const registry = new AgentRegistry({
+      factory: makeFactory(home),
+      instance: { pid: 1, cwd: '/tmp', version: '0.1.0', sandboxMode: 'off' },
+    });
+    const app = buildApp({ registry, home, secret });
+    expect((await app.request('/v1/instance')).status).toBe(404);
+    expect((await app.request('/wrong/v1/instance')).status).toBe(404);
+    expect((await app.request(`${prefix}/v1/instance`)).status).toBe(200);
+    expect((await app.request('/healthz')).status).toBe(200);
+    expect((await app.request('/v1/sessions', { method: 'POST' })).status).toBe(404);
+    expect((await app.request(`${prefix}/v1/sessions`, { method: 'POST' })).status).toBe(400);
+  });
+
   it('healthz returns ok', async () => {
     const registry = new AgentRegistry({
       factory: makeFactory(home),

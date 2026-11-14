@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,7 +108,7 @@ export async function spawnChimeraChild(args: SpawnChildArgs): Promise<ChildHand
   const proc = spawn(args.chimeraBin, argv, {
     cwd: args.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env, CHIMERA_SERVER_SECRET: randomBytes(32).toString('hex') },
     detached: false,
   });
 

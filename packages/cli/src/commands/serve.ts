@@ -27,6 +27,7 @@ import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
+import { readServerSecret } from '../server-secret';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { Updater } from '../updater';
 import { VERSION } from '../version';
@@ -86,6 +87,7 @@ export interface ServeOptions {
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
+  const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
@@ -228,6 +230,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
 
   const app = buildApp({
     registry,
+    secret,
     home: opts.home,
     onFork: async (parent, childId) => {
       if (parent.sandboxMode === 'overlay') {
@@ -235,7 +238,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       }
     },
   });
-  const server = await startServer({ app, port: opts.port, host: opts.host });
+  const server = await startServer({ app, port: opts.port, host: opts.host, secret });
 
   const client = new ChimeraClient({ baseUrl: server.url });
   const { sessionId } = await launchSession(
@@ -260,7 +263,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
       sessionId,
       startedAt: Date.now(),
       version: VERSION,
-      url: server.url,
+      url: new URL(server.url).origin,
     },
     opts.home,
   );
