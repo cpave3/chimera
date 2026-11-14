@@ -1,4 +1,5 @@
-import type { ToolSet } from 'ai';
+import { asSchema, type ToolSet } from 'ai';
+import Ajv from 'ajv';
 
 export interface ToolCall {
   name: string;
@@ -24,6 +25,8 @@ type ExecutableTool = {
   execute?: (args: unknown, options: unknown) => Promise<unknown>;
 };
 
+const schemaValidator = new Ajv({ strict: false });
+
 /**
  * Wrap every tool's execute, including MCP and subagents. Middleware runs
  * outside hooks so its rewritten input is what validation and permissions see.
@@ -47,6 +50,21 @@ export function interceptTools(
         const initial: ToolCall = { name, args };
         const execute = async (call = initial) => {
           if (call.name !== name) throw new Error('Tool middleware cannot change the tool name');
+          if (middleware && definition.inputSchema) {
+            const schema = asSchema(definition.inputSchema);
+            if (schema.validate) {
+              const validated = await schema.validate(call.args);
+              if (!validated.success) throw validated.error;
+              call = { ...call, args: validated.value };
+            } else {
+              const validate = schemaValidator.compile(await schema.jsonSchema);
+              if (!validate(call.args)) {
+                throw new Error(
+                  `Invalid arguments for ${name}: ${schemaValidator.errorsText(validate.errors)}`,
+                );
+              }
+            }
+          }
           let outcome: ToolOutcome | undefined;
           for (const interceptor of interceptors) {
             outcome = await interceptor.before?.(call);
