@@ -11,8 +11,10 @@ export interface ModOptions {
 export class ModRuntime {
   host!: ModHost;
   private registry?: AgentRegistry;
+  private url = '';
   private unsubscribe = () => {};
   private readonly turns = new Map<string, string>();
+  private readonly prompts = new Map<string, Promise<unknown>>();
   private readonly background = new Map<string, { description: string; background: boolean }>();
 
   static async create(
@@ -23,6 +25,7 @@ export class ModRuntime {
     runtime.host = await ModHost.create({
       folders: options.modDirs,
       noMods: options.mods === false,
+      serverUrl: () => runtime.url,
       sessionContext: (id) => runtime.context(id),
       warn: (message) => logger.warn(message),
       ui: (text) => logger.debug(text),
@@ -62,18 +65,95 @@ export class ModRuntime {
     return runtime;
   }
 
-  bind(registry: AgentRegistry, _url: string): void {
+  bind(registry: AgentRegistry, url: string): void {
     this.registry = registry;
+    this.url = url;
   }
 
   private context(id: string): Record<string, unknown> {
     const entry = this.registry?.get(id as SessionId);
     if (!entry) throw new SessionEnded(id);
     const snapshot = entry.agent.snapshot();
-    return { session: { id, name: snapshot.name, cwd: snapshot.cwd,
-      parentId: snapshot.parentId ?? this.registry!.getInstanceInfo().parentId ?? null,
-      isSubagent: !!this.registry!.getInstanceInfo().parentId,
-    } };
+    const readOnly = <T>(value: T): T => {
+      if (value && typeof value === 'object') {
+        for (const nested of Object.values(value)) readOnly(nested);
+        Object.freeze(value);
+      }
+      return value;
+    };
+    return {
+      session: readOnly({
+        id,
+        name: snapshot.name,
+        cwd: snapshot.cwd,
+        status: snapshot.status,
+        parentId: snapshot.parentId ?? this.registry!.getInstanceInfo().parentId ?? null,
+        isSubagent: !!this.registry!.getInstanceInfo().parentId,
+        model: snapshot.model,
+        usage: snapshot.usage,
+        messages: () => readOnly(entry.agent.snapshot().messages),
+      }),
+      prompt: { submit: ({ text }: { text: string }) => this.submit(id, text) },
+      message: {
+        append: async (text: string) => {
+          const result = await this.registry!.injectMessage(id as SessionId, text);
+          if (result === 'missing') throw new SessionEnded(id);
+          if (result === 'already-running') throw new Error('Session is busy');
+        },
+      },
+      turn: { abort: () => entry.agent.interrupt() },
+    };
+  }
+
+  private submit(id: string, text: string): Promise<unknown> {
+    const entry = this.registry?.get(id as SessionId);
+    if (!entry) return Promise.reject(new SessionEnded(id));
+    const queued = (entry.runActive && entry.agent.snapshot().status === 'running') || this.prompts.has(id);
+    const previous = this.prompts.get(id) ?? Promise.resolve();
+    const submitted = previous.then(async () => {
+      while (true) {
+        const current = this.registry?.get(id as SessionId);
+        if (!current) throw new SessionEnded(id);
+        if (current.activeRun) await current.activeRun;
+        if (current.activeCompaction) await current.activeCompaction;
+        if (
+          !current.lifecycleActive ||
+          current.lifecycleEnding ||
+          this.registry!.get(id as SessionId) !== current
+        ) {
+          throw new SessionEnded(id);
+        }
+        let unsubscribe = () => {};
+        const started = new Promise<unknown>((resolve) => {
+          unsubscribe = current.bus.subscribe((event) => {
+            if (event.type === 'user_message') {
+              unsubscribe();
+              resolve(queued ? { queued: true } : { accepted: true });
+            } else if (event.type === 'prompt_dropped') {
+              unsubscribe();
+              resolve({ dropped: true, reason: event.reason });
+            } else if (event.type === 'run_finished') {
+              unsubscribe();
+              resolve({ dropped: true, reason: event.error ?? event.reason });
+            }
+          });
+        });
+        try {
+          const result = await this.registry!.run(id as SessionId, text);
+          if (result === 'queued') return await started;
+          if (result === 'missing') throw new SessionEnded(id);
+        } finally {
+          unsubscribe();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    });
+    this.prompts.set(id, submitted);
+    const cleanup = () => {
+      if (this.prompts.get(id) === submitted) this.prompts.delete(id);
+    };
+    void submitted.then(cleanup, cleanup);
+    return submitted;
   }
 
   private map(event: LifecycleEvent): ModEvent | undefined {

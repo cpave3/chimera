@@ -78,6 +78,7 @@ export class ModHost {
   private readonly hooks: Hook[] = [];
   private readonly queues = new Map<string, Promise<void>>();
   private readonly ended = new Set<string>();
+  private readonly epochs = new Map<string, number>();
   private stopped = false;
 
   private constructor(private readonly options: ModHostOptions) {}
@@ -153,8 +154,10 @@ export class ModHost {
 
   private context(sessionId: string): ModContext {
     const delegated = this.options.sessionContext(sessionId);
+    const epoch = this.epochs.get(sessionId) ?? 0;
     const context = {
       ...delegated,
+      server: { url: () => this.options.serverUrl?.() },
       ui: {
         log: (
           text: string,
@@ -173,7 +176,12 @@ export class ModHost {
           const value = Reflect.get(target, key);
           if (typeof value === 'function')
             return (...args: unknown[]) => {
-              if (this.stopped || this.ended.has(sessionId)) throw new SessionEnded(sessionId);
+              if (
+                this.stopped ||
+                this.ended.has(sessionId) ||
+                epoch !== (this.epochs.get(sessionId) ?? 0)
+              )
+                throw new SessionEnded(sessionId);
               return Reflect.apply(value, target, args);
             };
           if (value && typeof value === 'object') return wrap(value as Record<string, unknown>);
@@ -189,6 +197,7 @@ export class ModHost {
   observe(event: ModEvent): Promise<void> {
     const previous = this.queues.get(event.sessionId) ?? Promise.resolve();
     const dispatch = previous.then(async () => {
+      if (event.type === 'session.start') this.ended.delete(event.sessionId);
       await this.run(event.type, event, async () => undefined, true);
     });
     const settled = dispatch.then(
@@ -263,6 +272,7 @@ export class ModHost {
 
   endSession(sessionId: string): void {
     this.ended.add(sessionId);
+    this.epochs.set(sessionId, (this.epochs.get(sessionId) ?? 0) + 1);
   }
 
   async shutdown(): Promise<void> {

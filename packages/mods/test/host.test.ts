@@ -15,6 +15,27 @@ async function folder(
 }
 
 describe('mod folder host', () => {
+  it('reactivates a switched-back session without reviving its old action handles', async () => {
+    const recorded: unknown[] = [];
+    const directory = await folder(`let old;
+      export function register(on) { on('session.start', ($) => {
+        if (!old) { old = $; return; }
+        try { old.session.record('invalid'); }
+        catch (error) { $.session.record(error.name); }
+        $.session.record('new activation');
+      }); }
+    `);
+    const host = await ModHost.create({
+      folders: [directory],
+      sessionContext: () => ({ session: { record: (value: unknown) => recorded.push(value) } }),
+    });
+    await host.observe({ type: 'session.start', sessionId: 'one' });
+    host.endSession('one');
+    await host.observe({ type: 'session.start', sessionId: 'one' });
+    expect(recorded).toEqual(['SessionEnded', 'new activation']);
+    await host.shutdown();
+  });
+
   it('loads register(on), delegates session actions and wraps terminal outermost first', async () => {
     const calls: string[] = [];
     const directory = await folder(`
