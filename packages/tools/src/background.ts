@@ -47,6 +47,7 @@ export interface BackgroundExitNotice {
 export interface BackgroundProcessManagerOptions {
   cwd: string;
   maxOutputBytes?: number;
+  onStart?: (notice: { shellId: string; command: string }) => void;
   /** Fired once per process when it leaves the `running` state. */
   onExit?: (notice: BackgroundExitNotice) => void;
 }
@@ -71,6 +72,7 @@ interface TrackedProcess {
 export class BackgroundProcessManager {
   private readonly cwd: string;
   private readonly maxOutputBytes: number;
+  private readonly onStart: BackgroundProcessManagerOptions['onStart'];
   private readonly onExit: ((notice: BackgroundExitNotice) => void) | undefined;
   private readonly processes = new Map<string, TrackedProcess>();
   private nextId = 1;
@@ -78,6 +80,7 @@ export class BackgroundProcessManager {
   constructor(opts: BackgroundProcessManagerOptions) {
     this.cwd = opts.cwd;
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    this.onStart = opts.onStart;
     this.onExit = opts.onExit;
   }
 
@@ -110,6 +113,7 @@ export class BackgroundProcessManager {
     };
     this.watchAttempt(tracked, opts);
     this.processes.set(id, tracked);
+    child.once('spawn', () => this.onStart?.({ shellId: id, command }));
     return { ...record };
   }
 

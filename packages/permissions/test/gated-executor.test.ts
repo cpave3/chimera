@@ -49,6 +49,34 @@ describe('GatedExecutor', () => {
     expect(r.stdout).toBe('ok');
   });
 
+  it('refuses a mod denial with its message without executing', async () => {
+    const gate = new DefaultPermissionGate({
+      cwd,
+      home: cwd,
+      autoApprove: 'none',
+      interceptPermission: async () => ({ decision: 'deny', message: 'frozen by mod' }),
+      raiseRequest: async () => {
+        throw new Error('must not prompt');
+      },
+    });
+    const inner = stubExecutor({
+      stdout: 'must not execute',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
+    inner.exec = async () => {
+      throw new Error('must not execute');
+    };
+    const executor = new GatedExecutor({ inner, gate });
+    await expect(executor.exec('echo hi')).resolves.toMatchObject({
+      exitCode: -1,
+      stderr: 'denied by mod: frozen by mod',
+    });
+  });
+
   it('defaults toolName to "bash" for backward compatibility', async () => {
     let capturedToolName = '';
     const gate = new DefaultPermissionGate({

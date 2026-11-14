@@ -36,7 +36,7 @@ async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function fixture() {
+async function fixture(instructions?: string) {
   const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-agent-'));
   homes.push(home);
   const calls: Array<{ name: string; arguments: { message: string } }> = [];
@@ -61,7 +61,8 @@ async function fixture() {
           result = {
             protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
-            serverInfo: { name: 'fixture', version: '1' },
+            serverInfo: { name: 'remote-display-name', version: '1' },
+            instructions,
           };
         } else if (message.method === 'tools/list') {
           result = {
@@ -93,7 +94,7 @@ async function fixture() {
 
   const modelRequests: Array<{
     tools?: Array<{ function: { name: string } }>;
-    messages: unknown[];
+    messages: Array<{ role: string; content: string }>;
   }> = [];
   const modelUrl = await listen(
     createServer((request, response) => {
@@ -146,7 +147,9 @@ async function fixture() {
     }),
   );
 
-  function registry(options: { trustedTools?: string[]; modeTools?: string[] } = {}) {
+  function registry(
+    options: { trustedTools?: string[]; modeTools?: string[]; systemPrompt?: string } = {},
+  ) {
     const modes = new InMemoryModeRegistry(
       [
         {
@@ -175,6 +178,7 @@ async function fixture() {
         },
       },
       autoApprove: 'all',
+      systemPromptOverride: options.systemPrompt,
       models: { 'fixture/test': { contextWindow: 200_000 } },
       home,
       subagents: { enabled: false, headlessAutoDeny: true },
@@ -265,5 +269,29 @@ it('denies an untrusted MCP call in a headless agent run even with host auto-app
   expect(entry.bus.snapshot()).toContainEqual(
     expect.objectContaining({ type: 'assistant_text_done', text: 'MCP denied' }),
   );
+  expect(await registry.delete(sessionId)).toBe(true);
+});
+
+it.each([
+  { instructions: undefined, systemPrompt: undefined },
+  { instructions: 'Always check the project before using echo.', systemPrompt: undefined },
+  { instructions: 'Always check the project before using echo.', systemPrompt: 'Custom prompt' },
+])('sends only supplied MCP instructions to the model, named by configured server (%s)', {
+  timeout: 20000,
+}, async ({ instructions, systemPrompt }) => {
+  const test = await fixture(instructions);
+  const registry = test.registry({ trustedTools: ['echo'], systemPrompt });
+  const { sessionId, entry } = await registry.create(init(test.home));
+  await registry.run(sessionId, 'Use the echo tool');
+  await entry.activeRun;
+  const system = test.modelRequests[0].messages
+    .filter((message) => message.role === 'system')
+    .map((message) => message.content)
+    .join('\n');
+  if (instructions) {
+    expect(system).toContain(`## MCP server: fixture\n\n${instructions}`);
+  } else {
+    expect(system).not.toContain('## MCP server:');
+  }
   expect(await registry.delete(sessionId)).toBe(true);
 });

@@ -1,8 +1,10 @@
+import type { ModBundle } from '@chimera/core';
 import { loadSkills, type SkillRegistry } from '@chimera/skills';
 import type { ChimeraConfig } from './config';
 
 export interface LoadSkillsOpts {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   home?: string;
   config: ChimeraConfig;
   /** If set, overrides `config.skills.claudeCompat` (from `--no-claude-compat`). */
@@ -28,6 +30,7 @@ export function loadSkillsFromConfig(opts: LoadSkillsOpts): SkillRegistry {
 
   return loadSkills({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.home,
     includeClaudeCompat: claudeCompat,
     onWarning: opts.onWarning,

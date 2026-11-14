@@ -4,7 +4,7 @@ import type { GoalChange } from './goal';
 import type { CallId, SessionId } from './ids';
 import type { PermissionRequest } from './interfaces';
 import type { Question } from './questions';
-import type { ExecutionTarget, TaskItem, ToolCallRecord, Usage } from './types';
+import type { ExecutionTarget, ModelConfig, TaskItem, ToolCallRecord, Usage } from './types';
 
 /**
  * Per-tool human-readable display payload, computed by a tool's
@@ -31,9 +31,19 @@ export type RunFinishedReason =
   | 'waiting_for_input'
   | 'output_limit';
 
+export type PromptSource = 'user' | 'continuation' | 'background' | 'stop_retry' | 'goal';
+
 export type AgentEvent =
+  | { type: 'prompt_dropped'; reason: string }
   | { type: 'session_started'; sessionId: SessionId }
-  | { type: 'user_message'; content: string; imageCount?: number }
+  | {
+      type: 'user_message';
+      content: string;
+      imageCount?: number;
+      source?: PromptSource;
+      append?: boolean;
+    }
+  | { type: 'message_appended'; text: string; imageCount?: number }
   | { type: 'assistant_text_delta'; id?: string; delta: string }
   | { type: 'assistant_text_done'; id?: string; text: string }
   /** Streaming delta for model reasoning content (o1, DeepSeek-R1, etc.). */
@@ -175,10 +185,16 @@ export type AgentEvent =
   | { type: 'subagent_event'; subagentId: string; event: AgentEvent }
   | {
       type: 'subagent_finished';
+      background?: boolean;
       subagentId: string;
       parentCallId: CallId;
       result: string;
       reason: string;
+    }
+  | {
+      type: 'background_process_started';
+      shellId: string;
+      command: string;
     }
   | {
       type: 'background_process_exited';
@@ -226,6 +242,9 @@ export type AgentEvent =
       type: 'run_finished';
       reason: RunFinishedReason;
       error?: string;
+      model?: ModelConfig;
+      usage?: Usage;
+      contextFill?: number;
     }
   | {
       type: 'compaction_started';

@@ -14,6 +14,7 @@ export { parseToolsCsv };
 export function discover(opts: LoadAgentsOptions): DiscoverResult {
   const tiers = buildTiers({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     assetType: 'agents',

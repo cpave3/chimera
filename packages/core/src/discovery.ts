@@ -135,8 +135,20 @@ export interface Tier {
   dir: string;
 }
 
+export interface ModBundle {
+  name: string;
+  directory: string;
+  manifest: {
+    commands?: string;
+    skills?: string;
+    agents?: string;
+    modes?: string;
+  };
+}
+
 export interface BuildTiersOptions {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   userHome?: string;
   includeClaudeCompat?: boolean;
   /**
@@ -163,16 +175,17 @@ export interface BuildTiersOptions {
  *   1. <cwd>/.chimera/<assetType>/
  *   2. ancestors/.chimera/<assetType>/ (walk up to nearest .git/ or userHome)
  *   3. <userHome>/.chimera/<assetType>/
- *   4. <cwd>/.claude/<assetType>/                       (if includeClaudeCompat)
- *   5. ancestors/.claude/<assetType>/                   (if includeClaudeCompat)
- *   6. <userHome>/.claude/<assetType>/                  (if includeClaudeCompat)
- *   7. <cwd>/.codex/<assetType>/                         (if includeCodexCompat)
- *   8. ancestors/.codex/<assetType>/                     (if includeCodexCompat)
- *   9. <userHome>/.codex/<assetType>/                    (if includeCodexCompat)
- *  10. <cwd>/.agents/<assetType>/                        (if includeAgentsCompat)
- *  11. ancestors/.agents/<assetType>/                    (if includeAgentsCompat)
- *  12. <userHome>/.agents/<assetType>/                   (if includeAgentsCompat)
- *  13. <builtinDir>                                     (if provided)
+ *   4. mod bundle asset paths, in load order
+ *   5. <cwd>/.claude/<assetType>/                       (if includeClaudeCompat)
+ *   6. ancestors/.claude/<assetType>/                   (if includeClaudeCompat)
+ *   7. <userHome>/.claude/<assetType>/                  (if includeClaudeCompat)
+ *   8. <cwd>/.codex/<assetType>/                         (if includeCodexCompat)
+ *   9. ancestors/.codex/<assetType>/                     (if includeCodexCompat)
+ *  10. <userHome>/.codex/<assetType>/                    (if includeCodexCompat)
+ *  11. <cwd>/.agents/<assetType>/                        (if includeAgentsCompat)
+ *  12. ancestors/.agents/<assetType>/                    (if includeAgentsCompat)
+ *  13. <userHome>/.agents/<assetType>/                   (if includeAgentsCompat)
+ *  14. <builtinDir>                                     (if provided)
  */
 export function buildTiers(opts: BuildTiersOptions): Tier[] {
   const cwd = resolve(opts.cwd);
@@ -190,6 +203,13 @@ export function buildTiers(opts: BuildTiersOptions): Tier[] {
     tiers.push({ source: 'ancestor', dir: join(anc, '.chimera', assetType) });
   }
   tiers.push({ source: 'user', dir: join(userHome, '.chimera', assetType) });
+
+  for (const bundle of opts.modBundles ?? []) {
+    const assetPath = bundle.manifest[assetType as keyof ModBundle['manifest']];
+    if (assetPath !== undefined) {
+      tiers.push({ source: `mod:${bundle.name}`, dir: resolve(bundle.directory, assetPath) });
+    }
+  }
 
   if (includeClaudeCompat) {
     tiers.push({ source: 'claude-project', dir: join(cwd, '.claude', assetType) });

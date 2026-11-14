@@ -53,6 +53,21 @@ async function mountSession(
 }
 
 describe('sending a message', () => {
+  it('shows why a prompt was dropped and accepts the next submission as a new run', async () => {
+    mounted = await mount();
+    await mounted.keys('blocked\r');
+    expect(mounted.term.screen().at(-4)).toContain('esc interrupt');
+
+    await mounted.event({ type: 'prompt_dropped', reason: 'Blocked by prompt policy' });
+
+    expect(mounted.screen()).toContain('prompt dropped: Blocked by prompt policy');
+    expect(mounted.term.screen().at(-4)).toContain('? help');
+    expect(mounted.screen()).not.toContain('   done  ');
+    await mounted.keys('allowed\r');
+    expect(mounted.session.sent).toEqual(['blocked', 'allowed']);
+    expect(mounted.session.appended).toEqual([]);
+  });
+
   it('shows a long paste as a placeholder but sends its text and attaches its paths', async () => {
     const attached: string[] = [];
     const { mounted, session } = await mountSession({

@@ -8,6 +8,10 @@ is global only; a launch flag can add servers for one session (see
 [Servers for one session](#servers-for-one-session)). There is no project-local
 MCP config, in-session hot reload, or TUI `/mcp` screen.
 
+When a server returns `instructions` during initialization, Chimera includes
+them in the model's system prompt under that server's configured name. Servers
+without instructions add no prompt section. This works independently of mods.
+
 ## Add a server
 
 ```bash

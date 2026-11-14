@@ -1,8 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PermissionRequest, PermissionResolution } from '@chimera/core';
-import type { FirePayload, HookFireResult, HookRunner } from '@chimera/hooks';
+import type {
+  LifecycleDecision,
+  LifecycleHookData,
+  PermissionRequest,
+  PermissionResolution,
+} from '@chimera/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DefaultPermissionGate } from '../src/gate';
 import { GatedExecutor } from '../src/gated-executor';
@@ -18,16 +22,14 @@ function req(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
   };
 }
 
-interface RecordingHookRunner extends HookRunner {
-  fired: FirePayload[];
-}
+type PermissionRequestPayload = Extract<LifecycleHookData, { type: 'PermissionRequest' }>;
 
-function recordingHookRunner(result: HookFireResult): RecordingHookRunner {
-  const fired: FirePayload[] = [];
+function recordingPermissionRequest(result: LifecycleDecision) {
+  const payloads: PermissionRequestPayload[] = [];
   return {
-    fired,
-    async fire(payload) {
-      fired.push(payload);
+    payloads,
+    async permissionRequest(payload: PermissionRequestPayload) {
+      payloads.push(payload);
       return result;
     },
   };
@@ -36,11 +38,11 @@ function recordingHookRunner(result: HookFireResult): RecordingHookRunner {
 describe('DefaultPermissionGate hook integration', () => {
   it('passes only safe MCP metadata to permission hooks', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-hook-'));
-    const runner = recordingHookRunner({ blocked: true });
+    const hooks = recordingPermissionRequest({ blocked: true });
     const gate = new DefaultPermissionGate({
       cwd,
       autoApprove: 'all',
-      hookRunner: runner,
+      permissionRequest: hooks.permissionRequest,
       raiseRequest: async () => {
         throw new Error('must not prompt');
       },
@@ -53,13 +55,13 @@ describe('DefaultPermissionGate hook integration', () => {
       args: { token: 'super-secret', name: 'private-name' },
     });
     expect(resolution).toMatchObject({ decision: 'deny', denialSource: 'hook' });
-    expect(runner.fired[0]).toMatchObject({
-      event: 'PermissionRequest',
+    expect(hooks.payloads[0]).toMatchObject({
+      type: 'PermissionRequest',
       tool_name: 'mcp',
       tool_input: { mcp: { server: 'burnlite', tool: 'create_project' } },
     });
-    expect(JSON.stringify(runner.fired)).not.toContain('super-secret');
-    expect(JSON.stringify(runner.fired)).not.toContain('private-name');
+    expect(JSON.stringify(hooks.payloads)).not.toContain('super-secret');
+    expect(JSON.stringify(hooks.payloads)).not.toContain('private-name');
   });
 
   let cwd: string;
@@ -79,7 +81,7 @@ describe('DefaultPermissionGate hook integration', () => {
       decision: 'allow' | 'deny';
       remembered: boolean;
     }> = [];
-    const hookRunner = recordingHookRunner({ blocked: true, blockingScript: '/x', reason: 'no' });
+    const hooks = recordingPermissionRequest({ blocked: true, reason: 'no' });
     const gate = new DefaultPermissionGate({
       cwd,
       autoApprove: 'none',
@@ -87,7 +89,7 @@ describe('DefaultPermissionGate hook integration', () => {
         raised += 1;
         return { decision: 'allow', remembered: false };
       },
-      hookRunner,
+      permissionRequest: hooks.permissionRequest,
       emitResolved: (requestId, decision, remembered) => {
         resolvedEvents.push({ requestId, decision, remembered });
       },
@@ -99,9 +101,9 @@ describe('DefaultPermissionGate hook integration', () => {
     expect(r.remembered).toBe(false);
     expect(r.denialSource).toBe('hook');
     expect(raised).toBe(0);
-    expect(hookRunner.fired).toHaveLength(1);
-    expect(hookRunner.fired[0]).toMatchObject({
-      event: 'PermissionRequest',
+    expect(hooks.payloads).toHaveLength(1);
+    expect(hooks.payloads[0]).toMatchObject({
+      type: 'PermissionRequest',
       tool_name: 'bash',
       target: 'host',
       command: 'rm -rf /',
@@ -110,13 +112,13 @@ describe('DefaultPermissionGate hook integration', () => {
   });
 
   it('does not call emitResolved when the hook allows', async () => {
-    const hookRunner = recordingHookRunner({ blocked: false });
+    const hooks = recordingPermissionRequest({ blocked: false });
     const resolvedEvents: unknown[] = [];
     const gate = new DefaultPermissionGate({
       cwd,
       autoApprove: 'none',
       raiseRequest: async () => ({ decision: 'allow', remembered: false }),
-      hookRunner,
+      permissionRequest: hooks.permissionRequest,
       emitResolved: (requestId, decision, remembered) => {
         resolvedEvents.push({ requestId, decision, remembered });
       },
@@ -129,7 +131,7 @@ describe('DefaultPermissionGate hook integration', () => {
 
   it('proceeds to user prompt when hook does not block', async () => {
     let raised = 0;
-    const hookRunner = recordingHookRunner({ blocked: false });
+    const hooks = recordingPermissionRequest({ blocked: false });
     const gate = new DefaultPermissionGate({
       cwd,
       autoApprove: 'none',
@@ -137,23 +139,23 @@ describe('DefaultPermissionGate hook integration', () => {
         raised += 1;
         return { decision: 'allow', remembered: false };
       },
-      hookRunner,
+      permissionRequest: hooks.permissionRequest,
     });
 
     const r = await gate.request(req());
 
     expect(r.decision).toBe('allow');
     expect(raised).toBe(1);
-    expect(hookRunner.fired).toHaveLength(1);
+    expect(hooks.payloads).toHaveLength(1);
   });
 
   it('skips the hook when a rule already matches', async () => {
-    const hookRunner = recordingHookRunner({ blocked: true });
+    const hooks = recordingPermissionRequest({ blocked: true });
     const gate = new DefaultPermissionGate({
       cwd,
       autoApprove: 'none',
       raiseRequest: async () => ({ decision: 'deny', remembered: false }),
-      hookRunner,
+      permissionRequest: hooks.permissionRequest,
     });
     gate.addRule(
       {
@@ -170,7 +172,7 @@ describe('DefaultPermissionGate hook integration', () => {
     const r = await gate.request(req());
 
     expect(r.decision).toBe('allow');
-    expect(hookRunner.fired).toHaveLength(0);
+    expect(hooks.payloads).toHaveLength(0);
   });
 
   it('rule denial sets denialSource to rule', async () => {
@@ -207,12 +209,12 @@ describe('DefaultPermissionGate hook integration', () => {
   });
 
   it('GatedExecutor renders "denied by hook" when hook blocks', async () => {
-    const hookRunner = recordingHookRunner({ blocked: true, blockingScript: '/x', reason: 'no' });
+    const hooks = recordingPermissionRequest({ blocked: true, reason: 'no' });
     const gate = new DefaultPermissionGate({
       cwd,
       autoApprove: 'none',
       raiseRequest: async () => ({ decision: 'allow', remembered: false }),
-      hookRunner,
+      permissionRequest: hooks.permissionRequest,
     });
     let innerCalled = false;
     const exec = new GatedExecutor({
@@ -285,7 +287,7 @@ describe('DefaultPermissionGate hook integration', () => {
     expect(r.stderr).toBe('denied by rule');
   });
 
-  it('skips hook when no runner is provided (existing behavior unchanged)', async () => {
+  it('skips hook when no callback is provided (existing behavior unchanged)', async () => {
     let raised = 0;
     const gate = new DefaultPermissionGate({
       cwd,

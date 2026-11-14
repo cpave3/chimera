@@ -57,6 +57,7 @@ export interface TuiHandle {
    * line item. Null clears the item.
    */
   updateStatus(status: string | null, notice?: string): void;
+  modLog(text: string, options: { to: 'status' | 'scrollback' }): void;
 }
 
 /** The layout to use: fullscreen needs a terminal that can show one. */
@@ -324,6 +325,7 @@ export function mountTui(opts: MountOptions): TuiHandle {
     layout,
     activeSessionId: () => controller.activeSession.sessionId,
     updateStatus: (status, notice) => controller.setUpdateStatus(status, notice),
+    modLog: (text, options) => controller.modLog(text, options),
     waitUntilExit: () => exited,
     unmount: () => finish(),
   };

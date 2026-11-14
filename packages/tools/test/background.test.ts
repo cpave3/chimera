@@ -49,6 +49,33 @@ describe('BackgroundProcessManager', () => {
     expect(finalRead?.exitCode).toBe(0);
   });
 
+  it('announces a registered start before a fast exit using the original command', async () => {
+    const notices: unknown[] = [];
+    const registered: unknown[] = [];
+    manager = new BackgroundProcessManager({
+      cwd: root,
+      onStart: (notice) => {
+        notices.push({ type: 'start', ...notice });
+        registered.push(manager.get(notice.shellId));
+      },
+      onExit: (notice) => notices.push({ type: 'exit', ...notice }),
+    });
+    const launched = manager.launch('printf original', { shellCommand: 'printf wrapped' });
+    await until(() => manager.get(launched.id)?.status === 'exited');
+    expect(notices).toEqual([
+      { type: 'start', shellId: launched.id, command: 'printf original' },
+      {
+        type: 'exit',
+        shellId: launched.id,
+        command: 'printf original',
+        status: 'exited',
+        exitCode: 0,
+      },
+    ]);
+    expect(registered).toEqual([expect.objectContaining({ id: launched.id, status: 'running' })]);
+    expect(manager.readOutput(launched.id)?.stdout).toBe('wrapped');
+  });
+
   it('fires onExit with the exit code when the process finishes', async () => {
     const notices: unknown[] = [];
     const notifying = new BackgroundProcessManager({
@@ -79,7 +106,8 @@ describe('BackgroundProcessManager', () => {
 
   it('retries under the same id once, retaining output and issuing one terminal notice', async () => {
     const onExit = vi.fn();
-    manager = new BackgroundProcessManager({ cwd: root, onExit });
+    const onStart = vi.fn();
+    manager = new BackgroundProcessManager({ cwd: root, onExit, onStart });
     const retryOnFailure = vi.fn(async () => ({
       shellCommand: 'echo retry; echo retry-error >&2; exit 7',
       reason: 'sandbox blocked',
@@ -105,6 +133,10 @@ describe('BackgroundProcessManager', () => {
     expect(output.stderr).toMatch(/automatic host.retry/i);
     expect(output.sandboxRetry).toEqual({ reason: 'sandbox blocked', initialExitCode: 3 });
     expect(onExit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ exitCode: 7 }));
+    expect(onStart).toHaveBeenCalledExactlyOnceWith({
+      shellId: launched.id,
+      command: 'echo original; echo initial-error >&2; exit 3',
+    });
   });
 
   it.each([
@@ -181,7 +213,8 @@ describe('BackgroundProcessManager', () => {
     const success = manager.launch('exit 0', { retryOnFailure });
     const killed = manager.launch('sleep 30', { retryOnFailure });
     manager.kill(killed.id);
-    const invalidCwd = new BackgroundProcessManager({ cwd: join(root, 'missing') });
+    const onStart = vi.fn();
+    const invalidCwd = new BackgroundProcessManager({ cwd: join(root, 'missing'), onStart });
     const spawnError = invalidCwd.launch('exit 3', { retryOnFailure });
     await until(
       () =>
@@ -190,6 +223,7 @@ describe('BackgroundProcessManager', () => {
         invalidCwd.get(spawnError.id)?.status === 'exited',
     );
     expect(invalidCwd.readOutput(spawnError.id)?.stderr).toMatch(/ENOENT/);
+    expect(onStart).not.toHaveBeenCalled();
     expect(retryOnFailure).not.toHaveBeenCalled();
   });
 });

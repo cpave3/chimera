@@ -7,8 +7,11 @@ export class EventQueue<T> {
   private resolvers: Array<(v: IteratorResult<T>) => void> = [];
   private closed = false;
 
+  constructor(private readonly observe?: (value: T) => void) {}
+
   push(value: T): void {
     if (this.closed) return;
+    this.observe?.(value);
     const resolver = this.resolvers.shift();
     if (resolver) {
       resolver({ value, done: false });

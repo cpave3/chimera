@@ -1,4 +1,4 @@
-import { type ToolSet, tool } from 'ai';
+import { jsonSchema, type ToolSet, tool } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { outputBudget, repeatNote } from '../src/guards';
@@ -19,6 +19,87 @@ function intercepted(
 }
 
 describe('interceptTools', () => {
+  it('wraps hooks and execution with validated rewritten arguments', async () => {
+    const observed: unknown[] = [];
+    const tools = interceptTools(
+      {
+        echo: tool({
+          inputSchema: z.object({ text: z.string() }),
+          execute: async (args) => {
+            observed.push(args);
+            return args.text;
+          },
+        }),
+      },
+      [
+        {
+          before: (call) => {
+            observed.push(call.args);
+          },
+        },
+      ],
+      async (call, next) => {
+        const result = await next({ ...call, args: { text: 'rewritten' } });
+        return `${result}!`;
+      },
+    );
+
+    expect(await tools.echo.execute!({ text: 'original' }, {} as never)).toBe('rewritten!');
+    expect(observed).toEqual([{ text: 'rewritten' }, { text: 'rewritten' }]);
+  });
+
+  it('rejects invalid middleware arguments before hooks or execution', async () => {
+    const observed: unknown[] = [];
+    const tools = interceptTools(
+      {
+        echo: tool({
+          inputSchema: z.object({ text: z.string() }),
+          execute: async (args) => {
+            observed.push(args);
+            return args.text;
+          },
+        }),
+      },
+      [
+        {
+          before: (call) => {
+            observed.push(call.args);
+          },
+        },
+      ],
+      (call, next) => next({ ...call, args: { text: 42 } }),
+    );
+
+    await expect(tools.echo.execute!({ text: 'original' }, {} as never)).rejects.toThrow();
+    expect(observed).toEqual([]);
+  });
+
+  it('also validates JSON Schema tools such as MCP tools', async () => {
+    let ran = false;
+    const tools = interceptTools(
+      {
+        remote: tool({
+          inputSchema: jsonSchema({
+            type: 'object',
+            properties: { count: { type: 'integer', minimum: 1 } },
+            required: ['count'],
+          }),
+          execute: async () => {
+            ran = true;
+            return 'done';
+          },
+        }),
+      },
+      [],
+      (call, next) => next({ ...call, args: { count: 0 } }),
+    );
+
+    await expect(tools.remote.execute!({}, {} as never)).rejects.toThrow(
+      'Invalid arguments for remote',
+    );
+    expect(ran).toBe(false);
+  });
+
   it('lets a before interceptor answer the call without running the tool', async () => {
     let ran = false;
     const guarded = intercepted('deploy', async () => {

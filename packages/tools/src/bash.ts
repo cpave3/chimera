@@ -115,7 +115,7 @@ export function buildBashTool(ctx: ToolContext) {
           return refuse(
             permissionDenialMessage(
               resolution.denialSource,
-              resolution.reviewerReason ?? resolution.systemOneNote,
+              resolution.reviewerReason ?? resolution.systemOneNote ?? resolution.feedback,
             ),
           );
         }
@@ -268,7 +268,7 @@ async function launchBackground(
       return refuse(
         permissionDenialMessage(
           resolution.denialSource,
-          resolution.reviewerReason ?? resolution.systemOneNote,
+          resolution.reviewerReason ?? resolution.systemOneNote ?? resolution.feedback,
         ),
       );
     }

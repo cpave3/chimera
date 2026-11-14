@@ -1,8 +1,10 @@
+import type { ModBundle } from '@chimera/core';
 import { loadModes, type ModeRegistry } from '@chimera/modes';
 import type { ChimeraConfig } from './config';
 
 export interface LoadModesOpts {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   home?: string;
   config: ChimeraConfig;
   /** If set, overrides `config.modes.claudeCompat`. */
@@ -27,6 +29,7 @@ export function loadModesFromConfig(opts: LoadModesOpts): ModeRegistry {
 
   return loadModes({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.home,
     includeClaudeCompat: claudeCompat,
     onWarning: opts.onWarning,

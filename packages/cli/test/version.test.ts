@@ -20,8 +20,8 @@ describe('the version', () => {
     expect(isRelease('v1.2.3-rc.1')).toBe(false);
     expect(isRelease('1.2.3')).toBe(false);
     expect(isRelease('v01.2.3')).toBe(false);
-    expect(versionReport('v1.2.3')).toEqual({ version: 'v1.2.3', release: true });
-    expect(versionReport('dev')).toEqual({ version: 'dev', release: false });
+    expect(versionReport('v1.2.3')).toEqual({ version: 'v1.2.3', release: true, modApi: [1] });
+    expect(versionReport('dev')).toEqual({ version: 'dev', release: false, modApi: [1] });
   });
 
   it('compares components as numbers', () => {
@@ -63,7 +63,7 @@ describe.skipIf(!existsSync(BIN))('chimera version', () => {
     expect(chimera('--version').stdout.trim()).toBe('dev');
     const json = chimera('version', '--json');
     expect(json.status).toBe(0);
-    expect(json.stdout.trim()).toBe('{"version":"dev","release":false}');
+    expect(json.stdout.trim()).toBe('{"version":"dev","release":false,"modApi":[1]}');
     expect(chimera('version').stdout.trim()).toBe('dev');
   });
 
@@ -73,7 +73,7 @@ describe.skipIf(!existsSync(BIN))('chimera version', () => {
     await chmod(join(home, '.chimera', 'config.json'), 0o000);
     const json = chimera('version', '--json');
     expect(json.status).toBe(0);
-    expect(JSON.parse(json.stdout)).toEqual({ version: 'dev', release: false });
+    expect(JSON.parse(json.stdout)).toEqual({ version: 'dev', release: false, modApi: [1] });
   });
 
   it.skipIf(!hasBun)('reports the stamped version of a build made with the define', async () => {
@@ -98,6 +98,6 @@ describe.skipIf(!existsSync(BIN))('chimera version', () => {
     );
     expect(build.status, build.stderr).toBe(0);
     const run = spawnSync(process.execPath, [out], { encoding: 'utf8' });
-    expect(JSON.parse(run.stdout)).toEqual({ version: 'v1.2.3', release: true });
+    expect(JSON.parse(run.stdout)).toEqual({ version: 'v1.2.3', release: true, modApi: [1] });
   });
 });

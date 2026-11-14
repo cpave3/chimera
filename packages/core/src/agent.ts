@@ -5,11 +5,18 @@ import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type To
 import { type ContextBreakdown, computeContextBreakdown } from './context-breakdown';
 import { ContextTracker, shouldCompact } from './context-tracker';
 import { EventQueue } from './event-queue';
-import { type AgentEvent, type ToolDisplay } from './events';
+import { type AgentEvent, type PromptSource, type ToolDisplay } from './events';
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
 import { readImageDimensions } from './image-header';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
+import { type LifecycleHookData, type LifecycleSource, lifecycleSource } from './lifecycle';
 import { elideImageToolResults } from './message-parts';
+import type {
+  ModelStepRequest,
+  PromptSubmissionResult,
+  StepModelResolution,
+  SubmittedPrompt,
+} from './model-interception';
 import {
   type ModelSettings,
   type ModelSettingsPatch,
@@ -71,14 +78,6 @@ import {
 } from './types';
 import { applyStepUsage, cloneUsage, readStepUsage, reconcileFinalUsage } from './usage';
 
-export interface StopHook {
-  fire(payload: { reason: string }): Promise<{
-    blocked: boolean;
-    reason?: string;
-    additionalContext?: string;
-  }>;
-}
-
 export interface GoalCheck {
   /** One question to the checker's model: the text of its reply. */
   ask(prompt: { system: string; prompt: string }, signal: AbortSignal): Promise<string>;
@@ -88,34 +87,19 @@ export interface GoalCheck {
   timeoutMs?: number;
 }
 
-export interface TimeoutHook {
-  fire(): Promise<void>;
-}
-
-export interface InterruptHook {
-  fire(): Promise<void>;
-}
-
 export interface UserInputRequest {
   request: string;
   kind?: 'information' | 'action';
 }
 
-export interface UserInputRequiredHook {
-  fire(request: UserInputRequest): Promise<void>;
-}
-
-export interface PermissionResolvedHook {
-  fire(resolution: {
-    requestId: string;
-    decision: 'allow' | 'deny';
-    remembered: boolean;
-    sessionStatus: 'running' | 'waiting_for_permission';
-    remainingPending: number;
-  }): Promise<void>;
-}
-
 export interface AgentOptions {
+  interceptStep?: (request: ModelStepRequest, next: () => Promise<void>) => Promise<void>;
+  resolveStepModel?: (ref: string, effort?: string) => StepModelResolution;
+  interceptPrompt?: (
+    prompt: SubmittedPrompt,
+    next: () => Promise<PromptSubmissionResult>,
+  ) => Promise<PromptSubmissionResult>;
+  lifecycle?: LifecycleSource;
   cwd: string;
   model: ModelConfig;
   languageModel: LanguageModel;
@@ -166,34 +150,10 @@ export interface AgentOptions {
    */
   compactor?: CompactorApi;
   /**
-   * Optional stop hook. When provided, fired synchronously before the agent
-   * emits `run_finished` with reason `"stop"`. If the hook returns
-   * `blocked: true`, the agent appends a user message containing the block
-   * reason and loops into a fresh LLM turn instead of finishing.
-   */
-  stopHook?: StopHook;
-  /**
    * Checks the session's goal at each clean stop, after the Stop hook let
    * the run end. Without it a goal is kept but never checked.
    */
   goalCheck?: GoalCheck;
-  /**
-   * Optional timeout hook. When provided, fired synchronously when a step
-   * exceeds `responseTimeoutMs` and the agent aborts. Purely observational;
-   * the agent always proceeds to emit `run_finished { reason: "timeout" }`
-   * after the hook resolves.
-   */
-  timeoutHook?: TimeoutHook;
-  /**
-   * Optional interrupt hook. When provided, fired synchronously when the
-   * run terminates with reason `"interrupted"` (e.g. from `Agent.interrupt()`
-   * or Ctrl+C in the TUI). Purely observational.
-   */
-  interruptHook?: InterruptHook;
-  /** Awaited before a user-input handoff emits its terminal run event. */
-  userInputRequiredHook?: UserInputRequiredHook;
-  /** Awaited after permission state changes and before the suspended tool resumes. */
-  permissionResolvedHook?: PermissionResolvedHook;
   /**
    * Idle timeout for a model step (ms): how long the model may produce no
    * stream output. Tool execution time does not count. A value of `0`
@@ -230,6 +190,23 @@ export type PermissionRaiseHandler = (req: PermissionRequest) => Promise<Permiss
 
 export class Agent {
   readonly session: Session;
+  get lifecycle(): LifecycleSource {
+    return this.opts.lifecycle ?? lifecycleSource;
+  }
+
+  dispatchLifecycle(event: LifecycleHookData) {
+    return this.lifecycle.dispatch({ ...event, sessionId: this.session.id, cwd: this.session.cwd });
+  }
+
+  private observeEvent(event: AgentEvent): AgentEvent {
+    if (event.type === 'user_message' && event.append) {
+      event = { type: 'message_appended', text: event.content, imageCount: event.imageCount };
+    }
+    void this.lifecycle
+      .dispatch({ ...event, sessionId: this.session.id, cwd: this.session.cwd })
+      .catch((error) => console.error('[lifecycle] observer failed:', error));
+    return event;
+  }
   private opts: AgentOptions;
   private abortController: AbortController;
   private pendingQuestions = new Map<
@@ -322,7 +299,11 @@ export class Agent {
    * terminal step the loop continues so the model responds to them (still
    * subject to `maxTerminalSteps`).
    */
-  private pendingInjectMessages: Array<{ content: string; images?: string[] }> = [];
+  private pendingInjectMessages: Array<{
+    content: string;
+    images?: string[];
+    source: PromptSource | 'append';
+  }> = [];
   /**
    * Optional callback invoked when a queued mode switch is drained. Returns
    * the freshly-recomposed system prompt + filtered tool set + effective
@@ -598,7 +579,7 @@ export class Agent {
     this.pendingPermissions.delete(requestId);
     const remainingPending = this.pendingPermissions.size;
     this.session.status = remainingPending > 0 ? 'waiting_for_permission' : 'running';
-    await this.firePermissionResolvedHook(requestId, decision, !!remember);
+    await this.dispatchPermissionResolved(requestId, decision, !!remember);
 
     pending.resolve({
       decision,
@@ -630,22 +611,23 @@ export class Agent {
     return this.pendingPermissions.has(requestId);
   }
 
-  private async firePermissionResolvedHook(
+  private async dispatchPermissionResolved(
     requestId: string,
     decision: 'allow' | 'deny',
     remembered: boolean,
   ): Promise<void> {
     const remainingPending = this.pendingPermissions.size;
     try {
-      await this.opts.permissionResolvedHook?.fire({
-        requestId,
+      await this.dispatchLifecycle({
+        type: 'PermissionResolved',
+        request_id: requestId,
         decision,
         remembered,
-        sessionStatus: remainingPending > 0 ? 'waiting_for_permission' : 'running',
-        remainingPending,
+        session_status: remainingPending > 0 ? 'waiting_for_permission' : 'running',
+        remaining_pending: remainingPending,
       });
-    } catch {
-      // Observational hook failures must not strand the caller.
+    } catch (error) {
+      console.error('[lifecycle] observer failed:', error);
     }
   }
 
@@ -667,7 +649,7 @@ export class Agent {
     decision: 'allow' | 'deny',
     remembered: boolean,
   ): Promise<void> {
-    await this.firePermissionResolvedHook(requestId, decision, remembered);
+    await this.dispatchPermissionResolved(requestId, decision, remembered);
     this.currentQueue?.push({
       type: 'permission_resolved',
       requestId,
@@ -826,10 +808,11 @@ export class Agent {
   /**
    * Push an arbitrary event onto the current run's stream. Used by tools that
    * need to emit out-of-band events (subagent spawn/finish, sub-stream
-   * forwarding). No-op if no run is active.
+   * forwarding). Idle events still reach lifecycle observers.
    */
   pushEvent(event: AgentEvent): void {
-    this.currentQueue?.push(event);
+    if (this.currentQueue) this.currentQueue.push(event);
+    else this.observeEvent(event);
   }
 
   /**
@@ -1137,14 +1120,14 @@ export class Agent {
   async *compactSession(): AsyncIterable<AgentEvent> {
     const compactor = this.opts.compactor;
     if (!compactor) {
-      yield { type: 'compaction_failed', error: 'not configured' };
+      yield this.observeEvent({ type: 'compaction_failed', error: 'not configured' });
       return;
     }
-    yield { type: 'compaction_started', reason: 'manual' };
+    yield this.observeEvent({ type: 'compaction_started', reason: 'manual' });
     try {
       const result = await compactor.compact(this.session, 'manual');
       this.contextTracker.noteCompaction();
-      yield {
+      yield this.observeEvent({
         type: 'compaction_finished',
         summary: result.summary,
         tokensBefore: result.tokensBefore,
@@ -1153,10 +1136,10 @@ export class Agent {
         strategy: result.strategy,
         prunedCount: result.prunedCount,
         prunedTokensSaved: result.prunedTokensSaved,
-      };
+      });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      yield { type: 'compaction_failed', error };
+      yield this.observeEvent({ type: 'compaction_failed', error });
     }
   }
 
@@ -1269,6 +1252,7 @@ export class Agent {
     } catch {
       // best-effort persistence
     }
+    this.observeEvent({ type: 'message_appended', text: content, imageCount: imagePaths?.length });
   }
 
   /**
@@ -1278,11 +1262,19 @@ export class Agent {
    * another async context while `runInternal` is awaiting — the buffer is
    * only read at step boundaries where `session.messages` is not mid-mutation.
    */
-  injectRunMessage(content: string, images?: string[]): void {
-    this.pendingInjectMessages.push({ content, images });
+  injectRunMessage(
+    content: string,
+    images?: string[],
+    source: PromptSource | 'append' = 'background',
+  ): void {
+    this.pendingInjectMessages.push({ content, images, source });
   }
 
-  run(userMessage: string, imagePaths?: string[]): AsyncIterable<AgentEvent> {
+  run(
+    userMessage: string,
+    imagePaths?: string[],
+    source: PromptSource = 'user',
+  ): AsyncIterable<AgentEvent> {
     if (this.running || this.updatingModelSettings) {
       throw new Error('Agent is already running');
     }
@@ -1293,14 +1285,28 @@ export class Agent {
     this.modelOverride = null;
     this.visionUnavailableEmitted = false;
 
-    const queue = new EventQueue<AgentEvent>();
+    const queue = new EventQueue<AgentEvent>((event) => {
+      if (event.type === 'run_finished') {
+        const context = this.contextBreakdown();
+        event.model = structuredClone(this.session.model);
+        event.usage = cloneUsage(this.session.usage);
+        event.contextFill = context.estimatedTotalTokens / context.contextWindow;
+        // Both lifecycle observers and stream consumers may start the next run.
+        this.currentQueue = null;
+        this.running = false;
+      }
+      this.observeEvent(event);
+    });
     this.currentQueue = queue;
 
     // Start the engine in the background; consumer drains the queue.
-    void this.runInternal(userMessage, queue, imagePaths).finally(() => {
+    void this.runInternal(userMessage, queue, imagePaths, source).finally(async () => {
+      if (this.currentQueue === queue) {
+        this.currentQueue = null;
+        this.running = false;
+      }
+      await this.lifecycle.drain(this.session.id);
       queue.close();
-      this.currentQueue = null;
-      this.running = false;
     });
 
     return queue.drain();
@@ -1480,7 +1486,24 @@ export class Agent {
     userMessage: string,
     queue: EventQueue<AgentEvent>,
     imagePaths?: string[],
+    source: PromptSource = 'user',
   ): Promise<void> {
+    if (this.opts.interceptPrompt) {
+      const prompt: SubmittedPrompt = { sessionId: this.session.id, text: userMessage, source };
+      try {
+        const result = await this.opts.interceptPrompt(prompt, async () => ({
+          decision: 'accept',
+        }));
+        if (result.decision === 'drop') {
+          queue.push({ type: 'prompt_dropped', reason: result.reason });
+          return;
+        }
+        userMessage = prompt.text;
+      } catch (error) {
+        queue.push({ type: 'run_finished', reason: 'error', error: describeProviderError(error) });
+        return;
+      }
+    }
     this.session.status = 'running';
     this.pendingUserInputRequest = null;
 
@@ -1556,6 +1579,10 @@ export class Agent {
         if (settingsState) queue.push({ type: 'model_settings_changed', settingsState });
       } catch (error) {
         this.session.status = 'error';
+        await this.dispatchLifecycle({
+          type: 'OnError',
+          error: `Model settings: ${(error as Error).message}`,
+        });
         queue.push({
           type: 'run_finished',
           reason: 'error',
@@ -1605,7 +1632,12 @@ export class Agent {
           `in ~/.chimera/config.json to a model with verified image support, or use ` +
           `/model to switch to a vision-capable model.`;
         queue.push({ type: 'session_started', sessionId: this.session.id });
-        queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
+        queue.push({
+          type: 'user_message',
+          content: userMessage,
+          imageCount: imagePaths?.length,
+          source,
+        });
         this.session.status = 'error';
         try {
           await persistSession(
@@ -1616,6 +1648,7 @@ export class Agent {
         } catch {
           // best-effort persistence
         }
+        await this.dispatchLifecycle({ type: 'OnError', error });
         queue.push({ type: 'run_finished', reason: 'error', error });
         return;
       }
@@ -1638,7 +1671,12 @@ export class Agent {
       });
     }
 
-    queue.push({ type: 'user_message', content: userMessage, imageCount: imagePaths?.length });
+    queue.push({
+      type: 'user_message',
+      content: userMessage,
+      imageCount: imagePaths?.length,
+      source,
+    });
 
     if (this.modelOverride && this.modelOverride.trigger !== 'fallback') {
       queue.push({
@@ -1753,480 +1791,526 @@ export class Agent {
               this.abortController.abort();
             }, responseTimeoutMs);
           };
-          armResponseTimeout();
-
           // Message count the prompt was built from; pairs with the step's
           // reported inputTokens in the context tracker.
           const messageCountAtPrompt = this.session.messages.length;
-          const activeVision = this.activeModel().vision === true;
-          if (!activeVision && visionFallbackProbe === null) {
-            const probe = this.visionModelResolver?.();
-            visionFallbackProbe =
-              probe?.status === 'ok' ? { configured: true, ref: probe.ref } : { configured: false };
-          }
           let stepError: unknown;
-          const stream = streamText({
-            model: this.activeLanguageModel(),
-            messages: await prepareMessagesForModel(this.session.messages, {
-              vision: activeVision,
-              visionConfigured: activeVision || (visionFallbackProbe?.configured ?? false),
-              visionRef: visionFallbackProbe?.ref,
-            }),
-            tools: this.opts.tools,
-            system: this.composeSystemPrompt(planHandoff),
-            stopWhen: stepCountIs(1),
-            // The loop below owns retries so that request failures and
-            // mid-stream failures follow one policy.
-            maxRetries: 0,
-            // Errors arrive as `error` stream parts; the SDK's default handler
-            // would also print each one to stderr, under the TUI.
-            onError: () => {},
-            experimental_repairToolCall: repairToolCall,
-            abortSignal: this.abortController.signal,
-            temperature: this.activeModel().temperature,
-            topP: this.activeModel().topP,
-            maxOutputTokens: this.activeModel().maxOutputTokens,
-            providerOptions: this.activeProviderOptions() as Parameters<
-              typeof streamText
-            >[0]['providerOptions'],
-          });
-
-          for await (const part of stream.fullStream) {
-            if (part.type === 'tool-call') {
-              toolsInFlight += 1;
-            } else if (
-              part.type === 'tool-error' ||
-              (part.type === 'tool-result' && !(part as { preliminary?: boolean }).preliminary)
-            ) {
-              toolsInFlight = Math.max(0, toolsInFlight - 1);
+          const activeModel = this.activeModel();
+          const originalRef = `${activeModel.providerId}/${activeModel.modelId}`;
+          const request: ModelStepRequest = {
+            sessionId: this.session.id,
+            model: originalRef,
+            systemPrompt: this.composeSystemPrompt(planHandoff) ?? '',
+            providerOptions: structuredClone(this.activeProviderOptions()),
+          };
+          const originalOptions = JSON.stringify(request.providerOptions);
+          let stream: ReturnType<typeof streamText> | undefined;
+          const readTerminalReason = () => terminalReason;
+          const consumeStep = async () => {
+            if (request.effort !== undefined && !this.opts.resolveStepModel)
+              throw new Error('Model effort resolver is not configured');
+            const requestModel =
+              request.model !== originalRef || request.effort !== undefined
+                ? (this.opts.resolveStepModel?.(request.model, request.effort) ??
+                  this.modelChangeResolver?.(request.model))
+                : {
+                    model: activeModel,
+                    languageModel: this.activeLanguageModel(),
+                    providerOptions: this.activeProviderOptions(),
+                  };
+            if (!requestModel) throw new Error(`Cannot resolve model: ${request.model}`);
+            // A routed model brings its own defaults unless the mod supplied options.
+            if (
+              JSON.stringify(request.providerOptions) === originalOptions &&
+              (request.model !== originalRef || request.effort !== undefined)
+            )
+              request.providerOptions = requestModel.providerOptions;
+            const activeVision = requestModel.model.vision === true;
+            if (!activeVision && visionFallbackProbe === null) {
+              const probe = this.visionModelResolver?.();
+              visionFallbackProbe =
+                probe?.status === 'ok'
+                  ? { configured: true, ref: probe.ref }
+                  : { configured: false };
             }
             armResponseTimeout();
-            switch (part.type) {
-              case 'text-start': {
-                // Flush an unconcluded text block before starting a new one.
-                // Some providers reuse the same id mid-step (text -> tool-call
-                // -> text) without sending text-end for the first block.
-                const activeText = textStreams.get(part.id);
-                if (activeText !== undefined && activeText.length > 0) {
-                  queue.push({ type: 'assistant_text_done', id: part.id, text: activeText });
-                  emittedTextById.set(part.id, activeText);
-                  textStreams.delete(part.id);
-                }
-                const shadow = shadows.get(part.id);
-                if (shadow) {
-                  shadows.delete(part.id);
-                  if (shadow.syntheticId) {
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: shadow.syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  } else if (shadow.buf.length > 0) {
-                    syntheticTextCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticTextCounter}`;
-                    queue.push({
-                      type: 'assistant_text_delta',
-                      id: syntheticId,
-                      delta: shadow.buf,
-                    });
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  }
-                }
-                if (emittedTextById.has(part.id)) {
-                  shadows.set(part.id, { buf: '' });
-                } else {
-                  textStreams.set(part.id, '');
-                }
-                break;
+            stream = streamText({
+              model: requestModel.languageModel,
+              messages: await prepareMessagesForModel(this.session.messages, {
+                vision: activeVision,
+                visionConfigured: activeVision || (visionFallbackProbe?.configured ?? false),
+                visionRef: visionFallbackProbe?.ref,
+              }),
+              tools: this.opts.tools,
+              system: request.systemPrompt,
+              stopWhen: stepCountIs(1),
+              // The loop below owns retries so that request failures and
+              // mid-stream failures follow one policy.
+              maxRetries: 0,
+              // Errors arrive as `error` stream parts; the SDK's default handler
+              // would also print each one to stderr, under the TUI.
+              onError: () => {},
+              experimental_repairToolCall: repairToolCall,
+              abortSignal: this.abortController.signal,
+              temperature: requestModel.model.temperature,
+              topP: requestModel.model.topP,
+              maxOutputTokens: requestModel.model.maxOutputTokens,
+              providerOptions: (request.providerOptions ??
+                requestModel.providerOptions) as Parameters<
+                typeof streamText
+              >[0]['providerOptions'],
+            });
+
+            for await (const part of stream.fullStream) {
+              if (part.type === 'tool-call') {
+                toolsInFlight += 1;
+              } else if (
+                part.type === 'tool-error' ||
+                (part.type === 'tool-result' && !(part as { preliminary?: boolean }).preliminary)
+              ) {
+                toolsInFlight = Math.max(0, toolsInFlight - 1);
               }
-              case 'text-delta': {
-                const shadow = shadows.get(part.id);
-                if (shadow) {
-                  shadow.buf += part.text;
-                  if (shadow.syntheticId) {
-                    queue.push({
-                      type: 'assistant_text_delta',
-                      id: shadow.syntheticId,
-                      delta: part.text,
-                    });
-                  } else {
-                    const stored = emittedTextById.get(part.id) ?? '';
-                    if (!stored.startsWith(shadow.buf)) {
+              armResponseTimeout();
+              switch (part.type) {
+                case 'text-start': {
+                  // Flush an unconcluded text block before starting a new one.
+                  // Some providers reuse the same id mid-step (text -> tool-call
+                  // -> text) without sending text-end for the first block.
+                  const activeText = textStreams.get(part.id);
+                  if (activeText !== undefined && activeText.length > 0) {
+                    queue.push({ type: 'assistant_text_done', id: part.id, text: activeText });
+                    emittedTextById.set(part.id, activeText);
+                    textStreams.delete(part.id);
+                  }
+                  const shadow = shadows.get(part.id);
+                  if (shadow) {
+                    shadows.delete(part.id);
+                    if (shadow.syntheticId) {
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: shadow.syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    } else if (shadow.buf.length > 0) {
                       syntheticTextCounter += 1;
-                      shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                      const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                      queue.push({
+                        type: 'assistant_text_delta',
+                        id: syntheticId,
+                        delta: shadow.buf,
+                      });
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    }
+                  }
+                  if (emittedTextById.has(part.id)) {
+                    shadows.set(part.id, { buf: '' });
+                  } else {
+                    textStreams.set(part.id, '');
+                  }
+                  break;
+                }
+                case 'text-delta': {
+                  const shadow = shadows.get(part.id);
+                  if (shadow) {
+                    shadow.buf += part.text;
+                    if (shadow.syntheticId) {
                       queue.push({
                         type: 'assistant_text_delta',
                         id: shadow.syntheticId,
+                        delta: part.text,
+                      });
+                    } else {
+                      const stored = emittedTextById.get(part.id) ?? '';
+                      if (!stored.startsWith(shadow.buf)) {
+                        syntheticTextCounter += 1;
+                        shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                        queue.push({
+                          type: 'assistant_text_delta',
+                          id: shadow.syntheticId,
+                          delta: shadow.buf,
+                        });
+                      }
+                    }
+                    break;
+                  }
+                  textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
+                  queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
+                  break;
+                }
+                case 'text-end': {
+                  const shadow = shadows.get(part.id);
+                  if (shadow) {
+                    shadows.delete(part.id);
+                    if (shadow.syntheticId) {
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: shadow.syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    } else if (
+                      shadow.buf.length > 0 &&
+                      shadow.buf !== emittedTextById.get(part.id)
+                    ) {
+                      // Buf is a strict prefix of stored content — model emitted a
+                      // shorter "new" text under the same id. Surface it as new.
+                      syntheticTextCounter += 1;
+                      const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                      queue.push({
+                        type: 'assistant_text_delta',
+                        id: syntheticId,
                         delta: shadow.buf,
                       });
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    }
+                    break;
+                  }
+                  const full = textStreams.get(part.id) ?? '';
+                  textStreams.delete(part.id);
+                  if (full.length > 0) {
+                    queue.push({ type: 'assistant_text_done', id: part.id, text: full });
+                    emittedTextById.set(part.id, full);
+                  }
+                  break;
+                }
+                case 'reasoning-start': {
+                  // Same provider quirk as text-start: mid-step id reuse without reasoning-end.
+                  const activeReasoning = reasoningStreams.get(part.id);
+                  if (activeReasoning !== undefined && activeReasoning.length > 0) {
+                    queue.push({ type: 'reasoning_text_done', id: part.id, text: activeReasoning });
+                    emittedReasoningById.set(part.id, activeReasoning);
+                    reasoningStreams.delete(part.id);
+                  }
+                  const reasoningShadow = reasoningShadows.get(part.id);
+                  if (reasoningShadow) {
+                    reasoningShadows.delete(part.id);
+                    if (reasoningShadow.syntheticId) {
+                      queue.push({
+                        type: 'reasoning_text_done',
+                        id: reasoningShadow.syntheticId,
+                        text: reasoningShadow.buf,
+                      });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
+                    } else if (reasoningShadow.buf.length > 0) {
+                      syntheticReasoningCounter += 1;
+                      const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                      queue.push({
+                        type: 'reasoning_text_delta',
+                        id: syntheticId,
+                        delta: reasoningShadow.buf,
+                      });
+                      queue.push({
+                        type: 'reasoning_text_done',
+                        id: syntheticId,
+                        text: reasoningShadow.buf,
+                      });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
                     }
                   }
-                  break;
-                }
-                textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
-                queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
-                break;
-              }
-              case 'text-end': {
-                const shadow = shadows.get(part.id);
-                if (shadow) {
-                  shadows.delete(part.id);
-                  if (shadow.syntheticId) {
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: shadow.syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  } else if (shadow.buf.length > 0 && shadow.buf !== emittedTextById.get(part.id)) {
-                    // Buf is a strict prefix of stored content — model emitted a
-                    // shorter "new" text under the same id. Surface it as new.
-                    syntheticTextCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticTextCounter}`;
-                    queue.push({
-                      type: 'assistant_text_delta',
-                      id: syntheticId,
-                      delta: shadow.buf,
-                    });
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  }
-                  break;
-                }
-                const full = textStreams.get(part.id) ?? '';
-                textStreams.delete(part.id);
-                if (full.length > 0) {
-                  queue.push({ type: 'assistant_text_done', id: part.id, text: full });
-                  emittedTextById.set(part.id, full);
-                }
-                break;
-              }
-              case 'reasoning-start': {
-                // Same provider quirk as text-start: mid-step id reuse without reasoning-end.
-                const activeReasoning = reasoningStreams.get(part.id);
-                if (activeReasoning !== undefined && activeReasoning.length > 0) {
-                  queue.push({ type: 'reasoning_text_done', id: part.id, text: activeReasoning });
-                  emittedReasoningById.set(part.id, activeReasoning);
-                  reasoningStreams.delete(part.id);
-                }
-                const reasoningShadow = reasoningShadows.get(part.id);
-                if (reasoningShadow) {
-                  reasoningShadows.delete(part.id);
-                  if (reasoningShadow.syntheticId) {
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: reasoningShadow.syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  } else if (reasoningShadow.buf.length > 0) {
-                    syntheticReasoningCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
-                    queue.push({
-                      type: 'reasoning_text_delta',
-                      id: syntheticId,
-                      delta: reasoningShadow.buf,
-                    });
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  }
-                }
-                if (emittedReasoningById.has(part.id)) {
-                  reasoningShadows.set(part.id, { buf: '' });
-                } else {
-                  reasoningStreams.set(part.id, '');
-                }
-                break;
-              }
-              case 'reasoning-delta': {
-                const reasoningShadow = reasoningShadows.get(part.id);
-                if (reasoningShadow) {
-                  reasoningShadow.buf += part.text;
-                  if (reasoningShadow.syntheticId) {
-                    queue.push({
-                      type: 'reasoning_text_delta',
-                      id: reasoningShadow.syntheticId,
-                      delta: part.text,
-                    });
+                  if (emittedReasoningById.has(part.id)) {
+                    reasoningShadows.set(part.id, { buf: '' });
                   } else {
-                    const stored = emittedReasoningById.get(part.id) ?? '';
-                    if (!stored.startsWith(reasoningShadow.buf)) {
-                      syntheticReasoningCounter += 1;
-                      reasoningShadow.syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                    reasoningStreams.set(part.id, '');
+                  }
+                  break;
+                }
+                case 'reasoning-delta': {
+                  const reasoningShadow = reasoningShadows.get(part.id);
+                  if (reasoningShadow) {
+                    reasoningShadow.buf += part.text;
+                    if (reasoningShadow.syntheticId) {
                       queue.push({
                         type: 'reasoning_text_delta',
                         id: reasoningShadow.syntheticId,
+                        delta: part.text,
+                      });
+                    } else {
+                      const stored = emittedReasoningById.get(part.id) ?? '';
+                      if (!stored.startsWith(reasoningShadow.buf)) {
+                        syntheticReasoningCounter += 1;
+                        reasoningShadow.syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                        queue.push({
+                          type: 'reasoning_text_delta',
+                          id: reasoningShadow.syntheticId,
+                          delta: reasoningShadow.buf,
+                        });
+                      }
+                    }
+                    break;
+                  }
+                  reasoningStreams.set(part.id, (reasoningStreams.get(part.id) ?? '') + part.text);
+                  queue.push({ type: 'reasoning_text_delta', id: part.id, delta: part.text });
+                  break;
+                }
+                case 'reasoning-end': {
+                  const reasoningShadow = reasoningShadows.get(part.id);
+                  if (reasoningShadow) {
+                    reasoningShadows.delete(part.id);
+                    if (reasoningShadow.syntheticId) {
+                      queue.push({
+                        type: 'reasoning_text_done',
+                        id: reasoningShadow.syntheticId,
+                        text: reasoningShadow.buf,
+                      });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
+                    } else if (
+                      reasoningShadow.buf.length > 0 &&
+                      reasoningShadow.buf !== emittedReasoningById.get(part.id)
+                    ) {
+                      syntheticReasoningCounter += 1;
+                      const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                      queue.push({
+                        type: 'reasoning_text_delta',
+                        id: syntheticId,
                         delta: reasoningShadow.buf,
                       });
-                    }
-                  }
-                  break;
-                }
-                reasoningStreams.set(part.id, (reasoningStreams.get(part.id) ?? '') + part.text);
-                queue.push({ type: 'reasoning_text_delta', id: part.id, delta: part.text });
-                break;
-              }
-              case 'reasoning-end': {
-                const reasoningShadow = reasoningShadows.get(part.id);
-                if (reasoningShadow) {
-                  reasoningShadows.delete(part.id);
-                  if (reasoningShadow.syntheticId) {
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: reasoningShadow.syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  } else if (
-                    reasoningShadow.buf.length > 0 &&
-                    reasoningShadow.buf !== emittedReasoningById.get(part.id)
-                  ) {
-                    syntheticReasoningCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
-                    queue.push({
-                      type: 'reasoning_text_delta',
-                      id: syntheticId,
-                      delta: reasoningShadow.buf,
-                    });
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  }
-                  break;
-                }
-                const reasoningFull = reasoningStreams.get(part.id) ?? '';
-                reasoningStreams.delete(part.id);
-                if (reasoningFull.length > 0) {
-                  queue.push({ type: 'reasoning_text_done', id: part.id, text: reasoningFull });
-                  emittedReasoningById.set(part.id, reasoningFull);
-                }
-                break;
-              }
-              case 'tool-call': {
-                const callId = newCallId();
-                const args = (part as { input?: unknown }).input;
-                const target = extractTarget(args, this.session.sandboxMode);
-                const record: ToolCallRecord = {
-                  callId,
-                  name: part.toolName,
-                  args,
-                  target,
-                  startedAt: Date.now(),
-                };
-                this.session.toolCalls.push(record);
-                callInfo.set(part.toolCallId, {
-                  callId,
-                  name: part.toolName,
-                  target,
-                  startedAt: record.startedAt,
-                });
-                this.callIdByToolCallId.set(part.toolCallId, callId);
-                const waiters = this.callIdWaiters.get(part.toolCallId);
-                if (waiters) {
-                  this.callIdWaiters.delete(part.toolCallId);
-                  for (const w of waiters) w(callId);
-                }
-                stepHadToolCalls = true;
-                queue.push({
-                  type: 'tool_call_start',
-                  callId,
-                  name: part.toolName,
-                  args,
-                  target,
-                  display: this.safeFormat(part.toolName, args),
-                });
-                break;
-              }
-              case 'tool-result': {
-                const info = callInfo.get(part.toolCallId);
-                if (!info) break;
-                const result = (part as { output?: unknown }).output;
-                const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
-                if (rec) {
-                  rec.result = result;
-                  rec.endedAt = Date.now();
-                }
-                queue.push({
-                  type: 'tool_call_result',
-                  callId: info.callId,
-                  result,
-                  durationMs: Date.now() - info.startedAt,
-                  display: this.safeFormat(info.name, rec?.args, result),
-                });
-                if (info.name === 'read' && this.opts.skillActivation) {
-                  const readPath = extractReadPath(rec?.args);
-                  if (readPath) {
-                    const hit = this.opts.skillActivation(readPath);
-                    if (hit) {
                       queue.push({
-                        type: 'skill_activated',
-                        skillName: hit.skillName,
-                        source: hit.source,
+                        type: 'reasoning_text_done',
+                        id: syntheticId,
+                        text: reasoningShadow.buf,
                       });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
                     }
+                    break;
                   }
+                  const reasoningFull = reasoningStreams.get(part.id) ?? '';
+                  reasoningStreams.delete(part.id);
+                  if (reasoningFull.length > 0) {
+                    queue.push({ type: 'reasoning_text_done', id: part.id, text: reasoningFull });
+                    emittedReasoningById.set(part.id, reasoningFull);
+                  }
+                  break;
                 }
-                // When the read tool returns an image, queue it for injection
-                // as a user message so the model can see it as a vision input.
-                if (info.name === 'read') {
-                  this.resolveAndTrackPath(rec?.args, false);
-                  if (
-                    result &&
-                    typeof result === 'object' &&
-                    'kind' in result &&
-                    (result as { kind?: string }).kind === 'image' &&
-                    'data' in result &&
-                    typeof (result as { data?: unknown }).data === 'string'
-                  ) {
-                    const readPath = extractReadPath(rec?.args);
-                    const sourcePath = readPath ? resolve(this.session.cwd, readPath) : undefined;
-                    this.pendingImageMessages.push({
-                      type: 'image',
-                      image: this.storableImage(result as ReadImageResult, sourcePath),
-                      ...(sourcePath
-                        ? {
-                            providerOptions: {
-                              chimera: { sourcePath, ...imageSize(result) },
-                            },
-                          }
-                        : {}),
-                    });
+                case 'tool-call': {
+                  const callId = newCallId();
+                  const args = (part as { input?: unknown }).input;
+                  const target = extractTarget(args, this.session.sandboxMode);
+                  const record: ToolCallRecord = {
+                    callId,
+                    name: part.toolName,
+                    args,
+                    target,
+                    startedAt: Date.now(),
+                  };
+                  this.session.toolCalls.push(record);
+                  callInfo.set(part.toolCallId, {
+                    callId,
+                    name: part.toolName,
+                    target,
+                    startedAt: record.startedAt,
+                  });
+                  this.callIdByToolCallId.set(part.toolCallId, callId);
+                  const waiters = this.callIdWaiters.get(part.toolCallId);
+                  if (waiters) {
+                    this.callIdWaiters.delete(part.toolCallId);
+                    for (const w of waiters) w(callId);
                   }
-                } else if (info.name === 'write' || info.name === 'edit') {
-                  this.resolveAndTrackPath(rec?.args, true);
-                } else if (info.name === 'apply_patch') {
-                  // One patch touches several files; its result lists them.
-                  const files = (result as { files?: unknown } | undefined)?.files;
-                  for (const file of Array.isArray(files) ? files : []) {
-                    const { path, movedTo } = file as { path?: unknown; movedTo?: unknown };
-                    for (const changedPath of [path, movedTo]) {
-                      if (typeof changedPath === 'string') {
-                        this.session.fileOps.writes.add(resolve(this.session.cwd, changedPath));
+                  stepHadToolCalls = true;
+                  queue.push({
+                    type: 'tool_call_start',
+                    callId,
+                    name: part.toolName,
+                    args,
+                    target,
+                    display: this.safeFormat(part.toolName, args),
+                  });
+                  break;
+                }
+                case 'tool-result': {
+                  const info = callInfo.get(part.toolCallId);
+                  if (!info) break;
+                  const result = (part as { output?: unknown }).output;
+                  const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
+                  if (rec) {
+                    rec.result = result;
+                    rec.endedAt = Date.now();
+                  }
+                  queue.push({
+                    type: 'tool_call_result',
+                    callId: info.callId,
+                    result,
+                    durationMs: Date.now() - info.startedAt,
+                    display: this.safeFormat(info.name, rec?.args, result),
+                  });
+                  if (info.name === 'read' && this.opts.skillActivation) {
+                    const readPath = extractReadPath(rec?.args);
+                    if (readPath) {
+                      const hit = this.opts.skillActivation(readPath);
+                      if (hit) {
+                        queue.push({
+                          type: 'skill_activated',
+                          skillName: hit.skillName,
+                          source: hit.source,
+                        });
                       }
                     }
                   }
-                }
-                callInfo.delete(part.toolCallId);
-                this.callIdByToolCallId.delete(part.toolCallId);
-                break;
-              }
-              case 'tool-error': {
-                const info = callInfo.get(part.toolCallId);
-                if (!info) break;
-                const errorValue = (part as { error?: unknown }).error;
-                const message =
-                  errorValue instanceof Error ? errorValue.message : String(errorValue);
-                const record = this.session.toolCalls.find(
-                  (toolCall) => toolCall.callId === info.callId,
-                );
-                if (record) {
-                  record.error = message;
-                  record.endedAt = Date.now();
-                }
-                queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
-                callInfo.delete(part.toolCallId);
-                this.callIdByToolCallId.delete(part.toolCallId);
-                break;
-              }
-              case 'finish-step': {
-                stepNumber += 1;
-                queue.push({
-                  type: 'step_finished',
-                  stepNumber,
-                  finishReason: part.finishReason,
-                });
-                this.stepsSinceCompaction += 1;
-                const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
-                if (stepUsage) {
-                  this.contextTracker.noteUsage(stepUsage.inputTokens, messageCountAtPrompt);
-                  applyStepUsage(this.session.usage, stepUsage);
-                  runDelta.inputTokens += stepUsage.inputTokens;
-                  runDelta.outputTokens += stepUsage.outputTokens;
-                  runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
-                  runDelta.totalTokens += stepUsage.totalTokens;
-                  queue.push({
-                    type: 'usage_updated',
-                    usage: cloneUsage(this.session.usage),
-                    contextWindow: this.activeContextWindow(),
-                    usedContextTokens: stepUsage.inputTokens,
-                    unknownWindow: this.activeContextWindowIsApproximate(),
-                  });
-                } else if (!usageMissingLogged) {
-                  usageMissingLogged = true;
-                  // Provider does not report usage on this step. Log once per
-                  // session at debug level; the loop continues with stale totals.
-                  if (typeof process !== 'undefined' && process.env?.DEBUG) {
-                    process.stderr.write(
-                      `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
-                    );
+                  // When the read tool returns an image, queue it for injection
+                  // as a user message so the model can see it as a vision input.
+                  if (info.name === 'read') {
+                    this.resolveAndTrackPath(rec?.args, false);
+                    if (
+                      result &&
+                      typeof result === 'object' &&
+                      'kind' in result &&
+                      (result as { kind?: string }).kind === 'image' &&
+                      'data' in result &&
+                      typeof (result as { data?: unknown }).data === 'string'
+                    ) {
+                      const readPath = extractReadPath(rec?.args);
+                      const sourcePath = readPath ? resolve(this.session.cwd, readPath) : undefined;
+                      this.pendingImageMessages.push({
+                        type: 'image',
+                        image: this.storableImage(result as ReadImageResult, sourcePath),
+                        ...(sourcePath
+                          ? {
+                              providerOptions: {
+                                chimera: { sourcePath, ...imageSize(result) },
+                              },
+                            }
+                          : {}),
+                      });
+                    }
+                  } else if (info.name === 'write' || info.name === 'edit') {
+                    this.resolveAndTrackPath(rec?.args, true);
+                  } else if (info.name === 'apply_patch') {
+                    // One patch touches several files; its result lists them.
+                    const files = (result as { files?: unknown } | undefined)?.files;
+                    for (const file of Array.isArray(files) ? files : []) {
+                      const { path, movedTo } = file as { path?: unknown; movedTo?: unknown };
+                      for (const changedPath of [path, movedTo]) {
+                        if (typeof changedPath === 'string') {
+                          this.session.fileOps.writes.add(resolve(this.session.cwd, changedPath));
+                        }
+                      }
+                    }
                   }
+                  callInfo.delete(part.toolCallId);
+                  this.callIdByToolCallId.delete(part.toolCallId);
+                  break;
                 }
-                try {
-                  await persistSession(
-                    this.session,
-                    {
-                      type: 'step_finished',
-                      stepNumber,
-                      finishReason: part.finishReason,
-                      messages: this.session.messages,
-                      toolCalls: this.session.toolCalls,
-                      usage: cloneUsage(this.session.usage),
-                    },
-                    this.opts.home,
+                case 'tool-error': {
+                  const info = callInfo.get(part.toolCallId);
+                  if (!info) break;
+                  const errorValue = (part as { error?: unknown }).error;
+                  const message =
+                    errorValue instanceof Error ? errorValue.message : String(errorValue);
+                  const record = this.session.toolCalls.find(
+                    (toolCall) => toolCall.callId === info.callId,
                   );
-                } catch (_e) {
-                  // persistence errors should not crash the run
+                  if (record) {
+                    record.error = message;
+                    record.endedAt = Date.now();
+                  }
+                  queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
+                  callInfo.delete(part.toolCallId);
+                  this.callIdByToolCallId.delete(part.toolCallId);
+                  break;
                 }
-                break;
-              }
-              case 'finish': {
-                const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
-                if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+                case 'finish-step': {
+                  stepNumber += 1;
                   queue.push({
-                    type: 'usage_updated',
-                    usage: cloneUsage(this.session.usage),
-                    contextWindow: this.activeContextWindow(),
-                    usedContextTokens: this.session.usage.inputTokens,
-                    unknownWindow: this.activeContextWindowIsApproximate(),
+                    type: 'step_finished',
+                    stepNumber,
+                    finishReason: part.finishReason,
                   });
+                  this.stepsSinceCompaction += 1;
+                  const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
+                  if (stepUsage) {
+                    this.contextTracker.noteUsage(stepUsage.inputTokens, messageCountAtPrompt);
+                    applyStepUsage(this.session.usage, stepUsage);
+                    runDelta.inputTokens += stepUsage.inputTokens;
+                    runDelta.outputTokens += stepUsage.outputTokens;
+                    runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
+                    runDelta.totalTokens += stepUsage.totalTokens;
+                    queue.push({
+                      type: 'usage_updated',
+                      usage: cloneUsage(this.session.usage),
+                      contextWindow: this.activeContextWindow(),
+                      usedContextTokens: stepUsage.inputTokens,
+                      unknownWindow: this.activeContextWindowIsApproximate(),
+                    });
+                  } else if (!usageMissingLogged) {
+                    usageMissingLogged = true;
+                    // Provider does not report usage on this step. Log once per
+                    // session at debug level; the loop continues with stale totals.
+                    if (typeof process !== 'undefined' && process.env?.DEBUG) {
+                      process.stderr.write(
+                        `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
+                      );
+                    }
+                  }
+                  try {
+                    await persistSession(
+                      this.session,
+                      {
+                        type: 'step_finished',
+                        stepNumber,
+                        finishReason: part.finishReason,
+                        messages: this.session.messages,
+                        toolCalls: this.session.toolCalls,
+                        usage: cloneUsage(this.session.usage),
+                      },
+                      this.opts.home,
+                    );
+                  } catch (_e) {
+                    // persistence errors should not crash the run
+                  }
+                  break;
                 }
-                break;
+                case 'finish': {
+                  const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
+                  if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+                    queue.push({
+                      type: 'usage_updated',
+                      usage: cloneUsage(this.session.usage),
+                      contextWindow: this.activeContextWindow(),
+                      usedContextTokens: this.session.usage.inputTokens,
+                      unknownWindow: this.activeContextWindowIsApproximate(),
+                    });
+                  }
+                  break;
+                }
+                case 'abort': {
+                  terminalReason = timedOut ? 'timeout' : 'interrupted';
+                  break;
+                }
+                case 'error': {
+                  terminalReason = 'error';
+                  errorMessage = describeProviderError(part.error);
+                  stepError = part.error;
+                  break;
+                }
+                default:
+                  // Ignore source, file, tool-input-*, start/start-step, raw.
+                  break;
               }
-              case 'abort': {
-                terminalReason = timedOut ? 'timeout' : 'interrupted';
-                break;
-              }
-              case 'error': {
-                terminalReason = 'error';
-                errorMessage = describeProviderError(part.error);
-                stepError = part.error;
-                break;
-              }
-              default:
-                // Ignore source, file, tool-input-*, start/start-step, raw.
-                break;
             }
-          }
 
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          timeoutHandle = undefined;
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            timeoutHandle = undefined;
+            request.usage = { ...runDelta };
+          };
+          try {
+            if (this.opts.interceptStep) await this.opts.interceptStep(request, consumeStep);
+            else await consumeStep();
+          } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            timeoutHandle = undefined;
+          }
+          terminalReason = readTerminalReason();
+          if (!stream) throw new Error('Model step interceptor did not call next()');
 
           // A step that failed before any tool call started has had no side
           // effects, so it is safe to send again.
@@ -2376,7 +2460,7 @@ export class Agent {
             this.session.pendingPermissionFeedback = [];
             for (const feedback of feedbackMessages) {
               this.session.messages.push(await buildUserMessage(feedback));
-              queue.push({ type: 'user_message', content: feedback });
+              queue.push({ type: 'user_message', content: feedback, source: 'continuation' });
             }
             injectedThisStep = true;
             this.abortController = new AbortController();
@@ -2400,6 +2484,7 @@ export class Agent {
                 type: 'user_message',
                 content: inject.content,
                 imageCount: inject.images?.length,
+                ...(inject.source === 'append' ? { append: true } : { source: inject.source }),
               });
             }
             injectedThisStep = true;
@@ -2448,6 +2533,11 @@ export class Agent {
             if (outputContinuations < Agent.MAX_OUTPUT_CONTINUATIONS) {
               outputContinuations += 1;
               this.session.messages.push({ role: 'user', content: OUTPUT_CONTINUATION_NOTE });
+              queue.push({
+                type: 'user_message',
+                content: OUTPUT_CONTINUATION_NOTE,
+                source: 'continuation',
+              });
               queue.push({
                 type: 'output_continued',
                 attempt: outputContinuations,
@@ -2510,34 +2600,26 @@ export class Agent {
         }
       }
 
-      if (timedOut && this.opts.timeoutHook) {
-        await this.opts.timeoutHook.fire();
-      }
-      if (terminalReason === 'interrupted' && this.opts.interruptHook) {
-        await this.opts.interruptHook.fire();
-      }
-      if (
-        terminalReason === 'waiting_for_input' &&
-        this.pendingUserInputRequest &&
-        this.opts.userInputRequiredHook
-      ) {
-        await this.opts.userInputRequiredHook.fire(this.pendingUserInputRequest);
+      if (timedOut) await this.dispatchLifecycle({ type: 'Timeout' });
+      if (terminalReason === 'interrupted') await this.dispatchLifecycle({ type: 'Interrupt' });
+      const userInputRequest = this.pendingUserInputRequest as UserInputRequest | null;
+      if (terminalReason === 'waiting_for_input' && userInputRequest) {
+        await this.dispatchLifecycle({
+          type: 'UserInputRequired',
+          ...userInputRequest,
+        });
       }
 
       // Stop hook: only for clean "stop", not error/interrupted/timeout.
-      if (
-        terminalReason === 'stop' &&
-        this.opts.stopHook &&
-        stopRetryCount < Agent.MAX_STOP_RETRIES
-      ) {
-        const hookResult = await this.opts.stopHook.fire({ reason: terminalReason });
+      if (terminalReason === 'stop' && stopRetryCount < Agent.MAX_STOP_RETRIES) {
+        const hookResult = await this.dispatchLifecycle({ type: 'Stop', reason: terminalReason });
         if (hookResult.blocked) {
           const parts: string[] = [];
           if (hookResult.reason) parts.push(hookResult.reason);
           if (hookResult.additionalContext) parts.push(hookResult.additionalContext);
           const blockMessage = parts.length > 0 ? parts.join('\n\n') : 'Blocked by stop hook';
           this.session.messages.push({ role: 'user', content: blockMessage });
-          queue.push({ type: 'user_message', content: blockMessage });
+          queue.push({ type: 'user_message', content: blockMessage, source: 'stop_retry' });
           stopRetryCount++;
           // Fresh abort controller for the next turn.
           this.abortController = new AbortController();
@@ -2560,7 +2642,7 @@ export class Agent {
           if (outcome.message !== undefined) {
             goalContinuations++;
             this.session.messages.push({ role: 'user', content: outcome.message });
-            queue.push({ type: 'user_message', content: outcome.message });
+            queue.push({ type: 'user_message', content: outcome.message, source: 'goal' });
             // Fresh abort controller for the next turn.
             this.abortController = new AbortController();
             continue;
@@ -2570,6 +2652,15 @@ export class Agent {
       }
 
       break; // No more retries.
+    }
+
+    if (terminalReason === 'max_steps' || terminalReason === 'output_limit') {
+      await this.dispatchLifecycle({ type: 'Stop', reason: terminalReason });
+    }
+    if (terminalReason === 'error') {
+      await this.dispatchLifecycle({ type: 'OnError', error: errorMessage ?? 'unknown' }).catch(
+        (error) => console.error('[lifecycle] observer failed:', error),
+      );
     }
 
     this.session.status =

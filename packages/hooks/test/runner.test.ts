@@ -49,6 +49,32 @@ describe('DefaultHookRunner', () => {
     expect(r.blocked).toBe(false);
   });
 
+  it('disposes all in-flight hooks promptly and skips queued and future scripts', async () => {
+    const started = join(root, 'started.txt');
+    const subsequent = join(root, 'subsequent.txt');
+    await writeFile(started, '');
+    await writeFile(subsequent, '');
+    await dropScript('Stop', '01-slow.sh', `#!/bin/sh\necho started >> "${started}"\nsleep 30\n`);
+    await dropScript('Stop', '02-subsequent.sh', `#!/bin/sh\necho ran >> "${subsequent}"\n`);
+    const runner = newRunner(3_000);
+    const pending = [
+      runner.fire({ event: 'Stop', reason: 'stop' }),
+      runner.fire({ event: 'Stop', reason: 'stop' }),
+    ];
+    await expect.poll(() => readFile(started, 'utf8')).toBe('started\nstarted\n');
+
+    const disposedAt = Date.now();
+    runner.dispose();
+    runner.dispose();
+    await expect(Promise.all(pending)).resolves.toEqual([{ blocked: false }, { blocked: false }]);
+    expect(Date.now() - disposedAt).toBeLessThan(1_000);
+    await expect(runner.fire({ event: 'Stop', reason: 'stop' })).resolves.toEqual({
+      blocked: false,
+    });
+    expect(await readFile(started, 'utf8')).toBe('started\nstarted\n');
+    expect(await readFile(subsequent, 'utf8')).toBe('');
+  });
+
   it('passes a JSON payload on stdin and the right env vars', async () => {
     const captured = join(root, 'captured.json');
     const envOut = join(root, 'env.txt');

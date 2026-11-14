@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -15,6 +17,7 @@ export interface Lockfile {
   port: number;
   cwd: string;
   sessionId?: SessionId;
+  parentId?: string;
   startedAt: number;
   version: string;
   url: string;
@@ -32,7 +35,9 @@ export function writeLockfile(lock: Lockfile, home = homedir()): string {
   const dir = instancesDir(home);
   mkdirSync(dir, { recursive: true });
   const path = lockfilePath(lock.pid, home);
-  writeFileSync(path, JSON.stringify(lock, null, 2), 'utf8');
+  const temporary = join(dir, `${lock.pid}.${randomUUID()}.tmp`);
+  writeFileSync(temporary, JSON.stringify(lock, null, 2), 'utf8');
+  renameSync(temporary, path);
   return path;
 }
 
@@ -123,8 +128,8 @@ function connectionRefused(error: unknown): boolean {
  * crash the kernel gives the number to another process, or to a thread, and
  * the lockfile outlives the instance. So each lockfile's server is asked who
  * it is. A port that refuses the connection, or that answers as something
- * else, means the instance is gone, and its lockfile is removed. An instance
- * that does not answer in time is kept: it may only be busy.
+ * else, means the instance is gone, and its lockfile is removed. A 404 may
+ * hide a secret-protected instance, so it is kept, like one that times out.
  */
 export async function listVerifiedInstances(
   options: VerifyInstancesOptions = {},
@@ -137,6 +142,8 @@ export async function listVerifiedInstances(
         const response = await request(`${lock.url}/v1/instance`, {
           signal: AbortSignal.timeout(timeoutMs),
         });
+        // A protected instance deliberately hides this route from discovery.
+        if (response.status === 404) return { ...lock, responsive: false };
         const info = response.ok ? ((await response.json()) as { pid?: unknown }) : null;
         if (info?.pid === lock.pid) return { ...lock, responsive: true };
       } catch (error) {
@@ -149,30 +156,14 @@ export async function listVerifiedInstances(
   return checked.filter((instance): instance is VerifiedInstance => instance !== null);
 }
 
-// Signals that end the process without running the caller's own cleanup.
-const FATAL_SIGNALS = { SIGHUP: 1, SIGTERM: 15 } as const;
-
 /**
- * Remove this process's lockfile however the process ends: a normal exit, a
- * closed terminal (SIGHUP) or a kill (SIGTERM). Only SIGKILL and a crash of
- * the runtime get past it, and `listVerifiedInstances` deals with what they
- * leave. Returns a function that takes the handlers off again.
+ * Signal shutdown belongs to the lifecycle owner: exiting from a second signal
+ * listener would bypass its awaited end hooks and child cleanup.
  */
 export function removeLockfileOnExit(pid: number, home?: string): () => void {
   const remove = () => removeLockfile(pid, home);
-  const handlers = Object.entries(FATAL_SIGNALS).map(([signal, number]) => {
-    const handler = () => {
-      remove();
-      // A listener keeps the signal from ending the process, so end it here,
-      // with the exit code a shell reports for that signal.
-      process.exit(128 + number);
-    };
-    process.once(signal, handler);
-    return [signal, handler] as const;
-  });
   process.once('exit', remove);
   return () => {
     process.off('exit', remove);
-    for (const [signal, handler] of handlers) process.off(signal, handler);
   };
 }

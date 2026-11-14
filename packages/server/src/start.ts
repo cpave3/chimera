@@ -1,10 +1,11 @@
-import { serve, type ServerType } from '@hono/node-server';
+import { type ServerType, serve } from '@hono/node-server';
 import type { Hono } from 'hono';
 
 export interface StartOptions {
   app: Hono;
   port?: number;
   host?: string;
+  secret?: string;
 }
 
 export interface ChimeraServer {
@@ -19,7 +20,9 @@ export async function startServer(opts: StartOptions): Promise<ChimeraServer> {
   if (host !== '127.0.0.1' && host !== 'localhost') {
     process.stderr.write(
       `warning: chimera server binding to non-loopback address '${host}'. ` +
-        'No auth is enforced; anyone with network access can control the agent.\n',
+        (opts.secret
+          ? 'Access requires the server secret; use a trusted network or TLS proxy.\n'
+          : 'No auth is enforced; anyone with network access can control the agent.\n'),
     );
   }
   const requestedPort = opts.port ?? 0;
@@ -30,12 +33,13 @@ export async function startServer(opts: StartOptions): Promise<ChimeraServer> {
       server = serve({ fetch: opts.app.fetch, port: requestedPort, hostname: host }, (info) => {
         const port = info.port;
         resolve({
-          url: `http://${host}:${port}`,
+          url: `http://${host}:${port}${opts.secret ? `/${encodeURIComponent(opts.secret).replaceAll('*', '%2A')}` : ''}`,
           port,
           host,
           close: () =>
             new Promise<void>((r) => {
               server?.close(() => r());
+              if (server && 'closeAllConnections' in server) server.closeAllConnections();
             }),
         });
       });

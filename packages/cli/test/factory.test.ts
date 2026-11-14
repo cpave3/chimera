@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectMemoryDir, type SandboxMode } from '@chimera/core';
 import { InMemoryModeRegistry, loadModes } from '@chimera/modes';
+import { bridgeHooksToLifecycle } from '@chimera/server';
 import { InMemorySkillRegistry } from '@chimera/skills';
 import { loadAgents } from '@chimera/subagents';
 import { detectOsSandbox } from '@chimera/tools';
@@ -665,11 +666,12 @@ describe('CliAgentFactory', () => {
       home: cwd,
       subagents: { enabled: false },
     });
-    const { agent } = await factory.build({
+    const { agent, hookRunner } = await factory.build({
       cwd,
       model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
       sandboxMode: 'off',
     });
+    const detachHooks = bridgeHooksToLifecycle(agent.lifecycle, agent.session.id, hookRunner!);
     const { write } = (
       agent as unknown as {
         opts: {
@@ -685,6 +687,8 @@ describe('CliAgentFactory', () => {
 
     expect(await readFile(join(cwd, 'open.txt'), 'utf8')).toBe('yes');
     await expect(readFile(join(cwd, 'frozen.txt'), 'utf8')).rejects.toThrow();
+    detachHooks();
+    hookRunner?.dispose?.();
   });
 
   it('lets ask_question reach the user only where a user watches the session', async () => {

@@ -44,6 +44,10 @@ export function isNewer(candidate: string, current: string): boolean {
 }
 
 /** What `chimera version --json` prints. */
-export function versionReport(version: string = VERSION): { version: string; release: boolean } {
-  return { version, release: isRelease(version) };
+export function versionReport(version: string = VERSION): {
+  version: string;
+  release: boolean;
+  modApi: number[];
+} {
+  return { version, release: isRelease(version), modApi: [1] };
 }

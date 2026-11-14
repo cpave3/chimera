@@ -1,12 +1,6 @@
 import { ChimeraClient } from '@chimera/client';
 import { Compactor } from '@chimera/compaction';
-import type {
-  AgentEvent,
-  GoalChange,
-  ModelConfig,
-  RunFinishedReason,
-  SandboxMode,
-} from '@chimera/core';
+import type { GoalChange, ModelConfig, RunFinishedReason, SandboxMode } from '@chimera/core';
 import { loadProviders, resolveContextWindow } from '@chimera/providers';
 import { applyOverlay, discardOverlay } from '@chimera/sandbox';
 import {
@@ -35,13 +29,17 @@ import {
 } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
+import { mergeModMcpServers } from '../mod-bundles';
+import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { RunRows } from '../run-rows';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
+import { readServerSecret } from '../server-secret';
+import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../session-shutdown';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { VERSION } from '../version';
 
-export interface RunOptions {
+export interface RunOptions extends ModOptions {
   prompt: string;
   json?: boolean;
   model?: string;
@@ -101,6 +99,7 @@ export interface RunResult {
 }
 
 export async function runOneShot(opts: RunOptions): Promise<RunResult> {
+  const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
@@ -110,10 +109,16 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   let factory: AgentFactory;
   let cliFactory: CliAgentFactory | undefined;
   const config = opts.factoryOverride && opts.modelOverride ? {} : loadConfig(opts.home);
+  const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
-  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
+  const mcpServers = mergeModMcpServers(
+    resolveMcpServers(config, opts.mcpConfig),
+    modRuntime.bundles,
+    {},
+  );
   const skills = loadSkillsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -122,6 +127,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     onWarning: (m) => process.stderr.write(`${m}\n`),
   });
   const modes = loadModesFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -131,6 +137,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   });
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
   const agents = loadAgentsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -180,6 +187,9 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     }
 
     cliFactory = new CliAgentFactory({
+      mods: modRuntime.host,
+      modDirs: opts.modDirs,
+      noMods: opts.mods === false,
       providersConfig: resolved.providersConfig,
       autoApprove: opts.autoApprove ?? 'host',
       hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -218,6 +228,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   // Load the commands registry for both server introspection and client-side
   // expansion (when `--command` is used).
   const commands = loadCommandsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -260,10 +271,24 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     home: opts.home,
     workspaceCheckpoints: config.workspaceCheckpoints !== false,
   });
-  const app = buildApp({ registry, home: opts.home });
-  const server = await startServer({ app });
+  const app = buildApp({ registry, home: opts.home, secret });
+  const server = await startServer({ app, secret });
+  modRuntime.bind(registry, server.url);
 
   const client = new ChimeraClient({ baseUrl: server.url });
+  let closing: Promise<void> | undefined;
+  const shutdown = (reason: ShutdownReason) => {
+    closing ??= (async () => {
+      await shutdownLifecycle(registry, modRuntime, reason);
+      if (cliFactory) await cliFactory.dispose();
+      await server.close();
+    })();
+    return closing;
+  };
+  const stopSignals = onShutdownSignals(async (reason) => {
+    await shutdown(reason);
+    process.exit(reason === 'exit' ? 130 : 0);
+  });
   let sessionId: string | undefined;
   try {
     const sessionResult = await launchSession(
@@ -284,16 +309,11 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     if (opts.goal) await client.setGoal(sessionId, opts.goal);
 
     let finalText = '';
-    let exitReason: RunFinishedReason = 'stop';
+    let exitReason: RunFinishedReason | 'prompt_dropped' = 'stop';
     let errorMessage: string | undefined;
     let goalChange: GoalChange | undefined;
 
     const activeSessionId = sessionId;
-    const sigintHandler = () => {
-      void client.interrupt(activeSessionId);
-    };
-    process.once('SIGINT', sigintHandler);
-
     const rows = new RunRows({
       write: (text) => process.stderr.write(text),
       color: process.stderr.isTTY === true,
@@ -315,10 +335,11 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
       if (ev.type === 'run_finished') {
         exitReason = ev.reason;
         errorMessage = ev.error;
+      } else if (ev.type === 'prompt_dropped') {
+        exitReason = 'prompt_dropped';
+        errorMessage = `prompt dropped: ${ev.reason}`;
       }
     }
-
-    process.removeListener('SIGINT', sigintHandler);
 
     if (!opts.json) {
       rows.finish();
@@ -344,19 +365,15 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
 
     return { exitCode: exitCodeFor(exitReason, opts.goal ? goalChange : undefined) };
   } finally {
-    // Best-effort delete the session so SessionEnd hooks fire.
-    if (sessionId) await client.deleteSession(sessionId).catch(() => {});
-    if (cliFactory) {
-      await cliFactory.dispose();
-    }
-    await server.close();
+    await shutdown('exit');
+    stopSignals();
   }
 }
 
 export interface FinalizeOverlayInput {
   sessionId: string;
   cwd: string;
-  exitReason: RunFinishedReason;
+  exitReason: RunFinishedReason | 'prompt_dropped';
   applyOnSuccess: boolean;
 }
 
@@ -376,7 +393,10 @@ export async function finalizeOverlay(input: FinalizeOverlayInput): Promise<void
  * The exit code of a run. `goalChange` is the last word on the run's goal,
  * for a run that was given one.
  */
-function exitCodeFor(reason: RunFinishedReason, goalChange?: GoalChange): number {
+function exitCodeFor(
+  reason: RunFinishedReason | 'prompt_dropped',
+  goalChange?: GoalChange,
+): number {
   if (reason === 'stop' && goalChange === 'impossible') return 3;
   // The run ended cleanly, but nothing says that the goal is met.
   if (reason === 'stop' && goalChange === 'unchecked') return 1;

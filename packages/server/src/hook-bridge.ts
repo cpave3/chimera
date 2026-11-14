@@ -1,75 +1,79 @@
-import type { HookRunner } from '@chimera/hooks';
-import type { EventBus } from './event-bus';
+import type { LifecycleHookData, LifecycleSource } from '@chimera/core';
+import { ALL_HOOK_EVENTS, type FirePayload, type HookRunner } from '@chimera/hooks';
 
-/**
- * Translate `AgentEvent`s on the bus into lifecycle-hook firings.
- *
- *  - `user_message`        → `UserPromptSubmit`
- *  - `tool_call_result`    → `PostToolUse` (success path)
- *  - `tool_call_error`     → `PostToolUse` (error path)
- *  - `compaction_started`  → `CompactionStart`
- *  - `compaction_finished` → `CompactionEnd` (success)
- *  - `compaction_failed`   → `CompactionEnd` (failure)
- *
- * `run_finished` is NOT translated here. `Stop` and `UserInputRequired` are
- * fired synchronously inside `Agent.runInternal`, while `AgentRegistry.run`
- * awaits `OnError` before publishing a terminal error. Bridging them here
- * would duplicate the hooks asynchronously.
- *
- * `tool_call_start` is consumed only to remember the tool's name + args so
- * the matching `tool_call_result` / `tool_call_error` event can be enriched
- * (those events carry only `callId`).
- *
- * Hook firings are intentionally **not awaited** — a slow hook must not block
- * the agent loop or the event bus. The runner enforces its own per-script
- * timeout.
- *
- * Returns the bus unsubscribe handle so callers can detach this bridge if
- * they ever need to. Today the bridge lives for the session's lifetime.
- */
-export function bridgeHooksToBus(bus: EventBus, runner: HookRunner): () => void {
+/** The source orders these awaited scripts without making observational events block the agent. */
+export function bridgeHooksToLifecycle(
+  source: LifecycleSource,
+  sessionId: string,
+  runner: HookRunner,
+): () => void {
   const inFlight = new Map<string, { name: string; args: unknown }>();
 
-  return bus.subscribe((env) => {
+  return source.subscribe(async (env) => {
+    if (env.sessionId !== sessionId) return;
+    let payload: FirePayload;
     switch (env.type) {
       case 'user_message':
-        void runner.fire({ event: 'UserPromptSubmit', user_message: env.content });
-        return;
+        payload = {
+          event: 'UserPromptSubmit',
+          user_message: env.content,
+          source: env.source ?? 'user',
+        };
+        break;
       case 'tool_call_start':
         inFlight.set(env.callId, { name: env.name, args: env.args });
         return;
       case 'tool_call_result': {
         const meta = inFlight.get(env.callId);
         inFlight.delete(env.callId);
-        void runner.fire({
+        payload = {
           event: 'PostToolUse',
           tool_name: meta?.name ?? 'unknown',
           tool_input: toRecord(meta?.args),
           tool_result: env.result,
-        });
-        return;
+        };
+        break;
       }
       case 'tool_call_error': {
         const meta = inFlight.get(env.callId);
         inFlight.delete(env.callId);
-        void runner.fire({
+        payload = {
           event: 'PostToolUse',
           tool_name: meta?.name ?? 'unknown',
           tool_input: toRecord(meta?.args),
           tool_error: env.error,
-        });
-        return;
+        };
+        break;
       }
       case 'compaction_started':
-        void runner.fire({ event: 'CompactionStart', reason: env.reason });
-        return;
+        payload = { event: 'CompactionStart', reason: env.reason };
+        break;
       case 'compaction_finished':
-        void runner.fire({ event: 'CompactionEnd', success: true });
-        return;
+        payload = { event: 'CompactionEnd', success: true };
+        break;
       case 'compaction_failed':
-        void runner.fire({ event: 'CompactionEnd', success: false, error: env.error });
-        return;
+        payload = { event: 'CompactionEnd', success: false, error: env.error };
+        break;
+      default: {
+        if (!(ALL_HOOK_EVENTS as readonly string[]).includes(env.type)) return;
+        const {
+          type,
+          sessionId: _sessionId,
+          cwd: _cwd,
+          ...data
+        } = env as LifecycleHookData & {
+          sessionId: string;
+          cwd: string;
+        };
+        payload = { event: type, ...data } as FirePayload;
+      }
     }
+    const result = await runner.fire(payload);
+    return {
+      blocked: result.blocked,
+      reason: result.reason,
+      additionalContext: result.parsedDecision?.additionalContext,
+    };
   });
 }
 

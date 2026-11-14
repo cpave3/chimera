@@ -19,16 +19,12 @@ import {
   type AskModelOptions,
   askModel,
   composeSystemPrompt,
-  type InterruptHook,
   loadSession,
   newSessionId,
   projectMemoryDir,
   readMemoryIndex,
   renderMemorySection,
   renderToolsSection,
-  type StopHook,
-  type TimeoutHook,
-  type UserInputRequiredHook,
   validateModelSettings,
   writeSessionMetadata,
 } from '@chimera/core';
@@ -41,6 +37,7 @@ import {
   type Mode,
   type ModeRegistry,
 } from '@chimera/modes';
+import type { ModEvent, ModHost } from '@chimera/mods';
 import {
   type AutoApproveLevel,
   BalancedPolicyEvaluator,
@@ -111,6 +108,7 @@ import type {
 import { McpAuth } from './mcp/auth';
 import { McpClientManager } from './mcp/client';
 import { type McpToolEntry, registerMcpTools } from './mcp/tools';
+import { modToolMiddleware } from './mod-tool-call';
 import { preToolUseHook } from './pre-tool-use';
 import type { CliSandboxOptions } from './sandbox-config';
 
@@ -121,6 +119,9 @@ const TOOLS_WITH_LIMITS = new Set(['spawn_agent']);
 const SKILL_INDEX_SHARE = 0.02;
 
 export interface CliAgentFactoryOptions {
+  mods?: ModHost;
+  modDirs?: string[];
+  noMods?: boolean;
   providersConfig: ProvidersConfig;
   autoApprove: AutoApproveLevel;
   hostBashPolicy?: HostBashPolicyConfig;
@@ -257,6 +258,9 @@ export interface CliAgentFactoryOptions {
 }
 
 export class CliAgentFactory implements AgentFactory {
+  private readonly mods: ModHost | undefined;
+  private readonly modDirs: string[] | undefined;
+  private readonly noMods: boolean | undefined;
   private readonly registry: ReturnType<typeof loadProviders>;
   private readonly autoApprove: AutoApproveLevel;
   private readonly hostBashPolicy: HostBashPolicyConfig;
@@ -313,6 +317,9 @@ export class CliAgentFactory implements AgentFactory {
   private lastFormatters: Record<string, FormatScrollback<any, any>> = {};
 
   constructor(opts: CliAgentFactoryOptions) {
+    this.mods = opts.mods;
+    this.modDirs = opts.modDirs;
+    this.noMods = opts.noMods;
     this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
     this.autoApprove = opts.autoApprove;
     // The CLI commands pass the policy of the user's config, where the OS
@@ -550,6 +557,7 @@ export class CliAgentFactory implements AgentFactory {
     const projectState = join(init.cwd, '.chimera');
     const local = new LocalExecutor({
       cwd: init.cwd,
+      home: userHome,
       readAllowDirs,
       writeAllowDirs: [
         tmpDir,
@@ -587,51 +595,6 @@ export class CliAgentFactory implements AgentFactory {
       globalRoot: this.home ? join(this.home, '.chimera', 'hooks') : undefined,
     });
 
-    const stopHook: StopHook = {
-      async fire(payload) {
-        const result = await hookRunner.fire({ event: 'Stop', reason: payload.reason });
-        return {
-          blocked: result.blocked,
-          reason: result.reason,
-          additionalContext: result.parsedDecision?.additionalContext,
-        };
-      },
-    };
-
-    const timeoutHook: TimeoutHook = {
-      async fire() {
-        await hookRunner.fire({ event: 'Timeout' });
-      },
-    };
-    const interruptHook: InterruptHook = {
-      async fire() {
-        await hookRunner.fire({ event: 'Interrupt' });
-      },
-    };
-    const userInputRequiredHook: UserInputRequiredHook = {
-      async fire(request) {
-        await hookRunner.fire({ event: 'UserInputRequired', ...request });
-      },
-    };
-    const permissionResolvedHook = {
-      async fire(resolution: {
-        requestId: string;
-        decision: 'allow' | 'deny';
-        remembered: boolean;
-        sessionStatus: 'running' | 'waiting_for_permission';
-        remainingPending: number;
-      }) {
-        await hookRunner.fire({
-          event: 'PermissionResolved',
-          request_id: resolution.requestId,
-          decision: resolution.decision,
-          remembered: resolution.remembered,
-          session_status: resolution.sessionStatus,
-          remaining_pending: resolution.remainingPending,
-        });
-      },
-    };
-
     const agent: Agent = new Agent({
       cwd: init.cwd,
       model: init.model,
@@ -650,7 +613,6 @@ export class CliAgentFactory implements AgentFactory {
       initialMode: activeMode?.name ?? requestedMode,
       compaction: this.compaction,
       compactor: this.compactor,
-      stopHook,
       // A subagent serves its parent's request; a goal is the user's.
       ...((this.subagents.currentDepth ?? 0) === 0
         ? {
@@ -661,12 +623,35 @@ export class CliAgentFactory implements AgentFactory {
             },
           }
         : {}),
-      timeoutHook,
-      interruptHook,
-      userInputRequiredHook,
-      permissionResolvedHook,
       responseTimeoutMs: this.responseTimeoutMs,
       providerOptions: initialGeneration.providerOptions,
+      interceptPrompt: this.mods
+        ? (prompt, next) =>
+            this.mods!.intercept(
+              'prompt.submit',
+              Object.assign(prompt, { type: 'prompt.submit' }) as unknown as ModEvent,
+              next,
+            )
+        : undefined,
+      interceptStep: this.mods
+        ? (request, next) =>
+            this.mods!.intercept(
+              'turn.step',
+              Object.assign(request, { type: 'turn.step' }) as unknown as ModEvent,
+              async () => next(),
+            )
+        : undefined,
+      resolveStepModel: (ref, effort) => {
+        const described = describeModel(ref, {
+          ...agent.session.modelSettingsOverrides?.[ref],
+          ...(effort === undefined ? {} : { reasoningEffort: effort }),
+        });
+        return {
+          model: described.model,
+          languageModel: described.provider.getModel(described.modelId, agent.session.id),
+          providerOptions: described.generation.providerOptions,
+        };
+      },
     });
     agent.session.modelSettingsOverrides = modelSettingsOverrides;
     agent.session.modelCreationDefaults = modelCreationDefaults;
@@ -743,7 +728,24 @@ export class CliAgentFactory implements AgentFactory {
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
       mcpHeadlessAutoDeny: this.mcpHeadlessAutoDeny,
-      hookRunner,
+      interceptPermission: this.mods
+        ? (request, args) =>
+            this.mods!.intercept<import('@chimera/permissions').ModPermissionDecision>(
+              'permission.request',
+              {
+                ...request,
+                type: 'permission.request',
+                sessionId: agent.session.id,
+                toolName: request.tool,
+                args: args ?? {
+                  command: request.command,
+                  ...(request.reason ? { reason: request.reason } : {}),
+                },
+              },
+              async () => 'pass',
+            )
+        : undefined,
+      permissionRequest: (payload) => agent.dispatchLifecycle(payload),
       emitResolved: (requestId, decision, remembered) =>
         agent.emitPermissionResolved(requestId, decision, remembered),
       ...(this.approvalReviewer
@@ -831,6 +833,7 @@ export class CliAgentFactory implements AgentFactory {
 
     const backgroundProcesses = new BackgroundProcessManager({
       cwd: init.cwd,
+      onStart: (notice) => agent.pushEvent({ type: 'background_process_started', ...notice }),
       onExit: (notice) =>
         agent.pushEvent({
           type: 'background_process_exited',
@@ -913,6 +916,8 @@ export class CliAgentFactory implements AgentFactory {
           return agent.signal;
         },
         parentSessionId: agent.session.id,
+        modDirs: this.modDirs,
+        mods: this.noMods ? false : undefined,
         cwd: init.cwd,
         defaultModelRef,
         getParentModel: () =>
@@ -949,6 +954,7 @@ export class CliAgentFactory implements AgentFactory {
 
     // Set once the tool surfaces exist; `tool_search` calls it at run time.
     let activateMcpTools: (entries: McpToolEntry[]) => void = () => {};
+    let mcpInstructions = '';
     if (Object.keys(this.mcpServers).length > 0) {
       if (init.sandboxMode !== 'off') {
         this.warn('MCP tools run on the host, outside the Docker sandbox');
@@ -979,6 +985,9 @@ export class CliAgentFactory implements AgentFactory {
       if (deferred) {
         extraSnippets.tool_search = 'Find and enable tools of the connected MCP servers.';
       }
+      mcpInstructions = Object.entries(manager.getInstructions())
+        .map(([name, instructions]) => `\n\n## MCP server: ${name}\n\n${instructions}`)
+        .join('');
     }
 
     this.liveAgents.set(agent.session.id, agent);
@@ -996,7 +1005,7 @@ export class CliAgentFactory implements AgentFactory {
     // their state (the repeat counter) follows the session, not the surface.
     const toolInterceptors: ToolCallInterceptor[] = [
       // First: a hook that blocks a call stops it before anything else sees it.
-      preToolUseHook(hookRunner),
+      preToolUseHook((payload) => agent.dispatchLifecycle(payload)),
       outputBudget({
         budgetTokens: () =>
           agent.session.model.outputBudgetTokens ?? initialProfile.outputBudgetTokens,
@@ -1048,7 +1057,11 @@ export class CliAgentFactory implements AgentFactory {
         surfaceTools = allowed;
       }
       const surface: ToolSurface = {
-        tools: interceptTools(surfaceTools, toolInterceptors),
+        tools: interceptTools(
+          surfaceTools,
+          toolInterceptors,
+          this.mods ? modToolMiddleware(this.mods, sessionId) : undefined,
+        ),
         snippets: { ...built.snippets, ...extraSnippets },
       };
       surfaces.set(key, surface);
@@ -1084,7 +1097,11 @@ export class CliAgentFactory implements AgentFactory {
       const allowed = this.toolsAllowlist
         ? applyAllowlist(added, new Set(this.toolsAllowlist))
         : added;
-      const intercepted = interceptTools(allowed, toolInterceptors);
+      const intercepted = interceptTools(
+        allowed,
+        toolInterceptors,
+        this.mods ? modToolMiddleware(this.mods, sessionId) : undefined,
+      );
       for (const surface of surfaces.values()) Object.assign(surface.tools, intercepted);
       agent.setToolFormatters(formatters);
       const mode = modesReg ? modesReg.find(agent.session.mode) : undefined;
@@ -1105,7 +1122,7 @@ export class CliAgentFactory implements AgentFactory {
       if (this.systemPromptOverride !== undefined) {
         return `${this.systemPromptOverride}\n\n${renderToolsSection(promptTools, {
           osSandbox: osSandboxForPrompt !== undefined,
-        })}`;
+        })}${mcpInstructions}`;
       }
       return composeSystemPrompt({
         cwd: init.cwd,
@@ -1113,6 +1130,7 @@ export class CliAgentFactory implements AgentFactory {
         sandboxMode: init.sandboxMode,
         osSandbox: osSandboxForPrompt,
         extensions: [
+          () => mcpInstructions || null,
           ...(skillIndexFor(contextWindow) ?? []),
           ...(memoryDirectory
             ? [

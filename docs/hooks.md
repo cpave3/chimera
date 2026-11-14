@@ -21,20 +21,21 @@ chmod +x .chimera/hooks/PostToolUse/audit.sh
 
 | Event              | When it fires                                                                 | Class |
 |--------------------|--------------------------------------------------------------------------------|-------|
+| `SessionStart`    | A session starts: new, resume, fork, or switch.                                  | post  |
 | `SessionCreated`   | A fresh session is registered; it does not fire when resuming a session.        | post  |
-| `UserPromptSubmit` | A user message is accepted, before the model is invoked.                       | post  |
+| `UserPromptSubmit` | A prompt or continuation is accepted (with its source).                       | post  |
 | `PreToolUse`       | A tool call is about to run, before the permission gate.                       | pre   |
 | `PostToolUse`      | A tool call completes (success or error).                                      | post  |
 | `PermissionRequest`| The permission gate would otherwise prompt the user.                           | pre   |
 | `PermissionResolved`| A human or automated permission decision completes, before work resumes.      | post  |
-| `Stop`             | A run reaches a clean stop, before any stop-hook retry.                         | post  |
+| `Stop`             | A run stops cleanly or reaches max_steps / output_limit.                         | post  |
 | `OnError`          | A run terminates with `run_finished.reason: "error"`.                          | post  |
 | `UserInputRequired`| The agent requests human assistance and ends its current run.                    | post  |
 | `Timeout`          | A model response times out.                                                     | post  |
 | `Interrupt`        | An active run is interrupted.                                                   | post  |
 | `CompactionStart`  | Session compaction begins.                                                      | post  |
 | `CompactionEnd`    | Session compaction succeeds or fails.                                           | post  |
-| `SessionEnd`       | A session is disposed by the server (shutdown, explicit close, etc.).           | post  |
+| `SessionEnd`       | A session exits, receives a signal, is deleted, or is switched away from.           | post  |
 
 ## Discovery
 
@@ -52,11 +53,15 @@ A "hook" is any regular file (or symlink to one) with at least one execute bit s
 Each hook receives one JSON payload on stdin. All payloads include `event`, `session_id`, and `cwd`. Scripts can parse stdin for event-specific fields and use `CHIMERA_SESSION_ID` directly when they only need the session ID. Per-event additions:
 
 ```jsonc
+// SessionStart (reason: new, resume, fork, switch)
+{ "event": "SessionStart", "session_id": "...", "cwd": "...", "reason": "resume",
+  "session_name": "...", "parentSessionId": "..." }
+
 // SessionCreated (session_name is optional)
 { "event": "SessionCreated", "session_id": "...", "cwd": "...", "session_name": "..." }
 
 // UserPromptSubmit
-{ "event": "UserPromptSubmit", "session_id": "...", "cwd": "...", "user_message": "..." }
+{ "event": "UserPromptSubmit", "session_id": "...", "cwd": "...", "user_message": "...", "source": "user" }
 
 // PreToolUse
 { "event": "PreToolUse", "session_id": "...", "cwd": "...",
@@ -86,7 +91,7 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
   "request_id": "...", "decision": "allow", "remembered": false,
   "session_status": "running", "remaining_pending": 0 }
 
-// Stop
+// Stop (reason: stop, max_steps, or output_limit)
 { "event": "Stop", "session_id": "...", "cwd": "...", "reason": "stop" }
 
 // OnError
@@ -107,7 +112,7 @@ Each hook receives one JSON payload on stdin. All payloads include `event`, `ses
   "success": false, "error": "..." }
 
 // SessionEnd
-{ "event": "SessionEnd", "session_id": "...", "cwd": "..." }
+{ "event": "SessionEnd", "session_id": "...", "cwd": "...", "reason": "exit" }
 ```
 
 Three environment variables are also set, for scripts that prefer not to parse JSON:
@@ -194,3 +199,31 @@ The activity value differs per event:
 The resolution script maps `waiting_for_permission` with pending requests to `waiting`, and `running` with zero pending requests to `working`. `PostToolUse` is deliberately not an activity transition: parallel tool results can arrive while another permission is still outstanding and must not overwrite `waiting`. Terminal hooks such as `Stop`, `Interrupt`, `Timeout`, and `SessionEnd` clear the activity after the resumed turn actually ends.
 
 `LEGATO_TASK_ID` is set by Legato when it spawns Chimera in a tracked tmux pane; outside that environment the scripts are no-ops. Re-run `legato hooks install --tool chimera` after upgrading Legato to install the resolution hook and remove its obsolete managed `PostToolUse` script.
+
+### Lifecycle ordering
+
+Shell hooks and mods consume one process-wide lifecycle source. Within a session,
+`UserPromptSubmit`, `PostToolUse`, and `CompactionStart`/`CompactionEnd` run in a
+serial queue without making the agent loop wait for them. Later awaited hooks,
+including `Stop`, wait for earlier scripts to finish. Different sessions do not
+hold each other up.
+
+`UserPromptSubmit.source` is `user`, `continuation`, `background`, `stop_retry`,
+or `goal`. `Stop.reason` is `stop`, `max_steps`, or `output_limit`; only a clean
+`stop` may be blocked to request a retry. Limit stops are notifications.
+
+`SessionStart` fires for new sessions, explicit and latest-session resumes,
+forks, and TUI switches. `SessionCreated` remains the fresh-session notification.
+`SessionStart.parentSessionId` is present for forks and subagent children.
+`SessionEnd.reason` is `exit`, `signal`, `delete`, or `switch`. `/exit` and
+Ctrl+C end the active session; SIGHUP and SIGTERM use `signal`. Shutdown allows
+at most two seconds total for end observers and scripts across all sessions;
+sleeping shell hooks are terminated when that window expires. A TUI switch ends
+the old activation without deleting the saved session, then starts the selected
+session. SIGKILL cannot run end hooks.
+
+Append-only context (`!cmd`, `@file`, or an idle append) is not a prompt and does
+not fire `UserPromptSubmit`. The lifecycle source observes `message_appended`
+with `text` and optional `imageCount`; mods receive this as `message.append`.
+Questions, terminal snapshots, and background work reach the same source even
+when a background completion arrives after the turn has finished.

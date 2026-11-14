@@ -50,6 +50,7 @@ export interface InstanceInfo {
   pid: number;
   cwd: string;
   version: string;
+  modApi: number[];
   sandboxMode: SandboxMode;
   parentId?: string;
 }
@@ -82,6 +83,7 @@ export interface ModelListEntry {
 
 export interface CreateSessionOpts {
   cwd: string;
+  previousSessionId?: SessionId;
   model: ModelConfig;
   sandboxMode?: SandboxMode;
   name?: string;
@@ -153,16 +155,25 @@ export class ChimeraClient {
     await this.json<void>(`/v1/sessions/${id}`, { method: 'DELETE' });
   }
 
-  async resumeSession(id: SessionId): Promise<{ sessionId: SessionId }> {
+  async resumeSession(
+    id: SessionId,
+    previousSessionId?: SessionId,
+  ): Promise<{ sessionId: SessionId }> {
     return this.json<{ sessionId: SessionId }>(`/v1/sessions/${id}/resume`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ previousSessionId }),
     });
   }
 
-  async forkSession(id: SessionId, purpose?: string, rewindIndex?: number): Promise<ForkResponse> {
+  async forkSession(
+    id: SessionId,
+    purpose?: string,
+    rewindIndex?: number,
+    previousSessionId?: SessionId,
+  ): Promise<ForkResponse> {
     const body: Record<string, unknown> = {};
+    if (previousSessionId !== undefined) body.previousSessionId = previousSessionId;
     if (purpose !== undefined) body.purpose = purpose;
     if (rewindIndex !== undefined) body.rewindIndex = rewindIndex;
     return this.json<ForkResponse>(`/v1/sessions/${id}/fork`, {
@@ -405,7 +416,7 @@ export class ChimeraClient {
   /**
    * Subscribe to the event stream first to avoid missing events, POST the
    * message once the SSE connection is established, then yield events until
-   * `run_finished`.
+   * `run_finished` or a terminal `prompt_dropped` submission outcome.
    */
   async *send(
     sessionId: SessionId,
@@ -442,7 +453,7 @@ export class ChimeraClient {
         lastEventId = id;
       })) {
         yield stripEnvelopeMeta(envelope);
-        if (envelope.type === 'run_finished') return;
+        if (envelope.type === 'run_finished' || envelope.type === 'prompt_dropped') return;
       }
     } finally {
       // lastEventId unused here; kept in case future logic wants to resume.
@@ -479,6 +490,7 @@ export class ChimeraClient {
             signal: opts.signal,
           });
         } catch (err) {
+          if (opts.signal?.aborted) return;
           if (retries >= this.maxRetries) throw err;
           retries += 1;
           await delay(Math.min(1000 * 2 ** (retries - 1), 5000));

@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { buildChildArgv } from '../src/spawn-child';
 
 describe('buildChildArgv', () => {
+  it('passes every explicit mod folder and the global disable switch to children', () => {
+    const argv = buildChildArgv({
+      chimeraBin: 'chimera',
+      cwd: '/tmp',
+      parentSessionId: 'parent',
+      autoApprove: 'none',
+      sandbox: false,
+      parentHasTty: true,
+      modDirs: ['/opt/first mod', '/opt/second'],
+      mods: false,
+    });
+    expect(argv.filter((arg) => arg === '--mod-dir')).toHaveLength(2);
+    expect(argv[argv.indexOf('--mod-dir') + 1]).toBe('/opt/first mod');
+    expect(argv).toContain('/opt/second');
+    expect(argv).toContain('--no-mods');
+  });
   it('passes inherited generation settings as one JSON argument', () => {
     const argv = buildChildArgv({
       chimeraBin: 'chimera',

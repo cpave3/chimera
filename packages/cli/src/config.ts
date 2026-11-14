@@ -125,10 +125,13 @@ export type McpServerConfig =
       args?: string[];
       env?: Record<string, string>;
       trustedTools?: string[];
+      cwd?: string;
+      inheritEnv?: false;
     }
   | { transport: 'http'; url: string; clientId?: string; trustedTools?: string[] };
 
 export interface ChimeraConfig {
+  mods?: { disabled?: string[] };
   mcpServers?: Record<string, McpServerConfig>;
   defaultModel?: string;
   /**
@@ -496,6 +499,15 @@ export function loadConfig(home = homedir()): ChimeraConfig {
     throw new Error(`Invalid ${path}: expected an object`);
   }
   validateMcpServers(config.mcpServers, path);
+  const mods = z
+    .object({ disabled: z.array(z.string()).optional() })
+    .strict()
+    .safeParse(config.mods ?? {});
+  if (!mods.success) {
+    throw new Error(
+      `Invalid ${path}: ${mods.error.issues.map((issue) => `mods.${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
+    );
+  }
   const result = hostBashPolicySchema.safeParse(config.commandPolicy?.hostBash ?? {});
   if (!result.success) {
     throw new Error(`Invalid commandPolicy.hostBash in ${path}: ${result.error.message}`);

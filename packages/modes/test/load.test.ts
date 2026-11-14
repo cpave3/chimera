@@ -14,6 +14,29 @@ function makeIsolatedHome() {
 }
 
 describe('loadModes', () => {
+  it('discovers bundle modes with native and compatibility precedence', () => {
+    const { home, cwd } = makeIsolatedHome();
+    const directory = join(home, 'bundle');
+    const body = '---\nname: audit\ndescription: Audit code\n---\nAudit carefully';
+    for (const root of [join(cwd, '.claude/modes'), join(directory, 'profiles')]) {
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, 'audit.md'), body);
+    }
+    const modBundles = [
+      { name: 'first', directory, manifest: { modes: 'profiles' } },
+      { name: 'second', directory, manifest: { modes: 'profiles' } },
+    ];
+    const registry = loadModes({ cwd, userHome: home, modBundles });
+    expect(registry.find('audit')).toMatchObject({ source: 'mod:first', body: 'Audit carefully' });
+    expect(registry.collisions().map((collision) => collision.loser)).toEqual([
+      'mod:second',
+      'claude-project',
+    ]);
+    mkdirSync(join(home, '.chimera/modes'), { recursive: true });
+    writeFileSync(join(home, '.chimera/modes/audit.md'), body);
+    expect(loadModes({ cwd, userHome: home, modBundles }).find('audit')?.source).toBe('user');
+  });
+
   it('returns the two shipped builtins by default', () => {
     const { home, cwd } = makeIsolatedHome();
     const registry = loadModes({ cwd, userHome: home, includeClaudeCompat: false });

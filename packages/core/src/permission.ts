@@ -3,11 +3,21 @@
  * reason or the System One check's note, for a denial that one of them made.
  */
 export function permissionDenialMessage(
-  source: 'rule' | 'hook' | 'headless' | 'policy' | 'reviewer' | 'system_one' | 'user' | undefined,
+  source:
+    | 'rule'
+    | 'hook'
+    | 'mod'
+    | 'headless'
+    | 'policy'
+    | 'reviewer'
+    | 'system_one'
+    | 'user'
+    | undefined,
   reason?: string,
 ): string {
   if (source === 'rule') return 'denied by rule';
   if (source === 'hook') return 'denied by hook';
+  if (source === 'mod') return reason ? `denied by mod: ${reason}` : 'denied by mod';
   if (source === 'headless' || source === 'policy') return 'denied by policy';
   if (source === 'reviewer') {
     // The reviewer wanted the user to decide, and this session has nobody to ask.

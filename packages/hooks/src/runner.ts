@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
-import { discover, type DiscoveryOptions } from './discovery';
+import { type DiscoveryOptions, discover } from './discovery';
 import {
-  PRE_HOOK_EVENTS,
   type FirePayload,
   type HookDecision,
   type HookEvent,
@@ -9,6 +8,7 @@ import {
   type HookLogger,
   type HookPayload,
   type HookRunner,
+  PRE_HOOK_EVENTS,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -35,6 +35,8 @@ export class DefaultHookRunner implements HookRunner {
   private readonly discoveryOpts: DiscoveryOptions;
   private readonly timeoutMs: number;
   private readonly log: HookLogger;
+  private disposed = false;
+  private readonly activeHooks = new Set<() => void>();
 
   constructor(opts: DefaultHookRunnerOptions) {
     this.cwd = opts.cwd;
@@ -47,7 +49,16 @@ export class DefaultHookRunner implements HookRunner {
     this.log = opts.log ?? defaultLog;
   }
 
+  dispose(): void {
+    this.disposed = true;
+    for (const cancel of this.activeHooks) {
+      cancel();
+    }
+    this.activeHooks.clear();
+  }
+
   async fire(payload: FirePayload): Promise<HookFireResult> {
+    if (this.disposed) return { blocked: false };
     const event = payload.event;
     const fullPayload = this.buildPayload(payload);
     const { global, project } = await discover(event, this.cwd, this.discoveryOpts);
@@ -62,6 +73,7 @@ export class DefaultHookRunner implements HookRunner {
     let blockResult: HookFireResult | undefined;
     let lastParsedDecision: HookDecision | undefined;
     for (const script of scripts) {
+      if (this.disposed) break;
       const outcome = await this.runOne(script, json, env);
 
       if (outcome.exitCode === 0 && outcome.decision) {
@@ -152,8 +164,7 @@ export class DefaultHookRunner implements HookRunner {
         return;
       }
 
-      const timer = setTimeout(() => {
-        timedOut = true;
+      const kill = () => {
         const pid = child.pid;
         if (pid !== undefined) {
           try {
@@ -167,10 +178,20 @@ export class DefaultHookRunner implements HookRunner {
             }
           }
         }
+      };
+      const timer = setTimeout(() => {
+        timedOut = true;
+        kill();
       }, this.timeoutMs);
+      const cancel = () => {
+        clearTimeout(timer);
+        kill();
+      };
+      this.activeHooks.add(cancel);
 
       child.on('error', (err) => {
         clearTimeout(timer);
+        this.activeHooks.delete(cancel);
         this.log('warn', `hook process error`, {
           script,
           error: err.message,
@@ -187,6 +208,7 @@ export class DefaultHookRunner implements HookRunner {
 
       child.on('close', (code, signal) => {
         clearTimeout(timer);
+        this.activeHooks.delete(cancel);
         if (timedOut) {
           this.log('warn', `hook timed out`, { script, timeoutMs: this.timeoutMs });
           settle({ ok: false, exitCode: null, timedOut: true, stderr, decision: undefined });

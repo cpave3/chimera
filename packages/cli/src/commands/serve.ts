@@ -25,13 +25,17 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
+import { mergeModMcpServers } from '../mod-bundles';
+import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
+import { readServerSecret } from '../server-secret';
+import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../session-shutdown';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { Updater } from '../updater';
 import { VERSION } from '../version';
 
-export interface ServeOptions {
+export interface ServeOptions extends ModOptions {
   port?: number;
   host?: string;
   machineHandshake?: boolean;
@@ -86,15 +90,21 @@ export interface ServeOptions {
 }
 
 export async function runServe(opts: ServeOptions): Promise<void> {
+  const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
   const config = loadConfig(opts.home);
+  const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
-  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
+  const mcpServers = mergeModMcpServers(
+    resolveMcpServers(config, opts.mcpConfig),
+    modRuntime.bundles,
+    { subagent: !!opts.parent },
+  );
   const { model, providersConfig } = resolveModel({
     cliModel: opts.model,
     cliSettings: opts.modelSettings,
@@ -103,6 +113,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   });
 
   const skills = loadSkillsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -110,6 +121,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   });
 
   const agents = loadAgentsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -133,6 +145,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     : undefined;
 
   const modes = loadModesFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -172,6 +185,9 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   }
 
   const factory = new CliAgentFactory({
+    mods: modRuntime.host,
+    modDirs: opts.modDirs,
+    noMods: opts.mods === false,
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -228,14 +244,42 @@ export async function runServe(opts: ServeOptions): Promise<void> {
 
   const app = buildApp({
     registry,
+    secret,
     home: opts.home,
+    onSessionChange: (activeSessionId) => {
+      writeLockfile(
+        {
+          ...lockfile,
+          sessionId: activeSessionId,
+          parentId:
+            opts.parent ?? registry.get(activeSessionId)?.agent.session.parentId ?? undefined,
+        },
+        opts.home,
+      );
+    },
     onFork: async (parent, childId) => {
       if (parent.sandboxMode === 'overlay') {
         await forkOverlay(parent.id, childId, {});
       }
     },
   });
-  const server = await startServer({ app, port: opts.port, host: opts.host });
+  const server = await startServer({ app, port: opts.port, host: opts.host, secret });
+  modRuntime.bind(registry, server.url);
+
+  let stopUpdates = () => {};
+  let closing: Promise<void> | undefined;
+  const shutdown = (reason: ShutdownReason) => {
+    closing ??= (async () => {
+      stopUpdates();
+      removeLockfile(process.pid, opts.home);
+      await shutdownLifecycle(registry, modRuntime, reason);
+      await factory.dispose();
+      await server.close();
+      process.exit(0);
+    })();
+    return closing;
+  };
+  onShutdownSignals(shutdown);
 
   const client = new ChimeraClient({ baseUrl: server.url });
   const { sessionId } = await launchSession(
@@ -252,37 +296,26 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     { sessionExists: opts.sessionExists },
   );
 
-  writeLockfile(
-    {
-      pid: process.pid,
-      port: server.port,
-      cwd: opts.cwd,
-      sessionId,
-      startedAt: Date.now(),
-      version: VERSION,
-      url: server.url,
-    },
-    opts.home,
-  );
+  const lockfile = {
+    pid: process.pid,
+    port: server.port,
+    cwd: opts.cwd,
+    sessionId,
+    parentId: opts.parent ?? registry.get(sessionId)?.agent.session.parentId ?? undefined,
+    startedAt: Date.now(),
+    version: VERSION,
+    url: new URL(server.url).origin,
+  };
+  writeLockfile(lockfile, opts.home);
 
   // A subagent's server (--machine-handshake) belongs to a parent that updates.
-  const stopUpdates = opts.machineHandshake
+  stopUpdates = opts.machineHandshake
     ? () => {}
     : startBackgroundUpdates({
         mode: config.updates?.mode ?? 'auto',
         updater: new Updater(),
         onNotice: (notice) => process.stderr.write(`chimera: ${notice}\n`),
       });
-
-  const shutdown = async () => {
-    stopUpdates();
-    removeLockfile(process.pid, opts.home);
-    await factory.dispose();
-    await server.close();
-    process.exit(0);
-  };
-  process.once('SIGINT', () => void shutdown());
-  process.once('SIGTERM', () => void shutdown());
 
   if (opts.machineHandshake) {
     process.stdout.write(

@@ -251,6 +251,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
             parentCallId,
             result: msg,
             reason: 'error',
+            background: inBackground,
           });
           return errorResult({ subagentId, message: msg });
         }
@@ -260,6 +261,8 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           handle = await spawnChimeraChild({
             chimeraBin: ctx.chimeraBin,
             chimeraBinArgs: ctx.chimeraBinArgs,
+            modDirs: ctx.modDirs,
+            mods: ctx.mods,
             cwd: childCwd,
             parentSessionId: ctx.parentSessionId,
             modelRef,
@@ -299,7 +302,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
         childSessionId: launched.childSessionId,
         url: launched.url,
         purpose: validated.purpose,
-        ...(inBackground ? { background: true } : {}),
+        background: inBackground,
       });
 
       const runToEnd = async (signal: AbortSignal): Promise<DriveResult> => {
@@ -323,6 +326,7 @@ export function buildSpawnAgentTool(ctx: SpawnAgentToolContext) {
           result:
             driven.finalText || (driven.reason === 'error' ? (driven.errorMessage ?? '') : ''),
           reason: driven.reason,
+          background: inBackground,
         });
         return driven;
       };

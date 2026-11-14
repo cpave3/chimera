@@ -40,14 +40,18 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
+import { mergeModMcpServers } from '../mod-bundles';
+import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
+import { readServerSecret } from '../server-secret';
+import { onShutdownSignals, type ShutdownReason, shutdownLifecycle } from '../session-shutdown';
 import { loadSkillsFromConfig } from '../skills-loader';
 import { OwnerLocalSudoAuthentication } from '../sudo-authentication';
 import { Updater } from '../updater';
 import { VERSION } from '../version';
 
-export interface InteractiveOptions {
+export interface InteractiveOptions extends ModOptions {
   cwd: string;
   model?: string;
   modelSettings?: string;
@@ -103,15 +107,21 @@ export function formatExitSummary(sessionId: string): string {
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
+  const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
     : null;
   const sandboxMode: SandboxMode = sandboxOpts?.enabled ? sandboxOpts.mode : 'off';
 
   const config = loadConfig(opts.home);
+  const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
-  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
+  const mcpServers = mergeModMcpServers(
+    resolveMcpServers(config, opts.mcpConfig),
+    modRuntime.bundles,
+    {},
+  );
   const { model, ref, providersConfig } = resolveModel({
     cliModel: opts.model,
     cliSettings: opts.modelSettings,
@@ -120,6 +130,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
 
   const skills = loadSkillsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -131,6 +142,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
 
   const modes = loadModesFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -141,6 +153,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
 
   const agents = loadReloadingAgentsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -182,6 +195,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     ({ password, signal }) => authenticateSudoPassword({ password, signal }),
   );
   const factory = new CliAgentFactory({
+    mods: modRuntime.host,
+    modDirs: opts.modDirs,
+    noMods: opts.mods === false,
     providersConfig,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
@@ -215,6 +231,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
 
   const commands = loadReloadingCommandsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -238,14 +255,50 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
   const app = buildApp({
     registry,
+    secret,
     home: opts.home,
+    onSessionChange: (activeSessionId) => {
+      writeLockfile(
+        {
+          ...lockfile,
+          sessionId: activeSessionId,
+          parentId: registry.get(activeSessionId)?.agent.session.parentId ?? undefined,
+        },
+        opts.home,
+      );
+    },
     onFork: async (parent, childId) => {
       if (parent.sandboxMode === 'overlay') {
         await forkOverlay(parent.id, childId, {});
       }
     },
   });
-  const server = await startServer({ app });
+  const server = await startServer({ app, secret });
+  modRuntime.bind(registry, server.url);
+
+  let stopUpdates = () => {};
+  let stopLockfileCleanup = () => {};
+  let unmount = () => {};
+  let closing: Promise<void> | undefined;
+  const shutdown = (reason: ShutdownReason) => {
+    closing ??= (async () => {
+      stopUpdates();
+      stopLockfileCleanup();
+      removeLockfile(process.pid, opts.home);
+      (commands as Partial<ReloadingCommandRegistry>).close?.();
+      (agents as Partial<ReloadingAgentRegistry>).close?.();
+      await shutdownLifecycle(registry, modRuntime, reason);
+      await factory.dispose();
+      await server.close();
+    })();
+    return closing;
+  };
+  const stopSignals = onShutdownSignals(async (reason) => {
+    const closing = shutdown(reason);
+    unmount();
+    await closing;
+    process.exit(0);
+  });
 
   const client = new ChimeraClient({ baseUrl: server.url });
   const { sessionId } = await launchSession(
@@ -265,20 +318,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   // Make this instance discoverable by `chimera attach` and `chimera ls`.
   // Same lockfile format as `chimera serve`; removed on exit so stale
   // lockfiles don't accumulate.
-  writeLockfile(
-    {
-      pid: process.pid,
-      port: server.port,
-      cwd: opts.cwd,
-      sessionId,
-      startedAt: Date.now(),
-      version: VERSION,
-      url: server.url,
-    },
-    opts.home,
-  );
+  const lockfile = {
+    pid: process.pid,
+    port: server.port,
+    cwd: opts.cwd,
+    sessionId,
+    parentId: registry.get(sessionId)?.agent.session.parentId ?? undefined,
+    startedAt: Date.now(),
+    version: VERSION,
+    url: new URL(server.url).origin,
+  };
+  writeLockfile(lockfile, opts.home);
 
-  const stopLockfileCleanup = removeLockfileOnExit(process.pid, opts.home);
+  stopLockfileCleanup = removeLockfileOnExit(process.pid, opts.home);
 
   const overlay: OverlayHandlers | undefined =
     sandboxMode === 'overlay'
@@ -331,7 +383,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     },
   });
   const updater = new Updater();
-  const stopUpdates = startBackgroundUpdates({
+  unmount = () => handle.unmount();
+  modRuntime.connectUi((text, options) => handle.modLog(text, options));
+  stopUpdates = startBackgroundUpdates({
     mode: config.updates?.mode ?? 'auto',
     updater,
     onNotice: (notice) => handle.updateStatus(updateStatus(updater), notice),
@@ -342,12 +396,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // The transcript stays in the scrollback; say how to get back to it.
     process.stdout.write(formatExitSummary(handle.activeSessionId()));
   } finally {
-    stopUpdates();
-    stopLockfileCleanup();
-    removeLockfile(process.pid, opts.home);
-    (commands as Partial<ReloadingCommandRegistry>).close?.();
-    (agents as Partial<ReloadingAgentRegistry>).close?.();
-    await factory.dispose();
-    await server.close();
+    await shutdown('exit');
+    stopSignals();
   }
 }

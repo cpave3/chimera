@@ -22,6 +22,7 @@ import type { AgentRegistry } from './agent-registry';
 
 export interface AppOptions {
   registry: AgentRegistry;
+  secret?: string;
   /** Home directory for session persistence; defaults to os.homedir(). */
   home?: string;
   /**
@@ -30,6 +31,7 @@ export interface AppOptions {
    * parent's overlay upperdir for `overlay`-mode sandboxes.
    */
   onFork?: (parentInfo: SessionInfo, childId: SessionId) => Promise<void> | void;
+  onSessionChange?: (sessionId: SessionId) => Promise<void> | void;
 }
 
 const settingsSchema = z
@@ -57,6 +59,7 @@ const settingsPatchSchema = z
 
 const createSessionSchema = z.object({
   cwd: z.string(),
+  previousSessionId: z.string().refine(isValidSessionId).optional(),
   model: z.object({
     providerId: z.string(),
     modelId: z.string(),
@@ -85,6 +88,11 @@ const messageSchema = z.object({
 const forkSchema = z.object({
   purpose: z.string().optional(),
   rewindIndex: z.number().int().nonnegative().optional(),
+  previousSessionId: z.string().refine(isValidSessionId).optional(),
+});
+
+const resumeSchema = z.object({
+  previousSessionId: z.string().refine(isValidSessionId).optional(),
 });
 
 const rewindSchema = z.object({
@@ -161,7 +169,13 @@ const permissionResolveSchema = z.discriminatedUnion('decision', [
 
 export function buildApp(opts: AppOptions): Hono {
   const { registry, home, onFork } = opts;
-  const app = new Hono();
+  // Match the encoded secret literally, rather than letting Hono decode routing metacharacters.
+  const root = new Hono(
+    opts.secret ? { getPath: (request) => new URL(request.url).pathname } : undefined,
+  );
+  const app = new Hono().basePath(
+    opts.secret ? `/${encodeURIComponent(opts.secret).replaceAll('*', '%2A')}` : '/',
+  );
 
   // In-memory cache of disk-scanned session metadata. Stored as the
   // in-flight promise (not the resolved array) so concurrent readers
@@ -173,7 +187,7 @@ export function buildApp(opts: AppOptions): Hono {
     listCache = null;
   };
 
-  app.get('/healthz', (c) => c.text('ok'));
+  root.get('/healthz', (c) => c.text('ok'));
 
   app.get('/v1/instance', (c) => c.json(registry.getInstanceInfo()));
 
@@ -204,7 +218,11 @@ export function buildApp(opts: AppOptions): Hono {
         // The requested ID is available.
       }
     }
+    if (parseResult.data.previousSessionId) {
+      await registry.endSession(parseResult.data.previousSessionId, 'switch');
+    }
     const { sessionId } = await registry.create({
+      startReason: parseResult.data.previousSessionId ? 'switch' : 'new',
       cwd: parseResult.data.cwd,
       model: parseResult.data.model,
       sandboxMode: parseResult.data.sandboxMode ?? 'off',
@@ -214,6 +232,7 @@ export function buildApp(opts: AppOptions): Hono {
       additionalWritePaths: parseResult.data.additionalWritePaths,
     });
     invalidateListCache();
+    if (parseResult.data.previousSessionId) await opts.onSessionChange?.(sessionId);
     return c.json({ sessionId }, 201);
   });
 
@@ -299,8 +318,23 @@ export function buildApp(opts: AppOptions): Hono {
   app.post('/v1/sessions/:id/resume', async (c) => {
     const id = c.req.param('id');
     if (!isValidSessionId(id)) return c.json({ error: 'not found' }, 404);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON' }, 400);
+    }
+    const parsed = resumeSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'bad request', errors: parsed.error.issues }, 400);
+    const previousSessionId = parsed.data.previousSessionId;
+    const reason = previousSessionId ? 'switch' : 'resume';
     const existing = registry.get(id);
     if (existing) {
+      if (previousSessionId && previousSessionId !== id) {
+        await registry.endSession(previousSessionId, 'switch');
+      }
+      await registry.startSession(id, reason);
+      if (previousSessionId) await opts.onSessionChange?.(id);
       return c.json({ sessionId: id });
     }
     let meta: Awaited<ReturnType<typeof readSessionMetadata>>;
@@ -309,12 +343,17 @@ export function buildApp(opts: AppOptions): Hono {
     } catch {
       return c.json({ error: `session ${id} not found on disk` }, 404);
     }
+    if (previousSessionId && previousSessionId !== id) {
+      await registry.endSession(previousSessionId, 'switch');
+    }
     const { sessionId } = await registry.create({
+      startReason: reason,
       cwd: meta.cwd,
       model: meta.model,
       sandboxMode: meta.sandboxMode,
       sessionId: id,
     });
+    if (previousSessionId) await opts.onSessionChange?.(sessionId);
     return c.json({ sessionId });
   });
 
@@ -362,13 +401,18 @@ export function buildApp(opts: AppOptions): Hono {
         );
       }
     }
+    if (parseResult.data.previousSessionId) {
+      await registry.endSession(parseResult.data.previousSessionId, 'switch');
+    }
     const { sessionId } = await registry.create({
+      startReason: 'fork',
       cwd: meta.cwd,
       model: meta.model,
       sandboxMode: meta.sandboxMode,
       sessionId: childId,
     });
     invalidateListCache();
+    if (parseResult.data.previousSessionId) await opts.onSessionChange?.(sessionId);
     return c.json({ sessionId, parentId }, 201);
   });
 
@@ -880,7 +924,9 @@ export function buildApp(opts: AppOptions): Hono {
 
       // Keep open until aborted.
       const abort = new Promise<void>((resolve) => {
+        stream.onAbort(resolve);
         c.req.raw.signal.addEventListener('abort', () => resolve());
+        if (stream.aborted || c.req.raw.signal.aborted) resolve();
       });
       await abort;
       clearInterval(heartbeat);
@@ -888,5 +934,5 @@ export function buildApp(opts: AppOptions): Hono {
     });
   });
 
-  return app;
+  return root.route('/', app);
 }

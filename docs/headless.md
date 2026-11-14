@@ -4,6 +4,22 @@ Chimera runs without the TUI in two ways: `chimera run` for one prompt, and
 `chimera serve` for a server that other clients drive. Both use the same
 agent, tools and configuration as the TUI.
 
+## Optional server secret
+
+Set `CHIMERA_SERVER_SECRET` before launching `chimera serve`, `chimera run`,
+or the TUI to serve the API only at `http://host:port/<secret>/v1/…`.
+Without it, the API remains open. `/healthz` stays public. Use a long,
+random secret and a trusted network or TLS proxy: the secret is a URL path,
+not transport encryption.
+
+Chimera reads and removes the variable before spawning tools, hooks or MCP
+servers. It never puts the secret in arguments or instance lockfiles. The
+owning TUI connects automatically; for `chimera attach <pid-or-session>`,
+set the same variable in the attaching process. For a URL target, provide
+the origin with that variable, or the full secret URL without it.
+Subagent child servers always get fresh secrets; their parents receive the
+full URLs through the private startup handshake.
+
 ## One prompt: `chimera run`
 
 ```
@@ -138,8 +154,15 @@ Events that only report: `approval_reviewed` (the reviewer's decision),
 `system_one_checked` (the System One check's verdict),
 `goal_updated` (a goal change or check result), `task_list_updated`,
 `usage_updated`, `subagent_spawned` and `subagent_finished`,
-`background_process_exited`, and the tool and text events of
+`background_process_started` (shell ID and command), `background_process_exited`, and the tool and text events of
 [the example transcript](session-transcript.md).
 
 All event additions are optional fields or new event types. A client that
 ignores unknown events continues to operate.
+
+`background_process_started` carries `shellId` and `command`, matching the later
+`background_process_exited` event. `subagent_finished.background` identifies
+foreground versus background execution. `run_finished` includes snapshots of
+`model`, `usage`, and `contextFill` (a context-window fraction), including limit,
+interruption, and error outcomes. `user_message.append: true` marks context
+injected into an existing turn rather than a new prompt.

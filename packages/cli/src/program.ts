@@ -16,6 +16,7 @@ import {
   runMcpRemove,
   runMcpTools,
 } from './commands/mcp';
+import { runModList, runModTest, runModTypes, runModValidate } from './commands/mod';
 import { runBashPolicyReview } from './commands/policy-review';
 import { runOneShot } from './commands/run';
 import { runSandboxBuild } from './commands/sandbox';
@@ -29,6 +30,8 @@ import {
 } from './commands/sessions';
 import { runSkillsList } from './commands/skills';
 import { runUpdate } from './commands/update';
+import { loadConfig } from './config';
+import { readServerSecret } from './server-secret';
 import { VERSION, versionReport } from './version';
 
 function applySubagentOptions(cmd: Command): Command {
@@ -51,10 +54,18 @@ function applyModeOptions(cmd: Command): Command {
 }
 
 function applyMcpOptions(cmd: Command): Command {
-  return cmd.option(
-    '--mcp-config <json|@file>',
-    'MCP servers for this session only: {"mcpServers": {...}} as JSON, or @path to a JSON file. Merged over the global config; same names replace it',
-  );
+  return cmd
+    .option(
+      '--mod-dir <directory>',
+      'Load a mod folder (repeatable)',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option('--no-mods', 'Disable all mods')
+    .option(
+      '--mcp-config <json|@file>',
+      'MCP servers for this session only: {"mcpServers": {...}} as JSON, or @path to a JSON file. Merged over the global config; same names replace it',
+    );
 }
 
 function applyCompactionOptions(cmd: Command): Command {
@@ -207,6 +218,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
     });
     process.exit(exitCode);
   });
@@ -307,6 +320,37 @@ export function buildProgram(): Command {
     .action(async (opts) => {
       await runHooksList({ cwd: opts.cwd, json: opts.json });
     });
+
+  const mod = program.command('mod').description('Inspect and test Chimera mods');
+  mod
+    .command('list')
+    .option('--json', 'JSON output')
+    .option(
+      '--mod-dir <directory>',
+      'Load a mod folder',
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option('--no-mods', 'Disable all mods')
+    .action(async (options) => {
+      process.exitCode = await runModList({
+        ...options,
+        modDirs: options.modDir,
+        disabled: loadConfig().mods?.disabled,
+      });
+    });
+  mod
+    .command('validate <directory>')
+    .option('--json', 'JSON output')
+    .action(async (directory: string, options) => {
+      process.exitCode = await runModValidate(directory, options);
+    });
+  mod.command('types').action(async () => {
+    process.exitCode = await runModTypes();
+  });
+  mod.command('test <directory>').action(async (directory: string) => {
+    process.exitCode = await runModTest(directory);
+  });
 
   program
     .command('skills')
@@ -413,6 +457,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
     });
   });
 
@@ -553,6 +599,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
       inline: opts.inline,
     });
   });
@@ -608,6 +656,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
       inline: opts.inline,
     });
   });
@@ -744,6 +794,8 @@ export function buildProgram(): Command {
       additionalReadPaths: readPaths,
       additionalWritePaths: writePaths,
       mcpConfig: opts.mcpConfig,
+      modDirs: opts.modDir,
+      mods: opts.mods,
       inline: opts.inline,
     });
   });
@@ -792,6 +844,7 @@ async function readStdin(): Promise<string> {
 }
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {
+  readServerSecret();
   const program = buildProgram();
   try {
     await program.parseAsync(argv);

@@ -8,7 +8,6 @@ import type {
   PermissionRequest,
   PermissionResolution,
 } from '@chimera/core';
-import type { HookRunner } from '@chimera/hooks';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DefaultPermissionGate, type GateOptions } from '../src/gate';
 import { GatedExecutor } from '../src/gated-executor';
@@ -203,9 +202,7 @@ describe('the approval reviewer in the gate', () => {
   });
 
   it('does not review what a rule, an auto-approve level or a hook decides', async () => {
-    const blockingHook = {
-      fire: async () => ({ blocked: true, blockingScript: '/hooks/no.sh', reason: 'no' }),
-    } as unknown as HookRunner;
+    const permissionRequest = async () => ({ blocked: true, reason: 'no' });
     const byRule = gate(allow);
     byRule.gate.addRule(
       {
@@ -219,7 +216,7 @@ describe('the approval reviewer in the gate', () => {
       'session',
     );
     const byLevel = gate(allow, { autoApprove: 'all', commandPolicy: undefined });
-    const byHook = gate(allow, { hookRunner: blockingHook });
+    const byHook = gate(allow, { permissionRequest });
 
     const ruled = await byRule.gate.requestMcp({
       requestId: 'm1',

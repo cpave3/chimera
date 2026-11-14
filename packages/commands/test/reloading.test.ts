@@ -35,6 +35,28 @@ describe('ReloadingCommandRegistry', () => {
     await rm(home, { recursive: true, force: true });
   });
 
+  it('watches bundled command paths and reloads edits', async () => {
+    const directory = join(home, 'bundle');
+    await mkdir(join(directory, 'prompts'), { recursive: true });
+    const path = join(directory, 'prompts/audit.md');
+    await writeFile(path, 'Before');
+    const registry = new ReloadingCommandRegistry({
+      cwd,
+      userHome: home,
+      modBundles: [{ name: 'audit', directory, manifest: { commands: 'prompts' } }],
+      debounceMs: DEBOUNCE,
+    });
+    try {
+      expect(registry.find('audit')?.source).toBe('mod:audit');
+      const changed = waitForChange(registry);
+      await writeFile(path, 'After');
+      await changed;
+      expect(registry.expand('audit', '')).toBe('After');
+    } finally {
+      registry.close();
+    }
+  });
+
   it('loads initial commands at construction', async () => {
     await writeFile(join(cwd, '.chimera', 'commands', 'hi.md'), 'Hello!');
     const registry = new ReloadingCommandRegistry({

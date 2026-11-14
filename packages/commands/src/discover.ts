@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildTiers, walkMarkdownFiles, parseFrontmatter } from '@chimera/core';
+import { buildTiers, parseFrontmatter, walkMarkdownFiles } from '@chimera/core';
 import type { Command, CommandCollision, CommandSource, LoadCommandsOptions } from './types';
 
 export interface DiscoverResult {
@@ -26,6 +26,7 @@ function toCommandName(relPath: string): string {
 export function discover(opts: LoadCommandsOptions): DiscoverResult {
   const tiers = buildTiers({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     assetType: 'commands',
