@@ -525,7 +525,7 @@ export class AgentRegistry {
       return 'already-running';
     }
     if (entry.runActive) {
-      entry.agent.injectRunMessage(content, images);
+      entry.agent.injectRunMessage(content, images, 'append');
       return 'injected';
     }
     entry.injectActive = true;

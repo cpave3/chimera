@@ -154,8 +154,15 @@ Events that only report: `approval_reviewed` (the reviewer's decision),
 `system_one_checked` (the System One check's verdict),
 `goal_updated` (a goal change or check result), `task_list_updated`,
 `usage_updated`, `subagent_spawned` and `subagent_finished`,
-`background_process_exited`, and the tool and text events of
+`background_process_started` (shell ID and command), `background_process_exited`, and the tool and text events of
 [the example transcript](session-transcript.md).
 
 All event additions are optional fields or new event types. A client that
 ignores unknown events continues to operate.
+
+`background_process_started` carries `shellId` and `command`, matching the later
+`background_process_exited` event. `subagent_finished.background` identifies
+foreground versus background execution. `run_finished` includes snapshots of
+`model`, `usage`, and `contextFill` (a context-window fraction), including limit,
+interruption, and error outcomes. `user_message.append: true` marks context
+injected into an existing turn rather than a new prompt.

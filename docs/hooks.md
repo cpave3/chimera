@@ -221,3 +221,9 @@ at most two seconds total for end observers and scripts across all sessions;
 sleeping shell hooks are terminated when that window expires. A TUI switch ends
 the old activation without deleting the saved session, then starts the selected
 session. SIGKILL cannot run end hooks.
+
+Append-only context (`!cmd`, `@file`, or an idle append) is not a prompt and does
+not fire `UserPromptSubmit`. The lifecycle source observes `message_appended`
+with `text` and optional `imageCount`; mods receive this as `message.append`.
+Questions, terminal snapshots, and background work reach the same source even
+when a background completion arrives after the turn has finished.

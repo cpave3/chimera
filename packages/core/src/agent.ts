@@ -187,6 +187,9 @@ export class Agent {
   }
 
   private observeEvent(event: AgentEvent): AgentEvent {
+    if (event.type === 'user_message' && event.append) {
+      event = { type: 'message_appended', text: event.content, imageCount: event.imageCount };
+    }
     void this.lifecycle
       .dispatch({ ...event, sessionId: this.session.id, cwd: this.session.cwd })
       .catch((error) => console.error('[lifecycle] observer failed:', error));
@@ -284,7 +287,11 @@ export class Agent {
    * terminal step the loop continues so the model responds to them (still
    * subject to `maxTerminalSteps`).
    */
-  private pendingInjectMessages: Array<{ content: string; images?: string[] }> = [];
+  private pendingInjectMessages: Array<{
+    content: string;
+    images?: string[];
+    source: PromptSource | 'append';
+  }> = [];
   /**
    * Optional callback invoked when a queued mode switch is drained. Returns
    * the freshly-recomposed system prompt + filtered tool set + effective
@@ -789,10 +796,11 @@ export class Agent {
   /**
    * Push an arbitrary event onto the current run's stream. Used by tools that
    * need to emit out-of-band events (subagent spawn/finish, sub-stream
-   * forwarding). No-op if no run is active.
+   * forwarding). Idle events still reach lifecycle observers.
    */
   pushEvent(event: AgentEvent): void {
-    this.currentQueue?.push(event);
+    if (this.currentQueue) this.currentQueue.push(event);
+    else this.observeEvent(event);
   }
 
   /**
@@ -1232,6 +1240,7 @@ export class Agent {
     } catch {
       // best-effort persistence
     }
+    this.observeEvent({ type: 'message_appended', text: content, imageCount: imagePaths?.length });
   }
 
   /**
@@ -1241,8 +1250,12 @@ export class Agent {
    * another async context while `runInternal` is awaiting — the buffer is
    * only read at step boundaries where `session.messages` is not mid-mutation.
    */
-  injectRunMessage(content: string, images?: string[]): void {
-    this.pendingInjectMessages.push({ content, images });
+  injectRunMessage(
+    content: string,
+    images?: string[],
+    source: PromptSource | 'append' = 'background',
+  ): void {
+    this.pendingInjectMessages.push({ content, images, source });
   }
 
   run(
@@ -1262,6 +1275,10 @@ export class Agent {
 
     const queue = new EventQueue<AgentEvent>((event) => {
       if (event.type === 'run_finished') {
+        const context = this.contextBreakdown();
+        event.model = structuredClone(this.session.model);
+        event.usage = cloneUsage(this.session.usage);
+        event.contextFill = context.estimatedTotalTokens / context.contextWindow;
         // Both lifecycle observers and stream consumers may start the next run.
         this.currentQueue = null;
         this.running = false;
@@ -2393,7 +2410,7 @@ export class Agent {
                 type: 'user_message',
                 content: inject.content,
                 imageCount: inject.images?.length,
-                source: 'background',
+                ...(inject.source === 'append' ? { append: true } : { source: inject.source }),
               });
             }
             injectedThisStep = true;

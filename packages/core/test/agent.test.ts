@@ -332,7 +332,7 @@ describe('Agent', () => {
       { request: 'Run X and paste the output', kind: 'action' },
       'completed',
     ]);
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-1)).toMatchObject({
       type: 'run_finished',
       reason: 'waiting_for_input',
       error: undefined,

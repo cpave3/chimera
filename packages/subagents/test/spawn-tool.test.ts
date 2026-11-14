@@ -213,8 +213,8 @@ describe('buildSpawnAgentTool — in-process happy path', () => {
 
     const spawned = events.find((e) => e.type === 'subagent_spawned');
     const finished = events.find((e) => e.type === 'subagent_finished');
-    expect(spawned).toBeDefined();
-    expect(finished).toBeDefined();
+    expect(spawned).toMatchObject({ background: false });
+    expect(finished).toMatchObject({ background: false });
     // sub-stream events were forwarded
     const wraps = events.filter(
       (e): e is Extract<AgentEvent, { type: 'subagent_event' }> => e.type === 'subagent_event',

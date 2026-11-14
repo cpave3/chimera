@@ -778,6 +778,7 @@ export class CliAgentFactory implements AgentFactory {
 
     const backgroundProcesses = new BackgroundProcessManager({
       cwd: init.cwd,
+      onStart: (notice) => agent.pushEvent({ type: 'background_process_started', ...notice }),
       onExit: (notice) =>
         agent.pushEvent({
           type: 'background_process_exited',

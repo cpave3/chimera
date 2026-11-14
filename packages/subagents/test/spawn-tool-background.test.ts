@@ -99,7 +99,33 @@ describe('spawn_agent in the background', () => {
     });
     expect(delivered).toHaveLength(1);
     expect(delivered[0]).toContain('the answer');
-    expect(events.at(-1)).toMatchObject({ type: 'subagent_finished', reason: 'stop' });
+    expect(events[0]).toMatchObject({ type: 'subagent_spawned', background: true });
+    expect(events.at(-1)).toMatchObject({
+      type: 'subagent_finished',
+      reason: 'stop',
+      background: true,
+    });
+  });
+
+  it.each([
+    false,
+    true,
+  ])('labels builder errors with the selected background mode (%s)', async (background) => {
+    const { call, events } = setup({
+      inProcess: async () => {
+        throw new Error('builder failed');
+      },
+    });
+
+    expect(await call({ background })).toMatchObject({ reason: 'error', result: 'builder failed' });
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'subagent_finished',
+        reason: 'error',
+        result: 'builder failed',
+        background,
+      }),
+    ]);
   });
 
   it('keeps the child running when the run that started it is interrupted', async () => {
@@ -126,7 +152,7 @@ describe('spawn_agent in the background', () => {
   });
 
   it('runs in the foreground, and says so, where the session cannot wait for a child', async () => {
-    const { call, child } = setup({ background: undefined });
+    const { call, child, events } = setup({ background: undefined });
 
     const pending = call({ background: true });
     await settle();
@@ -136,6 +162,8 @@ describe('spawn_agent in the background', () => {
     expect(result).toMatchObject({ result: 'the answer', reason: 'stop' });
     expect(result.status).toBeUndefined();
     expect(result.note).toMatch(/foreground/);
+    expect(events[0]).toMatchObject({ type: 'subagent_spawned', background: false });
+    expect(events.at(-1)).toMatchObject({ type: 'subagent_finished', background: false });
   });
 
   it('still blocks for a call that does not ask for the background', async () => {
