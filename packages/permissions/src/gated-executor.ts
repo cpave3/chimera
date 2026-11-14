@@ -72,7 +72,7 @@ export class GatedExecutor implements Executor {
         stdout: '',
         stderr: permissionDenialMessage(
           resolution.denialSource,
-          resolution.reviewerReason ?? resolution.systemOneNote,
+          resolution.feedback ?? resolution.reviewerReason ?? resolution.systemOneNote,
         ),
         exitCode: -1,
         timedOut: false,

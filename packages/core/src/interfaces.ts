@@ -111,6 +111,7 @@ export type PermissionDecisionSource =
   | 'automatic'
   | 'rule'
   | 'hook'
+  | 'mod'
   | 'headless'
   | 'policy'
   | 'reviewer'

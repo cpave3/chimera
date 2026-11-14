@@ -21,6 +21,12 @@ import type { AutoApproveLevel } from './types';
 
 export type RaiseRequestFn = (req: PermissionRequest) => Promise<PermissionResolution>;
 
+export type ModPermissionDecision =
+  | 'allow'
+  | 'deny'
+  | 'pass'
+  | { decision: 'allow' | 'deny' | 'pass'; message?: string };
+
 export interface GateOptions {
   cwd: string;
   home?: string;
@@ -35,6 +41,11 @@ export interface GateOptions {
   headlessAutoDeny?: boolean;
   /** Deny MCP prompts when no caller can answer them, without changing other tool policy. */
   mcpHeadlessAutoDeny?: boolean;
+  /** Runs after rules and automatic approvals, before the remaining approval chain. */
+  interceptPermission?: (
+    request: PermissionRequest,
+    args: unknown,
+  ) => Promise<ModPermissionDecision>;
   /**
    * Optional lifecycle callback. When set, dispatched with `PermissionRequest`
    * between rule check and user prompt. A blocking hook (exit 2) denies the
@@ -131,6 +142,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private readonly raise: RaiseRequestFn;
   private readonly headlessAutoDeny: boolean;
   private readonly mcpHeadlessAutoDeny: boolean;
+  private readonly interceptPermission: GateOptions['interceptPermission'];
   private readonly permissionRequest: GateOptions['permissionRequest'];
   private readonly emitResolved:
     | ((requestId: string, decision: 'allow' | 'deny', remembered: boolean) => void | Promise<void>)
@@ -148,6 +160,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     this.raise = opts.raiseRequest;
     this.headlessAutoDeny = opts.headlessAutoDeny ?? false;
     this.mcpHeadlessAutoDeny = opts.mcpHeadlessAutoDeny ?? false;
+    this.interceptPermission = opts.interceptPermission;
     this.permissionRequest = opts.permissionRequest;
     this.emitResolved = opts.emitResolved;
     this.commandPolicy = opts.commandPolicy;
@@ -170,8 +183,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
 
   /**
    * Full gate semantics:
-   * 1. If auto-approve level admits the call, return allow.
-   * 2. If a rule matches, return the rule's resolution.
+   * 1. Deny rules and blocked policy findings cannot be overridden.
+   * 2. Apply automatic approvals and matching allow rules, then mod interception.
    * 3. If a permissionRequest callback is configured, dispatch PermissionRequest.
    *    A pre-hook block (exit 2) denies without raising the user prompt — the executor
    *    renders this denial as `{ error: "denied by hook" }`.
@@ -342,6 +355,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
   private async retryApprovedBySystemOne(
     req: PermissionRequest,
   ): Promise<PermissionResolution | null> {
+    const intercepted = await this.interceptedByMod(req);
+    if (intercepted) return intercepted;
     const verdict = await this.checkedBySystemOne(req);
     if (verdict?.decision !== 'allow') return null;
     const hookDenial = await this.deniedByHook(req);
@@ -365,6 +380,8 @@ export class DefaultPermissionGate implements McpPermissionGate {
     req: PermissionRequest,
     mcpArguments?: unknown,
   ): Promise<PermissionResolution> {
+    const intercepted = await this.interceptedByMod(req, mcpArguments);
+    if (intercepted) return intercepted;
     const hookDenial = await this.deniedByHook(req);
     if (hookDenial) return hookDenial;
     const verdict = await this.checkedBySystemOne(req);
@@ -448,6 +465,27 @@ export class DefaultPermissionGate implements McpPermissionGate {
         ? { ...raised, denialSource: 'user' as const }
         : raised;
     return this.audited(req, resolution, 'user', review, verdict);
+  }
+
+  private async interceptedByMod(
+    request: PermissionRequest,
+    args?: unknown,
+  ): Promise<PermissionResolution | null> {
+    if (!this.interceptPermission) return null;
+    const result = await this.interceptPermission(request, args);
+    const decision = typeof result === 'string' ? result : result.decision;
+    if (decision === 'pass') return null;
+    await this.emitResolved?.(request.requestId, decision, false);
+    return this.audited(
+      request,
+      {
+        decision,
+        remembered: false,
+        ...(decision === 'deny' ? { denialSource: 'mod' as const } : {}),
+        ...(typeof result === 'object' && result.message ? { feedback: result.message } : {}),
+      },
+      'mod',
+    );
   }
 
   private audited(

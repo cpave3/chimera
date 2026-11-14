@@ -103,7 +103,9 @@ async function describeMcpTools(options: DescribeOptions): Promise<McpToolEntry[
               const byReviewer =
                 resolution.denialSource === 'reviewer'
                   ? ` by reviewer: ${resolution.reviewerReason ?? 'the request needs the user'}`
-                  : '';
+                  : resolution.denialSource === 'mod'
+                    ? ` by mod${resolution.feedback ? `: ${resolution.feedback}` : ''}`
+                    : '';
               return { error: `MCP call ${server}/${definition.name} denied${byReviewer}` };
             }
             try {

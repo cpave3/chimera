@@ -84,8 +84,9 @@ export class ModRuntime {
           contextFill: payload.contextFill,
         };
       }
+      // The gate already dispatched this interception with its stable requestId.
       case 'permission_request':
-        return { ...payload, type: 'permission.request', sessionId };
+        return undefined;
       case 'permission_resolved':
         return { ...payload, type: 'permission.resolved', sessionId };
       case 'question_request':

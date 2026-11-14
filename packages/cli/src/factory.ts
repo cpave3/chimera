@@ -701,6 +701,23 @@ export class CliAgentFactory implements AgentFactory {
       raiseRequest: (req) => agent.raisePermissionRequest(req),
       headlessAutoDeny: this.subagents.headlessAutoDeny,
       mcpHeadlessAutoDeny: this.mcpHeadlessAutoDeny,
+      interceptPermission: this.mods
+        ? (request, args) =>
+            this.mods!.intercept<import('@chimera/permissions').ModPermissionDecision>(
+              'permission.request',
+              {
+                ...request,
+                type: 'permission.request',
+                sessionId: agent.session.id,
+                toolName: request.tool,
+                args: args ?? {
+                  command: request.command,
+                  ...(request.reason ? { reason: request.reason } : {}),
+                },
+              },
+              async () => 'pass',
+            )
+        : undefined,
       permissionRequest: (payload) => agent.dispatchLifecycle(payload),
       emitResolved: (requestId, decision, remembered) =>
         agent.emitPermissionResolved(requestId, decision, remembered),
