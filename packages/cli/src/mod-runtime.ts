@@ -29,6 +29,29 @@ export class ModRuntime {
     });
     runtime.unsubscribe = lifecycleSource.subscribe(async (event) => {
       if (!runtime.registry?.get(event.sessionId as SessionId)) return;
+      if (event.type === 'Stop') {
+        const decision = await runtime.host.intercept<unknown>(
+          'turn.stop',
+          {
+            type: 'turn.stop',
+            sessionId: event.sessionId,
+            reason: event.reason,
+          },
+          async () => ({ decision: 'pass' }),
+        );
+        if (
+          decision &&
+          typeof decision === 'object' &&
+          'decision' in decision &&
+          decision.decision === 'block'
+        ) {
+          return {
+            blocked: true,
+            reason: 'reason' in decision ? String(decision.reason) : 'Continue',
+          };
+        }
+        return;
+      }
       const mapped = runtime.map(event);
       if (!mapped) return;
       await runtime.host

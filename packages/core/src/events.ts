@@ -34,6 +34,7 @@ export type RunFinishedReason =
 export type PromptSource = 'user' | 'continuation' | 'background' | 'stop_retry' | 'goal';
 
 export type AgentEvent =
+  | { type: 'prompt_dropped'; reason: string }
   | { type: 'session_started'; sessionId: SessionId }
   | {
       type: 'user_message';

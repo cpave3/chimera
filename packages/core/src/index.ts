@@ -11,8 +11,10 @@ export * from './goal';
 export * from './ids';
 export * from './image-header';
 export * from './interfaces';
+export * from './lifecycle';
 export * from './logging';
 export * from './message-parts';
+export * from './model-interception';
 export * from './model-settings';
 export * from './permission';
 export * from './persistence';
@@ -22,5 +24,3 @@ export { type PromptTool, renderToolsSection } from './prompts/role';
 export * from './questions';
 export * from './types';
 export * from './workspace-checkpoints';
-
-export * from './lifecycle';

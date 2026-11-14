@@ -37,7 +37,7 @@ import {
   type Mode,
   type ModeRegistry,
 } from '@chimera/modes';
-import type { ModHost } from '@chimera/mods';
+import type { ModEvent, ModHost } from '@chimera/mods';
 import {
   type AutoApproveLevel,
   BalancedPolicyEvaluator,
@@ -625,6 +625,33 @@ export class CliAgentFactory implements AgentFactory {
         : {}),
       responseTimeoutMs: this.responseTimeoutMs,
       providerOptions: initialGeneration.providerOptions,
+      interceptPrompt: this.mods
+        ? (prompt, next) =>
+            this.mods!.intercept(
+              'prompt.submit',
+              Object.assign(prompt, { type: 'prompt.submit' }) as unknown as ModEvent,
+              next,
+            )
+        : undefined,
+      interceptStep: this.mods
+        ? (request, next) =>
+            this.mods!.intercept(
+              'turn.step',
+              Object.assign(request, { type: 'turn.step' }) as unknown as ModEvent,
+              async () => next(),
+            )
+        : undefined,
+      resolveStepModel: (ref, effort) => {
+        const described = describeModel(ref, {
+          ...agent.session.modelSettingsOverrides?.[ref],
+          ...(effort === undefined ? {} : { reasoningEffort: effort }),
+        });
+        return {
+          model: described.model,
+          languageModel: described.provider.getModel(described.modelId, agent.session.id),
+          providerOptions: described.generation.providerOptions,
+        };
+      },
     });
     agent.session.modelSettingsOverrides = modelSettingsOverrides;
     agent.session.modelCreationDefaults = modelCreationDefaults;

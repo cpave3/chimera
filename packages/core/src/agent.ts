@@ -11,6 +11,12 @@ import { readImageDimensions } from './image-header';
 import type { PermissionRequest, PermissionResolution } from './interfaces';
 import { type LifecycleHookData, type LifecycleSource, lifecycleSource } from './lifecycle';
 import { elideImageToolResults } from './message-parts';
+import type {
+  ModelStepRequest,
+  PromptSubmissionResult,
+  StepModelResolution,
+  SubmittedPrompt,
+} from './model-interception';
 import {
   type ModelSettings,
   type ModelSettingsPatch,
@@ -87,6 +93,12 @@ export interface UserInputRequest {
 }
 
 export interface AgentOptions {
+  interceptStep?: (request: ModelStepRequest, next: () => Promise<void>) => Promise<void>;
+  resolveStepModel?: (ref: string, effort?: string) => StepModelResolution;
+  interceptPrompt?: (
+    prompt: SubmittedPrompt,
+    next: () => Promise<PromptSubmissionResult>,
+  ) => Promise<PromptSubmissionResult>;
   lifecycle?: LifecycleSource;
   cwd: string;
   model: ModelConfig;
@@ -1476,6 +1488,22 @@ export class Agent {
     imagePaths?: string[],
     source: PromptSource = 'user',
   ): Promise<void> {
+    if (this.opts.interceptPrompt) {
+      const prompt: SubmittedPrompt = { sessionId: this.session.id, text: userMessage, source };
+      try {
+        const result = await this.opts.interceptPrompt(prompt, async () => ({
+          decision: 'accept',
+        }));
+        if (result.decision === 'drop') {
+          queue.push({ type: 'prompt_dropped', reason: result.reason });
+          return;
+        }
+        userMessage = prompt.text;
+      } catch (error) {
+        queue.push({ type: 'run_finished', reason: 'error', error: describeProviderError(error) });
+        return;
+      }
+    }
     this.session.status = 'running';
     this.pendingUserInputRequest = null;
 
@@ -1763,480 +1791,526 @@ export class Agent {
               this.abortController.abort();
             }, responseTimeoutMs);
           };
-          armResponseTimeout();
-
           // Message count the prompt was built from; pairs with the step's
           // reported inputTokens in the context tracker.
           const messageCountAtPrompt = this.session.messages.length;
-          const activeVision = this.activeModel().vision === true;
-          if (!activeVision && visionFallbackProbe === null) {
-            const probe = this.visionModelResolver?.();
-            visionFallbackProbe =
-              probe?.status === 'ok' ? { configured: true, ref: probe.ref } : { configured: false };
-          }
           let stepError: unknown;
-          const stream = streamText({
-            model: this.activeLanguageModel(),
-            messages: await prepareMessagesForModel(this.session.messages, {
-              vision: activeVision,
-              visionConfigured: activeVision || (visionFallbackProbe?.configured ?? false),
-              visionRef: visionFallbackProbe?.ref,
-            }),
-            tools: this.opts.tools,
-            system: this.composeSystemPrompt(planHandoff),
-            stopWhen: stepCountIs(1),
-            // The loop below owns retries so that request failures and
-            // mid-stream failures follow one policy.
-            maxRetries: 0,
-            // Errors arrive as `error` stream parts; the SDK's default handler
-            // would also print each one to stderr, under the TUI.
-            onError: () => {},
-            experimental_repairToolCall: repairToolCall,
-            abortSignal: this.abortController.signal,
-            temperature: this.activeModel().temperature,
-            topP: this.activeModel().topP,
-            maxOutputTokens: this.activeModel().maxOutputTokens,
-            providerOptions: this.activeProviderOptions() as Parameters<
-              typeof streamText
-            >[0]['providerOptions'],
-          });
-
-          for await (const part of stream.fullStream) {
-            if (part.type === 'tool-call') {
-              toolsInFlight += 1;
-            } else if (
-              part.type === 'tool-error' ||
-              (part.type === 'tool-result' && !(part as { preliminary?: boolean }).preliminary)
-            ) {
-              toolsInFlight = Math.max(0, toolsInFlight - 1);
+          const activeModel = this.activeModel();
+          const originalRef = `${activeModel.providerId}/${activeModel.modelId}`;
+          const request: ModelStepRequest = {
+            sessionId: this.session.id,
+            model: originalRef,
+            systemPrompt: this.composeSystemPrompt(planHandoff) ?? '',
+            providerOptions: structuredClone(this.activeProviderOptions()),
+          };
+          const originalOptions = JSON.stringify(request.providerOptions);
+          let stream: ReturnType<typeof streamText> | undefined;
+          const readTerminalReason = () => terminalReason;
+          const consumeStep = async () => {
+            if (request.effort !== undefined && !this.opts.resolveStepModel)
+              throw new Error('Model effort resolver is not configured');
+            const requestModel =
+              request.model !== originalRef || request.effort !== undefined
+                ? (this.opts.resolveStepModel?.(request.model, request.effort) ??
+                  this.modelChangeResolver?.(request.model))
+                : {
+                    model: activeModel,
+                    languageModel: this.activeLanguageModel(),
+                    providerOptions: this.activeProviderOptions(),
+                  };
+            if (!requestModel) throw new Error(`Cannot resolve model: ${request.model}`);
+            // A routed model brings its own defaults unless the mod supplied options.
+            if (
+              JSON.stringify(request.providerOptions) === originalOptions &&
+              (request.model !== originalRef || request.effort !== undefined)
+            )
+              request.providerOptions = requestModel.providerOptions;
+            const activeVision = requestModel.model.vision === true;
+            if (!activeVision && visionFallbackProbe === null) {
+              const probe = this.visionModelResolver?.();
+              visionFallbackProbe =
+                probe?.status === 'ok'
+                  ? { configured: true, ref: probe.ref }
+                  : { configured: false };
             }
             armResponseTimeout();
-            switch (part.type) {
-              case 'text-start': {
-                // Flush an unconcluded text block before starting a new one.
-                // Some providers reuse the same id mid-step (text -> tool-call
-                // -> text) without sending text-end for the first block.
-                const activeText = textStreams.get(part.id);
-                if (activeText !== undefined && activeText.length > 0) {
-                  queue.push({ type: 'assistant_text_done', id: part.id, text: activeText });
-                  emittedTextById.set(part.id, activeText);
-                  textStreams.delete(part.id);
-                }
-                const shadow = shadows.get(part.id);
-                if (shadow) {
-                  shadows.delete(part.id);
-                  if (shadow.syntheticId) {
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: shadow.syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  } else if (shadow.buf.length > 0) {
-                    syntheticTextCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticTextCounter}`;
-                    queue.push({
-                      type: 'assistant_text_delta',
-                      id: syntheticId,
-                      delta: shadow.buf,
-                    });
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  }
-                }
-                if (emittedTextById.has(part.id)) {
-                  shadows.set(part.id, { buf: '' });
-                } else {
-                  textStreams.set(part.id, '');
-                }
-                break;
+            stream = streamText({
+              model: requestModel.languageModel,
+              messages: await prepareMessagesForModel(this.session.messages, {
+                vision: activeVision,
+                visionConfigured: activeVision || (visionFallbackProbe?.configured ?? false),
+                visionRef: visionFallbackProbe?.ref,
+              }),
+              tools: this.opts.tools,
+              system: request.systemPrompt,
+              stopWhen: stepCountIs(1),
+              // The loop below owns retries so that request failures and
+              // mid-stream failures follow one policy.
+              maxRetries: 0,
+              // Errors arrive as `error` stream parts; the SDK's default handler
+              // would also print each one to stderr, under the TUI.
+              onError: () => {},
+              experimental_repairToolCall: repairToolCall,
+              abortSignal: this.abortController.signal,
+              temperature: requestModel.model.temperature,
+              topP: requestModel.model.topP,
+              maxOutputTokens: requestModel.model.maxOutputTokens,
+              providerOptions: (request.providerOptions ??
+                requestModel.providerOptions) as Parameters<
+                typeof streamText
+              >[0]['providerOptions'],
+            });
+
+            for await (const part of stream.fullStream) {
+              if (part.type === 'tool-call') {
+                toolsInFlight += 1;
+              } else if (
+                part.type === 'tool-error' ||
+                (part.type === 'tool-result' && !(part as { preliminary?: boolean }).preliminary)
+              ) {
+                toolsInFlight = Math.max(0, toolsInFlight - 1);
               }
-              case 'text-delta': {
-                const shadow = shadows.get(part.id);
-                if (shadow) {
-                  shadow.buf += part.text;
-                  if (shadow.syntheticId) {
-                    queue.push({
-                      type: 'assistant_text_delta',
-                      id: shadow.syntheticId,
-                      delta: part.text,
-                    });
-                  } else {
-                    const stored = emittedTextById.get(part.id) ?? '';
-                    if (!stored.startsWith(shadow.buf)) {
+              armResponseTimeout();
+              switch (part.type) {
+                case 'text-start': {
+                  // Flush an unconcluded text block before starting a new one.
+                  // Some providers reuse the same id mid-step (text -> tool-call
+                  // -> text) without sending text-end for the first block.
+                  const activeText = textStreams.get(part.id);
+                  if (activeText !== undefined && activeText.length > 0) {
+                    queue.push({ type: 'assistant_text_done', id: part.id, text: activeText });
+                    emittedTextById.set(part.id, activeText);
+                    textStreams.delete(part.id);
+                  }
+                  const shadow = shadows.get(part.id);
+                  if (shadow) {
+                    shadows.delete(part.id);
+                    if (shadow.syntheticId) {
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: shadow.syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    } else if (shadow.buf.length > 0) {
                       syntheticTextCounter += 1;
-                      shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                      const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                      queue.push({
+                        type: 'assistant_text_delta',
+                        id: syntheticId,
+                        delta: shadow.buf,
+                      });
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    }
+                  }
+                  if (emittedTextById.has(part.id)) {
+                    shadows.set(part.id, { buf: '' });
+                  } else {
+                    textStreams.set(part.id, '');
+                  }
+                  break;
+                }
+                case 'text-delta': {
+                  const shadow = shadows.get(part.id);
+                  if (shadow) {
+                    shadow.buf += part.text;
+                    if (shadow.syntheticId) {
                       queue.push({
                         type: 'assistant_text_delta',
                         id: shadow.syntheticId,
+                        delta: part.text,
+                      });
+                    } else {
+                      const stored = emittedTextById.get(part.id) ?? '';
+                      if (!stored.startsWith(shadow.buf)) {
+                        syntheticTextCounter += 1;
+                        shadow.syntheticId = `${part.id}#${syntheticTextCounter}`;
+                        queue.push({
+                          type: 'assistant_text_delta',
+                          id: shadow.syntheticId,
+                          delta: shadow.buf,
+                        });
+                      }
+                    }
+                    break;
+                  }
+                  textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
+                  queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
+                  break;
+                }
+                case 'text-end': {
+                  const shadow = shadows.get(part.id);
+                  if (shadow) {
+                    shadows.delete(part.id);
+                    if (shadow.syntheticId) {
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: shadow.syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    } else if (
+                      shadow.buf.length > 0 &&
+                      shadow.buf !== emittedTextById.get(part.id)
+                    ) {
+                      // Buf is a strict prefix of stored content — model emitted a
+                      // shorter "new" text under the same id. Surface it as new.
+                      syntheticTextCounter += 1;
+                      const syntheticId = `${part.id}#${syntheticTextCounter}`;
+                      queue.push({
+                        type: 'assistant_text_delta',
+                        id: syntheticId,
                         delta: shadow.buf,
                       });
+                      queue.push({
+                        type: 'assistant_text_done',
+                        id: syntheticId,
+                        text: shadow.buf,
+                      });
+                      emittedTextById.set(part.id, shadow.buf);
+                    }
+                    break;
+                  }
+                  const full = textStreams.get(part.id) ?? '';
+                  textStreams.delete(part.id);
+                  if (full.length > 0) {
+                    queue.push({ type: 'assistant_text_done', id: part.id, text: full });
+                    emittedTextById.set(part.id, full);
+                  }
+                  break;
+                }
+                case 'reasoning-start': {
+                  // Same provider quirk as text-start: mid-step id reuse without reasoning-end.
+                  const activeReasoning = reasoningStreams.get(part.id);
+                  if (activeReasoning !== undefined && activeReasoning.length > 0) {
+                    queue.push({ type: 'reasoning_text_done', id: part.id, text: activeReasoning });
+                    emittedReasoningById.set(part.id, activeReasoning);
+                    reasoningStreams.delete(part.id);
+                  }
+                  const reasoningShadow = reasoningShadows.get(part.id);
+                  if (reasoningShadow) {
+                    reasoningShadows.delete(part.id);
+                    if (reasoningShadow.syntheticId) {
+                      queue.push({
+                        type: 'reasoning_text_done',
+                        id: reasoningShadow.syntheticId,
+                        text: reasoningShadow.buf,
+                      });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
+                    } else if (reasoningShadow.buf.length > 0) {
+                      syntheticReasoningCounter += 1;
+                      const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                      queue.push({
+                        type: 'reasoning_text_delta',
+                        id: syntheticId,
+                        delta: reasoningShadow.buf,
+                      });
+                      queue.push({
+                        type: 'reasoning_text_done',
+                        id: syntheticId,
+                        text: reasoningShadow.buf,
+                      });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
                     }
                   }
-                  break;
-                }
-                textStreams.set(part.id, (textStreams.get(part.id) ?? '') + part.text);
-                queue.push({ type: 'assistant_text_delta', id: part.id, delta: part.text });
-                break;
-              }
-              case 'text-end': {
-                const shadow = shadows.get(part.id);
-                if (shadow) {
-                  shadows.delete(part.id);
-                  if (shadow.syntheticId) {
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: shadow.syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  } else if (shadow.buf.length > 0 && shadow.buf !== emittedTextById.get(part.id)) {
-                    // Buf is a strict prefix of stored content — model emitted a
-                    // shorter "new" text under the same id. Surface it as new.
-                    syntheticTextCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticTextCounter}`;
-                    queue.push({
-                      type: 'assistant_text_delta',
-                      id: syntheticId,
-                      delta: shadow.buf,
-                    });
-                    queue.push({
-                      type: 'assistant_text_done',
-                      id: syntheticId,
-                      text: shadow.buf,
-                    });
-                    emittedTextById.set(part.id, shadow.buf);
-                  }
-                  break;
-                }
-                const full = textStreams.get(part.id) ?? '';
-                textStreams.delete(part.id);
-                if (full.length > 0) {
-                  queue.push({ type: 'assistant_text_done', id: part.id, text: full });
-                  emittedTextById.set(part.id, full);
-                }
-                break;
-              }
-              case 'reasoning-start': {
-                // Same provider quirk as text-start: mid-step id reuse without reasoning-end.
-                const activeReasoning = reasoningStreams.get(part.id);
-                if (activeReasoning !== undefined && activeReasoning.length > 0) {
-                  queue.push({ type: 'reasoning_text_done', id: part.id, text: activeReasoning });
-                  emittedReasoningById.set(part.id, activeReasoning);
-                  reasoningStreams.delete(part.id);
-                }
-                const reasoningShadow = reasoningShadows.get(part.id);
-                if (reasoningShadow) {
-                  reasoningShadows.delete(part.id);
-                  if (reasoningShadow.syntheticId) {
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: reasoningShadow.syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  } else if (reasoningShadow.buf.length > 0) {
-                    syntheticReasoningCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
-                    queue.push({
-                      type: 'reasoning_text_delta',
-                      id: syntheticId,
-                      delta: reasoningShadow.buf,
-                    });
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  }
-                }
-                if (emittedReasoningById.has(part.id)) {
-                  reasoningShadows.set(part.id, { buf: '' });
-                } else {
-                  reasoningStreams.set(part.id, '');
-                }
-                break;
-              }
-              case 'reasoning-delta': {
-                const reasoningShadow = reasoningShadows.get(part.id);
-                if (reasoningShadow) {
-                  reasoningShadow.buf += part.text;
-                  if (reasoningShadow.syntheticId) {
-                    queue.push({
-                      type: 'reasoning_text_delta',
-                      id: reasoningShadow.syntheticId,
-                      delta: part.text,
-                    });
+                  if (emittedReasoningById.has(part.id)) {
+                    reasoningShadows.set(part.id, { buf: '' });
                   } else {
-                    const stored = emittedReasoningById.get(part.id) ?? '';
-                    if (!stored.startsWith(reasoningShadow.buf)) {
-                      syntheticReasoningCounter += 1;
-                      reasoningShadow.syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                    reasoningStreams.set(part.id, '');
+                  }
+                  break;
+                }
+                case 'reasoning-delta': {
+                  const reasoningShadow = reasoningShadows.get(part.id);
+                  if (reasoningShadow) {
+                    reasoningShadow.buf += part.text;
+                    if (reasoningShadow.syntheticId) {
                       queue.push({
                         type: 'reasoning_text_delta',
                         id: reasoningShadow.syntheticId,
+                        delta: part.text,
+                      });
+                    } else {
+                      const stored = emittedReasoningById.get(part.id) ?? '';
+                      if (!stored.startsWith(reasoningShadow.buf)) {
+                        syntheticReasoningCounter += 1;
+                        reasoningShadow.syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                        queue.push({
+                          type: 'reasoning_text_delta',
+                          id: reasoningShadow.syntheticId,
+                          delta: reasoningShadow.buf,
+                        });
+                      }
+                    }
+                    break;
+                  }
+                  reasoningStreams.set(part.id, (reasoningStreams.get(part.id) ?? '') + part.text);
+                  queue.push({ type: 'reasoning_text_delta', id: part.id, delta: part.text });
+                  break;
+                }
+                case 'reasoning-end': {
+                  const reasoningShadow = reasoningShadows.get(part.id);
+                  if (reasoningShadow) {
+                    reasoningShadows.delete(part.id);
+                    if (reasoningShadow.syntheticId) {
+                      queue.push({
+                        type: 'reasoning_text_done',
+                        id: reasoningShadow.syntheticId,
+                        text: reasoningShadow.buf,
+                      });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
+                    } else if (
+                      reasoningShadow.buf.length > 0 &&
+                      reasoningShadow.buf !== emittedReasoningById.get(part.id)
+                    ) {
+                      syntheticReasoningCounter += 1;
+                      const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
+                      queue.push({
+                        type: 'reasoning_text_delta',
+                        id: syntheticId,
                         delta: reasoningShadow.buf,
                       });
-                    }
-                  }
-                  break;
-                }
-                reasoningStreams.set(part.id, (reasoningStreams.get(part.id) ?? '') + part.text);
-                queue.push({ type: 'reasoning_text_delta', id: part.id, delta: part.text });
-                break;
-              }
-              case 'reasoning-end': {
-                const reasoningShadow = reasoningShadows.get(part.id);
-                if (reasoningShadow) {
-                  reasoningShadows.delete(part.id);
-                  if (reasoningShadow.syntheticId) {
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: reasoningShadow.syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  } else if (
-                    reasoningShadow.buf.length > 0 &&
-                    reasoningShadow.buf !== emittedReasoningById.get(part.id)
-                  ) {
-                    syntheticReasoningCounter += 1;
-                    const syntheticId = `${part.id}#${syntheticReasoningCounter}`;
-                    queue.push({
-                      type: 'reasoning_text_delta',
-                      id: syntheticId,
-                      delta: reasoningShadow.buf,
-                    });
-                    queue.push({
-                      type: 'reasoning_text_done',
-                      id: syntheticId,
-                      text: reasoningShadow.buf,
-                    });
-                    emittedReasoningById.set(part.id, reasoningShadow.buf);
-                  }
-                  break;
-                }
-                const reasoningFull = reasoningStreams.get(part.id) ?? '';
-                reasoningStreams.delete(part.id);
-                if (reasoningFull.length > 0) {
-                  queue.push({ type: 'reasoning_text_done', id: part.id, text: reasoningFull });
-                  emittedReasoningById.set(part.id, reasoningFull);
-                }
-                break;
-              }
-              case 'tool-call': {
-                const callId = newCallId();
-                const args = (part as { input?: unknown }).input;
-                const target = extractTarget(args, this.session.sandboxMode);
-                const record: ToolCallRecord = {
-                  callId,
-                  name: part.toolName,
-                  args,
-                  target,
-                  startedAt: Date.now(),
-                };
-                this.session.toolCalls.push(record);
-                callInfo.set(part.toolCallId, {
-                  callId,
-                  name: part.toolName,
-                  target,
-                  startedAt: record.startedAt,
-                });
-                this.callIdByToolCallId.set(part.toolCallId, callId);
-                const waiters = this.callIdWaiters.get(part.toolCallId);
-                if (waiters) {
-                  this.callIdWaiters.delete(part.toolCallId);
-                  for (const w of waiters) w(callId);
-                }
-                stepHadToolCalls = true;
-                queue.push({
-                  type: 'tool_call_start',
-                  callId,
-                  name: part.toolName,
-                  args,
-                  target,
-                  display: this.safeFormat(part.toolName, args),
-                });
-                break;
-              }
-              case 'tool-result': {
-                const info = callInfo.get(part.toolCallId);
-                if (!info) break;
-                const result = (part as { output?: unknown }).output;
-                const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
-                if (rec) {
-                  rec.result = result;
-                  rec.endedAt = Date.now();
-                }
-                queue.push({
-                  type: 'tool_call_result',
-                  callId: info.callId,
-                  result,
-                  durationMs: Date.now() - info.startedAt,
-                  display: this.safeFormat(info.name, rec?.args, result),
-                });
-                if (info.name === 'read' && this.opts.skillActivation) {
-                  const readPath = extractReadPath(rec?.args);
-                  if (readPath) {
-                    const hit = this.opts.skillActivation(readPath);
-                    if (hit) {
                       queue.push({
-                        type: 'skill_activated',
-                        skillName: hit.skillName,
-                        source: hit.source,
+                        type: 'reasoning_text_done',
+                        id: syntheticId,
+                        text: reasoningShadow.buf,
                       });
+                      emittedReasoningById.set(part.id, reasoningShadow.buf);
                     }
+                    break;
                   }
+                  const reasoningFull = reasoningStreams.get(part.id) ?? '';
+                  reasoningStreams.delete(part.id);
+                  if (reasoningFull.length > 0) {
+                    queue.push({ type: 'reasoning_text_done', id: part.id, text: reasoningFull });
+                    emittedReasoningById.set(part.id, reasoningFull);
+                  }
+                  break;
                 }
-                // When the read tool returns an image, queue it for injection
-                // as a user message so the model can see it as a vision input.
-                if (info.name === 'read') {
-                  this.resolveAndTrackPath(rec?.args, false);
-                  if (
-                    result &&
-                    typeof result === 'object' &&
-                    'kind' in result &&
-                    (result as { kind?: string }).kind === 'image' &&
-                    'data' in result &&
-                    typeof (result as { data?: unknown }).data === 'string'
-                  ) {
-                    const readPath = extractReadPath(rec?.args);
-                    const sourcePath = readPath ? resolve(this.session.cwd, readPath) : undefined;
-                    this.pendingImageMessages.push({
-                      type: 'image',
-                      image: this.storableImage(result as ReadImageResult, sourcePath),
-                      ...(sourcePath
-                        ? {
-                            providerOptions: {
-                              chimera: { sourcePath, ...imageSize(result) },
-                            },
-                          }
-                        : {}),
-                    });
+                case 'tool-call': {
+                  const callId = newCallId();
+                  const args = (part as { input?: unknown }).input;
+                  const target = extractTarget(args, this.session.sandboxMode);
+                  const record: ToolCallRecord = {
+                    callId,
+                    name: part.toolName,
+                    args,
+                    target,
+                    startedAt: Date.now(),
+                  };
+                  this.session.toolCalls.push(record);
+                  callInfo.set(part.toolCallId, {
+                    callId,
+                    name: part.toolName,
+                    target,
+                    startedAt: record.startedAt,
+                  });
+                  this.callIdByToolCallId.set(part.toolCallId, callId);
+                  const waiters = this.callIdWaiters.get(part.toolCallId);
+                  if (waiters) {
+                    this.callIdWaiters.delete(part.toolCallId);
+                    for (const w of waiters) w(callId);
                   }
-                } else if (info.name === 'write' || info.name === 'edit') {
-                  this.resolveAndTrackPath(rec?.args, true);
-                } else if (info.name === 'apply_patch') {
-                  // One patch touches several files; its result lists them.
-                  const files = (result as { files?: unknown } | undefined)?.files;
-                  for (const file of Array.isArray(files) ? files : []) {
-                    const { path, movedTo } = file as { path?: unknown; movedTo?: unknown };
-                    for (const changedPath of [path, movedTo]) {
-                      if (typeof changedPath === 'string') {
-                        this.session.fileOps.writes.add(resolve(this.session.cwd, changedPath));
+                  stepHadToolCalls = true;
+                  queue.push({
+                    type: 'tool_call_start',
+                    callId,
+                    name: part.toolName,
+                    args,
+                    target,
+                    display: this.safeFormat(part.toolName, args),
+                  });
+                  break;
+                }
+                case 'tool-result': {
+                  const info = callInfo.get(part.toolCallId);
+                  if (!info) break;
+                  const result = (part as { output?: unknown }).output;
+                  const rec = this.session.toolCalls.find((t) => t.callId === info.callId);
+                  if (rec) {
+                    rec.result = result;
+                    rec.endedAt = Date.now();
+                  }
+                  queue.push({
+                    type: 'tool_call_result',
+                    callId: info.callId,
+                    result,
+                    durationMs: Date.now() - info.startedAt,
+                    display: this.safeFormat(info.name, rec?.args, result),
+                  });
+                  if (info.name === 'read' && this.opts.skillActivation) {
+                    const readPath = extractReadPath(rec?.args);
+                    if (readPath) {
+                      const hit = this.opts.skillActivation(readPath);
+                      if (hit) {
+                        queue.push({
+                          type: 'skill_activated',
+                          skillName: hit.skillName,
+                          source: hit.source,
+                        });
                       }
                     }
                   }
-                }
-                callInfo.delete(part.toolCallId);
-                this.callIdByToolCallId.delete(part.toolCallId);
-                break;
-              }
-              case 'tool-error': {
-                const info = callInfo.get(part.toolCallId);
-                if (!info) break;
-                const errorValue = (part as { error?: unknown }).error;
-                const message =
-                  errorValue instanceof Error ? errorValue.message : String(errorValue);
-                const record = this.session.toolCalls.find(
-                  (toolCall) => toolCall.callId === info.callId,
-                );
-                if (record) {
-                  record.error = message;
-                  record.endedAt = Date.now();
-                }
-                queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
-                callInfo.delete(part.toolCallId);
-                this.callIdByToolCallId.delete(part.toolCallId);
-                break;
-              }
-              case 'finish-step': {
-                stepNumber += 1;
-                queue.push({
-                  type: 'step_finished',
-                  stepNumber,
-                  finishReason: part.finishReason,
-                });
-                this.stepsSinceCompaction += 1;
-                const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
-                if (stepUsage) {
-                  this.contextTracker.noteUsage(stepUsage.inputTokens, messageCountAtPrompt);
-                  applyStepUsage(this.session.usage, stepUsage);
-                  runDelta.inputTokens += stepUsage.inputTokens;
-                  runDelta.outputTokens += stepUsage.outputTokens;
-                  runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
-                  runDelta.totalTokens += stepUsage.totalTokens;
-                  queue.push({
-                    type: 'usage_updated',
-                    usage: cloneUsage(this.session.usage),
-                    contextWindow: this.activeContextWindow(),
-                    usedContextTokens: stepUsage.inputTokens,
-                    unknownWindow: this.activeContextWindowIsApproximate(),
-                  });
-                } else if (!usageMissingLogged) {
-                  usageMissingLogged = true;
-                  // Provider does not report usage on this step. Log once per
-                  // session at debug level; the loop continues with stale totals.
-                  if (typeof process !== 'undefined' && process.env?.DEBUG) {
-                    process.stderr.write(
-                      `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
-                    );
+                  // When the read tool returns an image, queue it for injection
+                  // as a user message so the model can see it as a vision input.
+                  if (info.name === 'read') {
+                    this.resolveAndTrackPath(rec?.args, false);
+                    if (
+                      result &&
+                      typeof result === 'object' &&
+                      'kind' in result &&
+                      (result as { kind?: string }).kind === 'image' &&
+                      'data' in result &&
+                      typeof (result as { data?: unknown }).data === 'string'
+                    ) {
+                      const readPath = extractReadPath(rec?.args);
+                      const sourcePath = readPath ? resolve(this.session.cwd, readPath) : undefined;
+                      this.pendingImageMessages.push({
+                        type: 'image',
+                        image: this.storableImage(result as ReadImageResult, sourcePath),
+                        ...(sourcePath
+                          ? {
+                              providerOptions: {
+                                chimera: { sourcePath, ...imageSize(result) },
+                              },
+                            }
+                          : {}),
+                      });
+                    }
+                  } else if (info.name === 'write' || info.name === 'edit') {
+                    this.resolveAndTrackPath(rec?.args, true);
+                  } else if (info.name === 'apply_patch') {
+                    // One patch touches several files; its result lists them.
+                    const files = (result as { files?: unknown } | undefined)?.files;
+                    for (const file of Array.isArray(files) ? files : []) {
+                      const { path, movedTo } = file as { path?: unknown; movedTo?: unknown };
+                      for (const changedPath of [path, movedTo]) {
+                        if (typeof changedPath === 'string') {
+                          this.session.fileOps.writes.add(resolve(this.session.cwd, changedPath));
+                        }
+                      }
+                    }
                   }
+                  callInfo.delete(part.toolCallId);
+                  this.callIdByToolCallId.delete(part.toolCallId);
+                  break;
                 }
-                try {
-                  await persistSession(
-                    this.session,
-                    {
-                      type: 'step_finished',
-                      stepNumber,
-                      finishReason: part.finishReason,
-                      messages: this.session.messages,
-                      toolCalls: this.session.toolCalls,
-                      usage: cloneUsage(this.session.usage),
-                    },
-                    this.opts.home,
+                case 'tool-error': {
+                  const info = callInfo.get(part.toolCallId);
+                  if (!info) break;
+                  const errorValue = (part as { error?: unknown }).error;
+                  const message =
+                    errorValue instanceof Error ? errorValue.message : String(errorValue);
+                  const record = this.session.toolCalls.find(
+                    (toolCall) => toolCall.callId === info.callId,
                   );
-                } catch (_e) {
-                  // persistence errors should not crash the run
+                  if (record) {
+                    record.error = message;
+                    record.endedAt = Date.now();
+                  }
+                  queue.push({ type: 'tool_call_error', callId: info.callId, error: message });
+                  callInfo.delete(part.toolCallId);
+                  this.callIdByToolCallId.delete(part.toolCallId);
+                  break;
                 }
-                break;
-              }
-              case 'finish': {
-                const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
-                if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+                case 'finish-step': {
+                  stepNumber += 1;
                   queue.push({
-                    type: 'usage_updated',
-                    usage: cloneUsage(this.session.usage),
-                    contextWindow: this.activeContextWindow(),
-                    usedContextTokens: this.session.usage.inputTokens,
-                    unknownWindow: this.activeContextWindowIsApproximate(),
+                    type: 'step_finished',
+                    stepNumber,
+                    finishReason: part.finishReason,
                   });
+                  this.stepsSinceCompaction += 1;
+                  const stepUsage = readStepUsage((part as { usage?: unknown }).usage);
+                  if (stepUsage) {
+                    this.contextTracker.noteUsage(stepUsage.inputTokens, messageCountAtPrompt);
+                    applyStepUsage(this.session.usage, stepUsage);
+                    runDelta.inputTokens += stepUsage.inputTokens;
+                    runDelta.outputTokens += stepUsage.outputTokens;
+                    runDelta.cachedInputTokens += stepUsage.cachedInputTokens;
+                    runDelta.totalTokens += stepUsage.totalTokens;
+                    queue.push({
+                      type: 'usage_updated',
+                      usage: cloneUsage(this.session.usage),
+                      contextWindow: this.activeContextWindow(),
+                      usedContextTokens: stepUsage.inputTokens,
+                      unknownWindow: this.activeContextWindowIsApproximate(),
+                    });
+                  } else if (!usageMissingLogged) {
+                    usageMissingLogged = true;
+                    // Provider does not report usage on this step. Log once per
+                    // session at debug level; the loop continues with stale totals.
+                    if (typeof process !== 'undefined' && process.env?.DEBUG) {
+                      process.stderr.write(
+                        `[chimera] debug: model ${this.session.model.providerId}/${this.session.model.modelId} did not report usage on finish-step\n`,
+                      );
+                    }
+                  }
+                  try {
+                    await persistSession(
+                      this.session,
+                      {
+                        type: 'step_finished',
+                        stepNumber,
+                        finishReason: part.finishReason,
+                        messages: this.session.messages,
+                        toolCalls: this.session.toolCalls,
+                        usage: cloneUsage(this.session.usage),
+                      },
+                      this.opts.home,
+                    );
+                  } catch (_e) {
+                    // persistence errors should not crash the run
+                  }
+                  break;
                 }
-                break;
+                case 'finish': {
+                  const total = readStepUsage((part as { totalUsage?: unknown }).totalUsage);
+                  if (reconcileFinalUsage(this.session.usage, runDelta, total)) {
+                    queue.push({
+                      type: 'usage_updated',
+                      usage: cloneUsage(this.session.usage),
+                      contextWindow: this.activeContextWindow(),
+                      usedContextTokens: this.session.usage.inputTokens,
+                      unknownWindow: this.activeContextWindowIsApproximate(),
+                    });
+                  }
+                  break;
+                }
+                case 'abort': {
+                  terminalReason = timedOut ? 'timeout' : 'interrupted';
+                  break;
+                }
+                case 'error': {
+                  terminalReason = 'error';
+                  errorMessage = describeProviderError(part.error);
+                  stepError = part.error;
+                  break;
+                }
+                default:
+                  // Ignore source, file, tool-input-*, start/start-step, raw.
+                  break;
               }
-              case 'abort': {
-                terminalReason = timedOut ? 'timeout' : 'interrupted';
-                break;
-              }
-              case 'error': {
-                terminalReason = 'error';
-                errorMessage = describeProviderError(part.error);
-                stepError = part.error;
-                break;
-              }
-              default:
-                // Ignore source, file, tool-input-*, start/start-step, raw.
-                break;
             }
-          }
 
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          timeoutHandle = undefined;
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            timeoutHandle = undefined;
+            request.usage = { ...runDelta };
+          };
+          try {
+            if (this.opts.interceptStep) await this.opts.interceptStep(request, consumeStep);
+            else await consumeStep();
+          } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            timeoutHandle = undefined;
+          }
+          terminalReason = readTerminalReason();
+          if (!stream) throw new Error('Model step interceptor did not call next()');
 
           // A step that failed before any tool call started has had no side
           // effects, so it is safe to send again.
