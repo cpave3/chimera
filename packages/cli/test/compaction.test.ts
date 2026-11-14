@@ -1,17 +1,80 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Compactor } from '@chimera/compaction';
 import type { Session } from '@chimera/core';
+import { Agent } from '@chimera/core';
 import { loadProviders } from '@chimera/providers';
+import { MockLanguageModelV3 } from 'ai/test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   checkCompactionInvariant,
   compactionCallOptions,
+  compactionModelOptions,
   resolveCompactionConfig,
 } from '../src/compaction';
 import { resolveModel } from '../src/config';
 
 describe('resolveCompactionConfig', () => {
+  it('wires the configured utility fallback and its own window into real compaction', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'chimera-summary-options-'));
+    try {
+      const config = {
+        providers: {
+          direct: {
+            shape: 'openai' as const,
+            adapter: 'compatible' as const,
+            baseUrl: 'https://example.invalid/v1',
+            apiKey: 'test',
+          },
+        },
+        models: { 'direct/utility': { contextWindow: 4_000 } },
+        utilityModel: 'direct/utility',
+        compaction: { model: 'direct/summary' },
+      };
+      const refs: string[] = [];
+      const outputs: (number | undefined)[] = [];
+      const summary = new MockLanguageModelV3({
+        doGenerate: async (options) => {
+          outputs.push(options.maxOutputTokens);
+          return {
+            content: [{ type: 'text', text: 'summary' }],
+            finishReason: { unified: 'stop', raw: 'stop' },
+            usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } },
+            warnings: [],
+          };
+        },
+      });
+      const agent = new Agent({
+        home,
+        cwd: '/tmp',
+        languageModel: summary,
+        tools: {},
+        model: { providerId: 'direct', modelId: 'main', maxSteps: 1 },
+        contextWindow: 16_000,
+        sandboxMode: 'off',
+      });
+      agent.session.messages.push({ role: 'user', content: 'history '.repeat(10_000) });
+      const compactor = new Compactor({
+        home,
+        contextWindow: 16_000,
+        config: resolveCompactionConfig({ config }),
+        ...compactionModelOptions(config, loadProviders({ providers: config.providers })),
+        resolveModel: async (ref) => {
+          refs.push(ref);
+          if (ref === 'direct/summary') throw new Error('summary unavailable');
+          return summary;
+        },
+      });
+      const result = await compactor.compact(agent.session, 'manual');
+      expect(refs).toContain('direct/utility');
+      expect(outputs[0]).toBe(1_000);
+      expect(result.summary).toContain('summary');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('uses active session settings or the explicit compaction model defaults', async () => {
     const providers = {
       direct: {

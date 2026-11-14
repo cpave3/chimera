@@ -264,6 +264,12 @@ export function applySessionEvent(
     scrollback.addInfo(
       `compaction done${strategyNote}: ${delta > 0 ? `-` : ''}${delta} tokens (${ev.messagesReplaced} messages replaced${pruneNote})`,
     );
+    for (const warning of ev.warnings ?? []) scrollback.addInfo(warning);
+    if (ev.warnings?.length) {
+      scrollback.addInfo(
+        'Use /context to inspect the budget; check the compaction log before restating any missing detail.',
+      );
+    }
   } else if (ev.type === 'compaction_failed') {
     setCompacting(false);
     scrollback.addError(`compaction failed: ${ev.error}`);

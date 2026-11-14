@@ -52,6 +52,8 @@ export interface MessagePruner {
 }
 
 export interface CompactionLogEntry {
+  warnings: string[];
+  recoveryMessages?: import('ai').ModelMessage[];
   ts: number;
   reason: 'threshold' | 'manual';
   tokensBefore: number;

@@ -10,6 +10,7 @@ import { startBackgroundUpdates } from '../background-updates';
 import {
   checkCompactionInvariant,
   compactionCallOptions,
+  compactionModelOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
 } from '../compaction';
@@ -179,6 +180,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
         return target.provider.getModel(target.modelId, sessionId);
       },
       resolveCallOptions: compactionCallOptions(config, registry),
+      ...compactionModelOptions(config, registry),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),
     });

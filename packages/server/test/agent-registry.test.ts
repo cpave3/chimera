@@ -86,6 +86,28 @@ describe('AgentRegistry compaction', () => {
     expect(compactResult).toBe('already-running');
   });
 
+  it('compact cannot race an idle message injection', async () => {
+    const registry = makeRegistry();
+    const { sessionId } = await registry.create({ cwd: '/tmp', model, sandboxMode: 'off' });
+    const agent = registry.get(sessionId)!.agent;
+    const append = agent.appendMessage.bind(agent);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    agent.appendMessage = async (...args) => {
+      await pending;
+      return append(...args);
+    };
+    const injecting = registry.injectMessage(sessionId, 'new instruction');
+    try {
+      expect(registry.compact(sessionId)).toBe('already-running');
+    } finally {
+      release();
+      await injecting;
+    }
+  });
+
   it('compact returns already-running when compaction is already active', async () => {
     const compactor: CompactorApi = {
       maybeCompact: async () => ({ ran: false }),

@@ -26,7 +26,7 @@ export function classifyProviderError(error: unknown): ProviderFailure {
   if (APICallError.isInstance(error)) {
     const detail = `${message} ${error.responseBody ?? ''}`;
     const status = error.statusCode;
-    if ((status === 400 || status === 413 || status === 422) && OVERFLOW_PATTERN.test(detail)) {
+    if (OVERFLOW_PATTERN.test(detail)) {
       return { kind: 'overflow', message };
     }
     const temporaryStatus =

@@ -1,9 +1,16 @@
 import { existsSync } from 'node:fs';
 import { type FileHandle, open, readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
-import { type LanguageModel, type ModelMessage, stepCountIs, streamText, type ToolSet } from 'ai';
+import {
+  asSchema,
+  type LanguageModel,
+  type ModelMessage,
+  stepCountIs,
+  streamText,
+  type ToolSet,
+} from 'ai';
 import { type ContextBreakdown, computeContextBreakdown } from './context-breakdown';
-import { ContextTracker, shouldCompact } from './context-tracker';
+import { ContextTracker, estimateTokens, shouldCompact } from './context-tracker';
 import { EventQueue } from './event-queue';
 import { type AgentEvent, type PromptSource, type ToolDisplay } from './events';
 import { type CallId, newCallId, newRequestId, newSessionId, type SessionId } from './ids';
@@ -224,6 +231,7 @@ export class Agent {
   private currentQueue: EventQueue<AgentEvent> | null = null;
   private pendingUserInputRequest: UserInputRequest | null = null;
   private running = false;
+  private compacting = false;
   private updatingModelSettings = false;
   private modelSettingsResolver?: (
     ref: string,
@@ -902,7 +910,7 @@ export class Agent {
     | { status: 'running' }
     | { status: 'invalid'; error: string }
   > {
-    if (this.running || this.updatingModelSettings) return { status: 'running' };
+    if (this.running || this.compacting || this.updatingModelSettings) return { status: 'running' };
     const from = `${this.session.model.providerId}/${this.session.model.modelId}`;
     if (request.expectedModel !== undefined && request.expectedModel !== from)
       return { status: 'invalid', error: 'The selected model changed. Reload its settings.' };
@@ -975,7 +983,7 @@ export class Agent {
     | { status: 'applied'; from: string; to: string }
     | { status: 'running' }
     | { status: 'invalid'; error: string } {
-    if (this.running || this.updatingModelSettings) {
+    if (this.running || this.compacting || this.updatingModelSettings) {
       return { status: 'running' };
     }
     const currentRef = `${this.session.model.providerId}/${this.session.model.modelId}`;
@@ -1045,7 +1053,7 @@ export class Agent {
       this.queuedMode = null;
       return { status: 'noop' };
     }
-    if (this.running) {
+    if (this.running || this.compacting) {
       this.queuedMode = name;
       return { status: 'queued' };
     }
@@ -1118,15 +1126,39 @@ export class Agent {
    * yields `compaction_failed { error: 'not configured' }`.
    */
   async *compactSession(): AsyncIterable<AgentEvent> {
+    if (this.running || this.compacting || this.updatingModelSettings) {
+      yield this.observeEvent({ type: 'compaction_failed', error: 'Agent is already running' });
+      return;
+    }
     const compactor = this.opts.compactor;
     if (!compactor) {
       yield this.observeEvent({ type: 'compaction_failed', error: 'not configured' });
       return;
     }
-    yield this.observeEvent({ type: 'compaction_started', reason: 'manual' });
+    this.compacting = true;
+    this.abortController = new AbortController();
     try {
-      const result = await compactor.compact(this.session, 'manual');
+      yield this.observeEvent({ type: 'compaction_started', reason: 'manual' });
+      const result = await compactor.compact(this.session, 'manual', {
+        contextWindow: this.activeContextWindow(),
+        targetTokens: Math.max(
+          128,
+          this.activeContextWindow() / 2 - (await this.promptOverheadTokens()),
+        ),
+        imageLongEdge: this.activeModel().imageLongEdge,
+        abortSignal: this.abortController.signal,
+      });
       this.contextTracker.noteCompaction();
+      await persistSession(
+        this.session,
+        {
+          type: 'message_appended',
+          messages: this.session.messages,
+          toolCalls: this.session.toolCalls,
+          usage: cloneUsage(this.session.usage),
+        },
+        this.opts.home,
+      );
       yield this.observeEvent({
         type: 'compaction_finished',
         summary: result.summary,
@@ -1136,10 +1168,13 @@ export class Agent {
         strategy: result.strategy,
         prunedCount: result.prunedCount,
         prunedTokensSaved: result.prunedTokensSaved,
+        warnings: result.warnings,
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       yield this.observeEvent({ type: 'compaction_failed', error });
+    } finally {
+      this.compacting = false;
     }
   }
 
@@ -1234,7 +1269,7 @@ export class Agent {
    * the message array the AI SDK may be reading.
    */
   async appendMessage(content: string, imagePaths?: string[]): Promise<void> {
-    if (this.running) {
+    if (this.running || this.compacting) {
       throw new Error('Agent is already running');
     }
     this.session.messages.push(await buildUserMessage(content, imagePaths));
@@ -1275,7 +1310,7 @@ export class Agent {
     imagePaths?: string[],
     source: PromptSource = 'user',
   ): AsyncIterable<AgentEvent> {
-    if (this.running || this.updatingModelSettings) {
+    if (this.running || this.compacting || this.updatingModelSettings) {
       throw new Error('Agent is already running');
     }
     this.running = true;
@@ -1401,19 +1436,30 @@ export class Agent {
     });
   }
 
-  /**
-   * True when the projected next prompt crosses the compaction trigger.
-   * Projection uses the provider's last reported inputTokens plus a char/4
-   * estimate of messages appended since (pure estimate before the first
-   * usage report and right after a compaction).
-   */
-  private overCompactionThreshold(): boolean {
+  private async promptOverheadTokens(): Promise<number> {
+    const schemas = await Promise.all(
+      Object.entries(this.opts.tools).map(async ([name, tool]) => ({
+        name,
+        description: tool.description,
+        schema: await asSchema(tool.inputSchema).jsonSchema,
+      })),
+    );
+    return Math.ceil(
+      ((this.composeSystemPrompt(false) ?? '').length + JSON.stringify(schemas).length) / 4,
+    );
+  }
+
+  private async overCompactionThreshold(): Promise<boolean> {
     const config = this.opts.compaction;
     if (!config?.enabled || !this.opts.compactor) return false;
     return shouldCompact({
-      projected: this.contextTracker.projectedNextPrompt(this.session.messages, {
-        imageLongEdge: this.activeModel().imageLongEdge,
-      }),
+      projected: this.contextTracker.projectedNextPrompt(
+        this.session.messages,
+        {
+          imageLongEdge: this.activeModel().imageLongEdge,
+        },
+        await this.promptOverheadTokens(),
+      ),
       contextWindow: this.activeContextWindow(),
       thresholdPercent: config.thresholdPercent ?? 85,
       reserveTokens: config.reserveTokens,
@@ -1440,23 +1486,26 @@ export class Agent {
     if (!compactor) return false;
     queue.push({ type: 'compaction_started', reason: trigger });
     try {
+      const targetTokens = Math.max(
+        128,
+        this.activeContextWindow() / 2 - (await this.promptOverheadTokens()),
+      );
       const result = await compactor.compact(
         this.session,
         trigger === 'overflow' ? 'manual' : 'threshold',
+        {
+          contextWindow: this.activeContextWindow(),
+          abortSignal: this.abortController.signal,
+          imageLongEdge: this.activeModel().imageLongEdge,
+          targetTokens:
+            trigger === 'overflow'
+              ? Math.max(128, Math.min(targetTokens, estimateTokens(this.session.messages) / 2))
+              : targetTokens,
+        },
       );
-      queue.push({
-        type: 'compaction_finished',
-        summary: result.summary,
-        tokensBefore: result.tokensBefore,
-        tokensAfter: result.tokensAfter,
-        messagesReplaced: result.messagesReplaced,
-        strategy: result.strategy,
-        prunedCount: result.prunedCount,
-        prunedTokensSaved: result.prunedTokensSaved,
-      });
       this.contextTracker.noteCompaction();
       this.stepsSinceCompaction = 0;
-      if (this.overCompactionThreshold()) {
+      if (await this.overCompactionThreshold()) {
         this.compactionIneffective = true;
       }
       try {
@@ -1470,9 +1519,23 @@ export class Agent {
           },
           this.opts.home,
         );
-      } catch {
-        // Persistence errors must not crash the run.
+      } catch (error) {
+        result.warnings ??= [];
+        result.warnings.push(
+          `Could not persist compacted history: ${error instanceof Error ? error.message : String(error)}. Check disk space and permissions before restarting.`,
+        );
       }
+      queue.push({
+        type: 'compaction_finished',
+        summary: result.summary,
+        tokensBefore: result.tokensBefore,
+        tokensAfter: result.tokensAfter,
+        messagesReplaced: result.messagesReplaced,
+        strategy: result.strategy,
+        prunedCount: result.prunedCount,
+        prunedTokensSaved: result.prunedTokensSaved,
+        warnings: result.warnings,
+      });
       return result.tokensAfter < result.tokensBefore;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1690,9 +1753,7 @@ export class Agent {
     // Compaction: a fresh user turn clears the ineffective latch, then the
     // same projection-based trigger used between steps runs once up front.
     this.compactionIneffective = false;
-    if (this.overCompactionThreshold()) {
-      await this.runCompaction(queue, 'threshold');
-    }
+    this.stepsSinceCompaction = 1;
 
     // Track accumulated assistant text per text-id to emit assistant_text_done.
     const textStreams = new Map<string, string>();
@@ -1735,7 +1796,7 @@ export class Agent {
     // Retries already spent on the step currently being attempted; reset each
     // time a step completes.
     let providerRetries = 0;
-    let overflowCompactionTried = false;
+    let overflowCompactionAttempts = 0;
     let fallbackUsed = false;
     let outputContinuations = 0;
     // Lazy once-per-run probe of the vision fallback, used to word image
@@ -1756,6 +1817,15 @@ export class Agent {
 
       try {
         for (let iteration = 0; iteration < safetyMaxIterations; iteration++) {
+          this.abortController.signal.throwIfAborted();
+          if (
+            this.stepsSinceCompaction >= 1 &&
+            !this.compactionIneffective &&
+            (await this.overCompactionThreshold())
+          ) {
+            await this.runCompaction(queue, 'threshold');
+          }
+          this.abortController.signal.throwIfAborted();
           timedOut = false;
           timeoutHandle = undefined;
           // Map AI SDK tool call id -> our CallId, name, target for tool-result correlation.
@@ -2318,15 +2388,18 @@ export class Agent {
             const failure = classifyProviderError(stepError);
             if (
               failure.kind === 'overflow' &&
-              !overflowCompactionTried &&
+              overflowCompactionAttempts < 8 &&
               this.opts.compaction?.enabled
             ) {
-              overflowCompactionTried = true;
+              overflowCompactionAttempts++;
               if (await this.runCompaction(queue, 'overflow')) {
                 terminalReason = 'stop';
                 errorMessage = undefined;
                 continue;
               }
+            }
+            if (failure.kind === 'overflow') {
+              errorMessage = `${failure.message}. Context recovery could not make this request fit. Use /context, reduce the system prompt or tool schemas/output budget, or use /model to select a larger context window. This session can be reused after that change.`;
             }
             if (failure.kind === 'temporary' && providerRetries < Agent.MAX_PROVIDER_RETRIES) {
               providerRetries += 1;
@@ -2387,7 +2460,7 @@ export class Agent {
             break;
           }
           providerRetries = 0;
-          overflowCompactionTried = false;
+          overflowCompactionAttempts = 0;
 
           // After the stream finishes, attach response messages.
           const response = await stream.response;
@@ -2508,17 +2581,6 @@ export class Agent {
           const finishReason = await stream.finishReason;
 
           if (stepHadToolCalls) {
-            // Intermediate step — the model emitted tool calls and needs to
-            // consume results. Compact here if the projected next prompt
-            // crosses the trigger, so long tool loops never die on a
-            // context-window overflow mid-run.
-            if (
-              this.stepsSinceCompaction >= 1 &&
-              !this.compactionIneffective &&
-              this.overCompactionThreshold()
-            ) {
-              await this.runCompaction(queue, 'threshold');
-            }
             continue;
           }
 

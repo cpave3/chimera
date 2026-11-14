@@ -220,11 +220,23 @@ export interface CompactionOutcome {
   strategy?: string;
   prunedCount?: number;
   prunedTokensSaved?: number;
+  warnings?: string[];
+}
+
+export interface CompactionRequest {
+  contextWindow: number;
+  targetTokens?: number;
+  imageLongEdge?: number;
+  abortSignal?: AbortSignal;
 }
 
 export interface CompactorApi {
   maybeCompact(session: Session): Promise<{ ran: false } | ({ ran: true } & CompactionOutcome)>;
-  compact(session: Session, reason: 'threshold' | 'manual'): Promise<CompactionOutcome>;
+  compact(
+    session: Session,
+    reason: 'threshold' | 'manual',
+    request?: CompactionRequest,
+  ): Promise<CompactionOutcome>;
 }
 
 export interface RememberScope {

@@ -215,13 +215,14 @@ describe('Compactor', () => {
     expect(session.messages).toHaveLength(1);
   });
 
-  it('maybeCompact throws when compaction runs and resolveModel fails', async () => {
+  it('maybeCompact recovers when compaction runs and resolveModel fails', async () => {
     // ceil(500/4) + 16 = 141 tokens. threshold = 100 - 10 = 90. 141 > 90.
     const session = makeSession([{ role: 'user', content: 'x'.repeat(500) }]);
     const compactor = makeCompactor(true);
-    // Because toSummarize will be calculated and since our stub resolveModel
-    // returns null, generateText will throw.
-    await expect(compactor.maybeCompact(session)).rejects.toThrow();
+    const result = await compactor.maybeCompact(session);
+    expect(result.ran).toBe(true);
+    expect(estimateTokens(session.messages)).toBeLessThan(90);
+    if (result.ran) expect(result.warnings?.join(' ')).toContain('Summary unavailable');
   });
 
   it('manual compact with no messages returns empty summary and keeps tail', async () => {
@@ -325,7 +326,7 @@ describe('Compactor', () => {
     function summarizingCompactor(keepRecentTokens = 30) {
       return new Compactor({
         home,
-        contextWindow: 100,
+        contextWindow: 1_000,
         config: { enabled: true, reserveTokens: 10, keepRecentTokens },
         resolveModel: async () =>
           new MockLanguageModelV3({

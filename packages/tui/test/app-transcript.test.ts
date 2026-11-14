@@ -225,6 +225,23 @@ describe('vision routing', () => {
 });
 
 describe('compaction', () => {
+  it('shows recovery warnings and tells the operator how to inspect context', async () => {
+    mounted = await mount();
+    await mounted.event(event({ type: 'compaction_started', reason: 'overflow' }));
+    await mounted.event(
+      event({
+        type: 'compaction_finished',
+        summary: 'excerpt',
+        tokensBefore: 1000,
+        tokensAfter: 200,
+        messagesReplaced: 5,
+        warnings: ['Used lossy context recovery'],
+      }),
+    );
+    expect(mounted.screen()).toContain('Used lossy context recovery');
+    expect(mounted.screen()).toContain('/context');
+  });
+
   it('shows it running in the prompt box, then its result', async () => {
     mounted = await mount();
     await mounted.event(event({ type: 'compaction_started', reason: 'manual' }));

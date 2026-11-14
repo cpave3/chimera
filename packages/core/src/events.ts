@@ -260,6 +260,7 @@ export type AgentEvent =
       strategy?: string;
       prunedCount?: number;
       prunedTokensSaved?: number;
+      warnings?: string[];
     }
   | {
       type: 'compaction_failed';
