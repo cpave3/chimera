@@ -29,6 +29,7 @@ import {
 } from '../config';
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
+import { mergeModMcpServers } from '../mod-bundles';
 import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { RunRows } from '../run-rows';
@@ -111,8 +112,13 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
-  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
+  const mcpServers = mergeModMcpServers(
+    resolveMcpServers(config, opts.mcpConfig),
+    modRuntime.bundles,
+    {},
+  );
   const skills = loadSkillsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -121,6 +127,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
     onWarning: (m) => process.stderr.write(`${m}\n`),
   });
   const modes = loadModesFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -130,6 +137,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   });
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
   const agents = loadAgentsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -220,6 +228,7 @@ export async function runOneShot(opts: RunOptions): Promise<RunResult> {
   // Load the commands registry for both server introspection and client-side
   // expansion (when `--command` is used).
   const commands = loadCommandsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,

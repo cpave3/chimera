@@ -25,6 +25,7 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, writeLockfile } from '../lockfile';
+import { mergeModMcpServers } from '../mod-bundles';
 import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
@@ -99,7 +100,11 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
-  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
+  const mcpServers = mergeModMcpServers(
+    resolveMcpServers(config, opts.mcpConfig),
+    modRuntime.bundles,
+    { subagent: !!opts.parent },
+  );
   const { model, providersConfig } = resolveModel({
     cliModel: opts.model,
     cliSettings: opts.modelSettings,
@@ -108,6 +113,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   });
 
   const skills = loadSkillsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -115,6 +121,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   });
 
   const agents = loadAgentsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -138,6 +145,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     : undefined;
 
   const modes = loadModesFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,

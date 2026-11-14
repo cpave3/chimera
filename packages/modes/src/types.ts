@@ -1,4 +1,7 @@
+import type { ModBundle } from '@chimera/core';
+
 export type ModeSource =
+  | `mod:${string}`
   | 'project'
   | 'ancestor'
   | 'user'
@@ -52,6 +55,7 @@ export interface ModeCollision {
 
 export interface LoadModesOptions {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   /** Defaults to `os.homedir()`. */
   userHome?: string;
   /** Defaults to true. When false, the three `.claude/modes/` tiers are skipped. */

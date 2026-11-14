@@ -1,8 +1,10 @@
+import type { ModBundle } from '@chimera/core';
 import { type AgentRegistry, loadAgents, ReloadingAgentRegistry } from '@chimera/subagents';
 import type { ChimeraConfig } from './config';
 
 export interface LoadAgentsOpts {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   home?: string;
   config: ChimeraConfig;
   /** If set, overrides `config.agents.claudeCompat` (from `--no-claude-compat`). */
@@ -27,6 +29,7 @@ export function loadAgentsFromConfig(opts: LoadAgentsOpts): AgentRegistry {
 
   return loadAgents({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.home,
     includeClaudeCompat: claudeCompat,
     onWarning: opts.onWarning,
@@ -46,6 +49,7 @@ export function loadReloadingAgentsFromConfig(opts: LoadAgentsOpts): AgentRegist
 
   return new ReloadingAgentRegistry({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.home,
     includeClaudeCompat: claudeCompat,
     onWarning: opts.onWarning,

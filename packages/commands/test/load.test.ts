@@ -15,6 +15,32 @@ describe('loadCommands discovery', () => {
     await rm(home, { recursive: true, force: true });
   });
 
+  it('loads mod command paths below native tiers and above compatibility tiers', async () => {
+    const cwd = join(home, 'project');
+    const directory = join(home, 'bundle');
+    for (const folder of [join(cwd, '.claude/commands'), join(directory, 'prompts')]) {
+      await mkdir(folder, { recursive: true });
+      await writeFile(join(folder, 'review.md'), 'Review: $ARGUMENTS');
+    }
+    const modBundles = [
+      { name: 'first', directory, manifest: { commands: 'prompts' } },
+      { name: 'second', directory, manifest: { commands: 'prompts' } },
+    ];
+    const registry = loadCommands({ cwd, userHome: home, modBundles });
+    expect(registry.find('review')?.source).toBe('mod:first');
+    expect(registry.expand('review', 'changes')).toBe('Review: changes');
+    expect(registry.collisions().map((collision) => collision.loser)).toEqual([
+      'mod:second',
+      'claude-project',
+    ]);
+    await mkdir(join(home, '.chimera/commands'), { recursive: true });
+    await writeFile(join(home, '.chimera/commands/review.md'), 'user review');
+    expect(loadCommands({ cwd, userHome: home, modBundles }).find('review')?.source).toBe('user');
+    expect(loadCommands({ cwd, userHome: home, modBundles: [] }).find('review')?.source).toBe(
+      'user',
+    );
+  });
+
   it('loads a project command with frontmatter', async () => {
     const cwd = join(home, 'proj');
     await mkdir(join(cwd, '.chimera', 'commands'), { recursive: true });

@@ -57,6 +57,7 @@ export function parseToolEntries(raw: string): {
 export function discover(opts: LoadModesOptions): DiscoverResult {
   const tiers = buildTiers({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     assetType: 'modes',

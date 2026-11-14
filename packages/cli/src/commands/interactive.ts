@@ -40,6 +40,7 @@ import {
 import { CliAgentFactory } from '../factory';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
+import { mergeModMcpServers } from '../mod-bundles';
 import { type ModOptions, ModRuntime } from '../mod-runtime';
 import { loadModesFromConfig } from '../modes-loader';
 import { type ParseSandboxFlagsInput, parseSandboxFlags } from '../sandbox-config';
@@ -116,7 +117,11 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const modRuntime = await ModRuntime.create({ ...opts, disabled: config.mods?.disabled });
   // Resolved before anything else is set up, so a bad --mcp-config stops the
   // command at once instead of after a model has been chosen.
-  const mcpServers = resolveMcpServers(config, opts.mcpConfig);
+  const mcpServers = mergeModMcpServers(
+    resolveMcpServers(config, opts.mcpConfig),
+    modRuntime.bundles,
+    {},
+  );
   const { model, ref, providersConfig } = resolveModel({
     cliModel: opts.model,
     cliSettings: opts.modelSettings,
@@ -125,6 +130,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
 
   const skills = loadSkillsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -136,6 +142,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
 
   const modes = loadModesFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -146,6 +153,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
 
   const agents = loadReloadingAgentsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,
@@ -223,6 +231,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
 
   const commands = loadReloadingCommandsFromConfig({
+    modBundles: modRuntime.bundles,
     cwd: opts.cwd,
     home: opts.home,
     config,

@@ -16,8 +16,19 @@ export interface ModManifest {
   name: string;
   version: string;
   apiVersion: 1;
-  module: string;
+  module?: string;
+  description?: string;
+  mcpServers?: Record<string, ModMcpServer>;
+  skills?: string;
+  commands?: string;
+  agents?: string;
+  modes?: string;
 }
+
+export type ModMcpServer = (
+  | { transport: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+  | { transport: 'http'; url: string; clientId?: string }
+) & { trustedTools?: string[]; subagents?: boolean };
 
 export interface ModRecord {
   folder: string;
@@ -51,6 +62,37 @@ const HOOK_NAMES = new Set([
   'prompt.submit',
   'turn.stop',
 ]);
+
+function validBundleFields(manifest: Record<string, unknown>): boolean {
+  for (const key of ['description', 'skills', 'commands', 'agents', 'modes']) {
+    if (manifest[key] !== undefined && typeof manifest[key] !== 'string') return false;
+  }
+  const servers = manifest.mcpServers;
+  if (servers === undefined) return true;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return false;
+  const strings = (value: unknown) =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string');
+  return Object.values(servers).every((server) => {
+    if (!server || typeof server !== 'object' || Array.isArray(server)) return false;
+    if (server.subagents !== undefined && typeof server.subagents !== 'boolean') return false;
+    if (server.trustedTools !== undefined && !strings(server.trustedTools)) return false;
+    if (server.transport === 'http') {
+      return (
+        typeof server.url === 'string' &&
+        (server.clientId === undefined || typeof server.clientId === 'string')
+      );
+    }
+    if (server.transport !== 'stdio' || typeof server.command !== 'string') return false;
+    if (server.args !== undefined && !strings(server.args)) return false;
+    return (
+      server.env === undefined ||
+      (server.env &&
+        typeof server.env === 'object' &&
+        !Array.isArray(server.env) &&
+        Object.values(server.env).every((value) => typeof value === 'string'))
+    );
+  });
+}
 
 export interface ModContext {
   [key: string]: unknown;
@@ -184,8 +226,8 @@ export class ModHost {
         typeof manifest.version !== 'string' ||
         !manifest.version ||
         !Number.isInteger(manifest.apiVersion) ||
-        typeof manifest.module !== 'string' ||
-        !manifest.module
+        !validBundleFields(manifest) ||
+        (manifest.module !== undefined && (typeof manifest.module !== 'string' || !manifest.module))
       ) {
         throw new Error(`Invalid mod manifest: ${folder}`);
       }
@@ -204,6 +246,10 @@ export class ModHost {
       if (manifest.apiVersion !== 1) {
         record.status = 'unsupported-api';
         throw new Error(`Unsupported mod apiVersion ${manifest.apiVersion}; supported: 1`);
+      }
+      if (manifest.module === undefined) {
+        record.status = 'loaded';
+        return;
       }
       const modulePath = resolve(folder, manifest.module);
       if (!modulePath.startsWith(folder + sep) || !['.mjs', '.mts'].includes(extname(modulePath))) {

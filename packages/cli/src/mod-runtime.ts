@@ -89,6 +89,16 @@ export class ModRuntime {
     for (const message of this.uiMessages.splice(0)) ui(message.text, { to: message.to });
   }
 
+  get bundles() {
+    return this.host.mods
+      .filter((mod) => mod.status === 'loaded' && mod.manifest)
+      .map((mod) => ({
+        name: mod.manifest!.name,
+        directory: mod.folder,
+        manifest: mod.manifest!,
+      }));
+  }
+
   private context(id: string): Record<string, unknown> {
     const entry = this.registry?.get(id as SessionId);
     if (!entry) throw new SessionEnded(id);

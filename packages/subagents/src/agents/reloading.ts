@@ -78,6 +78,7 @@ export class ReloadingAgentRegistry implements AgentRegistry {
   private installWatchers(): void {
     const tiers = buildTiers({
       cwd: this.opts.cwd,
+      modBundles: this.opts.modBundles,
       userHome: this.opts.userHome,
       includeClaudeCompat: this.opts.includeClaudeCompat,
       assetType: 'agents',

@@ -1,4 +1,7 @@
+import type { ModBundle } from '@chimera/core';
+
 export type SkillSource =
+  | `mod:${string}`
   | 'project'
   | 'ancestor'
   | 'user'
@@ -36,6 +39,7 @@ export interface SkillCollision {
 
 export interface LoadSkillsOptions {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   /** Defaults to `os.homedir()`. */
   userHome?: string;
   /** Defaults to true. When false, the three `.claude/skills/` tiers are skipped. */

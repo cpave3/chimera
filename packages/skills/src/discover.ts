@@ -13,6 +13,7 @@ export function discover(opts: LoadSkillsOptions): DiscoverResult {
   const builtinDir = materializeBuiltins('skills', BUILTIN_SKILLS);
   const tiers = buildTiers({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.userHome,
     includeClaudeCompat: opts.includeClaudeCompat,
     includeCodexCompat: opts.includeCodexCompat ?? true,

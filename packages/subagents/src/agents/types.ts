@@ -1,4 +1,7 @@
+import type { ModBundle } from '@chimera/core';
+
 export type AgentSource =
+  | `mod:${string}`
   | 'builtin'
   | 'project'
   | 'ancestor'
@@ -32,6 +35,7 @@ export interface AgentCollision {
 
 export interface LoadAgentsOptions {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   /** Defaults to `os.homedir()`. */
   userHome?: string;
   /** Defaults to true. When false, the three `.claude/agents/` tiers are skipped. */

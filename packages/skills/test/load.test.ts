@@ -15,6 +15,32 @@ describe('loadSkills discovery', () => {
     await rm(home, { recursive: true, force: true });
   });
 
+  it('loads mod skills below native tiers and above compatibility tiers', async () => {
+    const cwd = join(home, 'project');
+    const directory = join(home, 'bundle');
+    const skillBody = '---\nname: pdf\ndescription: Read PDF\n---\nbody';
+    for (const root of [join(cwd, '.claude/skills'), join(directory, 'library')]) {
+      await mkdir(join(root, 'pdf'), { recursive: true });
+      await writeFile(join(root, 'pdf/SKILL.md'), skillBody);
+    }
+    const modBundles = [
+      { name: 'first', directory, manifest: { skills: 'library' } },
+      { name: 'second', directory, manifest: { skills: 'library' } },
+    ];
+    const registry = loadSkills({ cwd, userHome: home, modBundles });
+    expect(registry.find('pdf')?.source).toBe('mod:first');
+    expect(registry.collisions().map((collision) => collision.loser)).toEqual([
+      'mod:second',
+      'claude-project',
+    ]);
+    await mkdir(join(home, '.chimera/skills/pdf'), { recursive: true });
+    await writeFile(join(home, '.chimera/skills/pdf/SKILL.md'), skillBody);
+    expect(loadSkills({ cwd, userHome: home, modBundles }).find('pdf')?.source).toBe('user');
+    await mkdir(join(cwd, '.chimera/skills/pdf'), { recursive: true });
+    await writeFile(join(cwd, '.chimera/skills/pdf/SKILL.md'), skillBody);
+    expect(loadSkills({ cwd, userHome: home, modBundles }).find('pdf')?.source).toBe('project');
+  });
+
   it('loads the built-in bash policy review skill by default', () => {
     const registry = loadSkills({ cwd: home, userHome: home });
 

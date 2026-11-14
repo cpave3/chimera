@@ -1,8 +1,10 @@
 import { type CommandRegistry, loadCommands, ReloadingCommandRegistry } from '@chimera/commands';
+import type { ModBundle } from '@chimera/core';
 import type { ChimeraConfig } from './config';
 
 export interface LoadRegistryOpts {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   home?: string;
   config: ChimeraConfig;
   /** If set, overrides `config.commands.claudeCompat` (from `--no-claude-compat`). */
@@ -31,6 +33,7 @@ export function loadCommandsFromConfig(opts: LoadRegistryOpts): CommandRegistry 
 
   return loadCommands({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.home,
     includeClaudeCompat: claudeCompat,
     onWarning: opts.onWarning,
@@ -51,6 +54,7 @@ export function loadReloadingCommandsFromConfig(opts: LoadRegistryOpts): Command
 
   return new ReloadingCommandRegistry({
     cwd: opts.cwd,
+    modBundles: opts.modBundles,
     userHome: opts.home,
     includeClaudeCompat: claudeCompat,
     onWarning: opts.onWarning,

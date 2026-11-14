@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { discover } from '../src/agents/discover';
 import { parseToolsCsv } from '../src/agents/frontmatter';
+import { loadAgents } from '../src/agents/load';
 
 let cwd: string;
 let userHome: string;
@@ -40,6 +41,28 @@ function discoverOwn(options: Parameters<typeof discover>[0]) {
 }
 
 describe('agents discover', () => {
+  it('loads mod agents below native tiers and above compatibility tiers', () => {
+    const directory = join(userHome, 'bundle');
+    const frontmatter = 'name: audit\ndescription: Audit code\n';
+    writeAgent(join(directory, 'reviewers'), 'audit', frontmatter);
+    writeAgent(join(cwd, '.claude/agents'), 'audit', frontmatter);
+    const modBundles = [
+      { name: 'first', directory, manifest: { agents: 'reviewers' } },
+      { name: 'second', directory, manifest: { agents: 'reviewers' } },
+    ];
+    const registry = loadAgents({ cwd, userHome, modBundles });
+    expect(registry.find('audit')).toMatchObject({
+      source: 'mod:first',
+      body: 'system prompt body',
+    });
+    expect(registry.collisions().map((collision) => collision.loser)).toEqual([
+      'mod:second',
+      'claude-project',
+    ]);
+    writeAgent(join(userHome, '.chimera/agents'), 'audit', frontmatter);
+    expect(loadAgents({ cwd, userHome, modBundles }).find('audit')?.source).toBe('user');
+  });
+
   it('discovers agents from project/.chimera/agents and parses frontmatter', () => {
     const dir = join(cwd, '.chimera', 'agents');
     writeAgent(

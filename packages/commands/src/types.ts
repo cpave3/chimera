@@ -1,4 +1,7 @@
+import type { ModBundle } from '@chimera/core';
+
 export type CommandSource =
+  | `mod:${string}`
   | 'project'
   | 'ancestor'
   | 'user'
@@ -16,6 +19,7 @@ export interface Command {
 
 export interface LoadCommandsOptions {
   cwd: string;
+  modBundles?: readonly ModBundle[];
   userHome?: string;
   includeClaudeCompat?: boolean;
   onWarning?: (msg: string) => void;

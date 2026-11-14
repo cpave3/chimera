@@ -14,7 +14,14 @@ import { VERSION } from '../version';
 import { McpAuth } from './auth.js';
 
 export type McpServerConfig =
-  | { transport: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+  | {
+      transport: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      cwd?: string;
+      inheritEnv?: false;
+    }
   | { transport: 'http'; url: string; clientId?: string };
 export type McpTool = Awaited<ReturnType<Client['listTools']>>['tools'][number];
 export type McpCallResult = CallToolResult;
@@ -59,23 +66,27 @@ export class McpClientManager {
         ? new StdioClientTransport({
             command: config.command,
             args: config.args,
-            env: config.env
-              ? {
-                  ...(process.env as Record<string, string>),
-                  ...Object.fromEntries(
-                    Object.entries(config.env).map(([key, value]) => {
-                      if (!value.startsWith('env:')) return [key, value];
-                      const variable = value.slice(4);
-                      const secret = process.env[variable];
-                      if (secret === undefined)
-                        throw new Error(
-                          `MCP server ${name} needs environment variable ${variable}`,
-                        );
-                      return [key, secret];
-                    }),
-                  ),
-                }
-              : undefined,
+            cwd: config.cwd,
+            env:
+              config.inheritEnv === false
+                ? config.env
+                : config.env
+                  ? {
+                      ...(process.env as Record<string, string>),
+                      ...Object.fromEntries(
+                        Object.entries(config.env).map(([key, value]) => {
+                          if (!value.startsWith('env:')) return [key, value];
+                          const variable = value.slice(4);
+                          const secret = process.env[variable];
+                          if (secret === undefined)
+                            throw new Error(
+                              `MCP server ${name} needs environment variable ${variable}`,
+                            );
+                          return [key, secret];
+                        }),
+                      ),
+                    }
+                  : undefined,
             stderr: 'pipe',
             maxBufferSize: this.limits.maxResultBytes,
           })
