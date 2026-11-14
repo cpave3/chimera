@@ -181,3 +181,10 @@ stored there. Completion history is bounded to 1,000 records without evicting
 active children. The normal session checkpoints save this metadata; resumed
 unfinished children are marked interrupted rather than advertised as live.
 `GET …/subagents` remains the active-child discovery endpoint.
+
+Messages appended while a clean Stop hook or goal check is finishing are drained
+before that run ends. The final checkpoint seals injection admission: an append
+that arrives in that window gets `409`, not an acknowledgement that would strand
+it until another prompt. Retry after the run finishes; a fresh ordinary message
+then starts its own turn. Queues held before startup still join the starting
+run, and interrupted runs retain pending input for the next turn.
