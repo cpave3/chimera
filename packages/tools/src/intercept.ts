@@ -26,8 +26,9 @@ type ExecutableTool = {
   execute?: (args: unknown, options: unknown) => Promise<unknown>;
 };
 
-const schemaValidator = new Ajv({ strict: false });
-const schema2020Validator = new Ajv2020({ strict: false });
+// Server-supplied IDs must not register schemas for other tools to reference.
+const schemaValidator = new Ajv({ strict: false, addUsedSchema: false });
+const schema2020Validator = new Ajv2020({ strict: false, addUsedSchema: false });
 
 /**
  * Wrap every tool's execute, including MCP and subagents. Middleware runs

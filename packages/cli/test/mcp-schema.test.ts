@@ -200,3 +200,34 @@ it('rejects unsupported declared dialects rather than guessing their semantics',
   expect(test.permissions).toEqual([]);
   expect(test.calls).toEqual([]);
 });
+
+it.each([
+  'https://json-schema.org/draft/2020-12/schema',
+  'http://json-schema.org/draft-07/schema#',
+])('isolates server-supplied schema IDs between tools ($schema: %s)', async ($schema) => {
+  const schemaId = 'urn:chimera:test:isolated-schema';
+  const schema = (taskId: string): McpTool['inputSchema'] => ({
+    $schema,
+    $id: schemaId,
+    type: 'object',
+    definitions: { key: { const: taskId } },
+    properties: { taskId: { $ref: '#/definitions/key' } },
+    required: ['taskId'],
+  });
+  const first = await fixture(schema('PROP-424'));
+  const second = await fixture(schema('OTHER-1'));
+  await first.invoke({ taskId: 'PROP-424' });
+  await expect(second.invoke({ taskId: 'OTHER-1' })).resolves.toMatchObject({
+    content: [{ type: 'text', text: '{"taskId":"OTHER-1"}' }],
+  });
+  await expect(second.invoke({ taskId: 'PROP-424' })).rejects.toThrow('Invalid arguments');
+  expect(first.calls).toEqual([{ taskId: 'PROP-424' }]);
+  expect(second.calls).toEqual([{ taskId: 'OTHER-1' }]);
+
+  const referencing = await fixture({ $schema, type: 'object', $ref: schemaId });
+  await expect(referencing.invoke({ taskId: 'PROP-424' })).rejects.toThrow(
+    /can't resolve reference/,
+  );
+  expect(referencing.permissions).toEqual([]);
+  expect(referencing.calls).toEqual([]);
+});
