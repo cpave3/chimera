@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -122,6 +122,49 @@ describe.skipIf(!enabled)('the TUI in tmux', { timeout: 40_000 }, () => {
   function resize(columns: number): void {
     tmux('resize-window', '-t', SESSION, '-x', String(columns), '-y', '30');
   }
+
+  it.each([
+    false,
+    true,
+  ])('renders failed hook diagnostics without raw terminal writes (inline=%s)', async (inline) => {
+    const scripts: string[] = [];
+    const output = join(home, `terminal-${inline}.log`);
+    for (const event of ['SessionCreated', 'Stop', 'SessionEnd']) {
+      const directory = join(home, 'work', '.chimera', 'hooks', event);
+      const script = join(directory, 'broken.sh');
+      await mkdir(directory, { recursive: true });
+      await writeFile(script, `#!/bin/sh\necho repair-${event}-config >&2\nexit 1\n`);
+      await chmod(script, 0o755);
+      scripts.push(script);
+    }
+    try {
+      await start({ inline });
+      await until(() => shows('repair-SessionCreated-config'), 'the startup diagnostic');
+      expect(
+        capture(true).filter((row) => row.includes('repair-SessionCreated-config')),
+      ).toHaveLength(1);
+      tmux('pipe-pane', '-t', SESSION, `cat > '${output}'`);
+      await say('hook diagnostic');
+      await until(() => shows('repair-Stop-config', true), 'the actionable hook diagnostic');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const bytes = await readFile(output, 'utf8');
+      // Node's console inspection writes a multiline object outside the renderer.
+      expect(bytes).not.toContain('[hooks] hook Stop failed {');
+      const rows = capture(true);
+      expect(rows.some((row) => /^\s*stderr:/.test(row))).toBe(false);
+      expect(rows.filter((row) => row.startsWith('╭─ build'))).toHaveLength(1);
+      expect(rows.some((row) => row.includes('hook Stop failed'))).toBe(true);
+      tmux('send-keys', '-t', SESSION, 'C-c');
+      tmux('send-keys', '-t', SESSION, 'C-c');
+      await until(() => shows('repair-SessionEnd-config', true), 'the shutdown diagnostic');
+      const history = capture(true).join('\n');
+      expect(history.indexOf('hook SessionEnd failed')).toBeGreaterThan(
+        history.indexOf('resume with: chimera --session'),
+      );
+    } finally {
+      for (const script of scripts) await rm(script, { force: true });
+    }
+  });
 
   it('lays out the fullscreen layout again on a resize, with no stale rows', async () => {
     await start();

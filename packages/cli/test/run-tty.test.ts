@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -72,5 +72,47 @@ describe.skipIf(!hasScript || !built)('chimera run on a terminal', () => {
     // The label, then the facts, each in its own colour.
     expect(output).toContain('\x1b[90m   read\x1b[39m  notes.txt  \x1b[');
     expect(output).toContain('m3 lines\x1b[');
+  });
+
+  it('keeps actionable hook diagnostics on stderr for piped JSON consumers', {
+    timeout: 30_000,
+  }, async () => {
+    const directory = join(home, 'work', '.chimera', 'hooks', 'Stop');
+    const script = join(directory, 'broken.sh');
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      script,
+      '#!/bin/sh\ncat\necho private-hook-stdout\necho repair-hook-config >&2\nexit 1\n',
+    );
+    await chmod(script, 0o755);
+    try {
+      const child = spawn(process.execPath, [BIN, 'run', '--json', 'hello'], {
+        env: { ...process.env, HOME: home },
+        cwd: join(home, 'work'),
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+      const code = await new Promise((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', resolve);
+      });
+      expect(code).toBe(0);
+      expect(stderr).toContain('[hooks] hook Stop failed:');
+      expect(stderr).toContain('repair-hook-config');
+      expect(stdout + stderr).not.toContain('private-hook-stdout');
+      const events = stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(events.some((event) => event.type === 'run_finished')).toBe(true);
+    } finally {
+      await rm(script, { force: true });
+    }
   });
 });
