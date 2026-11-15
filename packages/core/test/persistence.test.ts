@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { newSessionId } from '../src/ids';
+import { newCallId, newSessionId } from '../src/ids';
 import {
   appendSessionEvent,
   deleteSession,
@@ -162,6 +162,43 @@ describe('persistence', () => {
     expect(loaded.id).toEqual(session.id);
     expect(loaded.messages).toEqual(session.messages);
     expect(loaded.status).toEqual('idle');
+  });
+
+  it('does not restore a crashed step as currently pending', async () => {
+    const session = makeSession({
+      toolCalls: [
+        {
+          callId: newCallId(),
+          toolCallId: 'provider-call',
+          pendingMessage: true,
+          messageCommitted: false,
+          name: 'read',
+          args: {},
+          target: 'host',
+          startedAt: 1,
+        },
+      ],
+    });
+    await persistSession(
+      session,
+      {
+        type: 'step_finished',
+        stepNumber: 1,
+        finishReason: 'stop',
+        messages: session.messages,
+        toolCalls: session.toolCalls,
+        usage: session.usage,
+      },
+      home,
+    );
+    const loaded = await loadSession(session.id, home);
+    expect(loaded.status).toBe('idle');
+    expect(loaded.toolCalls[0]).toMatchObject({
+      callId: session.toolCalls[0].callId,
+      toolCallId: 'provider-call',
+      messageCommitted: false,
+    });
+    expect(loaded.toolCalls[0].pendingMessage).not.toBe(true);
   });
 
   it('uses the most recent step_finished for messages on resume', async () => {

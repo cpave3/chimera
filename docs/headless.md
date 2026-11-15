@@ -160,6 +160,30 @@ Events that only report: `approval_reviewed` (the reviewer's decision),
 All event additions are optional fields or new event types. A client that
 ignores unknown events continues to operate.
 
+New tool records in session snapshots include `toolCallId`, the raw provider/SDK
+ID alongside the canonical `callId`. `messageCommitted: true` means the SDK
+response attached that invocation to model history. An error can leave a record
+with `messageCommitted: false`, even when a tool executed successfully.
+`pendingMessage: true` identifies the active step before response attachment,
+including a finished call awaiting a sibling. Response attachment and terminal
+cleanup clear pending flags; resume clears flags saved by a crashed step.
+Older records remain without provider IDs and are marked settled
+(`pendingMessage: false`) when an updated host resumes them.
+
+Provider IDs can repeat across steps and runs. Join retained tool-call parts
+with the surviving suffix of **committed occurrences** of each provider ID, in
+message order. Older unidentified occurrences precede identified ones in a mixed
+resumed history. Do not use a session-global first/last raw-ID map, include
+unattached failed steps in the committed occurrence count, or append all
+unreferenced records as live tools. Only explicit pending-message records belong
+after committed history. Canonical `callId` remains the replay/child identity.
+A failed final history checkpoint ends the run with an actionable error instead
+of claiming durable completion. These optional fields use the existing
+checkpoints; there is no transcript
+storage migration or change to model messages, compaction, or authentication.
+Older clients ignore the additions. Exact active-step correlation needs a client
+that understands them and a later operator-controlled host upgrade/resume.
+
 `background_process_started` carries `shellId` and `command`, matching the later
 `background_process_exited` event. `subagent_finished.background` identifies
 foreground versus background execution. `run_finished` includes snapshots of

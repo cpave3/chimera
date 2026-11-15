@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { APICallError, type LanguageModel, type ToolSet, tool } from 'ai';
@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { Agent, type AgentOptions } from '../src/agent';
 import type { AgentEvent } from '../src/events';
 import { LifecycleSource } from '../src/lifecycle';
+import { loadSession } from '../src/persistence';
 import type { CompactorApi, ModelConfig } from '../src/types';
 
 const USAGE = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -105,6 +106,213 @@ describe('Agent loop', () => {
     for await (const event of agent.run(message)) events.push(event);
     return events;
   }
+
+  it('snapshots both finished and unfinished tools as pending until their step commits', async () => {
+    const { model } = scriptedModel([
+      toolCallStep('capture', { value: 'same' }, 'first'),
+      [
+        ...toolCallStep('capture', { value: 'same' }, 'second').slice(0, -1),
+        {
+          type: 'tool-call',
+          toolCallId: 'sibling',
+          toolName: 'capture',
+          input: '{"value":"same"}',
+        },
+        { type: 'finish', finishReason: finish('tool-calls'), usage: USAGE },
+      ],
+      textStep('done'),
+    ]);
+    let releaseSibling!: () => void;
+    const siblingGate = new Promise<void>((resolve) => {
+      releaseSibling = resolve;
+    });
+    const agent = buildAgent({
+      languageModel: model,
+      tools: {
+        capture: tool({
+          inputSchema: z.object({ value: z.string() }),
+          execute: async (_input, options) => {
+            if (options.toolCallId === 'sibling') await siblingGate;
+            return 'captured';
+          },
+        }),
+      },
+    });
+    let observedPending = false;
+    let secondFinished = false;
+    try {
+      for await (const event of agent.run('go')) {
+        const snapshot = agent.snapshot();
+        if (event.type === 'tool_call_result' && event.callId === snapshot.toolCalls[1]?.callId) {
+          secondFinished = true;
+        }
+        if (observedPending || !secondFinished || snapshot.toolCalls.length !== 3) continue;
+        observedPending = true;
+        expect(snapshot.toolCalls).toMatchObject([
+          { toolCallId: 'first', result: 'captured', messageCommitted: true },
+          {
+            toolCallId: 'second',
+            result: 'captured',
+            pendingMessage: true,
+            messageCommitted: false,
+          },
+          { toolCallId: 'sibling', pendingMessage: true },
+        ]);
+        expect(snapshot.toolCalls[0].pendingMessage).not.toBe(true);
+        expect(snapshot.toolCalls[2].endedAt).toBeUndefined();
+        expect(snapshot.messages.filter((message) => message.role === 'assistant')).toHaveLength(1);
+        releaseSibling();
+      }
+    } finally {
+      releaseSibling();
+    }
+    expect(observedPending).toBe(true);
+    const snapshot = agent.snapshot();
+    const messageIds = snapshot.messages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? message.content.flatMap((part) => (part.type === 'tool-call' ? [part.toolCallId] : []))
+        : [],
+    );
+    expect(messageIds).toEqual(['first', 'second', 'sibling']);
+    expect(snapshot.toolCalls.map((record) => record.toolCallId)).toEqual(messageIds);
+    expect(snapshot.toolCalls.every((record) => record.pendingMessage !== true)).toBe(true);
+    expect(snapshot.toolCalls.every((record) => record.messageCommitted === true)).toBe(true);
+    expect(new Set(snapshot.toolCalls.map((record) => record.callId)).size).toBe(3);
+    expect(snapshot.toolCalls.map((record) => record.args)).toEqual([
+      { value: 'same' },
+      { value: 'same' },
+      { value: 'same' },
+    ]);
+    expect((await loadSession(agent.session.id, home)).toolCalls).toEqual(snapshot.toolCalls);
+  });
+
+  it('reports a failed history checkpoint instead of claiming a completed durable exchange', async () => {
+    const agent = buildAgent({
+      languageModel: scriptedModel([textStep('Implementation is done.')]).model,
+    });
+    await writeFile(join(home, '.chimera'), 'blocked storage');
+    const events = await collect(agent, 'done?');
+    expect(
+      events.some(
+        (event) => event.type === 'assistant_text_done' && event.text === 'Implementation is done.',
+      ),
+    ).toBe(true);
+    expect(events.at(-1)).toMatchObject({
+      type: 'run_finished',
+      reason: 'error',
+      error: expect.stringContaining('Could not persist session history'),
+    });
+    expect(agent.snapshot().status).toBe('error');
+  });
+
+  it('marks pre-metadata tool history settled when resuming before the next tool starts', async () => {
+    const { model } = scriptedModel([toolCallStep('capture', {}, 'old'), textStep('done')]);
+    const tools = { capture: tool({ inputSchema: z.object({}), execute: async () => 'captured' }) };
+    const first = buildAgent({ languageModel: model, tools });
+    await collect(first);
+    const legacy = await loadSession(first.session.id, home);
+    for (const call of legacy.toolCalls) {
+      delete call.toolCallId;
+      delete call.messageCommitted;
+      delete call.pendingMessage;
+    }
+    const resumed = buildAgent({
+      session: legacy,
+      languageModel: scriptedModel([textStep('ready')]).model,
+      tools,
+    });
+    let observed = false;
+    for await (const event of resumed.run('again')) {
+      if (event.type === 'session_started') {
+        observed = true;
+        expect(resumed.snapshot().toolCalls).toMatchObject([
+          { callId: legacy.toolCalls[0].callId, pendingMessage: false },
+        ]);
+      }
+    }
+    expect(observed).toBe(true);
+    expect(resumed.snapshot().messages).toContainEqual({ role: 'user', content: 'again' });
+  });
+
+  it('clears pending tool metadata after a provider stream error and persists the cleanup', async () => {
+    const { model } = scriptedModel([
+      [
+        ...toolCallStep('capture', {}, 'failed-step').slice(0, -1),
+        { type: 'error', error: new Error('stream failed after tool start') },
+        { type: 'finish', finishReason: finish('error'), usage: USAGE },
+      ],
+    ]);
+    const agent = buildAgent({
+      languageModel: model,
+      tools: { capture: tool({ inputSchema: z.object({}), execute: async () => 'captured' }) },
+    });
+    const events = await collect(agent);
+    expect(finishReason(events)).toBe('error');
+    expect(agent.snapshot().toolCalls).toMatchObject([
+      { toolCallId: 'failed-step', messageCommitted: false },
+    ]);
+    expect(agent.snapshot().toolCalls[0].pendingMessage).not.toBe(true);
+    const loaded = await loadSession(agent.session.id, home);
+    expect(loaded.toolCalls).toEqual(agent.snapshot().toolCalls);
+    expect(loaded.toolCalls[0].pendingMessage).not.toBe(true);
+  });
+
+  it('distinguishes committed occurrences from an unattached step with a reused provider ID', async () => {
+    const { model } = scriptedModel([
+      toolCallStep('capture', {}, 'reused'),
+      textStep('done'),
+      toolCallStep('capture', {}, 'reused'),
+      toolCallStep('capture', {}, 'reused'),
+      textStep('done again'),
+    ]);
+    let step = 0;
+    const agent = buildAgent({
+      languageModel: model,
+      tools: { capture: tool({ inputSchema: z.object({}), execute: async () => 'captured' }) },
+      interceptStep: async (_request, next) => {
+        await next();
+        if (++step === 3) throw new Error('second run failed before response attachment');
+      },
+    });
+    expect(finishReason(await collect(agent))).toBe('stop');
+    expect(finishReason(await collect(agent, 'again'))).toBe('error');
+    expect(finishReason(await collect(agent, 'third'))).toBe('stop');
+    const records = agent.snapshot().toolCalls;
+    expect(records.map((record) => record.toolCallId)).toEqual(['reused', 'reused', 'reused']);
+    expect(records.map((record) => record.messageCommitted)).toEqual([true, false, true]);
+    expect(new Set(records.map((record) => record.callId)).size).toBe(3);
+    const loaded = await loadSession(agent.session.id, home);
+    expect(loaded.toolCalls).toEqual(records);
+    expect(loaded.messages.filter((message) => message.role === 'tool')).toHaveLength(2);
+  });
+
+  it.each([
+    'error',
+    'interrupted',
+  ] as const)('persists cleared pending flags when a step throws before response attachment (%s)', async (reason) => {
+    const { model } = scriptedModel([toolCallStep('capture', {}, 'unattached')]);
+    let beforeAttachment: ReturnType<Agent['snapshot']> | undefined;
+    const agent = buildAgent({
+      languageModel: model,
+      tools: { capture: tool({ inputSchema: z.object({}), execute: async () => 'captured' }) },
+      interceptStep: async (_request, next) => {
+        await next();
+        beforeAttachment = agent.snapshot();
+        if (reason === 'interrupted') agent.interrupt();
+        throw new Error('step stopped before attaching messages');
+      },
+    });
+    const events = await collect(agent);
+    expect(finishReason(events)).toBe(reason);
+    expect(beforeAttachment?.toolCalls).toMatchObject([
+      { toolCallId: 'unattached', pendingMessage: true, result: 'captured' },
+    ]);
+    expect(agent.snapshot().toolCalls).toMatchObject([{ toolCallId: 'unattached' }]);
+    expect(agent.snapshot().toolCalls[0].pendingMessage).not.toBe(true);
+    expect((await loadSession(agent.session.id, home)).toolCalls).toEqual(
+      agent.snapshot().toolCalls,
+    );
+  });
 
   function finishReason(events: AgentEvent[]): string | undefined {
     const finished = events.find((event) => event.type === 'run_finished');
