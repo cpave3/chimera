@@ -88,6 +88,31 @@ Literal `rm` and `rmdir` targets are canonicalized before authorization, so syml
 
 Deterministic scary rules are hard blocks and do not show an approval prompt. Recursive forced deletion remains blocked even when its target is inside an authorized write directory. Sudo is a deterministic but promptable elevation finding: it always uses the normal approval flow, even with `autoApprove: "host"`/`"all"` or a remembered allow rule. Other concrete danger/path findings also use the normal approval flow. When Chimera is about to prompt, it fires the existing synchronous `PermissionRequest` lifecycle hook before entering `waiting_for_permission`.
 
+### Explicit-lease pushes
+
+The force-push rule has one narrow exception: a standalone literal command such as
+`git push --force-with-lease=refs/heads/topic:<full-sha> origin HEAD:refs/heads/topic`.
+The lease must name one full branch ref and a complete 40- or 64-digit object ID,
+and the single explicit destination must match it. The source can be `HEAD` or
+a full `refs/heads/...` ref. Wrappers, compound commands, additional flags or
+refspecs, implicit leases and bare force remain blocked.
+
+Chimera checks the local `refs/remotes/<remote>/HEAD` symbolic ref to identify
+the remote default branch. That branch, `main`, and `master` remain blocked.
+If the symbolic ref is missing, the denial explains how to populate it with
+`git remote set-head <remote> -a`. This check uses local metadata, not a live
+remote query; refresh that metadata if the remote default changes.
+
+An eligible lease push always requires operator approval, naming the remote,
+branch and expected SHA. Auto-approval, remembered allows, mods, System One,
+and the approval reviewer cannot substitute for that approval. Mod denials, blocking
+lifecycle hooks and explicit deny rules still apply. Headless sessions without an approval
+responder deny rather than run the push. Git itself enforces the lease at execution.
+
+Hard policy denials include the blocking rule ID, its reason, and an explicit
+statement that approval is unavailable for that command; retrying unsandboxed
+does not override them.
+
 ## Sudo authentication
 
 After you allow a foreground sudo command in the owner-local interactive TUI, Chimera temporarily releases the terminal and runs `sudo -v` with inherited terminal input and output. Chimera displays an authentication banner and an explicit native prompt explaining that input is hidden and one press of Enter submits it. No dots or characters appear while typing because sudo—not Chimera—owns the password input. Chimera never reads, transmits, logs, persists, or includes the password in permission actions or tool results.

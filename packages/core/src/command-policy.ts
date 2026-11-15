@@ -50,6 +50,12 @@ export type CommandPolicyFinding =
       message: string;
     }
   | {
+      kind: 'approval';
+      stageId: string;
+      ruleId: string;
+      message: string;
+    }
+  | {
       kind: 'blocked';
       stageId: string;
       ruleId: string;

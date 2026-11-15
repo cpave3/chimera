@@ -1,15 +1,19 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type {
   CommandPolicyStage,
   CommandPolicyStageContext,
   CommandPolicyStageResult,
 } from '@chimera/core';
 
-export interface ScaryCommandMatch {
+const execFileAsync = promisify(execFile);
+
+interface ScaryCommandMatch {
   ruleId: string;
   message: string;
 }
 
-export function matchScaryCommand(command: string): ScaryCommandMatch | undefined {
+function matchScaryCommand(command: string): ScaryCommandMatch | undefined {
   for (const invocation of command.split(/(?:&&|\|\||;|\|)/)) {
     const tokens = invocation.trim().split(/\s+/).filter(Boolean);
     const normalized = unwrapCommand(tokens);
@@ -49,6 +53,48 @@ export class ScaryCommandStage implements CommandPolicyStage {
   async evaluate(context: CommandPolicyStageContext): Promise<CommandPolicyStageResult> {
     const rule = matchScaryCommand(context.command);
     if (!rule) return { status: 'pass' };
+    if (rule.ruleId === 'git-force-push') {
+      const lease = parseLeasePush(context.command);
+      if (lease) {
+        let defaultRef: string;
+        try {
+          const result = await execFileAsync(
+            'git',
+            ['symbolic-ref', '--quiet', `refs/remotes/${lease.remote}/HEAD`],
+            { cwd: context.cwd, timeout: 1_000, signal: context.signal },
+          );
+          defaultRef = result.stdout.trim();
+        } catch (error) {
+          rule.message = `Cannot determine the default branch for ${lease.remote}: ${(error as Error).message}. Set it with git remote set-head ${lease.remote} -a before requesting lease-push approval.`;
+          return this.blocked(rule);
+        }
+        const branch = lease.ref.slice('refs/heads/'.length);
+        if (
+          ['main', 'master'].includes(branch) ||
+          defaultRef === `refs/remotes/${lease.remote}/${branch}`
+        ) {
+          rule.message = `Force-pushing protected/default branch ${lease.ref} is blocked.`;
+          return this.blocked(rule);
+        }
+        return {
+          status: 'findings',
+          findings: [
+            {
+              kind: 'approval',
+              stageId: this.id,
+              ruleId: 'git-lease-push',
+              message: `Operator approval required: replace ${lease.remote} ${lease.ref} at ${lease.sha} using an explicit lease.`,
+            },
+          ],
+        };
+      }
+      rule.message =
+        'Force-pushing requires a standalone git push with one --force-with-lease=refs/heads/<branch>:<full-sha> and a matching explicit <source>:refs/heads/<branch> destination; bare force and ambiguous pushes cannot be approved.';
+    }
+    return this.blocked(rule);
+  }
+
+  private blocked(rule: ScaryCommandMatch): CommandPolicyStageResult {
     return {
       status: 'findings',
       findings: [
@@ -61,6 +107,26 @@ export class ScaryCommandStage implements CommandPolicyStage {
       ],
     };
   }
+}
+
+function parseLeasePush(command: string) {
+  // Deliberately accept only literal argv: shell expansion, wrappers and extra
+  // push options could change the repository, destination or lease semantics.
+  if (!/^git[ \t]+push[ \t]+[A-Za-z0-9_./:=@ \t-]+$/.test(command)) return undefined;
+  const args = command.split(/[ \t]+/).slice(2);
+  if (args.length !== 3) return undefined;
+  const lease = args.find((arg) => arg.startsWith('--force-with-lease='));
+  const match = lease?.match(
+    /^--force-with-lease=(refs\/heads\/[A-Za-z0-9_][A-Za-z0-9_./-]*):([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/,
+  );
+  if (!match) return undefined;
+  const [remote, refspec] = args.filter((arg) => arg !== lease);
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(remote ?? '')) return undefined;
+  const destination = refspec?.match(
+    /^(HEAD|refs\/heads\/[A-Za-z0-9_][A-Za-z0-9_./-]*):(refs\/heads\/[A-Za-z0-9_][A-Za-z0-9_./-]*)$/,
+  );
+  if (!destination || destination[2] !== match[1]) return undefined;
+  return { remote: remote!, ref: match[1]!, sha: match[2]! };
 }
 
 function unwrapCommand(tokens: string[]): string[] {

@@ -47,6 +47,36 @@ const request: PendingPermission = {
 };
 
 describe('PermissionCard', () => {
+  it('shows the lease rule, branch and expected SHA with only one-time approval', () => {
+    const onResolve = vi.fn();
+    const card = new PermissionCard(
+      {
+        requestId: 'lease',
+        command: 'git push',
+        policyAnalysis: {
+          version: 1,
+          outcome: 'approval_required',
+          stages: [],
+          findings: [
+            {
+              kind: 'approval',
+              stageId: 'scary_commands',
+              ruleId: 'git-lease-push',
+              message: 'Replace refs/heads/topic at 0123456789012345678901234567890123456789',
+            },
+          ],
+        },
+      },
+      onResolve,
+    );
+    const text = draw(card, 140).join('\n');
+    expect(text).toContain('approval (git-lease-push)');
+    expect(text).toContain('refs/heads/topic at 0123456789012345678901234567890123456789');
+    expect(text).not.toContain('Allow & remember');
+    burst(card, 'a');
+    expect(onResolve).toHaveBeenCalledExactlyOnceWith({ decision: 'allow' });
+  });
+
   it.each([100, 60])('draws the request and the choices vertically at %i columns', (width) => {
     const lines = draw(new PermissionCard(request, vi.fn()), width);
     expect(lines[0]).toMatch(/^┌─ approval needed ─+ key or ↑↓ enter · esc deny ─┐$/);

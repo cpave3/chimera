@@ -1,6 +1,6 @@
 /**
- * The text the model gets for a denied call. `reason` is the reviewer's
- * reason or the System One check's note, for a denial that one of them made.
+ * The text the model gets for a denied call, including policy diagnostics
+ * or the reason supplied by the decision-maker.
  */
 export function permissionDenialMessage(
   source:
@@ -18,7 +18,9 @@ export function permissionDenialMessage(
   if (source === 'rule') return 'denied by rule';
   if (source === 'hook') return 'denied by hook';
   if (source === 'mod') return reason ? `denied by mod: ${reason}` : 'denied by mod';
-  if (source === 'headless' || source === 'policy') return 'denied by policy';
+  if (source === 'headless' || source === 'policy') {
+    return reason ? `denied by policy: ${reason}` : 'denied by policy';
+  }
   if (source === 'reviewer') {
     // The reviewer wanted the user to decide, and this session has nobody to ask.
     return `denied by reviewer: ${reason ?? 'the request needs the user'}`;

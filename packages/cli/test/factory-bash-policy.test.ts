@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
 
 interface ExecutableTool {
@@ -49,7 +50,9 @@ describe('CliAgentFactory host bash policy', () => {
       exit_code: 0,
     });
     await expect(bash.execute({ command: 'rm -rf build' }, {})).resolves.toMatchObject({
-      stderr: 'denied by policy',
+      stderr: expect.stringMatching(
+        /denied by policy: \[recursive-force-delete\].*Approval unavailable/,
+      ),
       exit_code: -1,
     });
     const records = (
@@ -62,6 +65,67 @@ describe('CliAgentFactory host bash policy', () => {
       expect.objectContaining({ command: 'echo safe', decision: 'allow', source: 'automatic' }),
       expect.objectContaining({ command: 'rm -rf build', decision: 'deny', source: 'policy' }),
     ]);
+  });
+
+  it('routes an explicit lease through operator approval before the bash tool pushes', async () => {
+    const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.invalid');
+    git('commit', '-qm', 'initial', '--allow-empty');
+    const expectedSha = git('rev-parse', 'HEAD');
+    git('init', '--bare', '-q', join(cwd, 'remote.git'));
+    git('remote', 'add', 'origin', join(cwd, 'remote.git'));
+    git('push', '-q', 'origin', 'HEAD:refs/heads/topic');
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    await writeFile(join(cwd, 'change'), 'rebased');
+    git('add', 'change');
+    git('commit', '--amend', '-qm', 'replacement');
+    const factory = new CliAgentFactory({
+      providersConfig: {
+        providers: {
+          anthropic: {
+            shape: 'anthropic',
+            baseUrl: 'https://example.invalid',
+            apiKey: 'env:CHIMERA_FACTORY_TEST_KEY',
+          },
+        },
+      },
+      autoApprove: 'all',
+      home: cwd,
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const approve = vi
+      .spyOn(agent, 'raisePermissionRequest')
+      .mockImplementation(async (request) => {
+        expect(git('--git-dir=remote.git', 'rev-parse', 'refs/heads/topic')).toBe(expectedSha);
+        expect(request.policyAnalysis?.findings).toContainEqual(
+          expect.objectContaining({
+            kind: 'approval',
+            ruleId: 'git-lease-push',
+            message: expect.stringContaining(`refs/heads/topic at ${expectedSha}`),
+          }),
+        );
+        return { decision: 'allow', remembered: false };
+      });
+    const bash = (agent as unknown as { opts: { tools: { bash: ExecutableTool } } }).opts.tools
+      .bash;
+    await expect(
+      bash.execute(
+        {
+          command: `git push --force-with-lease=refs/heads/topic:${expectedSha} origin HEAD:refs/heads/topic`,
+        },
+        {},
+      ),
+    ).resolves.toMatchObject({ exit_code: 0 });
+    expect(approve).toHaveBeenCalledOnce();
+    expect(git('--git-dir=remote.git', 'rev-parse', 'refs/heads/topic')).toBe(
+      git('rev-parse', 'HEAD'),
+    );
   });
 
   it('auto-runs a literal delete inside the writable project root', async () => {
