@@ -79,10 +79,14 @@ it('carries exact pending and committed tool identities through client HTTP and 
     ({ sessionId } = await client.createSession({ cwd: home, model, sandboxMode: 'off' }));
     let observed = false;
     const started: string[] = [];
+    let firstFinished = false;
     let reply = '';
     for await (const event of client.send(sessionId, 'done?')) {
       if (event.type === 'tool_call_start') started.push(event.callId);
       if (event.type === 'tool_call_result' && event.callId === started[0]) {
+        firstFinished = true;
+      }
+      if (!observed && firstFinished && started.length === 2) {
         const snapshot = await client.getSession(sessionId);
         expect(snapshot.toolCalls).toMatchObject([
           {
