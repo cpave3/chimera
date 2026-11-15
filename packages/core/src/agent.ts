@@ -207,7 +207,8 @@ export class Agent {
 
   private observeEvent(event: AgentEvent): AgentEvent {
     if (event.type === 'subagent_spawned' || event.type === 'subagent_finished') {
-      const children = (this.session.subagentStates ??= []);
+      this.session.subagentStates ??= [];
+      const children = this.session.subagentStates;
       const subagentId = event.subagentId;
       let child = children.find((child) => child.subagentId === subagentId);
       if (!child) {
