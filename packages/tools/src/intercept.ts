@@ -1,5 +1,6 @@
 import { asSchema, type ToolSet } from 'ai';
 import Ajv from 'ajv';
+import Ajv2020 from 'ajv/dist/2020.js';
 
 export interface ToolCall {
   name: string;
@@ -25,7 +26,9 @@ type ExecutableTool = {
   execute?: (args: unknown, options: unknown) => Promise<unknown>;
 };
 
-const schemaValidator = new Ajv({ strict: false });
+// Server-supplied IDs must not register schemas for other tools to reference.
+const schemaValidator = new Ajv({ strict: false, addUsedSchema: false });
+const schema2020Validator = new Ajv2020({ strict: false, addUsedSchema: false });
 
 /**
  * Wrap every tool's execute, including MCP and subagents. Middleware runs
@@ -57,10 +60,17 @@ export function interceptTools(
               if (!validated.success) throw validated.error;
               call = { ...call, args: validated.value };
             } else {
-              const validate = schemaValidator.compile(await schema.jsonSchema);
+              const jsonSchema = await schema.jsonSchema;
+              const validator =
+                jsonSchema.$schema?.replace(/#$/, '') ===
+                'https://json-schema.org/draft/2020-12/schema'
+                  ? schema2020Validator
+                  : schemaValidator;
+              // Synchronous compilation resolves bundled/local refs only; never fetch server URLs.
+              const validate = validator.compile(jsonSchema);
               if (!validate(call.args)) {
                 throw new Error(
-                  `Invalid arguments for ${name}: ${schemaValidator.errorsText(validate.errors)}`,
+                  `Invalid arguments for ${name}: ${validator.errorsText(validate.errors)}`,
                 );
               }
             }

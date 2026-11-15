@@ -114,6 +114,13 @@ an interactive approval from their parent. Calls return bounded text and
 structured content; image, binary, and unknown content are reported as such,
 not silently converted to text. Server-side tool errors are surfaced as errors.
 
+Tool middleware revalidates inputs using JSON Schema 2020-12 (MCP's default
+when `$schema` is absent) or explicitly declared draft-07. This validation
+preserves schema constraints and local references; it does not fetch remote
+`$ref` targets or unknown dialects. Unsupported dialects and unresolved references
+fail validation before permission approval or server execution. Discovery with
+`mcp tools` alone does not exercise agent-side input validation.
+
 ## OAuth and credentials
 
 For Burnlite, run `chimera mcp login burnlite` in a terminal where you can open

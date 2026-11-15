@@ -7,10 +7,12 @@ import { InMemoryModeRegistry } from '@chimera/modes';
 import { AgentRegistry } from '@chimera/server';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CliAgentFactory } from '../src/factory';
+import { ModRuntime } from '../src/mod-runtime';
 
 const toolName = 'mcp_fixture_echo';
 const servers: Server[] = [];
 const factories: CliAgentFactory[] = [];
+const runtimes: ModRuntime[] = [];
 const homes: string[] = [];
 
 beforeEach(() => {
@@ -20,6 +22,7 @@ beforeEach(() => {
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(factories.splice(0).map((factory) => factory.dispose()));
+  await Promise.all(runtimes.splice(0).map((runtime) => runtime.shutdown()));
   await Promise.all(
     servers
       .splice(0)
@@ -39,6 +42,8 @@ async function listen(server: Server): Promise<string> {
 async function fixture(instructions?: string) {
   const home = await mkdtemp(join(tmpdir(), 'chimera-mcp-agent-'));
   homes.push(home);
+  const runtime = await ModRuntime.create({ mods: false, home });
+  runtimes.push(runtime);
   const calls: Array<{ name: string; arguments: { message: string } }> = [];
   const methods: string[] = [];
   const mcpUrl = await listen(
@@ -70,6 +75,7 @@ async function fixture(instructions?: string) {
               {
                 name: 'echo',
                 inputSchema: {
+                  $schema: 'https://json-schema.org/draft/2020-12/schema',
                   type: 'object',
                   properties: { message: { type: 'string' } },
                   required: ['message'],
@@ -166,6 +172,8 @@ async function fixture(instructions?: string) {
       [],
     );
     const factory = new CliAgentFactory({
+      // Even an empty mod host enables the middleware input-validation path.
+      mods: runtime.host,
       providersConfig: {
         providers: {
           fixture: {
