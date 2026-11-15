@@ -158,6 +158,26 @@ permission to act with your host credentials, not as a way to trust the whole
 server. The permission audit records decisions without raw argument bodies or
 secrets.
 
+## Connection recovery
+
+A closed MCP connection no longer requires a session reload. Chimera discards
+that connection and its tool catalog. A later, new call reconnects and
+rediscovers the server. Concurrent callers share one connection and discovery.
+This applies to ordinary and mod-bundled servers. It does not hot-reload server
+configuration or add newly discovered tools to the session's registered tool list.
+
+Chimera **never automatically replays a failed tool call**. A disconnected,
+timed-out, cancelled, or oversized call can have executed on the server before
+its reply was lost. Check the result before retrying a mutation. After a
+receive-limit error, request less output instead of repeating the same large
+read. Stdio diagnostics are consumed and discarded so a verbose server cannot
+block its own response pipe; diagnostic text is not added to agent errors.
+
+HTTP session expiry (404) discards the old connection, but does not replay the
+request. A new request initializes a new session. Token refresh after a 401
+continues to use the existing OAuth flow. Closing a Chimera session also closes
+initializing MCP connections; disposed managers cannot start another child.
+
 ## Troubleshooting
 
 - **Server unavailable:** Check `chimera mcp list`, then verify the stdio
@@ -175,6 +195,8 @@ secrets.
 - **Tool missing:** Run `chimera mcp tools <server>` to see original tool
   names. Start or resume a session after changing config, and check the mode
   and subagent allowlist. Only MCP tools are exposed, not resources or prompts.
+- **Connection closed:** A new call reconnects automatically. The failed call
+  was not retried. Check the result before retrying a mutation.
 - **Timeout, oversized schema/result, or server error:** Check server health
   and reduce the requested output. Tool discovery, calls, schema sizes, tool
   counts, and results have limits; failures are reported rather than treated
