@@ -593,6 +593,8 @@ export class CliAgentFactory implements AgentFactory {
       sessionId,
       // A home override moves the global hooks with the rest of Chimera's state.
       globalRoot: this.home ? join(this.home, '.chimera', 'hooks') : undefined,
+      log: (_level, message, meta) =>
+        this.warn(`[hooks] ${message}${meta ? `: ${JSON.stringify(meta)}` : ''}`),
     });
 
     const agent: Agent = new Agent({

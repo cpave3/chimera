@@ -11,6 +11,52 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+it('delivers hook failures with actionable metadata to the factory warning sink', async () => {
+  root = await mkdtemp(join(tmpdir(), 'chimera-hook-warning-'));
+  const directory = join(root, '.chimera', 'hooks', 'SessionCreated');
+  await mkdir(directory, { recursive: true });
+  const script = join(directory, 'broken.sh');
+  await writeFile(
+    script,
+    '#!/bin/sh\ncat\necho private-hook-stdout\necho fix-the-hook >&2\nexit 1\n',
+  );
+  await chmod(script, 0o755);
+  const warn = vi.fn();
+  const factory = new CliAgentFactory({
+    providersConfig: {
+      providers: { direct: { shape: 'openai', baseUrl: 'https://provider.test/v1', apiKey: 'x' } },
+    },
+    models: { 'direct/coder': { contextWindow: 64_000 } },
+    home: root,
+    warn,
+    subagents: { enabled: false },
+  });
+  const registry = new AgentRegistry({
+    factory,
+    instance: { pid: 1, cwd: root, version: 'test', sandboxMode: 'off' },
+  });
+  try {
+    const { sessionId } = await registry.create({
+      cwd: root,
+      model: { providerId: 'direct', modelId: 'coder', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      `[hooks] hook SessionCreated failed: ${JSON.stringify({
+        script,
+        exitCode: 1,
+        timedOut: false,
+        stderr: 'fix-the-hook',
+      })}`,
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-hook-stdout');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('session_id');
+    await registry.delete(sessionId);
+  } finally {
+    await factory.dispose();
+  }
+});
+
 it('routes factory tool, permission and terminal hooks through the ordered source once', async () => {
   root = await mkdtemp(join(tmpdir(), 'chimera-factory-hooks-'));
   const cwd = join(root, 'cwd');

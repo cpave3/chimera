@@ -39,6 +39,7 @@ import {
   resolveSystemOne,
 } from '../config';
 import { CliAgentFactory } from '../factory';
+import { InteractiveWarnings } from '../interactive-warnings';
 import { launchSession, type SessionExistsPolicy } from '../launch-session';
 import { removeLockfile, removeLockfileOnExit, writeLockfile } from '../lockfile';
 import { mergeModMcpServers } from '../mod-bundles';
@@ -108,6 +109,18 @@ export function formatExitSummary(sessionId: string): string {
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
+  const warnings = new InteractiveWarnings();
+  try {
+    await runInteractiveSession(opts, warnings);
+  } finally {
+    warnings.disconnect();
+  }
+}
+
+async function runInteractiveSession(
+  opts: InteractiveOptions,
+  warnings: InteractiveWarnings,
+): Promise<void> {
   const secret = readServerSecret();
   const sandboxOpts = opts.sandboxFlags
     ? parseSandboxFlags({ ...opts.sandboxFlags, cliVersion: VERSION })
@@ -197,6 +210,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     ({ password, signal }) => authenticateSudoPassword({ password, signal }),
   );
   const factory = new CliAgentFactory({
+    warn: (message) => warnings.report(message),
     mods: modRuntime.host,
     modDirs: opts.modDirs,
     noMods: opts.mods === false,
@@ -280,7 +294,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
 
   let stopUpdates = () => {};
   let stopLockfileCleanup = () => {};
-  let unmount = () => {};
+  let unmount = () => warnings.disconnect();
   let closing: Promise<void> | undefined;
   const shutdown = (reason: ShutdownReason) => {
     closing ??= (async () => {
@@ -385,7 +399,11 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     },
   });
   const updater = new Updater();
-  unmount = () => handle.unmount();
+  unmount = () => {
+    handle.unmount();
+    warnings.disconnect();
+  };
+  warnings.connect((message) => handle.modLog(message, { to: 'scrollback' }));
   modRuntime.connectUi((text, options) => handle.modLog(text, options));
   stopUpdates = startBackgroundUpdates({
     mode: config.updates?.mode ?? 'auto',
@@ -395,9 +413,11 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
   });
   try {
     await handle.waitUntilExit();
+    warnings.disconnect();
     // The transcript stays in the scrollback; say how to get back to it.
     process.stdout.write(formatExitSummary(handle.activeSessionId()));
   } finally {
+    unmount();
     await shutdown('exit');
     stopSignals();
   }
