@@ -221,7 +221,11 @@ export async function loadSession(sessionId: SessionId, home = homedir()): Promi
   const snapshot = await readLatestStepSnapshot(sessionId, home);
   if (snapshot) {
     session.messages = snapshot.messages;
-    session.toolCalls = snapshot.toolCalls;
+    session.toolCalls = snapshot.toolCalls.map((call) => {
+      const restored = { ...call };
+      if (restored.pendingMessage) restored.pendingMessage = false;
+      return restored;
+    });
     session.usage = snapshot.usage;
   }
 

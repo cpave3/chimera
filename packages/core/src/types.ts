@@ -80,6 +80,12 @@ export interface ModelConfig {
 
 export interface ToolCallRecord {
   callId: CallId;
+  /** Provider/SDK ID; unlike callId, this may be reused across steps or runs. */
+  toolCallId?: string;
+  /** Whether the SDK response actually attached this call to model history. */
+  messageCommitted?: boolean;
+  /** True only while the active step has not attached its response messages. */
+  pendingMessage?: boolean;
   name: string;
   args: unknown;
   target: ExecutionTarget;

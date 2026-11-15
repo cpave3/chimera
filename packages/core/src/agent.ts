@@ -422,6 +422,7 @@ export class Agent {
         ...opts.session,
         parentId: opts.session.parentId ?? null,
         children: opts.session.children ?? [],
+        toolCalls: opts.session.toolCalls.map((call) => ({ ...call, pendingMessage: false })),
         status: 'idle',
         usage: opts.session.usage ?? emptyUsage(),
         mode: opts.session.mode ?? DEFAULT_SESSION_MODE,
@@ -1916,6 +1917,7 @@ export class Agent {
             string,
             { callId: CallId; name: string; target: ExecutionTarget; startedAt: number }
           >();
+          const stepCalls = new Map<string, ToolCallRecord>();
           // True when the current step emitted at least one tool call. Used to
           // decide whether to loop again: tool-call steps are intermediate (the
           // model needs to see results), stop/length steps are terminal.
@@ -2251,12 +2253,16 @@ export class Agent {
                   const target = extractTarget(args, this.session.sandboxMode);
                   const record: ToolCallRecord = {
                     callId,
+                    toolCallId: part.toolCallId,
+                    pendingMessage: true,
+                    messageCommitted: false,
                     name: part.toolName,
                     args,
                     target,
                     startedAt: Date.now(),
                   };
                   this.session.toolCalls.push(record);
+                  stepCalls.set(part.toolCallId, record);
                   callInfo.set(part.toolCallId, {
                     callId,
                     name: part.toolName,
@@ -2549,6 +2555,21 @@ export class Agent {
           const response = await stream.response;
           if (response && Array.isArray(response.messages)) {
             this.session.messages.push(...(response.messages as ModelMessage[]));
+            const committedCalls = new Set(
+              response.messages.flatMap((message) =>
+                Array.isArray(message.content)
+                  ? message.content.flatMap((part) =>
+                      part.type === 'tool-call' ? [stepCalls.get(part.toolCallId)?.callId] : [],
+                    )
+                  : [],
+              ),
+            );
+            for (const record of this.session.toolCalls) {
+              if (record.pendingMessage) {
+                record.messageCommitted = committedCalls.has(record.callId);
+                record.pendingMessage = false;
+              }
+            }
           }
 
           const userInputRequest = this.pendingUserInputRequest as UserInputRequest | null;
@@ -2684,29 +2705,6 @@ export class Agent {
         if (hitSafetyCap && terminalReason === 'stop') {
           terminalReason = 'max_steps';
         }
-
-        // The AI SDK only exposes the assistant + tool messages from the run
-        // via `await stream.response` *after* the stream completes — so the
-        // per-step `step_finished` events persisted during the loop captured
-        // a snapshot that still only had the user message. Emit one more
-        // `step_finished` here, carrying the now-complete `messages` /
-        // `toolCalls`, so resume can see the full conversation.
-        try {
-          await persistSession(
-            this.session,
-            {
-              type: 'step_finished',
-              stepNumber,
-              finishReason: terminalReason === 'stop' ? 'stop' : terminalReason,
-              messages: this.session.messages,
-              toolCalls: this.session.toolCalls,
-              usage: cloneUsage(this.session.usage),
-            },
-            this.opts.home,
-          );
-        } catch {
-          // best-effort
-        }
       } catch (err) {
         if (timedOut) {
           terminalReason = 'timeout';
@@ -2717,6 +2715,35 @@ export class Agent {
           terminalReason = 'error';
           errorMessage = err instanceof Error ? err.message : String(err);
         }
+      }
+
+      // Failed or interrupted steps may never attach their response messages.
+      for (const record of this.session.toolCalls) {
+        if (record.pendingMessage) record.pendingMessage = false;
+      }
+
+      // The AI SDK only exposes the assistant + tool messages from the run
+      // via `await stream.response` *after* the stream completes — so the
+      // per-step `step_finished` events persisted during the loop captured
+      // a snapshot that still only had the user message. Emit one more
+      // `step_finished` here, carrying the now-complete `messages` /
+      // `toolCalls`, so resume can see the full conversation.
+      try {
+        await persistSession(
+          this.session,
+          {
+            type: 'step_finished',
+            stepNumber,
+            finishReason: terminalReason === 'stop' ? 'stop' : terminalReason,
+            messages: this.session.messages,
+            toolCalls: this.session.toolCalls,
+            usage: cloneUsage(this.session.usage),
+          },
+          this.opts.home,
+        );
+      } catch (error) {
+        terminalReason = 'error';
+        errorMessage = `Could not persist session history: ${error instanceof Error ? error.message : String(error)}. Check disk space and permissions before restarting.`;
       }
 
       if (timedOut) await this.dispatchLifecycle({ type: 'Timeout' });
