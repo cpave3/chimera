@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { McpClientManager } from '../src/mcp/client';
 
@@ -35,11 +36,16 @@ it('discovers and calls a tool over POST-only streamable HTTP', async () => {
                 tools: [
                   {
                     name: 'echo',
-                    inputSchema: { type: 'object', properties: { message: { type: 'string' } } },
+                    inputSchema: {
+                      type: 'object',
+                      properties: { message: { type: 'string' } },
+                    },
                   },
                 ],
               }
-            : { content: [{ type: 'text', text: message.params.arguments.message }] };
+            : {
+                content: [{ type: 'text', text: message.params.arguments.message }],
+              };
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
     });
@@ -262,7 +268,10 @@ it('completes PKCE login through loopback callback and stores confidential crede
     throw new Error('missing callback port');
   const callbackPort = callbackAddress.port;
   await new Promise<void>((resolve) => reserved.close(() => resolve()));
-  const authorization = new McpAuth('fixture', `${base}/mcp`, { directory, callbackPort });
+  const authorization = new McpAuth('fixture', `${base}/mcp`, {
+    directory,
+    callbackPort,
+  });
   let callbackCount = 0;
   await authorization.login({
     onCallback: () => {
@@ -292,7 +301,10 @@ it('completes PKCE login through loopback callback and stores confidential crede
   const stored = JSON.parse(await readFile(storedPath, 'utf8'));
   delete stored.tokens;
   await writeFile(storedPath, JSON.stringify(stored));
-  const again = new McpAuth('fixture', `${base}/mcp`, { directory, callbackPort });
+  const again = new McpAuth('fixture', `${base}/mcp`, {
+    directory,
+    callbackPort,
+  });
   await again.login({
     onUrl: (url) => {
       const parsed = new URL(url);
@@ -309,7 +321,10 @@ it('completes PKCE login through loopback callback and stores confidential crede
   expect(tokenRequests).toBe(2);
   await authorization.logout();
   expect(await authorization.tokens()).toBeUndefined();
-  const retry = new McpAuth('fixture', `${base}/mcp`, { directory, callbackPort });
+  const retry = new McpAuth('fixture', `${base}/mcp`, {
+    directory,
+    callbackPort,
+  });
   await expect(
     retry.login({
       onUrl: (url) => {
@@ -345,4 +360,202 @@ await server.connect(new StdioServerTransport());`;
     { type: 'text', text: 'pong' },
   ]);
   await manager.close();
+});
+
+async function lifecycleFixture(failure: string, callMs = 1000) {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const directory = await mkdtemp(join(tmpdir(), 'chimera-mcp-disconnect-'));
+  const journal = join(directory, 'calls');
+  const manager = new McpClientManager(
+    {
+      legato: {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [
+          fileURLToPath(new URL('./fixtures/mcp-lifecycle-server.mjs', import.meta.url)),
+          journal,
+          failure,
+        ],
+        inheritEnv: false,
+        env: {},
+      },
+    },
+    undefined,
+    { callMs },
+  );
+  cleanup.push(async () => {
+    await manager.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  return {
+    manager,
+    calls: async () => (await readFile(journal, 'utf8')).trim().split('\n'),
+  };
+}
+
+it.each([
+  'exit',
+  'oversized response',
+])('reconnects after %s without replaying an ambiguous mutation', async (failure) => {
+  const { manager, calls } = await lifecycleFixture(failure);
+  expect((await manager.call('legato', 'ping', {})).content).toEqual([
+    { type: 'text', text: 'pong' },
+  ]);
+  const failed = manager.call('legato', 'mutate', {});
+  await expect(failed).rejects.toThrow(failure === 'exit' ? 'connection closed' : 'receive limit');
+  await expect(failed).rejects.toThrow('not retried');
+  await expect(failed).rejects.toThrow('Check the result before retrying a mutation');
+  await expect(failed).rejects.not.toThrow('private-result-canary');
+  const recovered = await Promise.all([
+    manager.call('legato', 'ping', {}),
+    manager.call('legato', 'ping', {}),
+  ]);
+  expect(recovered.map((result) => result.content)).toEqual([
+    [{ type: 'text', text: 'pong' }],
+    [{ type: 'text', text: 'pong' }],
+  ]);
+  expect((await manager.discover('legato')).map((tool) => tool.name)).toEqual(['ping']);
+  await expect(manager.call('legato', 'mutate', {})).rejects.toThrow('Unknown MCP tool');
+  expect(await calls()).toEqual([
+    'start',
+    'list',
+    'ping',
+    'mutate',
+    'start',
+    'list',
+    'ping',
+    'ping',
+  ]);
+});
+
+it('drains private stdio diagnostics so a verbose server can answer calls', async () => {
+  const { manager } = await lifecycleFixture('stderr', 500);
+  expect((await manager.call('legato', 'flood', {})).content).toEqual([
+    { type: 'text', text: 'pong' },
+  ]);
+});
+
+it.each([
+  'timeout',
+  'abort',
+])('does not replay a %s or discard a healthy stdio connection', async (failure) => {
+  const { manager, calls } = await lifecycleFixture('hang', 500);
+  await manager.discover('legato');
+  const controller = new AbortController();
+  const outcome = manager.call('legato', 'mutate', {}, controller.signal).catch((error) => error);
+  if (failure === 'abort') {
+    await expect.poll(async () => (await calls()).includes('mutate')).toBe(true);
+    controller.abort(new Error('private-abort-canary'));
+  }
+  const error = await outcome;
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message).toContain(failure === 'abort' ? 'aborted' : 'timed out');
+  expect(error.message).toContain('not retried');
+  expect(error.message).not.toContain('private-abort-canary');
+  expect((await manager.call('legato', 'ping', {})).content).toEqual([
+    { type: 'text', text: 'pong' },
+  ]);
+  expect(await calls()).toEqual(['start', 'list', 'mutate', 'ping']);
+});
+
+it('closes an initializing connection and cannot restore it after session disposal', async () => {
+  const { manager, calls } = await lifecycleFixture('initializing');
+  const discovery = manager.discover('legato').catch((error) => error);
+  await expect
+    .poll(async () => {
+      try {
+        return (await calls()).includes('initialize');
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
+  await manager.close();
+  expect(await discovery).toBeInstanceOf(Error);
+  await expect(manager.call('legato', 'ping', {})).rejects.toThrow('manager is closed');
+  expect(await calls()).toEqual(['start', 'initialize']);
+});
+
+it.each([
+  'call',
+  'discovery',
+])('reinitializes an HTTP session lost during %s only for a new request', async (failure) => {
+  let sessions = 0;
+  let session = '';
+  const calls: string[] = [];
+  const server = createServer((request, response) => {
+    if (request.method !== 'POST') {
+      response.writeHead(405).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      const message = JSON.parse(Buffer.concat(chunks).toString());
+      let result: unknown;
+      if (message.method === 'initialize') {
+        session = `session-${++sessions}`;
+        response.setHeader('mcp-session-id', session);
+        result = {
+          protocolVersion: '2025-03-26',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'fixture', version: '1' },
+        };
+      } else if (request.headers['mcp-session-id'] !== session) {
+        response.writeHead(404).end('private-session-canary');
+        return;
+      } else if (message.method === 'notifications/initialized') {
+        response.writeHead(202).end();
+        return;
+      } else if (message.method === 'tools/list') {
+        if (failure === 'discovery' && sessions === 1) {
+          session = 'expired';
+          response.writeHead(404).end('private-session-canary');
+          return;
+        }
+        result = {
+          tools: ['ping', 'mutate'].map((name) => ({
+            name,
+            inputSchema: { type: 'object' },
+          })),
+        };
+      } else {
+        calls.push(message.params.name);
+        if (message.params.name === 'mutate') {
+          // Model ambiguous delivery around server session loss, not a safe rejection to replay.
+          session = 'expired';
+          response.writeHead(404).end('private-session-canary');
+          return;
+        }
+        result = { content: [{ type: 'text', text: 'pong' }] };
+      }
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing port');
+  const manager = new McpClientManager({
+    local: { transport: 'http', url: `http://127.0.0.1:${address.port}/mcp` },
+  });
+  cleanup.push(async () => {
+    await manager.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  if (failure === 'call') await manager.call('local', 'ping', {});
+  const failed =
+    failure === 'call' ? manager.call('local', 'mutate', {}) : manager.discover('local');
+  await expect(failed).rejects.toThrow('session expired');
+  await expect(failed).rejects.toThrow(
+    failure === 'call' ? 'not retried' : 'No tool call was sent',
+  );
+  await expect(failed).rejects.not.toThrow('private-session-canary');
+  expect((await manager.call('local', 'ping', {})).content).toEqual([
+    { type: 'text', text: 'pong' },
+  ]);
+  expect(sessions).toBe(2);
+  expect(calls).toEqual(failure === 'call' ? ['ping', 'mutate', 'ping'] : ['ping']);
 });
