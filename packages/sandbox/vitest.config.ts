@@ -4,6 +4,7 @@ import { textImports } from '../../vitest.text-imports';
 export default defineConfig({
   plugins: [textImports(/docker[/\\](Dockerfile|entrypoint\.sh)$/)],
   test: {
+    setupFiles: ['../../vitest.isolation.ts'],
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
     passWithNoTests: true,

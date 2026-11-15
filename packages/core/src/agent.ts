@@ -206,6 +206,41 @@ export class Agent {
   }
 
   private observeEvent(event: AgentEvent): AgentEvent {
+    if (event.type === 'subagent_spawned' || event.type === 'subagent_finished') {
+      this.session.subagentStates ??= [];
+      const children = this.session.subagentStates;
+      const subagentId = event.subagentId;
+      let child = children.find((child) => child.subagentId === subagentId);
+      if (!child) {
+        child = {
+          subagentId: event.subagentId,
+          sessionId: this.session.id,
+          parentCallId: event.parentCallId,
+          status: 'running',
+        };
+        children.push(child);
+      }
+      if (event.type === 'subagent_spawned') {
+        child.childSessionId = event.childSessionId;
+        child.purpose = event.purpose;
+        child.background = event.background;
+        child.startedAt ??= Date.now();
+      } else {
+        child.status =
+          event.reason === 'stop'
+            ? 'finished'
+            : event.reason === 'interrupted'
+              ? 'interrupted'
+              : 'error';
+        child.reason = event.reason;
+        child.endedAt = Date.now();
+      }
+      while (children.length > 1000) {
+        const completed = children.findIndex((child) => child.status !== 'running');
+        if (completed < 0) break;
+        children.splice(completed, 1);
+      }
+    }
     if (event.type === 'user_message' && event.append) {
       event = { type: 'message_appended', text: event.content, imageCount: event.imageCount };
     }
@@ -229,8 +264,14 @@ export class Agent {
     }
   >();
   private currentQueue: EventQueue<AgentEvent> | null = null;
+  private readonly idleEventListeners = new Set<(event: AgentEvent) => void>();
   private pendingUserInputRequest: UserInputRequest | null = null;
   private running = false;
+  private runAcceptsMessages = true;
+
+  get acceptsRunMessages(): boolean {
+    return this.runAcceptsMessages;
+  }
   private compacting = false;
   private updatingModelSettings = false;
   private modelSettingsResolver?: (
@@ -820,7 +861,18 @@ export class Agent {
    */
   pushEvent(event: AgentEvent): void {
     if (this.currentQueue) this.currentQueue.push(event);
-    else this.observeEvent(event);
+    else {
+      this.observeEvent(event);
+      for (const listener of this.idleEventListeners) listener(event);
+    }
+  }
+
+  /** Events outside a run have no async iterator for an embedder to consume. */
+  subscribeIdleEvents(listener: (event: AgentEvent) => void): () => void {
+    this.idleEventListeners.add(listener);
+    return () => {
+      this.idleEventListeners.delete(listener);
+    };
   }
 
   /**
@@ -1305,6 +1357,37 @@ export class Agent {
     this.pendingInjectMessages.push({ content, images, source });
   }
 
+  private async drainInjectedMessages(queue: EventQueue<AgentEvent>): Promise<boolean> {
+    if (this.pendingInjectMessages.length === 0) return false;
+    const injects = this.pendingInjectMessages;
+    this.pendingInjectMessages = [];
+    for (const inject of injects) {
+      this.session.messages.push(await buildUserMessage(inject.content, inject.images));
+      queue.push({
+        type: 'user_message',
+        content: inject.content,
+        imageCount: inject.images?.length,
+        ...(inject.source === 'append' ? { append: true } : { source: inject.source }),
+      });
+    }
+    this.abortController = new AbortController();
+    try {
+      await persistSession(
+        this.session,
+        {
+          type: 'message_appended',
+          messages: this.session.messages,
+          toolCalls: this.session.toolCalls,
+          usage: cloneUsage(this.session.usage),
+        },
+        this.opts.home,
+      );
+    } catch {
+      // Match the step-boundary injection's best-effort persistence.
+    }
+    return true;
+  }
+
   run(
     userMessage: string,
     imagePaths?: string[],
@@ -1314,6 +1397,7 @@ export class Agent {
       throw new Error('Agent is already running');
     }
     this.running = true;
+    this.runAcceptsMessages = true;
     // Fresh abort controller per run.
     this.abortController = new AbortController();
     // Defensive: a crashed run must not leak its vision override into this one.
@@ -1322,6 +1406,7 @@ export class Agent {
 
     const queue = new EventQueue<AgentEvent>((event) => {
       if (event.type === 'run_finished') {
+        this.runAcceptsMessages = false;
         const context = this.contextBreakdown();
         event.model = structuredClone(this.session.model);
         event.usage = cloneUsage(this.session.usage);
@@ -2546,34 +2631,8 @@ export class Agent {
               this.opts.home,
             );
           }
-          if (this.pendingInjectMessages.length > 0) {
-            const injects = this.pendingInjectMessages;
-            this.pendingInjectMessages = [];
-            for (const inject of injects) {
-              this.session.messages.push(await buildUserMessage(inject.content, inject.images));
-              queue.push({
-                type: 'user_message',
-                content: inject.content,
-                imageCount: inject.images?.length,
-                ...(inject.source === 'append' ? { append: true } : { source: inject.source }),
-              });
-            }
+          if (await this.drainInjectedMessages(queue)) {
             injectedThisStep = true;
-            this.abortController = new AbortController();
-            try {
-              await persistSession(
-                this.session,
-                {
-                  type: 'message_appended',
-                  messages: this.session.messages,
-                  toolCalls: this.session.toolCalls,
-                  usage: cloneUsage(this.session.usage),
-                },
-                this.opts.home,
-              );
-            } catch {
-              // best-effort persistence
-            }
           }
 
           const finishReason = await stream.finishReason;
@@ -2711,7 +2770,19 @@ export class Agent {
         }
       }
 
-      break; // No more retries.
+      if (terminalReason === 'stop' && this.abortController.signal.aborted) {
+        terminalReason = 'interrupted';
+        await this.dispatchLifecycle({ type: 'Interrupt' });
+      }
+      // Stop hooks and goal checks await external work after the step drain.
+      if (terminalReason === 'stop' && this.pendingInjectMessages.length > 0) {
+        await this.drainInjectedMessages(queue);
+        continue;
+      }
+      // No await between the final empty check and closing admission. The
+      // registry retries arrivals during the final checkpoint instead.
+      this.runAcceptsMessages = false;
+      break;
     }
 
     if (terminalReason === 'max_steps' || terminalReason === 'output_limit') {

@@ -61,6 +61,7 @@ export interface AgentEntry {
   gate?: PermissionGate;
   hookRunner?: HookRunner;
   detachHooks?: () => void;
+  detachIdleEvents: () => void;
   lifecycleActive: boolean;
   lifecycleEnding: boolean;
   bus: EventBus;
@@ -202,6 +203,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export class AgentRegistry {
+  private readonly preparingRuns = new Set<SessionId>();
   private readonly entries = new Map<SessionId, AgentEntry>();
   private readonly factory: AgentFactory;
   private readonly instance: InstanceInfo;
@@ -269,6 +271,7 @@ export class AgentRegistry {
       agent,
       gate,
       hookRunner,
+      detachIdleEvents: agent.subscribeIdleEvents((event) => bus.publish(event)),
       lifecycleActive: false,
       lifecycleEnding: false,
       bus,
@@ -434,6 +437,7 @@ export class AgentRegistry {
     await this.endSession(id, 'delete');
     entry.detachHooks?.();
     await this.factory.disposeSession?.(id);
+    entry.detachIdleEvents();
     this.entries.delete(id);
     return true;
   }
@@ -454,9 +458,11 @@ export class AgentRegistry {
     if (!entry) return 'missing';
     if (entry.runActive || entry.compactionActive || entry.rewindActive) return 'already-running';
     entry.runActive = true;
+    this.preparingRuns.add(id);
     entry.activeRun = (async () => {
       try {
         await this.snapshotWorkspace(entry, content);
+        this.preparingRuns.delete(id);
         for await (const event of entry.agent.run(content, images, source)) {
           entry.bus.publish(event);
           if (event.type === 'run_finished') break;
@@ -471,6 +477,7 @@ export class AgentRegistry {
         await this.fireOnError(entry, message);
         entry.bus.publish(finished);
       } finally {
+        this.preparingRuns.delete(id);
         entry.runActive = false;
         entry.activeRun = null;
       }
@@ -493,6 +500,10 @@ export class AgentRegistry {
       const entry = this.entries.get(id);
       if (!entry) return 'missing';
       if (entry.runActive) {
+        if (!this.preparingRuns.has(id) && !entry.agent.acceptsRunMessages) {
+          await entry.activeRun;
+          continue;
+        }
         entry.agent.injectRunMessage(content);
         return 'injected';
       }
@@ -526,6 +537,7 @@ export class AgentRegistry {
       return 'already-running';
     }
     if (entry.runActive) {
+      if (!this.preparingRuns.has(id) && !entry.agent.acceptsRunMessages) return 'already-running';
       entry.agent.injectRunMessage(content, images, 'append');
       return 'injected';
     }
@@ -539,7 +551,7 @@ export class AgentRegistry {
     } finally {
       entry.injectActive = false;
     }
-    entry.bus.publish({ type: 'user_message', content });
+    entry.bus.publish({ type: 'user_message', content, append: true });
     return 'injected';
   }
 
