@@ -93,7 +93,11 @@ async function describeMcpTools(options: DescribeOptions): Promise<McpToolEntry[
         },
         tool: tool({
           description,
-          inputSchema: jsonSchema<Record<string, unknown>>(definition.inputSchema),
+          inputSchema: jsonSchema<Record<string, unknown>>({
+            // MCP defaults to 2020-12; other raw tool schemas retain their existing default.
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            ...definition.inputSchema,
+          }),
           execute: async (args, { abortSignal, toolCallId }) => {
             const resolution = await gate.requestMcp(
               { requestId: newRequestId(), server, tool: definition.name, args, cwd, toolCallId },
