@@ -130,6 +130,27 @@ describe('BackgroundProcessManager output tap', () => {
     ]);
   });
 
+  it('flags truncation on the stream that hit the limit, not the last event', async () => {
+    track({ maxOutputBytes: 4 });
+    manager.launch('printf ab >&2; sleep 0.02; printf abcdef');
+    await until(() => observed.some((event) => event.kind === 'exit'));
+    expect(outputs()).toEqual([
+      expect.objectContaining({ stream: 'stderr', text: 'ab' }),
+      expect.objectContaining({ stream: 'stdout', text: 'abcd', truncated: true }),
+    ]);
+    expect(outputs()[0]).not.toHaveProperty('truncated');
+  });
+
+  it('flags each stream that hit the limit in the same window', async () => {
+    track({ maxOutputBytes: 4 });
+    manager.launch('printf abcdef; printf ghijkl >&2');
+    await until(() => observed.some((event) => event.kind === 'exit'));
+    expect(outputs()).toEqual([
+      expect.objectContaining({ stream: 'stdout', text: 'abcd', truncated: true }),
+      expect.objectContaining({ stream: 'stderr', text: 'ghij', truncated: true }),
+    ]);
+  });
+
   it('decodes multibyte characters split across chunks', async () => {
     track();
     manager.launch("printf '\\342\\202'; sleep 0.2; printf '\\254\\n'");

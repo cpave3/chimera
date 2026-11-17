@@ -61,7 +61,7 @@ export interface BackgroundOutputBatch {
   seq: number;
   /** Bytes of this flush window dropped by `maxBatchBytes`, across both streams. */
   droppedBytes?: number;
-  /** The output limit was reached: no more output follows from this process. */
+  /** This stream reached the output limit: no more output follows on it. */
   truncated?: boolean;
 }
 
@@ -91,7 +91,7 @@ interface PendingOutput {
   chunks: Record<BackgroundOutputStream, Buffer[]>;
   bytes: number;
   droppedBytes: number;
-  truncated: boolean;
+  truncated: Record<BackgroundOutputStream, boolean>;
   timer: NodeJS.Timeout | undefined;
   seq: number;
   decoders: Record<BackgroundOutputStream, StringDecoder>;
@@ -163,7 +163,7 @@ export class BackgroundProcessManager {
         chunks: { stdout: [], stderr: [] },
         bytes: 0,
         droppedBytes: 0,
-        truncated: false,
+        truncated: { stdout: false, stderr: false },
         timer: undefined,
         seq: 0,
         decoders: { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') },
@@ -263,7 +263,7 @@ export class BackgroundProcessManager {
       pending.bytes += kept.length;
     }
     if (truncatedNow) {
-      pending.truncated = true;
+      pending.truncated[stream] = true;
       if (!pending.order.includes(stream)) pending.order.push(stream);
     }
     if (pending.order.length === 0 && pending.droppedBytes === 0) return;
@@ -281,24 +281,32 @@ export class BackgroundProcessManager {
     clearTimeout(pending.timer);
     pending.timer = undefined;
     const batches: BackgroundOutputBatch[] = [];
-    for (const stream of final ? (['stdout', 'stderr'] as const) : pending.order) {
+    const streams = final
+      ? [...new Set([...pending.order, 'stdout', 'stderr'] as const)]
+      : pending.order;
+    for (const stream of streams) {
       const decoder = pending.decoders[stream];
       let text = decoder.write(Buffer.concat(pending.chunks[stream]));
       if (final) text += decoder.end();
       if (text === '' && !pending.order.includes(stream)) continue;
-      batches.push({ shellId: tracked.record.id, stream, text, seq: 0 });
+      batches.push({
+        shellId: tracked.record.id,
+        stream,
+        text,
+        seq: 0,
+        ...(pending.truncated[stream] ? { truncated: true } : {}),
+      });
     }
     if (batches.length === 0 && pending.droppedBytes > 0) {
       batches.push({ shellId: tracked.record.id, stream: 'stdout', text: '', seq: 0 });
     }
     const last = batches.at(-1);
     if (last && pending.droppedBytes > 0) last.droppedBytes = pending.droppedBytes;
-    if (last && pending.truncated) last.truncated = true;
     pending.order = [];
     pending.chunks = { stdout: [], stderr: [] };
     pending.bytes = 0;
     pending.droppedBytes = 0;
-    pending.truncated = false;
+    pending.truncated = { stdout: false, stderr: false };
     for (const batch of batches) {
       batch.seq = ++pending.seq;
       tap.onBatch(batch);
