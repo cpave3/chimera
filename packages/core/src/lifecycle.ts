@@ -47,6 +47,15 @@ export type LifecycleHookData =
       request: string;
       kind?: 'information' | 'action';
     }
+  | {
+      type: 'BackgroundOutput';
+      shellId: string;
+      stream: 'stdout' | 'stderr';
+      text: string;
+      seq: number;
+      droppedBytes?: number;
+      truncated?: boolean;
+    }
   | { type: 'CompactionStart'; reason: string }
   | { type: 'CompactionEnd'; success: boolean; error?: string };
 

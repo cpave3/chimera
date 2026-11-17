@@ -53,6 +53,7 @@ const HOOK_NAMES = new Set([
   'agent.spawn',
   'agent.finish',
   'background.start',
+  'background.output',
   'background.exit',
   'compaction.start',
   'compaction.end',

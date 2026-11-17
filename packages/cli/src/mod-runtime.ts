@@ -243,6 +243,8 @@ export class ModRuntime {
         return { type: 'message.append', sessionId, text: payload.text };
       case 'background_process_started':
         return { ...payload, type: 'background.start', sessionId, jobId: payload.shellId };
+      case 'BackgroundOutput':
+        return { ...payload, type: 'background.output', sessionId, jobId: event.shellId };
       case 'background_process_exited':
         return { ...payload, type: 'background.exit', sessionId, jobId: event.shellId };
       case 'subagent_spawned': {
