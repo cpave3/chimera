@@ -50,6 +50,12 @@ export function register(on: On) {
       await $.ui.log(sessionId, {to: 'debug'});
     });
   }
+  on('background.output', async ($, event) => {
+    const text: string = event.text;
+    const seq: number = event.seq;
+    const stream: 'stdout' | 'stderr' = event.stream;
+    await $.ui.log(event.jobId + stream + seq + text, {to: 'debug'});
+  });
   // @ts-expect-error unknown hook
   on('not.a.hook', () => {});
 }

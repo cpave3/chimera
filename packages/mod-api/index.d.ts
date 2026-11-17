@@ -122,6 +122,19 @@ export interface ModEventMap {
     reason?: string;
   };
   'background.start': EventBase & { jobId: string; command: string };
+  /**
+   * Best-effort output of a background job, batched about every 250 ms and at
+   * most 64 KiB per flush. `seq` counts from 1 per job without gaps; the last
+   * batch arrives before `background.exit`.
+   */
+  'background.output': EventBase & {
+    jobId: string;
+    stream: 'stdout' | 'stderr';
+    text: string;
+    seq: number;
+    droppedBytes?: number;
+    truncated?: boolean;
+  };
   'background.exit': EventBase & { jobId: string; command?: string; exitCode?: number | null };
   'compaction.start': EventBase & { reason: 'threshold' | 'manual' | 'overflow' };
   'compaction.end': EventBase &

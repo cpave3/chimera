@@ -112,8 +112,27 @@ Observer hooks:
 | `question.request`, `question.resolved` | `requestId`, questions or resolution status |
 | `agent.spawn`, `agent.finish` | `agentId`, `parentCallId`, `childSessionId` (after handshake), `description`, `background`; finish also has `reason` and `result` |
 | `background.start`, `background.exit` | `jobId`, `command`, exit information |
+| `background.output` | `jobId`, `stream`: stdout/stderr, `text`, `seq`, `droppedBytes?`, `truncated?` (see below) |
 | `compaction.start`, `compaction.end` | reason, success/summary or error |
 | `message.append` | text added without starting a turn |
+
+`background.output` carries what a `run_in_background` bash job prints. It is
+best-effort and meant for display, for example a live tile beside the session:
+
+- Output is batched per job. A batch is sent at most every 250 ms, with at most one
+  event per stream. Within one batch window the order of stdout and stderr lines is
+  not kept.
+- One batch window carries at most 64 KiB of text, both streams together. Bytes over
+  that are dropped and counted in `droppedBytes` on the window's last event.
+- `seq` counts from 1 for each job and has no gaps. A jump means a consumer lost an
+  event downstream.
+- You get only the output the agent's own buffer keeps: 16 MiB unread per stream.
+  When that limit is reached, the event has `truncated: true` and no more output
+  follows for that stream. Reading `background.output` does not change what the
+  agent's `bash_output` tool returns.
+- The final batch comes before `background.exit`. For a killed job too.
+- Output is not written to the session log and is not sent to API clients. Chimera
+  collects it only when a loaded mod registers `background.output`.
 
 Run-end reasons are `stop`, `max_steps`, `error`, `interrupted`, `timeout`,
 `waiting_for_input` and `output_limit`.

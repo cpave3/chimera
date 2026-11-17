@@ -844,6 +844,15 @@ export class CliAgentFactory implements AgentFactory {
           status: notice.status === 'killed' ? 'killed' : 'exited',
           exitCode: notice.exitCode,
         }),
+      // Lifecycle only: output is for mods, not the session log or its clients.
+      output: this.mods?.registrations.some(({ name }) => name === 'background.output')
+        ? {
+            onBatch: (batch) =>
+              void agent
+                .dispatchLifecycle({ type: 'BackgroundOutput', ...batch })
+                .catch((error) => this.warn(`background output observer failed: ${error}`)),
+          }
+        : undefined,
     });
     this.liveBackgroundManagers.set(agent.session.id, backgroundProcesses);
 

@@ -162,7 +162,9 @@ processes:
 
 Background launches go through the same permission gate as foreground host
 commands. When a process exits, a `background_process_exited` event is pushed
-onto the session's event stream and the TUI prints an info line. All
+onto the session's event stream and the TUI prints an info line. Mods can
+also follow a process's output as it runs with the `background.output` event
+(see [mods](mods.md)); that does not change what `bash_output` returns. All
 background processes for a session are killed when the server shuts down.
 Background commands always run on the host — `target: 'sandbox'` is refused.
 

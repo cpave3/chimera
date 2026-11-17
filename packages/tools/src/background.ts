@@ -1,6 +1,9 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const DEFAULT_OUTPUT_INTERVAL_MS = 250;
+const DEFAULT_OUTPUT_BATCH_BYTES = 64 * 1024;
 const SIGKILL_DELAY_MS = 2_000;
 
 export type BackgroundProcessStatus = 'running' | 'exited' | 'killed';
@@ -44,12 +47,54 @@ export interface BackgroundExitNotice {
   exitCode: number | null;
 }
 
+export type BackgroundOutputStream = 'stdout' | 'stderr';
+
+/**
+ * Output a process wrote since the previous batch for the same stream. `seq`
+ * counts from 1 per process with no gaps, so a consumer that sees a jump lost
+ * a batch downstream.
+ */
+export interface BackgroundOutputBatch {
+  shellId: string;
+  stream: BackgroundOutputStream;
+  text: string;
+  seq: number;
+  /** Bytes of this flush window dropped by `maxBatchBytes`, across both streams. */
+  droppedBytes?: number;
+  /** This stream reached the output limit: no more output follows on it. */
+  truncated?: boolean;
+}
+
+export interface BackgroundOutputTap {
+  onBatch: (batch: BackgroundOutputBatch) => void;
+  intervalMs?: number;
+  /** Cap on the bytes of one flush, both streams together. */
+  maxBatchBytes?: number;
+}
+
 export interface BackgroundProcessManagerOptions {
   cwd: string;
   maxOutputBytes?: number;
   onStart?: (notice: { shellId: string; command: string }) => void;
   /** Fired once per process when it leaves the `running` state. */
   onExit?: (notice: BackgroundExitNotice) => void;
+  /**
+   * Copies of the output the read buffer accepted, batched per interval. The
+   * last batch of a process is delivered before its `onExit`. Reading output
+   * through `readOutput` is unaffected.
+   */
+  output?: BackgroundOutputTap;
+}
+
+interface PendingOutput {
+  order: BackgroundOutputStream[];
+  chunks: Record<BackgroundOutputStream, Buffer[]>;
+  bytes: number;
+  droppedBytes: number;
+  truncated: Record<BackgroundOutputStream, boolean>;
+  timer: NodeJS.Timeout | undefined;
+  seq: number;
+  decoders: Record<BackgroundOutputStream, StringDecoder>;
 }
 
 interface TrackedProcess {
@@ -59,6 +104,7 @@ interface TrackedProcess {
   stderr: CursorBuffer;
   authorizing: boolean;
   killRequested: boolean;
+  pendingOutput: PendingOutput;
 }
 
 /**
@@ -74,6 +120,7 @@ export class BackgroundProcessManager {
   private readonly maxOutputBytes: number;
   private readonly onStart: BackgroundProcessManagerOptions['onStart'];
   private readonly onExit: ((notice: BackgroundExitNotice) => void) | undefined;
+  private readonly outputTap: BackgroundOutputTap | undefined;
   private readonly processes = new Map<string, TrackedProcess>();
   private nextId = 1;
 
@@ -82,6 +129,7 @@ export class BackgroundProcessManager {
     this.maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
     this.onStart = opts.onStart;
     this.onExit = opts.onExit;
+    this.outputTap = opts.output;
   }
 
   /**
@@ -110,6 +158,16 @@ export class BackgroundProcessManager {
       stderr: new CursorBuffer(this.maxOutputBytes),
       authorizing: false,
       killRequested: false,
+      pendingOutput: {
+        order: [],
+        chunks: { stdout: [], stderr: [] },
+        bytes: 0,
+        droppedBytes: 0,
+        truncated: { stdout: false, stderr: false },
+        timer: undefined,
+        seq: 0,
+        decoders: { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') },
+      },
     };
     this.watchAttempt(tracked, opts);
     this.processes.set(id, tracked);
@@ -120,13 +178,13 @@ export class BackgroundProcessManager {
   private watchAttempt(tracked: TrackedProcess, opts: BackgroundLaunchOptions): void {
     const child = tracked.child;
     const attemptStderr = opts.retryOnFailure ? new CursorBuffer(this.maxOutputBytes) : undefined;
-    child.stdout?.on('data', (chunk: Buffer) => tracked.stdout.push(chunk));
+    child.stdout?.on('data', (chunk: Buffer) => this.append(tracked, 'stdout', chunk));
     child.stderr?.on('data', (chunk: Buffer) => {
-      tracked.stderr.push(chunk);
+      this.append(tracked, 'stderr', chunk);
       attemptStderr?.push(chunk);
     });
     child.on('error', (err) => {
-      tracked.stderr.push(Buffer.from(String(err.message)));
+      this.append(tracked, 'stderr', Buffer.from(String(err.message)));
       this.settle(tracked, 'exited', -1);
     });
     child.on('close', (code, signal) => {
@@ -161,7 +219,7 @@ export class BackgroundProcessManager {
         return;
       }
       tracked.record.sandboxRetry = { reason: retry.reason, initialExitCode: exitCode };
-      tracked.stderr.pushNotice(`\nAutomatic host-retry: ${retry.reason}\n`);
+      this.appendNotice(tracked, `\nAutomatic host-retry: ${retry.reason}\n`);
       tracked.child = spawn('sh', ['-c', retry.shellCommand], {
         cwd: this.cwd,
         env: { ...process.env, ...(opts.env ?? {}) },
@@ -170,8 +228,88 @@ export class BackgroundProcessManager {
       });
       this.watchAttempt(tracked, { env: opts.env });
     } catch (err) {
-      tracked.stderr.pushNotice(`\nAutomatic host-retry failed: ${String(err)}\n`);
+      this.appendNotice(tracked, `\nAutomatic host-retry failed: ${String(err)}\n`);
       this.settle(tracked, 'exited', exitCode);
+    }
+  }
+
+  private append(tracked: TrackedProcess, stream: BackgroundOutputStream, chunk: Buffer): void {
+    const buffer = tracked[stream];
+    const wasTruncated = buffer.truncated;
+    const accepted = buffer.push(chunk);
+    this.tap(tracked, stream, accepted, buffer.truncated && !wasTruncated);
+  }
+
+  private appendNotice(tracked: TrackedProcess, text: string): void {
+    const chunk = Buffer.from(text);
+    tracked.stderr.pushNotice(chunk);
+    this.tap(tracked, 'stderr', chunk, false);
+  }
+
+  private tap(
+    tracked: TrackedProcess,
+    stream: BackgroundOutputStream,
+    accepted: Buffer,
+    truncatedNow: boolean,
+  ): void {
+    if (!this.outputTap) return;
+    const pending = tracked.pendingOutput;
+    const room = (this.outputTap.maxBatchBytes ?? DEFAULT_OUTPUT_BATCH_BYTES) - pending.bytes;
+    const kept = accepted.subarray(0, Math.max(0, room));
+    pending.droppedBytes += accepted.length - kept.length;
+    if (kept.length > 0) {
+      if (!pending.order.includes(stream)) pending.order.push(stream);
+      pending.chunks[stream].push(kept);
+      pending.bytes += kept.length;
+    }
+    if (truncatedNow) {
+      pending.truncated[stream] = true;
+      if (!pending.order.includes(stream)) pending.order.push(stream);
+    }
+    if (pending.order.length === 0 && pending.droppedBytes === 0) return;
+    pending.timer ??= setTimeout(
+      () => this.flushOutput(tracked, false),
+      this.outputTap.intervalMs ?? DEFAULT_OUTPUT_INTERVAL_MS,
+    );
+    pending.timer.unref();
+  }
+
+  private flushOutput(tracked: TrackedProcess, final: boolean): void {
+    const tap = this.outputTap;
+    if (!tap) return;
+    const pending = tracked.pendingOutput;
+    clearTimeout(pending.timer);
+    pending.timer = undefined;
+    const batches: BackgroundOutputBatch[] = [];
+    const streams = final
+      ? [...new Set([...pending.order, 'stdout', 'stderr'] as const)]
+      : pending.order;
+    for (const stream of streams) {
+      const decoder = pending.decoders[stream];
+      let text = decoder.write(Buffer.concat(pending.chunks[stream]));
+      if (final) text += decoder.end();
+      if (text === '' && !pending.order.includes(stream)) continue;
+      batches.push({
+        shellId: tracked.record.id,
+        stream,
+        text,
+        seq: 0,
+        ...(pending.truncated[stream] ? { truncated: true } : {}),
+      });
+    }
+    if (batches.length === 0 && pending.droppedBytes > 0) {
+      batches.push({ shellId: tracked.record.id, stream: 'stdout', text: '', seq: 0 });
+    }
+    const last = batches.at(-1);
+    if (last && pending.droppedBytes > 0) last.droppedBytes = pending.droppedBytes;
+    pending.order = [];
+    pending.chunks = { stdout: [], stderr: [] };
+    pending.bytes = 0;
+    pending.droppedBytes = 0;
+    pending.truncated = { stdout: false, stderr: false };
+    for (const batch of batches) {
+      batch.seq = ++pending.seq;
+      tap.onBatch(batch);
     }
   }
 
@@ -231,6 +369,7 @@ export class BackgroundProcessManager {
     if (tracked.record.status !== 'running') return;
     tracked.record.status = status;
     tracked.record.exitCode = exitCode;
+    this.flushOutput(tracked, true);
     this.onExit?.({
       shellId: tracked.record.id,
       command: tracked.record.command,
@@ -255,6 +394,8 @@ export class BackgroundProcessManager {
   }
 }
 
+const EMPTY = Buffer.alloc(0);
+
 /**
  * Byte-capped accumulator with a destructive read cursor. Chunks past the cap
  * are dropped and `truncated` flips to true.
@@ -267,27 +408,29 @@ class CursorBuffer {
   constructor(private readonly cap: number) {}
 
   // Lifecycle notices must remain visible even when process output hit the cap.
-  pushNotice(text: string): void {
-    const chunk = Buffer.from(text);
+  pushNotice(chunk: Buffer): void {
     this.chunks.push(chunk);
     this.size += chunk.length;
   }
 
-  push(chunk: Buffer): void {
-    if (this.truncated) return;
+  /** Returns the part of `chunk` that was kept. */
+  push(chunk: Buffer): Buffer {
+    if (this.truncated) return EMPTY;
     const remaining = this.cap - this.size;
     if (remaining <= 0) {
       this.truncated = true;
-      return;
+      return EMPTY;
     }
     if (chunk.length <= remaining) {
       this.chunks.push(chunk);
       this.size += chunk.length;
-      return;
+      return chunk;
     }
-    this.chunks.push(chunk.subarray(0, remaining));
+    const kept = chunk.subarray(0, remaining);
+    this.chunks.push(kept);
     this.size += remaining;
     this.truncated = true;
+    return kept;
   }
 
   consume(): string {
