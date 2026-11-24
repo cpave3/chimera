@@ -96,6 +96,38 @@ describe('PermissionCard', () => {
     expect(lines.at(-1)).toMatch(/^└─+┘$/);
   });
 
+  it('offers to allow every tool of the MCP server that asked, at a chosen scope', () => {
+    const onResolve = vi.fn<(action: PermissionDecisionAction) => void>();
+    const card = new PermissionCard(
+      {
+        requestId: 'mcp',
+        command: 'burnlite/create_note',
+        mcp: { server: 'burnlite', tool: 'create_note', preview: [] },
+      },
+      onResolve,
+    );
+    const choices = draw(card, 100).filter((line) => /^│ (› | {2})\S {2}\S/.test(line));
+    expect(choices.map((line) => line.slice(2, 40).trimEnd())).toEqual([
+      '› a  Allow once',
+      '  A  Allow & remember…',
+      '  S  Allow all burnlite tools…',
+      '  g  Allow pattern…',
+      '  d  Deny once',
+      '  f  Deny with feedback…',
+    ]);
+    burst(card, 'S');
+    expect(draw(card, 100).some((line) => line.includes('remember glob burnlite/*'))).toBe(true);
+    burst(card, 'g');
+    expect(onResolve).toHaveBeenCalledExactlyOnceWith({
+      decision: 'allow',
+      remember: { scope: 'global', pattern: 'burnlite/*', patternKind: 'glob' },
+    });
+  });
+
+  it('does not offer a whole-server choice for a bash request', () => {
+    expect(draw(new PermissionCard(request, vi.fn()), 100).join('\n')).not.toContain('Allow all');
+  });
+
   it('denies with the whole feedback typed in one burst', () => {
     const onResolve = vi.fn<(action: PermissionDecisionAction) => void>();
     const card = new PermissionCard(request, onResolve);
