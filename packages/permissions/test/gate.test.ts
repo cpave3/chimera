@@ -570,3 +570,68 @@ describe('DefaultPermissionGate', () => {
     expect(resolution.decision).toBe('allow');
   });
 });
+
+describe('DefaultPermissionGate server-wide MCP trust', () => {
+  let cwd: string;
+
+  beforeEach(async () => {
+    cwd = await mkdtemp(join(tmpdir(), 'chimera-mcp-server-'));
+  });
+
+  afterEach(async () => {
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  function headlessGate(): DefaultPermissionGate {
+    return new DefaultPermissionGate({
+      cwd,
+      home: join(cwd, 'home'),
+      autoApprove: 'none',
+      mcpHeadlessAutoDeny: true,
+      raiseRequest: async () => {
+        throw new Error('must not prompt');
+      },
+    });
+  }
+
+  function mcpCall(server: string, tool: string) {
+    return { requestId: `${server}-${tool}`, server, tool, cwd, args: {} };
+  }
+
+  it('trusts every tool of a server whose trustedTools is a lone star', async () => {
+    const gate = headlessGate();
+    expect(await gate.requestMcp(mcpCall('burnlite', 'create_note'), ['*'])).toEqual({
+      decision: 'allow',
+      remembered: false,
+    });
+  });
+
+  it('sends a tool excluded from trustedTools on to the prompt chain', async () => {
+    const gate = headlessGate();
+    expect(
+      await gate.requestMcp(mcpCall('burnlite', 'delete_task'), ['*', '!delete_*']),
+    ).toMatchObject({ decision: 'deny', denialSource: 'headless' });
+    expect(
+      await gate.requestMcp(mcpCall('burnlite', 'create_task'), ['*', '!delete_*']),
+    ).toMatchObject({ decision: 'allow' });
+  });
+
+  it('lets a deny rule beat a lone-star trustedTools', async () => {
+    const gate = headlessGate();
+    gate.addRule(
+      {
+        tool: 'mcp',
+        target: 'host',
+        pattern: 'burnlite/create_note',
+        patternKind: 'exact',
+        decision: 'deny',
+        createdAt: Date.now(),
+      },
+      'session',
+    );
+    expect(await gate.requestMcp(mcpCall('burnlite', 'create_note'), ['*'])).toMatchObject({
+      decision: 'deny',
+      denialSource: 'rule',
+    });
+  });
+});

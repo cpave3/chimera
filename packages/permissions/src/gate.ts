@@ -13,7 +13,7 @@ import type {
   PermissionRule,
   RememberScope,
 } from '@chimera/core';
-import { matchRule } from './matching';
+import { matchRule, trustedByList } from './matching';
 import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
 import type { SystemOneCheck, SystemOneVerdict } from './system-one';
@@ -221,7 +221,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     if (matchingRule?.decision === 'allow') {
       return this.audited(request, { decision: 'allow', remembered: true }, 'rule');
     }
-    if (trustedTools.includes(call.tool)) {
+    if (trustedByList(call.tool, trustedTools)) {
       return this.audited(request, { decision: 'allow', remembered: false }, 'automatic');
     }
     return this.prompt(request, call.args);

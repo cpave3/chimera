@@ -1,6 +1,6 @@
 import type { PermissionRequest, PermissionRule } from '@chimera/core';
 import { describe, expect, it } from 'vitest';
-import { matchRule } from '../src/matching';
+import { matchRule, trustedByList } from '../src/matching';
 
 function req(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
   return {
@@ -65,5 +65,59 @@ describe('matchRule', () => {
 
   it('does not match when tool differs', async () => {
     expect(await matchRule(req(), [rule({ tool: 'other' })])).toBeNull();
+  });
+});
+
+describe('matchRule for MCP identities', () => {
+  const mcpReq = (command: string) => req({ tool: 'mcp', command });
+  const serverAllow = rule({ tool: 'mcp', pattern: 'burnlite/*', patternKind: 'glob' });
+
+  it('a server glob matches only that server', async () => {
+    expect((await matchRule(mcpReq('burnlite/create_note'), [serverAllow]))?.decision).toBe(
+      'allow',
+    );
+    expect(await matchRule(mcpReq('other/create_note'), [serverAllow])).toBeNull();
+    expect(await matchRule(mcpReq('burnlite-x/create_note'), [serverAllow])).toBeNull();
+  });
+
+  it('an exact deny beats a server glob allow', async () => {
+    const deny = rule({
+      tool: 'mcp',
+      pattern: 'burnlite/delete_task',
+      patternKind: 'exact',
+      decision: 'deny',
+    });
+    expect((await matchRule(mcpReq('burnlite/delete_task'), [serverAllow, deny]))?.decision).toBe(
+      'deny',
+    );
+  });
+});
+
+describe('trustedByList', () => {
+  it('a plain name trusts only that tool', () => {
+    expect(trustedByList('list_projects', ['list_projects'])).toBe(true);
+    expect(trustedByList('create_task', ['list_projects'])).toBe(false);
+  });
+
+  it('a lone star trusts every tool', () => {
+    expect(trustedByList('delete_task', ['*'])).toBe(true);
+  });
+
+  it('a glob trusts a family of tools', () => {
+    expect(trustedByList('list_projects', ['list_*'])).toBe(true);
+    expect(trustedByList('create_task', ['list_*'])).toBe(false);
+  });
+
+  it('an exclusion takes a tool back out of the list', () => {
+    expect(trustedByList('create_task', ['*', '!delete_*'])).toBe(true);
+    expect(trustedByList('delete_task', ['*', '!delete_*'])).toBe(false);
+  });
+
+  it('exclusions alone trust nothing', () => {
+    expect(trustedByList('create_task', ['!delete_*'])).toBe(false);
+  });
+
+  it('an empty list trusts nothing', () => {
+    expect(trustedByList('create_task', [])).toBe(false);
   });
 });
