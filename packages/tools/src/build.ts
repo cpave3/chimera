@@ -1,15 +1,16 @@
 import type { ToolSet } from 'ai';
 import { buildApplyPatchTool } from './apply-patch';
+import { buildAskQuestionTool } from './ask-question';
 import { buildBashKillTool, buildBashOutputTool } from './background-tools';
 import { buildBashTool } from './bash';
 import { buildCodexToolDefs } from './codex-adapter';
 import type { ToolContext } from './context';
 import { buildEditTool } from './edit';
+import { buildGitTool } from './git';
 import { buildGlobTool } from './glob';
 import { buildGrepTool } from './grep';
 import { buildReadTool } from './read';
 import { buildRecallTool } from './recall';
-import { buildAskQuestionTool } from './ask-question';
 import { buildRequestUserInputTool } from './request-user-input';
 import { buildTaskListTool } from './task-list';
 import type { ChimeraToolDef, FormatScrollback } from './types';
@@ -34,6 +35,7 @@ export function buildTools(ctx: ToolContext): BuildToolsResult {
       : { edit: buildEditTool(ctx) }),
     glob: buildGlobTool(ctx),
     grep: buildGrepTool(ctx),
+    git: buildGitTool(ctx),
     fetch: buildFetchTool(ctx),
   };
   if (ctx.webSearch) {

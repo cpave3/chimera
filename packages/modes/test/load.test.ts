@@ -64,6 +64,7 @@ describe('loadModes', () => {
       'read',
       'glob',
       'grep',
+      'git',
       'task_list',
       'fetch',
       'web_search',

@@ -110,12 +110,20 @@ spawn.
 ## The `explore` agent
 
 Chimera ships one agent definition, `explore`: a read-only search helper with
-`read`, `glob`, `grep`, `fetch` and `web_search`. The model is told to give it
-a wide search (many files, or a place it does not know yet) and to work from
-the findings, which carry `path:line` references. The file contents then stay
-out of the main context. To change it, put your own `explore.md` in
+`read`, `glob`, `grep`, `git`, `fetch` and `web_search`. The model is told to
+give it a wide search (many files, or a place it does not know yet) and to
+work from the findings, which carry `path:line` references. The file contents
+then stay out of the main context. To change it, put your own `explore.md` in
 `~/.chimera/agents/` or `<cwd>/.chimera/agents/`; yours replaces the built-in
 one.
+
+`git` lets a read-only agent see history without shell access: the commits
+between two revisions, a diff, a file at a revision, which branches contain a
+commit. Any agent definition can add `git` to its `tools:`. It reads the
+repository that holds the working directory, and nothing outside it. The tool
+refuses every git command that writes or runs a configured program, whatever
+`--auto-approve` level the child inherits from its parent, and it never asks
+for approval. See [Tools](docs/tools.md#built-in-tools) for what it refuses.
 
 ## A cheaper model for helper work
 

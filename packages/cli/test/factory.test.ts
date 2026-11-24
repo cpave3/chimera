@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -503,6 +504,7 @@ describe('CliAgentFactory', () => {
         'agent_status',
         'agent_stop',
         'fetch',
+        'git',
         'glob',
         'grep',
         'read',
@@ -520,6 +522,84 @@ describe('CliAgentFactory', () => {
     expect(refused.reason).toBe('error');
     expect(refused.result).toMatch(/plan mode.*agent: "explore"/);
     expect(warnings).toEqual([]);
+  });
+
+  it('gives a session whose tool list names git a read-only git that never prompts', async () => {
+    const run = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.stderr);
+    };
+    run('init', '-q');
+    run(
+      '-c',
+      'user.email=t@example.com',
+      '-c',
+      'user.name=T',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'only commit',
+    );
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'none',
+      home: cwd,
+      toolsAllowlist: ['read', 'glob', 'grep', 'git', 'fetch', 'web_search'],
+      subagents: { enabled: false, headlessAutoDeny: true },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const events: Array<{ type: string }> = [];
+    agent.subscribeIdleEvents((event) => events.push(event));
+    const tools = (
+      agent as unknown as {
+        opts: {
+          tools: Record<
+            string,
+            { execute: (args: object, options: object) => Promise<Record<string, unknown>> }
+          >;
+        };
+      }
+    ).opts.tools;
+
+    expect(Object.keys(tools)).toContain('git');
+    expect(Object.keys(tools)).not.toContain('bash');
+    const log = await tools.git!.execute(
+      { subcommand: 'log', args: ['--format=%s'] },
+      { abortSignal: new AbortController().signal, toolCallId: 'g1', messages: [] },
+    );
+    expect(log.stdout).toBe('only commit\n');
+    const commit = await tools.git!.execute(
+      { subcommand: 'commit', args: ['--allow-empty', '-m', 'x'] },
+      { abortSignal: new AbortController().signal, toolCallId: 'g2', messages: [] },
+    );
+    expect(commit.exit_code).toBe(-1);
+    expect(events.filter((event) => event.type === 'permission_request')).toEqual([]);
+  });
+
+  it('keeps git out of a session with no tool list', async () => {
+    const factory = new CliAgentFactory({
+      providersConfig: anthropicOnly,
+      autoApprove: 'all',
+      home: cwd,
+      subagents: { enabled: false },
+    });
+    const { agent } = await factory.build({
+      cwd,
+      model: { providerId: 'anthropic', modelId: 'claude-opus-4-7', maxSteps: 1 },
+      sandboxMode: 'off',
+    });
+    const opts = (
+      agent as unknown as { opts: { tools: Record<string, unknown>; systemPrompt: string } }
+    ).opts;
+
+    expect(Object.keys(opts.tools)).toContain('bash');
+    expect(Object.keys(opts.tools)).not.toContain('git');
+    expect(opts.systemPrompt).not.toContain('Read git history');
   });
 
   it('warns about a limit on a tool that takes none', async () => {

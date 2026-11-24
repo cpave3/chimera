@@ -14,10 +14,10 @@ Chimera ships with two built-ins:
   available); minimal prompt fragment. New sessions start in `build` unless
   you pass `--mode <name>` or set `defaultMode` in config.
 - **`plan`** — read-only exploration and research. `tools: [read, glob,
-  grep, task_list, fetch, web_search, spawn_agent(explore), agent_status,
-  agent_stop]`: it can read the repository, look things up on the web, and
-  hand a wide search to the read-only `explore` agent, but it cannot edit a
-  file or run a command. It has no `bash`: the command classifier's `safe`
+  grep, git, task_list, fetch, web_search, spawn_agent(explore),
+  agent_status, agent_stop]`: it can read the repository and its git
+  history, look things up on the web, and hand a wide search to the
+  read-only `explore` agent, but it cannot edit a file or run a command. It has no `bash`: the command classifier's `safe`
   level includes commands that write files, so no bash limit would keep the
   mode read-only.
   The body steers the model toward building context, presenting a numbered

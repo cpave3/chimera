@@ -14,6 +14,7 @@ each tool call.
 | `apply_patch` | Add, update, delete or move files with a patch. | For models that edit with patches (GPT, Codex) |
 | `glob` | Find files by name pattern. | Always |
 | `grep` | Search file contents with a regular expression. | Always |
+| `git` | Read git history and state: `log`, `show`, `diff`, `rev-parse`, `merge-base`, `status`, `branch` (list mode), `cat-file`. | When a tool list names it: plan mode, the `explore` agent, or an agent definition or mode of your own |
 | `fetch` | Fetch a URL as readable text. | Always |
 | `web_search` | Search the web. | When `webSearch` is configured |
 | `task_list` | Keep the task list for work with three or more steps. | Always |
@@ -40,6 +41,45 @@ Notes:
   [OS sandbox](sandbox.md) control.
 - **A mode can limit the tools.** Plan mode has no tool that changes files.
   See [Modes](MODES.md).
+- **`git` only reads, and never asks.** It runs git without a shell. Its
+  boundary is the repository that holds the working directory: history and
+  objects are repository-wide anyway, so from a directory below the top it
+  reads the whole work tree (`HEAD:README.md`, `:(top)README.md`, `../x`).
+  It refuses:
+  - other subcommands, and every `branch` option that is not a listing;
+  - options that write a file (`--output` and its abbreviations), run a
+    program (`--ext-diff`, `--textconv`, `--filters`, `--submodule=diff`,
+    `--ignore-submodules=none`, `--no-ignore-submodules`) or point git
+    elsewhere (`--no-index`, `-C`, `-c`, `--git-dir`, `--work-tree`). For
+    copy detection, use `--find-copies` in place of `-C`;
+  - a path that is absolute, climbs out of the repository with `..`, or
+    leads out of it through a symlink. Every positional argument and
+    everything after `--` is checked this way, revisions too, so give an
+    option's value with `=` (`--grep=/api`, not `--grep /api`);
+  - `status`, and a `diff` that compares the work tree, when a tracked file
+    uses a configured clean filter (Git LFS, say). The tool does not run
+    filters, and without its filter git would report a converted file as
+    changed. The check covers the whole repository, whatever the working
+    directory. `diff --cached`, `diff A B`, `log` and `show` still work. In
+    such a repository, put a diff's `--cached` and revisions before its
+    other options (`diff A B --stat`): an argument that follows an option
+    may be that option's value (`-S HEAD`, `-S --cached`), so that order is
+    refused;
+  - a working directory that is not in a git work tree, and a submodule or
+    any other work tree whose git directory is outside it. A linked worktree
+    (`git worktree add`) is read when git's two-way link holds: its `.git`
+    file names `<common dir>/worktrees/<name>`, and that directory's
+    `gitdir` file names the `.git` file back. Its paths are still held to
+    its own work tree.
+
+  It runs git with no pager, no optional index lock, no fsmonitor, no hooks,
+  no external diff or textconv, no clean filters (each configured driver is
+  emptied by name), no signature program, no submodule child processes
+  (`--ignore-submodules=dirty` for `diff` and `status`), no terminal prompt,
+  no lazy fetch, and without the inherited `GIT_DIR` and `GIT_WORK_TREE`.
+  These limits hold whatever `--auto-approve` level the session has. Output
+  over 256,000 characters is cut with a note. A session without a tool list
+  does not get it: it has `bash`.
 - **Hooks see every call.** A `PreToolUse` hook can block a tool call. See
   [Lifecycle hooks](hooks.md).
 - **Questions and handoffs.** `ask_question` and `request_user_input` are

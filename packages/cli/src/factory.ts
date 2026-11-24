@@ -1086,7 +1086,13 @@ export class CliAgentFactory implements AgentFactory {
 
     const toolsInMode = (surface: ToolSurface, mode: Mode | undefined): ToolSet => {
       const allowlist = mode ? computeAllowlist(mode) : undefined;
-      if (!allowlist) return surface.tools;
+      if (!allowlist) {
+        if (this.toolsAllowlist) return surface.tools;
+        // A session with bash has no use for the read-only git tool, and
+        // every tool costs prompt: it appears only where a tool list names it.
+        const { git: _git, ...tools } = surface.tools;
+        return tools;
+      }
       const filtered = applyAllowlist(surface.tools, allowlist);
       if (surface.tools.request_user_input) {
         filtered.request_user_input = surface.tools.request_user_input;
