@@ -14,6 +14,7 @@ each tool call.
 | `apply_patch` | Add, update, delete or move files with a patch. | For models that edit with patches (GPT, Codex) |
 | `glob` | Find files by name pattern. | Always |
 | `grep` | Search file contents with a regular expression. | Always |
+| `git` | Read git history and state: `log`, `show`, `diff`, `rev-parse`, `merge-base`, `status`, `branch` (list mode), `cat-file`. | When a tool list names it: plan mode, the `explore` agent, or an agent definition or mode of your own |
 | `fetch` | Fetch a URL as readable text. | Always |
 | `web_search` | Search the web. | When `webSearch` is configured |
 | `task_list` | Keep the task list for work with three or more steps. | Always |
@@ -40,6 +41,18 @@ Notes:
   [OS sandbox](sandbox.md) control.
 - **A mode can limit the tools.** Plan mode has no tool that changes files.
   See [Modes](MODES.md).
+- **`git` only reads, and never asks.** It runs git without a shell, in
+  the working directory, and refuses everything that writes: other
+  subcommands, `--output` and its abbreviations, `--ext-diff`,
+  `--textconv`, `--filters`, `--no-index`, `-C`, `-c`, `--git-dir`,
+  `--work-tree`, and every `branch` option that is not a listing. (For copy
+  detection, use `--find-copies` in place of `-C`.) Arguments after a
+  literal `--` are paths and are not checked. It runs git with no pager, no
+  optional index lock, no fsmonitor, no hooks, no external diff or textconv,
+  no terminal prompt, and without the inherited `GIT_DIR` and
+  `GIT_WORK_TREE`. These limits hold whatever `--auto-approve` level the
+  session has. Output over 256,000 characters is cut with a note. A session
+  without a tool list does not get it: it has `bash`.
 - **Hooks see every call.** A `PreToolUse` hook can block a tool call. See
   [Lifecycle hooks](hooks.md).
 - **Questions and handoffs.** `ask_question` and `request_user_input` are
