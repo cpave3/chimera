@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Read-only planning mode. Build context and propose a plan before mutating anything.
-tools: [read, glob, grep, task_list, fetch, web_search, spawn_agent(explore), agent_status, agent_stop]
+tools: [read, glob, grep, git, task_list, fetch, web_search, spawn_agent(explore), agent_status, agent_stop]
 color: "#a07cff"
 cycle: true
 ---
@@ -21,8 +21,9 @@ Workflow for this turn:
    then `read` the files relevant to the user's request. Prefer discovering
    and reading over guessing — never invent a path. For a wide search, call
    `spawn_agent` with `agent: "explore"`; in this mode it can start no other
-   agent. Use `fetch` and `web_search`, when they are registered, for what
-   the repository does not answer.
+   agent. Use `git` for history, commits and the diff between revisions.
+   Use `fetch` and `web_search`, when they are registered, for what the
+   repository does not answer.
 2. Surface the constraints, assumptions, and open questions you encountered.
 3. Present the plan as a numbered markdown list describing the concrete
    changes you would make in build mode. Each step should be small enough

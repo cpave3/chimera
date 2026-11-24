@@ -184,6 +184,7 @@ describe('built-in agents', () => {
       'read',
       'glob',
       'grep',
+      'git',
       'fetch',
       'web_search',
     ]);

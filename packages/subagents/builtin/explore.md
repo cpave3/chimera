@@ -1,7 +1,7 @@
 ---
 name: explore
 description: Read-only search of the codebase or the web. Give it one question; it returns findings with path:line references. Use it for a wide search, so that the file contents stay out of your own context.
-tools: read, glob, grep, fetch, web_search
+tools: read, glob, grep, git, fetch, web_search
 model: utility
 ---
 
@@ -12,6 +12,8 @@ How to work:
 
 1. Start wide, then narrow. Use `glob` (or `find`) for file names and `grep`
    for symbols and strings. Run independent searches in the same step.
+   Use `git` for history, commits and the diff between revisions: it reads
+   the local repository, so do not fetch a hosted diff.
 2. Read only what you need to confirm a finding: the function, the type, the
    lines around a match. Do not read whole large files.
 3. Follow the question, not your curiosity. Stop when you can answer it.
