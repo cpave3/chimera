@@ -200,7 +200,10 @@ it; Chimera never captures the mouse here.
   the wheel), and the choices stay in view. For an OS sandbox bypass, choose
   **Allow once**, **Allow exact command…**, or **Allow command prefix…**,
   then the session, project or global scope. See
-  [OS sandbox](sandbox.md#os-sandbox) for the limits.
+  [OS sandbox](sandbox.md#os-sandbox) for the limits. An MCP request also
+  offers **Allow all `<server>` tools…** (`S`), which remembers the rule
+  `<server>/*` at the scope you pick. See
+  [Trusting a whole server](mcp.md#trusting-a-whole-server).
 - **Reviewer and System One marks.** A tool row that the approval reviewer or
   the System One check allowed ends with `approved by reviewer` or
   `approved by System One`. See

@@ -71,8 +71,10 @@ commands that the [command policy](bash-command-policy.md) accepts.
   [approval reviewer](bash-command-policy.md#approval-reviewer) or the
   [System One check](bash-command-policy.md#system-one-check) to prevent
   this, or drive the run from a client that answers.
-- An MCP call needs a `trustedTools` entry or an allow rule. Without one it is
-  denied. See [MCP tools](mcp.md).
+- An MCP call needs a `trustedTools` entry (a tool name, a glob, or `*` for
+  the whole server) or an allow rule (exact `server/tool` or `server/*`).
+  Without one it is denied. See
+  [What decides an MCP call](mcp.md#what-decides-an-mcp-call).
 - The agent cannot ask questions: `ask_question` returns at once, and the
   agent states its assumption. `request_user_input` ends the run with a
   machine-readable request. See [Requesting user input](request-user-input.md).
