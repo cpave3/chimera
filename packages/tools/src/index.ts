@@ -9,6 +9,7 @@ export * from './define';
 export * from './diagnostics';
 export { buildEditTool } from './edit';
 export * from './errors';
+export { buildGitTool } from './git';
 export { buildGlobTool } from './glob';
 export { buildGrepTool } from './grep';
 export * from './guards';
