@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -139,14 +139,49 @@ describeIfGit('git tool', () => {
     expect(result.stderr).toMatch(/^refused by chimera: /);
   });
 
-  it.each([
-    [['/etc/hostname', 'file.txt']],
-    [['--', '../outside.txt', 'file.txt']],
-    [['sub/../../outside.txt', 'file.txt']],
-  ])('refuses diff %j, which would read a file outside the working directory', async (args) => {
-    const result = await gitTool().execute({ subcommand: 'diff', args });
-    expect(result.exit_code).toBe(-1);
-    expect(result.stderr).toMatch(/^refused by chimera: .*outside the working directory/);
+  describe('paths outside the working directory', () => {
+    let outside: string;
+
+    beforeEach(async () => {
+      outside = await mkdtemp(join(tmpdir(), 'chimera-git-outside-'));
+      await writeFile(join(outside, 'secret.txt'), 'secret\n');
+      await symlink(outside, join(root, 'link'));
+    });
+
+    afterEach(async () => {
+      await rm(outside, { recursive: true, force: true });
+    });
+
+    const shapes = {
+      absolute: () => join(outside, 'secret.txt'),
+      'leaving the cwd': () => '../secret.txt',
+      'through a symlink': () => 'link/secret.txt',
+    };
+
+    it.each([
+      ['log', (path: string) => ['--', path]],
+      ['show', (path: string) => ['HEAD', '--', path]],
+      ['diff', (path: string) => [path, 'file.txt']],
+      ['status', (path: string) => ['--', path]],
+      ['rev-parse', (path: string) => ['--resolve-git-dir', path]],
+    ] as const)('refuses %s with a path outside the working directory', async (subcommand, argsFor) => {
+      for (const [shape, path] of Object.entries(shapes)) {
+        const result = await gitTool().execute({ subcommand, args: argsFor(path()) });
+        expect(result.exit_code, shape).toBe(-1);
+        expect(result.stderr, shape).toMatch(
+          /^refused by chimera: .*outside the working directory/,
+        );
+      }
+    });
+
+    it('accepts a path inside the working directory', async () => {
+      const result = await gitTool().execute({
+        subcommand: 'log',
+        args: ['--format=%s', '--', 'file.txt'],
+      });
+      expect(result.exit_code).toBe(0);
+      expect(result.stdout).toContain('second commit');
+    });
   });
 
   it('diffs a revision range', async () => {

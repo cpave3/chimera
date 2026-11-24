@@ -1,4 +1,5 @@
-import { isAbsolute, posix } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
@@ -162,22 +163,54 @@ function argumentRefusal(subcommand: string, args: string[]): string | undefined
     const refused = refusedOption(arg);
     if (refused) return `the git tool does not accept ${refused}.`;
   }
-  if (subcommand === 'branch') return branchRefusal(args);
-  if (subcommand === 'diff') return diffPathRefusal(args);
-  return undefined;
+  return subcommand === 'branch' ? branchRefusal(args) : undefined;
 }
 
 /**
- * Given two paths and one outside the working tree, `git diff` compares
- * them as plain files, with or without `--no-index`: so it reads any file.
- * The read tool keeps to the working directory, and so does this one.
+ * The positional arguments and everything after `--`: revisions and paths.
+ * git cannot always tell them apart either, so every one is checked as a path.
  */
-function diffPathRefusal(args: string[]): string | undefined {
-  for (const arg of args) {
-    if (arg.startsWith('-')) continue;
-    const normalized = posix.normalize(arg);
-    if (isAbsolute(arg) || normalized === '..' || normalized.startsWith('../')) {
-      return `git diff does not read ${arg}: it is outside the working directory.`;
+function pathCandidates(args: string[]): string[] {
+  const separator = args.indexOf('--');
+  const before = separator === -1 ? args : args.slice(0, separator);
+  const after = separator === -1 ? [] : args.slice(separator + 1);
+  return [...before.filter((arg) => !arg.startsWith('-')), ...after];
+}
+
+/** `path` with its existing part resolved through symlinks. */
+async function resolveExisting(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    const parent = dirname(path);
+    if (parent === path) return path;
+    return join(await resolveExisting(parent), basename(path));
+  }
+}
+
+function within(directory: string, path: string): boolean {
+  const rel = relative(directory, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * The read tool keeps to the working directory, and so does this one: a
+ * pathspec outside it would let `log`, `show` or `status` look there, and
+ * `diff` given one such path compares the two as plain files even without
+ * `--no-index`.
+ */
+async function pathRefusal(cwd: string, args: string[]): Promise<string | undefined> {
+  const candidates = pathCandidates(args);
+  if (candidates.length === 0) return undefined;
+  const realCwd = await resolveExisting(cwd);
+  for (const arg of candidates) {
+    const lexical = resolve(cwd, arg);
+    if (
+      isAbsolute(arg) ||
+      !within(cwd, lexical) ||
+      !within(realCwd, await resolveExisting(lexical))
+    ) {
+      return `${arg} is outside the working directory. If it is the value of an option, attach it with =.`;
     }
   }
   return undefined;
@@ -201,7 +234,9 @@ export function buildGitTool(ctx: ToolContext) {
       if (!(READ_SUBCOMMANDS as readonly string[]).includes(args.subcommand)) {
         return refuse(`git ${args.subcommand} is not a read-only git command.`);
       }
-      const refusal = argumentRefusal(args.subcommand, args.args ?? []);
+      const refusal =
+        argumentRefusal(args.subcommand, args.args ?? []) ??
+        (await pathRefusal(ctx.sandboxExecutor.cwd(), args.args ?? []));
       if (refusal) return refuse(refusal);
       const words = [
         'git',
