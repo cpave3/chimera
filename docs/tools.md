@@ -59,7 +59,11 @@ Notes:
   - `status`, and a `diff` that compares the work tree, when a tracked file
     uses a configured clean filter (Git LFS, say). The tool does not run
     filters, and without its filter git would report a converted file as
-    changed. `diff --cached`, `diff A B`, `log` and `show` still work;
+    changed. The check covers the whole repository, whatever the working
+    directory. `diff --cached`, `diff A B`, `log` and `show` still work. In
+    such a repository, put a diff's revisions before its options
+    (`diff A B --stat`): a revision that follows an option may be that
+    option's value (`-S HEAD`), so that order is refused;
   - a working directory that is not in a git work tree, and a submodule or
     any other work tree whose git directory is outside it. A linked worktree
     (`git worktree add`) is read when git's two-way link holds: its `.git`

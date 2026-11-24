@@ -353,29 +353,40 @@ async function filterOverrides(
 }
 
 /**
- * `status` compares the work tree, and so does `diff` unless it compares
- * the index (`--cached`) or two commits.
+ * Whether the call compares the work tree: `status` does, and so does
+ * `diff` unless it compares the index (`--cached`) or two commits. An
+ * option's value can be an argument of its own (`-S HEAD`), and only git's
+ * option table says which: so a positional right after an option makes the
+ * count of revisions `ambiguous`.
  */
-async function comparesWorkTree(subcommand: string, args: string[], run: RunGit): Promise<boolean> {
-  if (subcommand === 'status') return true;
-  if (subcommand !== 'diff') return false;
+async function workTreeComparison(
+  subcommand: string,
+  args: string[],
+  run: RunGit,
+): Promise<'none' | 'work-tree' | 'ambiguous'> {
+  if (subcommand === 'status') return 'work-tree';
+  if (subcommand !== 'diff') return 'none';
   const separator = args.indexOf('--');
   const options = separator === -1 ? args : args.slice(0, separator);
-  if (options.includes('--cached') || options.includes('--staged')) return false;
+  if (options.includes('--cached') || options.includes('--staged')) return 'none';
   const positionals = options.filter((arg) => !arg.startsWith('-'));
-  if (positionals.length === 0) return true;
+  if (positionals.length === 0) return 'work-tree';
+  const followsOption = options.some(
+    (arg, i) => i > 0 && !arg.startsWith('-') && /^-[^=]*$/.test(options[i - 1]!),
+  );
+  if (followsOption) return 'ambiguous';
   const revisions = await run(['rev-parse', '--revs-only', ...positionals]);
-  return revisions.stdout.split('\n').filter(Boolean).length < 2;
+  return revisions.stdout.split('\n').filter(Boolean).length < 2 ? 'work-tree' : 'none';
 }
 
-/** The first converting filter driver that a tracked file's attributes select. */
+/** The first converting filter driver that a tracked file's attributes select, anywhere in the repository. */
 async function trackedFilter(
   exec: (command: string) => Promise<{ stdout: string }>,
   converting: Set<string>,
 ): Promise<string | undefined> {
   if (converting.size === 0) return undefined;
   const listing = await exec(
-    `unset ${REPOSITORY_ENV.join(' ')}; ${git(['ls-files', '-z'])} | ${git(['check-attr', '--stdin', '-z', 'filter'])}`,
+    `unset ${REPOSITORY_ENV.join(' ')}; ${git(['ls-files', '-z', '--', ':/'])} | ${git(['check-attr', '--stdin', '-z', 'filter'])}`,
   );
   // -z output: path, attribute, value, each ended by a NUL.
   const fields = listing.stdout.split('\0');
@@ -422,13 +433,16 @@ export function buildGitTool(ctx: ToolContext) {
       const filters = await filterOverrides(run);
       if ('refusal' in filters) return refuse(filters.refusal);
       // Without its clean filter, git sees a converted file as changed.
-      if (await comparesWorkTree(args.subcommand, args.args ?? [], run)) {
-        const driver = await trackedFilter(exec, filters.converting);
-        if (driver) {
-          return refuse(
-            `tracked files use the clean filter "${driver}", which the git tool does not run, so git ${args.subcommand} would report the work tree wrongly. Compare commits (diff A B), the index (diff --cached), or use log and show.`,
-          );
-        }
+      const comparison = await workTreeComparison(args.subcommand, args.args ?? [], run);
+      const driver =
+        comparison === 'none' ? undefined : await trackedFilter(exec, filters.converting);
+      if (driver) {
+        const filtered = `tracked files use the clean filter "${driver}", which the git tool does not run`;
+        return refuse(
+          comparison === 'ambiguous'
+            ? `${filtered}, and a revision here follows an option that may take it as its value. Put the revisions first and give long options their value with =: diff A B --stat.`
+            : `${filtered}, so git ${args.subcommand} would report the work tree wrongly. Compare commits (diff A B), the index (diff --cached), or use log and show.`,
+        );
       }
       const result = await run([
         ...filters.options,

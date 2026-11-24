@@ -454,6 +454,43 @@ describeIfGit('git tool', () => {
       const result = await gitTool().execute({ subcommand, args });
       expect(result.exit_code).toBe(0);
     });
+
+    it('refuses from a directory below the top, where the filtered file is outside it', async () => {
+      const nested = join(root, 'nested');
+      await mkdir(nested);
+      await writeFile(join(nested, 'inner.txt'), 'inner\n');
+      git(root, 'add', 'nested/inner.txt');
+      git(root, 'commit', '-q', '-m', 'nested');
+      const tool = gitTool({}, nested);
+
+      const status = await tool.execute({ subcommand: 'status', args: ['--porcelain'] });
+      const diff = await tool.execute({
+        subcommand: 'diff',
+        args: ['HEAD', '--', ':(top)upper.txt'],
+      });
+
+      expect(status.stderr).toMatch(/^refused by chimera: .*clean filter "upper"/);
+      expect(diff.stderr).toMatch(/^refused by chimera: .*clean filter "upper"/);
+    });
+
+    it.each([
+      [['-S', 'HEAD', 'HEAD']],
+      [['-G', 'main..HEAD']],
+      [['--stat', 'main', 'HEAD']],
+    ])('refuses diff %j, where a positional may be the value of an option', async (args) => {
+      const result = await gitTool().execute({ subcommand: 'diff', args });
+      expect(result.exit_code).toBe(-1);
+      expect(result.stderr).toMatch(/^refused by chimera: .*clean filter "upper".*with =/);
+    });
+
+    it('runs a diff of two commits with its options after them', async () => {
+      const result = await gitTool().execute({
+        subcommand: 'diff',
+        args: ['main', 'HEAD', '--stat', '-SLOWER'],
+      });
+      expect(result.exit_code).toBe(0);
+      expect(result.stdout).toContain('upper.txt');
+    });
   });
 
   it('runs status when a filter is configured but no tracked file uses it', async () => {
