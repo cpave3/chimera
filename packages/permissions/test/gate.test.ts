@@ -679,6 +679,7 @@ describe('DefaultPermissionGate server-wide MCP trust', () => {
     ['burnlite/create_*', 'glob'],
     ['burnlite*/*', 'glob'],
     ['burnlite/', 'glob'],
+    ['burnlite/{list_projects,../other/*}', 'glob'],
     ['burnlite/*', 'prefix'],
   ] as const)('narrows a remembered %s (%s) to the exact tool that asked', (pattern, patternKind) => {
     const gate = headlessGate();
@@ -702,6 +703,27 @@ describe('DefaultPermissionGate server-wide MCP trust', () => {
     expect(gate.listRules()).toMatchObject([
       { pattern: 'mcp*/list_projects', patternKind: 'exact' },
     ]);
+  });
+
+  it('trusts a dot-prefixed tool under a lone-star trustedTools', async () => {
+    const gate = headlessGate();
+    expect(await gate.requestMcp(mcpCall('burnlite', '.status'), ['*'])).toMatchObject({
+      decision: 'allow',
+    });
+  });
+
+  it('remembers a server glob approved on a dot-prefixed tool, covering the next tool', async () => {
+    const gate = headlessGate();
+    gate.applyRemember(
+      { scope: 'session', pattern: 'burnlite/*', patternKind: 'glob' },
+      mcpRequest('burnlite', '.status'),
+      'allow',
+    );
+    expect(gate.listRules()).toMatchObject([{ pattern: 'burnlite/*', patternKind: 'glob' }]);
+    expect(await gate.requestMcp(mcpCall('burnlite', 'create_note'))).toMatchObject({
+      decision: 'allow',
+      remembered: true,
+    });
   });
 
   it('lets a deny rule beat a lone-star trustedTools', async () => {

@@ -196,7 +196,8 @@ You can write the same rule by hand, under `rules` in
 ```
 
 A hand-written rule may use any glob; `*` does not cross the `/`, so
-`burnlite/*` does not match `burnlite-x/…`. An exact deny rule, such as
+`burnlite/*` does not match `burnlite-x/…`. In MCP rules and `trustedTools`,
+`*` also matches tool names that start with `.`. An exact deny rule, such as
 `burnlite/delete_task`, still beats a `burnlite/*` allow.
 
 ### `trustedTools`

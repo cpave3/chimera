@@ -80,6 +80,15 @@ describe('matchRule for MCP identities', () => {
     expect(await matchRule(mcpReq('burnlite-x/create_note'), [serverAllow])).toBeNull();
   });
 
+  it('a server glob matches a dot-prefixed tool of that server', async () => {
+    expect((await matchRule(mcpReq('burnlite/.status'), [serverAllow]))?.decision).toBe('allow');
+  });
+
+  it('a bash glob still skips dot-prefixed paths', async () => {
+    const bashGlob = rule({ pattern: 'cat src/*' });
+    expect(await matchRule(req({ command: 'cat src/.env' }), [bashGlob])).toBeNull();
+  });
+
   it('an exact deny beats a server glob allow', async () => {
     const deny = rule({
       tool: 'mcp',
@@ -115,6 +124,11 @@ describe('trustedByList', () => {
 
   it('exclusions alone trust nothing', () => {
     expect(trustedByList('create_task', ['!delete_*'])).toBe(false);
+  });
+
+  it('globs and exclusions cover dot-prefixed tool names', () => {
+    expect(trustedByList('.status', ['*'])).toBe(true);
+    expect(trustedByList('.status', ['.status', '!*'])).toBe(false);
   });
 
   it('an empty list trusts nothing', () => {

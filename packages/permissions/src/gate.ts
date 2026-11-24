@@ -14,7 +14,7 @@ import type {
   RememberScope,
 } from '@chimera/core';
 import { minimatch, escape as minimatchEscape } from 'minimatch';
-import { matchRule, trustedByList } from './matching';
+import { MCP_GLOB, matchRule, trustedByList } from './matching';
 import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
 import type { SystemOneCheck, SystemOneVerdict } from './system-one';
@@ -594,10 +594,13 @@ export class DefaultPermissionGate implements McpPermissionGate {
 function isServerScopedGlob(scope: RememberScope, server: string, identity: string): boolean {
   if (scope.patternKind !== 'glob') return false;
   const serverPrefix = `${minimatchEscape(server)}/`;
+  const toolPattern = scope.pattern.slice(serverPrefix.length);
   return (
     scope.pattern.startsWith(serverPrefix) &&
-    scope.pattern.length > serverPrefix.length &&
-    minimatch(identity, scope.pattern)
+    toolPattern.length > 0 &&
+    // A `/` in the tool part, e.g. inside braces as `{x,../other/*}`, could reach another server.
+    !toolPattern.includes('/') &&
+    minimatch(identity, scope.pattern, MCP_GLOB)
   );
 }
 
