@@ -103,6 +103,8 @@ const REFUSED_LONG_OPTIONS = [
   '--upload-pack',
   '--git-dir',
   '--work-tree',
+  // It would override the --ignore-submodules=dirty the tool adds.
+  '--no-ignore-submodules',
 ];
 
 /** Options that are prefixes of a refused option but that git takes as written. */
@@ -313,22 +315,31 @@ async function pathRefusal(cwd: string, top: string, args: string[]): Promise<st
   return undefined;
 }
 
+function git(words: string[]): string {
+  return ['git', ...GLOBAL_OPTIONS, ...words].map(shellQuote).join(' ');
+}
+
 function gitCommand(words: string[]): string {
-  const git = ['git', ...GLOBAL_OPTIONS, ...words].map(shellQuote).join(' ');
-  return `unset ${REPOSITORY_ENV.join(' ')}; exec ${git}`;
+  return `unset ${REPOSITORY_ENV.join(' ')}; exec ${git(words)}`;
 }
 
 /**
  * A clean filter runs whenever git compares a work-tree file that the
  * attributes select, `diff` and `status` included. Filter drivers have
  * names of their own, so each configured one is emptied by name.
+ * `converting` are the drivers that had a clean or process command.
  */
-async function filterOverrides(run: RunGit): Promise<{ options: string[] } | { refusal: string }> {
+async function filterOverrides(
+  run: RunGit,
+): Promise<{ options: string[]; converting: Set<string> } | { refusal: string }> {
   const listing = await run(['config', '--null', '--name-only', '--get-regexp', '^filter\\.']);
   const drivers = new Set<string>();
+  const converting = new Set<string>();
   for (const key of listing.stdout.split('\0')) {
     if (!key.startsWith('filter.')) continue;
-    drivers.add(key.slice('filter.'.length, key.lastIndexOf('.')));
+    const driver = key.slice('filter.'.length, key.lastIndexOf('.'));
+    drivers.add(driver);
+    if (key.endsWith('.clean') || key.endsWith('.process')) converting.add(driver);
   }
   const options: string[] = [];
   for (const driver of drivers) {
@@ -338,7 +349,40 @@ async function filterOverrides(run: RunGit): Promise<{ options: string[] } | { r
       options.push('-c', `filter.${driver}.${setting}`);
     }
   }
-  return { options };
+  return { options, converting };
+}
+
+/**
+ * `status` compares the work tree, and so does `diff` unless it compares
+ * the index (`--cached`) or two commits.
+ */
+async function comparesWorkTree(subcommand: string, args: string[], run: RunGit): Promise<boolean> {
+  if (subcommand === 'status') return true;
+  if (subcommand !== 'diff') return false;
+  const separator = args.indexOf('--');
+  const options = separator === -1 ? args : args.slice(0, separator);
+  if (options.includes('--cached') || options.includes('--staged')) return false;
+  const positionals = options.filter((arg) => !arg.startsWith('-'));
+  if (positionals.length === 0) return true;
+  const revisions = await run(['rev-parse', '--revs-only', ...positionals]);
+  return revisions.stdout.split('\n').filter(Boolean).length < 2;
+}
+
+/** The first converting filter driver that a tracked file's attributes select. */
+async function trackedFilter(
+  exec: (command: string) => Promise<{ stdout: string }>,
+  converting: Set<string>,
+): Promise<string | undefined> {
+  if (converting.size === 0) return undefined;
+  const listing = await exec(
+    `unset ${REPOSITORY_ENV.join(' ')}; ${git(['ls-files', '-z'])} | ${git(['check-attr', '--stdin', '-z', 'filter'])}`,
+  );
+  // -z output: path, attribute, value, each ended by a NUL.
+  const fields = listing.stdout.split('\0');
+  for (let i = 2; i < fields.length; i += 3) {
+    if (converting.has(fields[i]!)) return fields[i];
+  }
+  return undefined;
 }
 
 function refuse(reason: string): GitResult {
@@ -362,13 +406,14 @@ export function buildGitTool(ctx: ToolContext) {
       const refusal = argumentRefusal(args.subcommand, args.args ?? []);
       if (refusal) return refuse(refusal);
       const timeoutMs = args.timeout_ms ?? 30_000;
-      const run = (words: string[]) =>
-        ctx.sandboxExecutor.exec(gitCommand(words), {
+      const exec = (command: string) =>
+        ctx.sandboxExecutor.exec(command, {
           signal: abortSignal,
           timeoutMs,
           env: ENV,
           toolName: 'git',
         });
+      const run = (words: string[]) => exec(gitCommand(words));
       const cwd = ctx.sandboxExecutor.cwd();
       const repository = await locateRepository(run, cwd);
       if ('refusal' in repository) return refuse(repository.refusal);
@@ -376,6 +421,15 @@ export function buildGitTool(ctx: ToolContext) {
       if (pathRefused) return refuse(pathRefused);
       const filters = await filterOverrides(run);
       if ('refusal' in filters) return refuse(filters.refusal);
+      // Without its clean filter, git sees a converted file as changed.
+      if (await comparesWorkTree(args.subcommand, args.args ?? [], run)) {
+        const driver = await trackedFilter(exec, filters.converting);
+        if (driver) {
+          return refuse(
+            `tracked files use the clean filter "${driver}", which the git tool does not run, so git ${args.subcommand} would report the work tree wrongly. Compare commits (diff A B), the index (diff --cached), or use log and show.`,
+          );
+        }
+      }
       const result = await run([
         ...filters.options,
         args.subcommand,

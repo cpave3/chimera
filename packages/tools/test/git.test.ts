@@ -403,7 +403,7 @@ describeIfGit('git tool', () => {
     await utimes(join(gitDirectory, 'index'), past, past);
   }
 
-  it('diffs and reports status without running a clean filter', async () => {
+  it('never runs a clean filter', async () => {
     const { script, marker } = await probe(await mkdtemp(join(tmpdir(), 'chimera-git-probe-')));
     await writeFile(join(root, '.gitattributes'), 'file.txt filter=probe\n');
     git(root, 'config', 'filter.probe.clean', script);
@@ -415,11 +415,51 @@ describeIfGit('git tool', () => {
     const tool = gitTool();
     const diff = await tool.execute({ subcommand: 'diff' });
     const status = await tool.execute({ subcommand: 'status', args: ['--porcelain'] });
+    const history = await tool.execute({ subcommand: 'diff', args: ['main', 'topic'] });
 
     expect(existsSync(marker)).toBe(false);
-    expect(diff.exit_code).toBe(0);
-    expect(diff.stdout).toContain('+three');
-    expect(status.stdout).toContain(' M file.txt');
+    expect(diff.stderr).toMatch(/clean filter "probe"/);
+    expect(status.stderr).toMatch(/clean filter "probe"/);
+    expect(history.exit_code).toBe(0);
+    expect(history.stdout).toContain('+two');
+  });
+
+  describe('with a content-converting clean filter', () => {
+    beforeEach(async () => {
+      git(root, 'config', 'filter.upper.clean', 'tr a-z A-Z');
+      await writeFile(join(root, '.gitattributes'), 'upper.txt filter=upper\n');
+      await writeFile(join(root, 'upper.txt'), 'lower\n');
+      git(root, 'add', '.gitattributes', 'upper.txt');
+      git(root, 'commit', '-q', '-m', 'filtered');
+    });
+
+    it.each([
+      ['status', ['--porcelain']],
+      ['diff', []],
+      ['diff', ['HEAD']],
+      ['diff', ['--', 'upper.txt']],
+    ])('refuses %s %j, which would compare the work tree without the filter', async (subcommand, args) => {
+      const result = await gitTool().execute({ subcommand, args });
+      expect(result.exit_code).toBe(-1);
+      expect(result.stderr).toMatch(/^refused by chimera: .*clean filter "upper"/);
+    });
+
+    it.each([
+      ['diff', ['--cached']],
+      ['diff', ['main', 'HEAD']],
+      ['diff', ['main..HEAD']],
+      ['log', ['-p', '-1']],
+      ['show', ['HEAD:upper.txt']],
+    ])('still runs %s %j, which compares no work-tree file', async (subcommand, args) => {
+      const result = await gitTool().execute({ subcommand, args });
+      expect(result.exit_code).toBe(0);
+    });
+  });
+
+  it('runs status when a filter is configured but no tracked file uses it', async () => {
+    git(root, 'config', 'filter.upper.clean', 'tr a-z A-Z');
+    const result = await gitTool().execute({ subcommand: 'status', args: ['--porcelain'] });
+    expect(result.exit_code).toBe(0);
   });
 
   it('never runs a signature program', async () => {
@@ -476,14 +516,15 @@ describeIfGit('git tool', () => {
       await tool.execute({ subcommand: 'status' });
       await tool.execute({ subcommand: 'diff' });
       const refused = await tool.execute({ subcommand: 'diff', args: ['--submodule=diff'] });
-      const unignored = await tool.execute({
-        subcommand: 'status',
-        args: ['--ignore-submodules=none'],
-      });
+      const unignored = await Promise.all(
+        [['--ignore-submodules=none'], ['--no-ignore-submodules'], ['--no-ignore-sub']].map(
+          (args) => tool.execute({ subcommand: 'status', args: [...args, '--porcelain'] }),
+        ),
+      );
 
       expect(existsSync(marker)).toBe(false);
       expect(refused.exit_code).toBe(-1);
-      expect(unignored.exit_code).toBe(-1);
+      expect(unignored.map((result) => result.exit_code)).toEqual([-1, -1, -1]);
     } finally {
       await rm(inner, { recursive: true, force: true });
     }

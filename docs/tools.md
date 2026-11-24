@@ -49,13 +49,17 @@ Notes:
   - other subcommands, and every `branch` option that is not a listing;
   - options that write a file (`--output` and its abbreviations), run a
     program (`--ext-diff`, `--textconv`, `--filters`, `--submodule=diff`,
-    `--ignore-submodules=none`) or point git elsewhere (`--no-index`, `-C`,
-    `-c`, `--git-dir`, `--work-tree`). For copy detection, use
-    `--find-copies` in place of `-C`;
+    `--ignore-submodules=none`, `--no-ignore-submodules`) or point git
+    elsewhere (`--no-index`, `-C`, `-c`, `--git-dir`, `--work-tree`). For
+    copy detection, use `--find-copies` in place of `-C`;
   - a path that is absolute, climbs out of the repository with `..`, or
     leads out of it through a symlink. Every positional argument and
     everything after `--` is checked this way, revisions too, so give an
     option's value with `=` (`--grep=/api`, not `--grep /api`);
+  - `status`, and a `diff` that compares the work tree, when a tracked file
+    uses a configured clean filter (Git LFS, say). The tool does not run
+    filters, and without its filter git would report a converted file as
+    changed. `diff --cached`, `diff A B`, `log` and `show` still work;
   - a working directory that is not in a git work tree, and a submodule or
     any other work tree whose git directory is outside it. A linked worktree
     (`git worktree add`) is read when git's two-way link holds: its `.git`
