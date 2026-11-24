@@ -281,6 +281,27 @@ it('denies an untrusted MCP call in a headless agent run even with host auto-app
 });
 
 it.each([
+  { trustedTools: ['*'], runs: true },
+  { trustedTools: ['*', '!ech*'], runs: false },
+])('runs a headless MCP call under trustedTools $trustedTools: $runs', {
+  timeout: 20000,
+}, async ({ trustedTools, runs }) => {
+  const test = await fixture();
+  const registry = test.registry({ trustedTools });
+  const { sessionId, entry } = await registry.create(init(test.home));
+  expect(await registry.run(sessionId, 'Use the echo tool')).toBe('queued');
+  await entry.activeRun;
+  expect(test.calls).toHaveLength(runs ? 1 : 0);
+  expect(entry.bus.snapshot()).toContainEqual(
+    expect.objectContaining({
+      type: 'assistant_text_done',
+      text: runs ? 'Final: MCP says hello' : 'MCP denied',
+    }),
+  );
+  expect(await registry.delete(sessionId)).toBe(true);
+});
+
+it.each([
   { instructions: undefined, systemPrompt: undefined },
   { instructions: 'Always check the project before using echo.', systemPrompt: undefined },
   { instructions: 'Always check the project before using echo.', systemPrompt: 'Custom prompt' },
