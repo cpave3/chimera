@@ -41,21 +41,32 @@ Notes:
   [OS sandbox](sandbox.md) control.
 - **A mode can limit the tools.** Plan mode has no tool that changes files.
   See [Modes](MODES.md).
-- **`git` only reads, and never asks.** It runs git without a shell, in
-  the working directory, and refuses everything that writes: other
-  subcommands, `--output` and its abbreviations, `--ext-diff`,
-  `--textconv`, `--filters`, `--no-index`, `-C`, `-c`, `--git-dir`,
-  `--work-tree`, every `branch` option that is not a listing, and any path
-  outside the working directory: absolute, with `..` above it, or through a
-  symlink that leads out of it. Every positional argument and everything
-  after `--` is checked this way, revisions too, so give an option's value
-  with `=` (`--grep=/api`, not `--grep /api`). For copy detection, use
-  `--find-copies` in place of `-C`. It runs git with no pager, no
-  optional index lock, no fsmonitor, no hooks, no external diff or textconv,
-  no terminal prompt, and without the inherited `GIT_DIR` and
-  `GIT_WORK_TREE`. These limits hold whatever `--auto-approve` level the
-  session has. Output over 256,000 characters is cut with a note. A session
-  without a tool list does not get it: it has `bash`.
+- **`git` only reads, and never asks.** It runs git without a shell. Its
+  boundary is the repository that holds the working directory: history and
+  objects are repository-wide anyway, so from a directory below the top it
+  reads the whole work tree (`HEAD:README.md`, `:(top)README.md`, `../x`).
+  It refuses:
+  - other subcommands, and every `branch` option that is not a listing;
+  - options that write a file (`--output` and its abbreviations), run a
+    program (`--ext-diff`, `--textconv`, `--filters`, `--submodule=diff`,
+    `--ignore-submodules=none`) or point git elsewhere (`--no-index`, `-C`,
+    `-c`, `--git-dir`, `--work-tree`). For copy detection, use
+    `--find-copies` in place of `-C`;
+  - a path that is absolute, climbs out of the repository with `..`, or
+    leads out of it through a symlink. Every positional argument and
+    everything after `--` is checked this way, revisions too, so give an
+    option's value with `=` (`--grep=/api`, not `--grep /api`);
+  - a working directory that is not in a git work tree, and a linked
+    worktree or submodule, whose git directory is outside it.
+
+  It runs git with no pager, no optional index lock, no fsmonitor, no hooks,
+  no external diff or textconv, no clean filters (each configured driver is
+  emptied by name), no signature program, no submodule child processes
+  (`--ignore-submodules=dirty` for `diff` and `status`), no terminal prompt,
+  no lazy fetch, and without the inherited `GIT_DIR` and `GIT_WORK_TREE`.
+  These limits hold whatever `--auto-approve` level the session has. Output
+  over 256,000 characters is cut with a note. A session without a tool list
+  does not get it: it has `bash`.
 - **Hooks see every call.** A `PreToolUse` hook can block a tool call. See
   [Lifecycle hooks](hooks.md).
 - **Questions and handoffs.** `ask_question` and `request_user_input` are

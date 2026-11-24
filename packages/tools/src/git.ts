@@ -221,24 +221,66 @@ function within(directory: string, path: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
+type RunGit = (words: string[]) => Promise<{ stdout: string; exitCode: number }>;
+
 /**
- * The read tool keeps to the working directory, and so does this one: a
- * pathspec outside it would let `log`, `show` or `status` look there, and
- * `diff` given one such path compares the two as plain files even without
- * `--no-index`.
+ * The repository is the boundary: history and objects are repository-wide
+ * anyway, so git may read any path in the work tree. The work tree must
+ * hold its git directory, so a linked worktree or a submodule, whose `.git`
+ * file points elsewhere, is not read.
  */
-async function pathRefusal(cwd: string, args: string[]): Promise<string | undefined> {
+async function locateRepository(
+  run: RunGit,
+  cwd: string,
+): Promise<{ top: string } | { refusal: string }> {
+  const probe = await run([
+    'rev-parse',
+    '--is-inside-work-tree',
+    '--show-prefix',
+    '--path-format=relative',
+    '--git-dir',
+    '--git-common-dir',
+  ]);
+  const [inWorkTree, prefix = '', ...directories] = probe.stdout.split('\n');
+  if (probe.exitCode !== 0 || inWorkTree !== 'true') {
+    return { refusal: `${cwd} is not in a git work tree.` };
+  }
+  const top = resolve(
+    cwd,
+    ...prefix
+      .split('/')
+      .filter(Boolean)
+      .map(() => '..'),
+  );
+  const realTop = await resolveExisting(top);
+  for (const directory of directories.filter(Boolean)) {
+    const gitDirectory = resolve(cwd, directory);
+    if (!within(top, gitDirectory) || !within(realTop, await resolveExisting(gitDirectory))) {
+      return {
+        refusal: `the git directory ${gitDirectory} is outside the repository at ${top}: a linked worktree or a submodule is not read.`,
+      };
+    }
+  }
+  return { top };
+}
+
+/**
+ * A pathspec outside the repository would let `log`, `show` or `status`
+ * look there, and `diff` given one such path compares the two as plain
+ * files even without `--no-index`.
+ */
+async function pathRefusal(cwd: string, top: string, args: string[]): Promise<string | undefined> {
   const candidates = pathCandidates(args);
   if (candidates.length === 0) return undefined;
-  const realCwd = await resolveExisting(cwd);
+  const realTop = await resolveExisting(top);
   for (const arg of candidates) {
     const lexical = resolve(cwd, arg);
     if (
       isAbsolute(arg) ||
-      !within(cwd, lexical) ||
-      !within(realCwd, await resolveExisting(lexical))
+      !within(top, lexical) ||
+      !within(realTop, await resolveExisting(lexical))
     ) {
-      return `${arg} is outside the working directory. If it is the value of an option, attach it with =.`;
+      return `${arg} is absolute or outside the repository. Give paths relative to the working directory, and attach an option's value with =.`;
     }
   }
   return undefined;
@@ -254,9 +296,7 @@ function gitCommand(words: string[]): string {
  * attributes select, `diff` and `status` included. Filter drivers have
  * names of their own, so each configured one is emptied by name.
  */
-async function filterOverrides(
-  run: (words: string[]) => Promise<{ stdout: string; exitCode: number }>,
-): Promise<{ options: string[] } | { refusal: string }> {
+async function filterOverrides(run: RunGit): Promise<{ options: string[] } | { refusal: string }> {
   const listing = await run(['config', '--null', '--name-only', '--get-regexp', '^filter\\.']);
   const drivers = new Set<string>();
   for (const key of listing.stdout.split('\0')) {
@@ -281,9 +321,9 @@ function refuse(reason: string): GitResult {
 export function buildGitTool(ctx: ToolContext) {
   return defineTool<GitArgs, GitResult>({
     description:
-      'Run a read-only git command in the working directory: log, show, diff, rev-parse, ' +
-      'merge-base, status, branch (list mode) or cat-file. Never asks for approval. ' +
-      'Options that write files, run external programs or leave the working directory are refused.',
+      'Run a read-only git command on the repository of the working directory: log, show, diff, ' +
+      'rev-parse, merge-base, status, branch (list mode) or cat-file. Never asks for approval. ' +
+      'Options that write files, run external programs or leave the repository are refused.',
     promptSnippet:
       'Read git history and state: log, show, diff, status, rev-parse, merge-base, branch --contains, cat-file.',
     inputSchema: GIT_SCHEMA,
@@ -292,9 +332,7 @@ export function buildGitTool(ctx: ToolContext) {
       if (!(READ_SUBCOMMANDS as readonly string[]).includes(args.subcommand)) {
         return refuse(`git ${args.subcommand} is not a read-only git command.`);
       }
-      const refusal =
-        argumentRefusal(args.subcommand, args.args ?? []) ??
-        (await pathRefusal(ctx.sandboxExecutor.cwd(), args.args ?? []));
+      const refusal = argumentRefusal(args.subcommand, args.args ?? []);
       if (refusal) return refuse(refusal);
       const timeoutMs = args.timeout_ms ?? 30_000;
       const run = (words: string[]) =>
@@ -304,6 +342,11 @@ export function buildGitTool(ctx: ToolContext) {
           env: ENV,
           toolName: 'git',
         });
+      const cwd = ctx.sandboxExecutor.cwd();
+      const repository = await locateRepository(run, cwd);
+      if ('refusal' in repository) return refuse(repository.refusal);
+      const pathRefused = await pathRefusal(cwd, repository.top, args.args ?? []);
+      if (pathRefused) return refuse(pathRefused);
       const filters = await filterOverrides(run);
       if ('refusal' in filters) return refuse(filters.refusal);
       const result = await run([
