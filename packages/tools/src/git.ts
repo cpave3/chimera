@@ -355,9 +355,9 @@ async function filterOverrides(
 /**
  * Whether the call compares the work tree: `status` does, and so does
  * `diff` unless it compares the index (`--cached`) or two commits. An
- * option's value can be an argument of its own (`-S HEAD`), and only git's
- * option table says which: so a positional right after an option makes the
- * count of revisions `ambiguous`.
+ * option's value can be an argument of its own (`-S HEAD`, `-S --cached`),
+ * and only git's option table says which: so a positional, `--cached` or
+ * `--staged` right after an option makes the comparison `ambiguous`.
  */
 async function workTreeComparison(
   subcommand: string,
@@ -368,13 +368,12 @@ async function workTreeComparison(
   if (subcommand !== 'diff') return 'none';
   const separator = args.indexOf('--');
   const options = separator === -1 ? args : args.slice(0, separator);
-  if (options.includes('--cached') || options.includes('--staged')) return 'none';
+  const mayBeValue = (i: number) => i > 0 && /^-[^=]*$/.test(options[i - 1]!);
+  const indexOnly = options.findIndex((arg) => arg === '--cached' || arg === '--staged');
+  if (indexOnly !== -1) return mayBeValue(indexOnly) ? 'ambiguous' : 'none';
   const positionals = options.filter((arg) => !arg.startsWith('-'));
   if (positionals.length === 0) return 'work-tree';
-  const followsOption = options.some(
-    (arg, i) => i > 0 && !arg.startsWith('-') && /^-[^=]*$/.test(options[i - 1]!),
-  );
-  if (followsOption) return 'ambiguous';
+  if (options.some((arg, i) => !arg.startsWith('-') && mayBeValue(i))) return 'ambiguous';
   const revisions = await run(['rev-parse', '--revs-only', ...positionals]);
   return revisions.stdout.split('\n').filter(Boolean).length < 2 ? 'work-tree' : 'none';
 }
@@ -440,7 +439,7 @@ export function buildGitTool(ctx: ToolContext) {
         const filtered = `tracked files use the clean filter "${driver}", which the git tool does not run`;
         return refuse(
           comparison === 'ambiguous'
-            ? `${filtered}, and a revision here follows an option that may take it as its value. Put the revisions first and give long options their value with =: diff A B --stat.`
+            ? `${filtered}, and a revision here follows an option that may take it as its value. Put --cached and the revisions first, and give long options their value with =: diff A B --stat.`
             : `${filtered}, so git ${args.subcommand} would report the work tree wrongly. Compare commits (diff A B), the index (diff --cached), or use log and show.`,
         );
       }

@@ -446,6 +446,7 @@ describeIfGit('git tool', () => {
 
     it.each([
       ['diff', ['--cached']],
+      ['diff', ['--cached', '--stat']],
       ['diff', ['main', 'HEAD']],
       ['diff', ['main..HEAD']],
       ['log', ['-p', '-1']],
@@ -477,7 +478,9 @@ describeIfGit('git tool', () => {
       [['-S', 'HEAD', 'HEAD']],
       [['-G', 'main..HEAD']],
       [['--stat', 'main', 'HEAD']],
-    ])('refuses diff %j, where a positional may be the value of an option', async (args) => {
+      [['-S', '--cached', 'HEAD']],
+      [['-S', '--staged', 'HEAD']],
+    ])('refuses diff %j, where an argument may be the value of an option', async (args) => {
       const result = await gitTool().execute({ subcommand: 'diff', args });
       expect(result.exit_code).toBe(-1);
       expect(result.stderr).toMatch(/^refused by chimera: .*clean filter "upper".*with =/);
