@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTools } from '../src/build';
 import type { ToolContext } from '../src/context';
@@ -279,6 +279,107 @@ describeIfGit('git tool', () => {
     await tool.execute({ subcommand: 'status' });
 
     expect(existsSync(marker)).toBe(false);
+  });
+
+  async function probe(directory: string): Promise<{ script: string; marker: string }> {
+    const marker = join(directory, 'ran');
+    const script = join(directory, 'probe.sh');
+    await writeFile(script, `#!/bin/sh\ntouch '${marker}'\ncat\n`);
+    await chmod(script, 0o755);
+    return { script, marker };
+  }
+
+  /** Make the index older than the work tree, so git must compare contents. */
+  async function ageIndex(repository: string): Promise<void> {
+    const past = new Date(Date.now() - 3_600_000);
+    const gitDirectory = resolve(repository, git(repository, 'rev-parse', '--git-dir'));
+    await utimes(join(gitDirectory, 'index'), past, past);
+  }
+
+  it('diffs and reports status without running a clean filter', async () => {
+    const { script, marker } = await probe(await mkdtemp(join(tmpdir(), 'chimera-git-probe-')));
+    await writeFile(join(root, '.gitattributes'), 'file.txt filter=probe\n');
+    git(root, 'config', 'filter.probe.clean', script);
+    git(root, 'config', 'filter.probe.process', script);
+    git(root, 'config', 'filter.probe.required', 'true');
+    await writeFile(join(root, 'file.txt'), 'one\ntwo\nthree\n');
+    await ageIndex(root);
+
+    const tool = gitTool();
+    const diff = await tool.execute({ subcommand: 'diff' });
+    const status = await tool.execute({ subcommand: 'status', args: ['--porcelain'] });
+
+    expect(existsSync(marker)).toBe(false);
+    expect(diff.exit_code).toBe(0);
+    expect(diff.stdout).toContain('+three');
+    expect(status.stdout).toContain(' M file.txt');
+  });
+
+  it('never runs a signature program', async () => {
+    const { script, marker } = await probe(root);
+    git(root, 'config', 'gpg.program', script);
+    git(root, 'config', 'log.showSignature', 'true');
+    const tree = git(root, 'rev-parse', 'HEAD^{tree}');
+    const signed = spawnSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
+      cwd: root,
+      encoding: 'utf8',
+      input:
+        `tree ${tree}\nauthor a <a@b> 1 +0000\ncommitter a <a@b> 1 +0000\n` +
+        'gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQ==\n -----END PGP SIGNATURE-----\n\nsigned\n',
+    }).stdout.trim();
+    git(root, 'branch', 'signed', signed);
+
+    const tool = gitTool();
+    const log = await tool.execute({ subcommand: 'log', args: ['--format=%G? %s', 'signed'] });
+    await tool.execute({ subcommand: 'show', args: ['--show-signature', 'signed'] });
+
+    expect(existsSync(marker)).toBe(false);
+    expect(log.stdout).toContain('signed');
+  });
+
+  it("never runs a submodule's clean filter", async () => {
+    const inner = await mkdtemp(join(tmpdir(), 'chimera-git-inner-'));
+    try {
+      git(inner, 'init', '-q');
+      git(
+        inner,
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'user.name=T',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'in',
+      );
+      await writeFile(join(inner, 'f'), 'a\n');
+      git(inner, 'add', 'f');
+      git(inner, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'f');
+      git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub');
+      git(root, 'commit', '-q', '-m', 'add sub');
+      const submodule = join(root, 'sub');
+      const { script, marker } = await probe(inner);
+      await writeFile(join(submodule, '.gitattributes'), 'f filter=probe\n');
+      git(submodule, 'config', 'filter.probe.clean', script);
+      await writeFile(join(submodule, 'f'), 'b\n');
+      await ageIndex(submodule);
+
+      const tool = gitTool();
+      await tool.execute({ subcommand: 'status' });
+      await tool.execute({ subcommand: 'diff' });
+      const refused = await tool.execute({ subcommand: 'diff', args: ['--submodule=diff'] });
+      const unignored = await tool.execute({
+        subcommand: 'status',
+        args: ['--ignore-submodules=none'],
+      });
+
+      expect(existsSync(marker)).toBe(false);
+      expect(refused.exit_code).toBe(-1);
+      expect(unignored.exit_code).toBe(-1);
+    } finally {
+      await rm(inner, { recursive: true, force: true });
+    }
   });
 
   it("reads the working directory's repository whatever GIT_DIR it inherits", async () => {

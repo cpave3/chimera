@@ -44,21 +44,38 @@ type GitResult = {
  */
 const MAX_OUTPUT_CHARS = 256_000;
 
+/** A program path that cannot run: git fails to start it and carries on. */
+const NO_PROGRAM = '/dev/null/none';
+
 /**
  * Before the subcommand: no pager, no optional index refresh (`status`
- * would rewrite `.git/index`), and no fsmonitor or hook program from the
- * repository's config.
+ * would rewrite `.git/index`), and none of the programs git starts on its
+ * own from config: fsmonitor, hooks, signature verification (`%G?`,
+ * `--show-signature`, `log.showSignature`) and the submodule summary.
  */
 const GLOBAL_OPTIONS = [
   '--no-pager',
   '--no-optional-locks',
-  '-c',
-  'core.fsmonitor=false',
-  '-c',
-  'core.hooksPath=/dev/null',
+  ...[
+    'core.fsmonitor=false',
+    'core.hooksPath=/dev/null',
+    `gpg.program=${NO_PROGRAM}`,
+    `gpg.openpgp.program=${NO_PROGRAM}`,
+    `gpg.ssh.program=${NO_PROGRAM}`,
+    `gpg.x509.program=${NO_PROGRAM}`,
+    'log.showSignature=false',
+    'diff.submodule=short',
+    'status.submoduleSummary=false',
+  ].flatMap((setting) => ['-c', setting]),
 ];
 /** Subcommands that would run a configured external diff or textconv program. */
 const DIFF_SUBCOMMANDS = new Set(['log', 'show', 'diff']);
+/**
+ * Subcommands that compare the work tree. In a submodule that changed, git
+ * runs a child git with the submodule's own config, filters included.
+ */
+const WORK_TREE_SUBCOMMANDS = new Set(['diff', 'status']);
+const ENV = { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1' };
 /** Inherited variables that would point git at another repository than the working directory's. */
 const REPOSITORY_ENV = [
   'GIT_DIR',
@@ -91,14 +108,25 @@ const REFUSED_LONG_OPTIONS = [
 /** Options that are prefixes of a refused option but that git takes as written. */
 const EXACT_OPTIONS = new Set(['--text', '--filter']);
 
+/** Values that would make git run a child git in a submodule, with the submodule's config. */
+const REFUSED_VALUES: Record<string, string[]> = {
+  '--submodule': ['diff'],
+  '--ignore-submodules': ['none', 'untracked'],
+};
+
+function abbreviates(name: string, option: string): boolean {
+  return name.startsWith(option) || (name.length > 2 && option.startsWith(name));
+}
+
 function refusedOption(arg: string): string | undefined {
   if (/^-[cC]/.test(arg)) return arg.slice(0, 2);
   if (!arg.startsWith('--')) return undefined;
-  const name = arg.split('=', 1)[0]!;
+  const [name, value] = arg.split(/=(.*)/s) as [string, string | undefined];
   if (EXACT_OPTIONS.has(name)) return undefined;
-  return REFUSED_LONG_OPTIONS.find(
-    (refused) => name.startsWith(refused) || (name.length > 2 && refused.startsWith(name)),
-  );
+  for (const [option, values] of Object.entries(REFUSED_VALUES)) {
+    if (value !== undefined && values.includes(value) && abbreviates(name, option)) return arg;
+  }
+  return REFUSED_LONG_OPTIONS.find((refused) => abbreviates(name, refused));
 }
 
 /** `git branch` options that make it list branches. Without one it creates a branch. */
@@ -216,6 +244,36 @@ async function pathRefusal(cwd: string, args: string[]): Promise<string | undefi
   return undefined;
 }
 
+function gitCommand(words: string[]): string {
+  const git = ['git', ...GLOBAL_OPTIONS, ...words].map(shellQuote).join(' ');
+  return `unset ${REPOSITORY_ENV.join(' ')}; exec ${git}`;
+}
+
+/**
+ * A clean filter runs whenever git compares a work-tree file that the
+ * attributes select, `diff` and `status` included. Filter drivers have
+ * names of their own, so each configured one is emptied by name.
+ */
+async function filterOverrides(
+  run: (words: string[]) => Promise<{ stdout: string; exitCode: number }>,
+): Promise<{ options: string[] } | { refusal: string }> {
+  const listing = await run(['config', '--null', '--name-only', '--get-regexp', '^filter\\.']);
+  const drivers = new Set<string>();
+  for (const key of listing.stdout.split('\0')) {
+    if (!key.startsWith('filter.')) continue;
+    drivers.add(key.slice('filter.'.length, key.lastIndexOf('.')));
+  }
+  const options: string[] = [];
+  for (const driver of drivers) {
+    // `-c` splits at the first `=`: such a name cannot be overridden.
+    if (driver.includes('=')) return { refusal: `filter driver "${driver}" cannot be turned off.` };
+    for (const setting of ['clean=', 'process=', 'required=false']) {
+      options.push('-c', `filter.${driver}.${setting}`);
+    }
+  }
+  return { options };
+}
+
 function refuse(reason: string): GitResult {
   return { stdout: '', stderr: `refused by chimera: ${reason}`, exit_code: -1, timed_out: false };
 }
@@ -238,20 +296,23 @@ export function buildGitTool(ctx: ToolContext) {
         argumentRefusal(args.subcommand, args.args ?? []) ??
         (await pathRefusal(ctx.sandboxExecutor.cwd(), args.args ?? []));
       if (refusal) return refuse(refusal);
-      const words = [
-        'git',
-        ...GLOBAL_OPTIONS,
+      const timeoutMs = args.timeout_ms ?? 30_000;
+      const run = (words: string[]) =>
+        ctx.sandboxExecutor.exec(gitCommand(words), {
+          signal: abortSignal,
+          timeoutMs,
+          env: ENV,
+          toolName: 'git',
+        });
+      const filters = await filterOverrides(run);
+      if ('refusal' in filters) return refuse(filters.refusal);
+      const result = await run([
+        ...filters.options,
         args.subcommand,
         ...(DIFF_SUBCOMMANDS.has(args.subcommand) ? ['--no-ext-diff', '--no-textconv'] : []),
+        ...(WORK_TREE_SUBCOMMANDS.has(args.subcommand) ? ['--ignore-submodules=dirty'] : []),
         ...(args.args ?? []),
-      ];
-      const command = `unset ${REPOSITORY_ENV.join(' ')}; exec ${words.map(shellQuote).join(' ')}`;
-      const result = await ctx.sandboxExecutor.exec(command, {
-        signal: abortSignal,
-        timeoutMs: args.timeout_ms ?? 30_000,
-        env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
-        toolName: 'git',
-      });
+      ]);
       const cut = result.stdout.length > MAX_OUTPUT_CHARS;
       const stdout = cut
         ? `${result.stdout.slice(0, MAX_OUTPUT_CHARS)}\n[git: output cut at ${MAX_OUTPUT_CHARS} characters. Narrow it: a revision range, -n <count>, --stat, or a path after --.]`
