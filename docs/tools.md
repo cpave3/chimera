@@ -56,8 +56,12 @@ Notes:
     leads out of it through a symlink. Every positional argument and
     everything after `--` is checked this way, revisions too, so give an
     option's value with `=` (`--grep=/api`, not `--grep /api`);
-  - a working directory that is not in a git work tree, and a linked
-    worktree or submodule, whose git directory is outside it.
+  - a working directory that is not in a git work tree, and a submodule or
+    any other work tree whose git directory is outside it. A linked worktree
+    (`git worktree add`) is read when git's two-way link holds: its `.git`
+    file names `<common dir>/worktrees/<name>`, and that directory's
+    `gitdir` file names the `.git` file back. Its paths are still held to
+    its own work tree.
 
   It runs git with no pager, no optional index lock, no fsmonitor, no hooks,
   no external diff or textconv, no clean filters (each configured driver is

@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext } from './context';
@@ -224,10 +224,37 @@ function within(directory: string, path: string): boolean {
 type RunGit = (words: string[]) => Promise<{ stdout: string; exitCode: number }>;
 
 /**
+ * A linked worktree keeps its git directory in the main repository, at
+ * `<common dir>/worktrees/<name>`. git links the two both ways: the work
+ * tree's `.git` file names that directory, and the directory's `gitdir`
+ * file names the `.git` file. Only a link that round-trips is trusted.
+ */
+async function isLinkedWorktree(
+  top: string,
+  gitDirectory: string,
+  commonDirectory: string,
+): Promise<boolean> {
+  try {
+    const [realGitDirectory, realCommonDirectory] = await Promise.all([
+      realpath(gitDirectory),
+      realpath(commonDirectory),
+    ]);
+    if (dirname(realGitDirectory) !== join(realCommonDirectory, 'worktrees')) return false;
+    const dotGit = join(top, '.git');
+    const pointer = (await readFile(dotGit, 'utf8')).match(/^gitdir: (.+)$/m)?.[1]?.trim();
+    if (!pointer || (await realpath(resolve(top, pointer))) !== realGitDirectory) return false;
+    const back = (await readFile(join(realGitDirectory, 'gitdir'), 'utf8')).trim();
+    return (await realpath(resolve(realGitDirectory, back))) === (await realpath(dotGit));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The repository is the boundary: history and objects are repository-wide
  * anyway, so git may read any path in the work tree. The work tree must
- * hold its git directory, so a linked worktree or a submodule, whose `.git`
- * file points elsewhere, is not read.
+ * hold its git directory, or be a linked worktree of it; a submodule, or a
+ * `.git` file whose link does not round-trip, is not read.
  */
 async function locateRepository(
   run: RunGit,
@@ -253,15 +280,15 @@ async function locateRepository(
       .map(() => '..'),
   );
   const realTop = await resolveExisting(top);
-  for (const directory of directories.filter(Boolean)) {
-    const gitDirectory = resolve(cwd, directory);
-    if (!within(top, gitDirectory) || !within(realTop, await resolveExisting(gitDirectory))) {
-      return {
-        refusal: `the git directory ${gitDirectory} is outside the repository at ${top}: a linked worktree or a submodule is not read.`,
-      };
-    }
-  }
-  return { top };
+  const [gitDirectory, commonDirectory] = directories.map((directory) => resolve(cwd, directory));
+  if (!gitDirectory || !commonDirectory) return { refusal: `${cwd} is not in a git work tree.` };
+  const inside = async (path: string) =>
+    within(top, path) && within(realTop, await resolveExisting(path));
+  if ((await inside(gitDirectory)) && (await inside(commonDirectory))) return { top };
+  if (await isLinkedWorktree(top, gitDirectory, commonDirectory)) return { top };
+  return {
+    refusal: `the git directory ${gitDirectory} is outside the work tree at ${top}, and it is not a linked worktree whose link round-trips. A submodule is not read.`,
+  };
 }
 
 /**

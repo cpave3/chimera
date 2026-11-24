@@ -207,15 +207,71 @@ describeIfGit('git tool', () => {
     });
   });
 
-  it('refuses a linked worktree, whose git directory is outside it', async () => {
-    const worktree = `${root}-worktree`;
-    git(root, 'worktree', 'add', '-q', worktree, 'main');
-    try {
-      const result = await gitTool({}, worktree).execute({ subcommand: 'log' });
-      expect(result.exit_code).toBe(-1);
-      expect(result.stderr).toMatch(/^refused by chimera: .*git directory .* outside/);
-    } finally {
+  describe('a linked worktree', () => {
+    let worktree: string;
+
+    beforeEach(() => {
+      worktree = `${root}-worktree`;
+      git(root, 'worktree', 'add', '-q', worktree, 'main');
+    });
+
+    afterEach(async () => {
       await rm(worktree, { recursive: true, force: true });
+    });
+
+    it('is read, with paths still held to its own work tree', async () => {
+      const tool = gitTool({}, worktree);
+
+      const log = await tool.execute({ subcommand: 'log', args: ['--format=%s'] });
+      const status = await tool.execute({ subcommand: 'status', args: ['--porcelain'] });
+      const out = await tool.execute({ subcommand: 'log', args: ['--', '../x'] });
+
+      expect(log.exit_code).toBe(0);
+      expect(log.stdout.trim()).toBe('first commit');
+      expect(status.exit_code).toBe(0);
+      expect(out.stderr).toMatch(/^refused by chimera: .*outside the repository/);
+    });
+
+    it('is refused when its git directory does not point back to it', async () => {
+      const entry = git(worktree, 'rev-parse', '--absolute-git-dir');
+      const elsewhere = await mkdtemp(join(tmpdir(), 'chimera-git-elsewhere-'));
+      try {
+        await writeFile(join(entry, 'gitdir'), `${join(elsewhere, '.git')}\n`);
+
+        const result = await gitTool({}, worktree).execute({ subcommand: 'log' });
+
+        expect(result.exit_code).toBe(-1);
+        expect(result.stderr).toMatch(/^refused by chimera: .*git directory/);
+      } finally {
+        await rm(elsewhere, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('refuses a submodule, whose git directory is outside it', async () => {
+    const inner = await mkdtemp(join(tmpdir(), 'chimera-git-inner-'));
+    try {
+      git(inner, 'init', '-q');
+      git(
+        inner,
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'user.name=T',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'in',
+      );
+      git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub');
+
+      const result = await gitTool({}, join(root, 'sub')).execute({ subcommand: 'log' });
+
+      expect(result.exit_code).toBe(-1);
+      expect(result.stderr).toMatch(/^refused by chimera: .*git directory/);
+    } finally {
+      await rm(inner, { recursive: true, force: true });
     }
   });
 
