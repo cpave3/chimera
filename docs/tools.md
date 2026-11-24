@@ -45,9 +45,10 @@ Notes:
   the working directory, and refuses everything that writes: other
   subcommands, `--output` and its abbreviations, `--ext-diff`,
   `--textconv`, `--filters`, `--no-index`, `-C`, `-c`, `--git-dir`,
-  `--work-tree`, and every `branch` option that is not a listing. (For copy
-  detection, use `--find-copies` in place of `-C`.) Arguments after a
-  literal `--` are paths and are not checked. It runs git with no pager, no
+  `--work-tree`, every `branch` option that is not a listing, and a `diff`
+  path outside the working directory (git would compare it as a plain
+  file). For copy detection, use `--find-copies` in place of `-C`. Other
+  arguments after a literal `--` are paths and are not checked. It runs git with no pager, no
   optional index lock, no fsmonitor, no hooks, no external diff or textconv,
   no terminal prompt, and without the inherited `GIT_DIR` and
   `GIT_WORK_TREE`. These limits hold whatever `--auto-approve` level the

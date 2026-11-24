@@ -1,3 +1,4 @@
+import { isAbsolute, posix } from 'node:path';
 import { z } from 'zod';
 import type { ToolContext } from './context';
 import { defineTool } from './define';
@@ -161,7 +162,25 @@ function argumentRefusal(subcommand: string, args: string[]): string | undefined
     const refused = refusedOption(arg);
     if (refused) return `the git tool does not accept ${refused}.`;
   }
-  return subcommand === 'branch' ? branchRefusal(args) : undefined;
+  if (subcommand === 'branch') return branchRefusal(args);
+  if (subcommand === 'diff') return diffPathRefusal(args);
+  return undefined;
+}
+
+/**
+ * Given two paths and one outside the working tree, `git diff` compares
+ * them as plain files, with or without `--no-index`: so it reads any file.
+ * The read tool keeps to the working directory, and so does this one.
+ */
+function diffPathRefusal(args: string[]): string | undefined {
+  for (const arg of args) {
+    if (arg.startsWith('-')) continue;
+    const normalized = posix.normalize(arg);
+    if (isAbsolute(arg) || normalized === '..' || normalized.startsWith('../')) {
+      return `git diff does not read ${arg}: it is outside the working directory.`;
+    }
+  }
+  return undefined;
 }
 
 function refuse(reason: string): GitResult {

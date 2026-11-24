@@ -139,6 +139,22 @@ describeIfGit('git tool', () => {
     expect(result.stderr).toMatch(/^refused by chimera: /);
   });
 
+  it.each([
+    [['/etc/hostname', 'file.txt']],
+    [['--', '../outside.txt', 'file.txt']],
+    [['sub/../../outside.txt', 'file.txt']],
+  ])('refuses diff %j, which would read a file outside the working directory', async (args) => {
+    const result = await gitTool().execute({ subcommand: 'diff', args });
+    expect(result.exit_code).toBe(-1);
+    expect(result.stderr).toMatch(/^refused by chimera: .*outside the working directory/);
+  });
+
+  it('diffs a revision range', async () => {
+    const result = await gitTool().execute({ subcommand: 'diff', args: ['main..topic'] });
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toContain('+two');
+  });
+
   it('does not check the paths after a literal --', async () => {
     await writeFile(join(root, '--output'), 'odd name\n');
     git(root, 'add', '--', '--output');
