@@ -13,6 +13,7 @@ import type {
   PermissionRule,
   RememberScope,
 } from '@chimera/core';
+import { minimatch, escape as minimatchEscape } from 'minimatch';
 import { matchRule, trustedByList } from './matching';
 import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
@@ -556,12 +557,13 @@ export class DefaultPermissionGate implements McpPermissionGate {
   /** Apply a RememberScope by adding a rule based on the original request. */
   applyRemember(scope: RememberScope, req: PermissionRequest, decision: 'allow' | 'deny'): void {
     if (req.mcp) {
+      const serverGlob = isServerScopedGlob(scope, req.mcp.server, req.command);
       this.store.add(
         {
           tool: 'mcp',
           target: 'host',
-          pattern: `${req.mcp.server}/${req.mcp.tool}`,
-          patternKind: 'exact',
+          pattern: serverGlob ? scope.pattern : `${req.mcp.server}/${req.mcp.tool}`,
+          patternKind: serverGlob ? 'glob' : 'exact',
           decision,
           createdAt: Date.now(),
         },
@@ -582,6 +584,21 @@ export class DefaultPermissionGate implements McpPermissionGate {
       scope.scope,
     );
   }
+}
+
+/**
+ * A remembered MCP glob is kept only when its server part is the literal
+ * server that asked and it covers the call being approved, so an answer to
+ * one prompt can widen trust across that server's tools but never past it.
+ */
+function isServerScopedGlob(scope: RememberScope, server: string, identity: string): boolean {
+  if (scope.patternKind !== 'glob') return false;
+  const serverPrefix = `${minimatchEscape(server)}/`;
+  return (
+    scope.pattern.startsWith(serverPrefix) &&
+    scope.pattern.length > serverPrefix.length &&
+    minimatch(identity, scope.pattern)
+  );
 }
 
 function mcpArgumentPreview(args: unknown): Array<{ name: string; type: string }> {
