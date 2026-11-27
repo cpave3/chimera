@@ -31,6 +31,11 @@ export interface ContextBreakdownInput {
   systemPrompt: string;
   lastPromptTokens: number | null;
   contextWindow: number;
+  /**
+   * The prompt basis (discovered input limit capped by the context window).
+   * Compaction triggers are computed against this; defaults to `contextWindow`.
+   */
+  inputWindow?: number;
   compaction?: CompactionConfig;
   maxOutputTokens?: number;
   /** Long edge images are scaled to before pricing; see EstimateOptions. */

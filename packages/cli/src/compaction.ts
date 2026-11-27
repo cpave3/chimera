@@ -9,23 +9,73 @@ import { validateModelSettings } from '@chimera/core';
 import {
   localCapabilities,
   type ProviderRegistry,
+  type ResolvedModelWindows,
   resolveContextWindow,
   resolveModelSettings,
+  resolveModelWindows,
 } from '@chimera/providers';
 import { createRecallPruner, RecallStore } from '@chimera/recall';
 import type { ChimeraConfig } from './config';
 
+/**
+ * The startup model's resolved windows, discovery included: commands run the
+ * compaction invariant check against these AFTER discovery so a configuration
+ * that only fits a discovered window is not rejected on the table/fallback
+ * value, and a discovered window that breaks the configuration is. Uses the
+ * caller's registry so the factory shares the same capability cache.
+ */
+export async function startupSessionWindows(
+  config: Pick<ChimeraConfig, 'providers' | 'models'>,
+  registry: ProviderRegistry,
+  ref: string,
+): Promise<ResolvedModelWindows> {
+  const { provider, modelId } = registry.resolve(ref);
+  const providerSpec = config.providers?.[provider.id];
+  const providerShape = providerSpec?.shape ?? provider.shape;
+  const override = config.models?.[ref]?.contextWindow;
+  try {
+    const capabilities = await provider.getCapabilities(modelId);
+    return resolveModelWindows({
+      providerShape,
+      providerId: provider.id,
+      modelId,
+      override,
+      capabilities,
+    });
+  } catch {
+    return resolveModelWindows({ providerShape, providerId: provider.id, modelId, override });
+  }
+}
+
 export function compactionModelOptions(config: ChimeraConfig, registry: ProviderRegistry) {
   return {
     fallbackModel: config.utilityModel,
-    resolveContextWindow: (ref: string) => {
+    // The Compactor awaits this hook, so the summary model's window resolves
+    // through the provider's cached capability discovery: a Manticore alias
+    // carries its own limits into the summary budget, and a separately
+    // discovered input cap bounds the summary call's prompt like any other.
+    // A resolution failure degrades to the sync table/fallback path.
+    resolveContextWindow: async (ref: string) => {
       const { provider, modelId } = registry.resolve(ref);
-      return resolveContextWindow({
-        providerId: provider.id,
-        modelId,
-        providerShape: config.providers![provider.id].shape,
-        override: config.models?.[ref]?.contextWindow,
-      }).value;
+      const providerShape = config.providers![provider.id].shape;
+      const override = config.models?.[ref]?.contextWindow;
+      try {
+        const capabilities = await provider.getCapabilities(modelId);
+        return resolveModelWindows({
+          providerShape,
+          providerId: provider.id,
+          modelId,
+          override,
+          capabilities,
+        }).promptBasis;
+      } catch {
+        return resolveContextWindow({
+          providerShape,
+          providerId: provider.id,
+          modelId,
+          override,
+        }).value;
+      }
     },
   };
 }

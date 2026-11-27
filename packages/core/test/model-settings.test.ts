@@ -25,6 +25,36 @@ it('reads the cross-repository contract without narrowing effort values or losin
     validateModelSettings({ thinking: 'off' }, fixture.unknown as ModelCapabilities),
   ).toThrow();
 });
+
+it('rejects an explicit output limit above a discovered cap or the context left above the input cap', () => {
+  const capabilities = {
+    ...fixture.state.capabilities,
+    settings: {
+      ...fixture.state.capabilities.settings,
+      maxOutputTokens: {
+        status: 'supported' as const,
+        type: 'number' as const,
+        min: 1,
+        integer: true,
+      },
+    },
+    limits: {
+      context: { status: 'discovered' as const, value: 262_144 },
+      input: { status: 'discovered' as const, value: 131_072 },
+      output: { status: 'discovered' as const, value: 32_768 },
+    },
+  } as unknown as ModelCapabilities;
+  expect(() => validateModelSettings({ maxOutputTokens: 32_768 }, capabilities)).not.toThrow();
+  expect(() => validateModelSettings({ maxOutputTokens: 40_000 }, capabilities)).toThrow(
+    /discovered output limit of 32768 tokens/,
+  );
+  expect(() =>
+    validateModelSettings({ maxOutputTokens: 150_000 }, {
+      ...capabilities,
+      limits: { ...capabilities.limits, output: { status: 'unknown' } },
+    } as ModelCapabilities),
+  ).toThrow(/context left above the discovered input limit/);
+});
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), 'chimera-settings-'));
 });

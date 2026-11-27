@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { ChimeraClient } from '@chimera/client';
 import { Compactor } from '@chimera/compaction';
 import type { SandboxMode } from '@chimera/core';
-import { loadProviders, resolveContextWindow } from '@chimera/providers';
+import { loadProviders } from '@chimera/providers';
 import { forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import { loadAgentsFromConfig } from '../agents-loader';
@@ -13,6 +13,7 @@ import {
   compactionModelOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
+  startupSessionWindows,
 } from '../compaction';
 import {
   approvalReviewerEnabled,
@@ -156,13 +157,10 @@ export async function runServe(opts: ServeOptions): Promise<void> {
   const initialMode = opts.mode ?? config.defaultMode ?? 'build';
 
   const compactionConfig = resolveCompactionConfig({ cliOverride: opts.compaction, config });
-  const resolvedWindow = resolveContextWindow({
-    providerShape: providersConfig.providers[model.providerId]?.shape ?? 'openai',
-    providerId: model.providerId,
-    modelId: model.modelId,
-    override: config.models?.[`${model.providerId}/${model.modelId}`]?.contextWindow,
-  });
-  const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.value);
+  const providerRegistry = loadProviders(providersConfig);
+  const startupRef = `${model.providerId}/${model.modelId}`;
+  const resolvedWindow = await startupSessionWindows(config, providerRegistry, startupRef);
+  const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.promptBasis);
   if (!invariant.ok) {
     process.stderr.write(`${invariant.error}\n`);
     process.exit(1);
@@ -170,17 +168,16 @@ export async function runServe(opts: ServeOptions): Promise<void> {
 
   let compactor: Compactor | undefined;
   if (compactionConfig.enabled) {
-    const registry = loadProviders(providersConfig);
     compactor = new Compactor({
       config: compactionConfig,
-      contextWindow: resolvedWindow.value,
+      contextWindow: resolvedWindow.context.value,
       imageLongEdge: config.models?.[`${model.providerId}/${model.modelId}`]?.imageLongEdge,
       resolveModel: async (ref, sessionId) => {
-        const target = registry.resolve(ref);
+        const target = providerRegistry.resolve(ref);
         return target.provider.getModel(target.modelId, sessionId);
       },
-      resolveCallOptions: compactionCallOptions(config, registry),
-      ...compactionModelOptions(config, registry),
+      resolveCallOptions: compactionCallOptions(config, providerRegistry),
+      ...compactionModelOptions(config, providerRegistry),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),
     });
@@ -191,6 +188,7 @@ export async function runServe(opts: ServeOptions): Promise<void> {
     modDirs: opts.modDirs,
     noMods: opts.mods === false,
     providersConfig,
+    registry: providerRegistry,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
     mcpServers,

@@ -17,6 +17,18 @@ const OUTPUT_BUDGET_SHARE = 0.08;
 const MIN_OUTPUT_BUDGET_TOKENS = 2_000;
 const MAX_OUTPUT_BUDGET_TOKENS = 25_000;
 
+/**
+ * The bounded profile heuristic for generation budgets: 8% of the window,
+ * clamped to [2_000, 25_000]. Used directly for the tool-output budget and,
+ * capped by a discovered output limit, as the default `maxOutputTokens`.
+ */
+export function boundedOutputDefault(contextWindow: number): number {
+  return Math.min(
+    MAX_OUTPUT_BUDGET_TOKENS,
+    Math.max(MIN_OUTPUT_BUDGET_TOKENS, Math.round(contextWindow * OUTPUT_BUDGET_SHARE)),
+  );
+}
+
 export function resolveModelProfile(input: ResolveModelProfileInput): ModelProfile {
   // A proxy alias (`sol`, `astra`) says nothing about the model behind it, but
   // asking for the codex tool shape does: it is a Codex-style model.
@@ -26,9 +38,6 @@ export function resolveModelProfile(input: ResolveModelProfileInput): ModelProfi
     toolCallShape: input.options?.toolCallShape ?? 'chimera',
     editFormat: input.options?.editFormat ?? (gpt ? 'patch' : 'replace'),
     promptStyle: input.options?.promptStyle ?? (known ? 'lean' : 'guided'),
-    outputBudgetTokens: Math.min(
-      MAX_OUTPUT_BUDGET_TOKENS,
-      Math.max(MIN_OUTPUT_BUDGET_TOKENS, Math.round(input.contextWindow * OUTPUT_BUDGET_SHARE)),
-    ),
+    outputBudgetTokens: boundedOutputDefault(input.contextWindow),
   };
 }
