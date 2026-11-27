@@ -2,7 +2,7 @@ import type { AgentEvent, PermissionDecisionAction } from '@chimera/core';
 import { wrapText } from '../ledger/text';
 import type { PendingPermission } from '../permission-queue';
 import type { InputEvent } from '../terminal/keys';
-import { sanitizeDeep } from '../terminal/sanitize';
+import { sanitizeDeep, sanitizeText } from '../terminal/sanitize';
 import type { Style } from '../theme/style';
 import {
   type Card,
@@ -115,6 +115,21 @@ export class PermissionCard implements Card {
                 run: () =>
                   this.setMode({ kind: 'scope', pattern: request.command, patternKind: 'exact' }),
               },
+              ...(request.mcp
+                ? [
+                    {
+                      key: 'S',
+                      label: `Allow all ${sanitizeText(request.mcp.server)} tools…`,
+                      tone: 'allow' as const,
+                      run: () =>
+                        this.setMode({
+                          kind: 'scope',
+                          pattern: `${request.mcp!.server}/*`,
+                          patternKind: 'glob',
+                        }),
+                    },
+                  ]
+                : []),
               {
                 key: 'g',
                 label: 'Allow pattern…',

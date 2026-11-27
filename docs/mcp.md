@@ -56,7 +56,7 @@ HTTP servers that supply a pre-registered public client ID, set `clientId` in
 the server entry. Remote URLs must use HTTPS; plain HTTP is allowed only for
 loopback servers. Server names must start with a letter and contain only
 letters, digits, `_`, or `-`. Do not enable `trustedTools` unless you intend to
-authorize those tools without a prompt (see below).
+authorize those tools without a prompt (see [`trustedTools`](#trustedtools)).
 
 ## Servers for one session
 
@@ -152,18 +152,73 @@ network restrictions do not confine these calls, including with
 
 Every MCP call passes a separate MCP permission gate before the server receives
 it. Host `autoApprove` does not grant MCP calls. An interactive request shows
-the server, tool, target, and a bounded, redacted argument preview; you can
-allow one call or remember a per-server/per-tool rule for this session, this
-project, or all projects. Global rules live in `~/.chimera/permissions.json`;
-project rules live in `<cwd>/.chimera/permissions.json`. New sessions load these
-rules at creation. Headless runs and subagents without an interactive approver
-deny by default when no rule allows the call. An explicit
-`trustedTools` list on a server authorizes the named tools in **all** modes
-where those tools are available, including headless runs and subagents;
-explicit deny rules still take priority. Treat a trusted entry as ongoing
-permission to act with your host credentials, not as a way to trust the whole
-server. The permission audit records decisions without raw argument bodies or
-secrets.
+the server, tool, target, and a bounded, redacted argument preview. Global
+rules live in `~/.chimera/permissions.json`; project rules live in
+`<cwd>/.chimera/permissions.json`. New sessions load these rules at creation.
+Headless runs and subagents without an interactive approver deny by default
+when no rule or `trustedTools` entry allows the call. The permission audit
+records decisions without raw argument bodies or secrets.
+
+### What decides an MCP call
+
+The gate checks these in order and stops at the first that applies:
+
+1. A **deny rule** that matches `<server>/<tool>` denies the call.
+2. An **allow rule** that matches `<server>/<tool>` allows it.
+3. The server's **`trustedTools`** list allows it, unless a `!` entry
+   excludes the tool.
+4. Otherwise the call **asks**: mods, hooks, the approval reviewer (when
+   `approvalReviewer.enabled` is true), then you. A headless run denies.
+
+Nothing is trusted by default. A server is trusted only by a rule you save or
+write, or by a `trustedTools` entry in its config.
+
+### Trusting a whole server
+
+At the prompt, **Allow all `<server>` tools…** (key `S`) saves the glob rule
+`<server>/*` for the session, the project, or all projects. **Allow pattern…**
+also takes a glob, but a remembered MCP pattern must name the server that
+asked and cover the call being approved. Any other pattern (`**`, `*/*`,
+another server) is saved as the exact `<server>/<tool>`.
+
+You can write the same rule by hand, under `rules` in
+`~/.chimera/permissions.json` or `<cwd>/.chimera/permissions.json`:
+
+```json
+{
+  "tool": "mcp",
+  "target": "host",
+  "pattern": "burnlite/*",
+  "patternKind": "glob",
+  "decision": "allow",
+  "createdAt": 1764000000000
+}
+```
+
+A hand-written rule may use any glob; `*` does not cross the `/`, so
+`burnlite/*` does not match `burnlite-x/…`. In MCP rules and `trustedTools`,
+`*` also matches tool names that start with `.`. An exact deny rule, such as
+`burnlite/delete_task`, still beats a `burnlite/*` allow.
+
+### `trustedTools`
+
+Each `trustedTools` entry is a glob over the server's **original** tool name:
+
+| Entry | Trusts |
+| --- | --- |
+| `"list_projects"` | that tool |
+| `"list_*"` | every tool whose name starts with `list_` |
+| `"*"` | every tool of the server |
+| `"!delete_*"` | nothing; excludes matching tools from the other entries |
+
+`["*", "!delete_*"]` runs every tool without a prompt except the delete
+tools, which ask (or are denied in a headless run). Use a deny rule, not a
+`!` entry, for a tool that must never run. A mod manifest's `mcpServers`
+entries and `--mcp-config` take the same `trustedTools` entries.
+
+A `trustedTools` list authorizes its tools in **all** modes where those tools
+are available, including headless runs and subagents. Treat an entry,
+especially `*`, as ongoing permission to act with your host credentials.
 
 ## Connection recovery
 
@@ -196,9 +251,10 @@ initializing MCP connections; disposed managers cannot start another child.
   run `chimera mcp login <server>` in a terminal and retry. If you changed the remote resource URL, log in again;
   credentials are keyed to the exact URL. Check that the browser can reach
   Chimera's local callback. Login failures do not remove the server config.
-- **Call denied:** Approve interactively or, only for tools you intentionally
-  trust, add the original tool name to that server's `trustedTools`. An
-  explicit deny rule takes precedence; `--auto-approve host` does not help.
+- **Call denied:** Approve interactively, save a `<server>/*` rule, or, only
+  for tools you intentionally trust, add the original tool name (or a glob)
+  to that server's `trustedTools`. An explicit deny rule takes precedence;
+  `--auto-approve host` does not help.
 - **Tool missing:** Run `chimera mcp tools <server>` to see original tool
   names. Start or resume a session after changing config, and check the mode
   and subagent allowlist. Only MCP tools are exposed, not resources or prompts.

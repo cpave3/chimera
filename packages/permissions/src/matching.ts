@@ -2,6 +2,12 @@ import type { PermissionRequest, PermissionRule } from '@chimera/core';
 import { minimatch } from 'minimatch';
 import { matchesCommandPrefix } from './command-prefix';
 
+/**
+ * MCP tool names are not paths: a leading dot is an ordinary character, and
+ * `!` exclusions are handled by the caller, not by minimatch's negation.
+ */
+export const MCP_GLOB = { dot: true, nonegate: true } as const;
+
 async function matches(rule: PermissionRule, req: PermissionRequest): Promise<boolean> {
   if (rule.tool !== req.tool) return false;
   if (rule.target !== req.target) return false;
@@ -12,7 +18,27 @@ async function matches(rule: PermissionRule, req: PermissionRequest): Promise<bo
   if (rule.patternKind === 'prefix') {
     return req.tool === 'bash' && matchesCommandPrefix(req.command, rule.pattern);
   }
-  return rule.patternKind === 'glob' && minimatch(req.command, rule.pattern);
+  return (
+    rule.patternKind === 'glob' &&
+    minimatch(req.command, rule.pattern, req.tool === 'mcp' ? MCP_GLOB : undefined)
+  );
+}
+
+/**
+ * Whether an MCP server's `trustedTools` list trusts `tool`. Each entry is a
+ * glob over the tool's own name; an entry starting with `!` excludes the tools
+ * it matches, and an exclusion always beats an inclusion.
+ */
+export function trustedByList(tool: string, entries: readonly string[]): boolean {
+  let included = false;
+  for (const entry of entries) {
+    if (entry.startsWith('!')) {
+      if (minimatch(tool, entry.slice(1), MCP_GLOB)) return false;
+    } else if (minimatch(tool, entry, MCP_GLOB)) {
+      included = true;
+    }
+  }
+  return included;
 }
 
 export async function matchRule(

@@ -72,6 +72,9 @@ bundled assets precede compatibility tiers. Their source is `mod:<name>`.
 Configured MCP servers win over bundled ones; first loaded mod wins between
 bundles. MCP servers start in subagents unless `subagents: false`. `${MOD_DIR}`
 expands in commands and paths, and the mod folder is the server's working directory.
+A bundled server's `trustedTools` takes the same globs and `!` exclusions as
+config (see [MCP `trustedTools`](mcp.md#trustedtools)). Its calls go through the
+same [decision order](mcp.md#what-decides-an-mcp-call) as any MCP call.
 Without an explicit `env` map, only `HOME LOGNAME PATH SHELL TERM USER` are passed.
 An explicit map inherits Chimera's secret-scrubbed environment and overlays its
 entries. Values can refer to `env:NAME` or `${NAME}`; missing variables are errors.

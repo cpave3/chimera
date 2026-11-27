@@ -13,7 +13,8 @@ import type {
   PermissionRule,
   RememberScope,
 } from '@chimera/core';
-import { matchRule } from './matching';
+import { minimatch, escape as minimatchEscape } from 'minimatch';
+import { MCP_GLOB, matchRule, trustedByList } from './matching';
 import type { ApprovalReview, ApprovalReviewer } from './reviewer';
 import { RuleStore } from './rule-store';
 import type { SystemOneCheck, SystemOneVerdict } from './system-one';
@@ -221,7 +222,7 @@ export class DefaultPermissionGate implements McpPermissionGate {
     if (matchingRule?.decision === 'allow') {
       return this.audited(request, { decision: 'allow', remembered: true }, 'rule');
     }
-    if (trustedTools.includes(call.tool)) {
+    if (trustedByList(call.tool, trustedTools)) {
       return this.audited(request, { decision: 'allow', remembered: false }, 'automatic');
     }
     return this.prompt(request, call.args);
@@ -556,12 +557,13 @@ export class DefaultPermissionGate implements McpPermissionGate {
   /** Apply a RememberScope by adding a rule based on the original request. */
   applyRemember(scope: RememberScope, req: PermissionRequest, decision: 'allow' | 'deny'): void {
     if (req.mcp) {
+      const serverGlob = isServerScopedGlob(scope, req.mcp.server, req.command);
       this.store.add(
         {
           tool: 'mcp',
           target: 'host',
-          pattern: `${req.mcp.server}/${req.mcp.tool}`,
-          patternKind: 'exact',
+          pattern: serverGlob ? scope.pattern : `${req.mcp.server}/${req.mcp.tool}`,
+          patternKind: serverGlob ? 'glob' : 'exact',
           decision,
           createdAt: Date.now(),
         },
@@ -582,6 +584,24 @@ export class DefaultPermissionGate implements McpPermissionGate {
       scope.scope,
     );
   }
+}
+
+/**
+ * A remembered MCP glob is kept only when its server part is the literal
+ * server that asked and it covers the call being approved, so an answer to
+ * one prompt can widen trust across that server's tools but never past it.
+ */
+function isServerScopedGlob(scope: RememberScope, server: string, identity: string): boolean {
+  if (scope.patternKind !== 'glob') return false;
+  const serverPrefix = `${minimatchEscape(server)}/`;
+  const toolPattern = scope.pattern.slice(serverPrefix.length);
+  return (
+    scope.pattern.startsWith(serverPrefix) &&
+    toolPattern.length > 0 &&
+    // A `/` in the tool part, e.g. inside braces as `{x,../other/*}`, could reach another server.
+    !toolPattern.includes('/') &&
+    minimatch(identity, scope.pattern, MCP_GLOB)
+  );
 }
 
 function mcpArgumentPreview(args: unknown): Array<{ name: string; type: string }> {
