@@ -216,6 +216,56 @@ describe('model settings requests', () => {
     expect(capabilities.settings.reasoningEffort.values).not.toContain('max');
   });
 
+  it('serves and caches discovered limits, tolerating absent or null blocks', async () => {
+    const spec = {
+      shape: 'openai' as const,
+      capabilitySource: 'manticore' as const,
+      baseUrl: 'https://proxy.test/v1',
+      apiKey: 'key',
+    };
+    const provider = loadProviders({ providers: { proxy: spec } }).get('proxy');
+    const caps = localCapabilities('glm-5.3', { ...spec, requestProfile: 'thinking' });
+    const limits = {
+      context: { status: 'discovered', value: 262_144 },
+      input: { status: 'discovered', value: 131_072 },
+      output: { status: 'discovered', value: 32_768 },
+    };
+    const fetchMock = vi.fn(async () => Response.json({ ...caps, limits }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await provider.getCapabilities('glm-go')).toMatchObject({ limits });
+    await provider.getCapabilities('glm-go');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockResolvedValue(Response.json({ ...caps, limits: null }));
+    expect((await provider.getCapabilities('glm-go', true)).limits).toBeUndefined();
+  });
+
+  it.each([
+    ['a non-object block', 'nope' as unknown],
+    ['a discovered context of zero', { context: { status: 'discovered', value: 0 } }],
+    ['a negative discovered input', { input: { status: 'discovered', value: -5 } }],
+    ['a fractional discovered output', { output: { status: 'discovered', value: 1.5 } }],
+    ['an unsafe discovered context', { context: { status: 'discovered', value: 2 ** 53 } }],
+    ['an invalid limit status', { output: { status: 'guessed', value: 100 } }],
+    ['a discovered limit without a value', { context: { status: 'discovered' } }],
+  ])('rejects capability payloads with %s into the unavailable fallback', async (label, limits) => {
+    void label;
+    const spec = {
+      shape: 'openai' as const,
+      capabilitySource: 'manticore' as const,
+      baseUrl: 'https://proxy.test/v1',
+      apiKey: 'key',
+    };
+    const provider = loadProviders({ providers: { proxy: spec } }).get('proxy');
+    const caps = localCapabilities('glm-5.3', { ...spec, requestProfile: 'thinking' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ ...caps, limits })),
+    );
+    const capabilities = await provider.getCapabilities('glm-go');
+    expect(capabilities.source).toBe('unavailable');
+    expect(capabilities.limits).toBeUndefined();
+  });
+
   it('caches authenticated discovery, refreshes changed aliases, and reports outages as unknown', async () => {
     const spec = {
       shape: 'openai' as const,
