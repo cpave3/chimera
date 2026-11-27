@@ -37,6 +37,8 @@ type ModelResolution = {
   languageModel: LanguageModel;
   contextWindow: number;
   contextWindowIsApproximate: boolean;
+  /** Prompt basis for the new model; defaults to `contextWindow` when omitted. */
+  inputWindow?: number;
   systemPrompt: string;
   /** The tool set for this model's profile; omitted keeps the current tools. */
   tools?: ToolSet;
@@ -131,6 +133,13 @@ export interface AgentOptions {
    */
   contextWindowIsApproximate?: boolean;
   /**
+   * The prompt basis for the session's model: `min(discovered input limit,
+   * contextWindow)` when the deployment reports a separate input cap,
+   * otherwise the context window itself. Compaction triggers and targets are
+   * computed against this value; display keeps `contextWindow`.
+   */
+  inputWindow?: number;
+  /**
    * Optional hook: if a `read` tool call resolves to a known SKILL.md, returns
    * `{ skillName, source }` so the agent can emit `skill_activated`. Purely
    * observational; return value does not change tool behavior.
@@ -189,6 +198,8 @@ export type VisionModelResolution =
       languageModel: LanguageModel;
       contextWindow: number;
       contextWindowIsApproximate: boolean;
+      /** Prompt basis for the run model; defaults to `contextWindow`. */
+      inputWindow?: number;
       providerOptions?: ProviderOptions;
     }
   | { status: 'unavailable'; reason: string };
@@ -377,6 +388,7 @@ export class Agent {
     languageModel: LanguageModel;
     contextWindow: number;
     contextWindowIsApproximate: boolean;
+    inputWindow?: number;
     systemPrompt: string;
     /** The tool set for the new model's profile; omitted keeps the current tools. */
     tools?: ToolSet;
@@ -407,6 +419,7 @@ export class Agent {
     languageModel: LanguageModel;
     contextWindow: number;
     contextWindowIsApproximate: boolean;
+    inputWindow?: number;
     providerOptions?: ProviderOptions;
     trigger: 'user_images' | 'tool_image' | 'fallback';
   } | null = null;
@@ -924,6 +937,7 @@ export class Agent {
       languageModel: LanguageModel;
       contextWindow: number;
       contextWindowIsApproximate: boolean;
+      inputWindow?: number;
       systemPrompt: string;
       tools?: ToolSet;
       providerOptions?: ProviderOptions;
@@ -1193,10 +1207,10 @@ export class Agent {
     try {
       yield this.observeEvent({ type: 'compaction_started', reason: 'manual' });
       const result = await compactor.compact(this.session, 'manual', {
-        contextWindow: this.activeContextWindow(),
+        contextWindow: this.activeInputWindow(),
         targetTokens: Math.max(
           128,
-          this.activeContextWindow() / 2 - (await this.promptOverheadTokens()),
+          this.activeInputWindow() / 2 - (await this.promptOverheadTokens()),
         ),
         imageLongEdge: this.activeModel().imageLongEdge,
         abortSignal: this.abortController.signal,
@@ -1469,6 +1483,14 @@ export class Agent {
     return this.modelOverride?.contextWindow ?? this.opts.contextWindow;
   }
 
+  /**
+   * The prompt basis in effect for the current step: the run model's input
+   * window when the deployment reports one, else the total context window.
+   */
+  private activeInputWindow(): number {
+    return this.modelOverride?.inputWindow ?? this.opts.inputWindow ?? this.activeContextWindow();
+  }
+
   private activeContextWindowIsApproximate(): boolean {
     return this.modelOverride?.contextWindowIsApproximate ?? !!this.opts.contextWindowIsApproximate;
   }
@@ -1515,9 +1537,10 @@ export class Agent {
       messages: this.session.messages,
       systemPrompt: this.composeSystemPrompt(false) ?? '',
       lastPromptTokens: this.session.usage.lastStep?.inputTokens ?? null,
-      contextWindow: this.opts.contextWindow,
+      contextWindow: this.activeContextWindow(),
+      inputWindow: this.activeInputWindow(),
       compaction: this.opts.compaction,
-      maxOutputTokens: this.opts.model.maxOutputTokens,
+      maxOutputTokens: this.activeModel().maxOutputTokens,
       imageLongEdge: this.activeModel().imageLongEdge,
     });
   }
@@ -1546,7 +1569,7 @@ export class Agent {
         },
         await this.promptOverheadTokens(),
       ),
-      contextWindow: this.activeContextWindow(),
+      contextWindow: this.activeInputWindow(),
       thresholdPercent: config.thresholdPercent ?? 85,
       reserveTokens: config.reserveTokens,
       maxOutputTokens: this.activeModel().maxOutputTokens,
@@ -1574,13 +1597,13 @@ export class Agent {
     try {
       const targetTokens = Math.max(
         128,
-        this.activeContextWindow() / 2 - (await this.promptOverheadTokens()),
+        this.activeInputWindow() / 2 - (await this.promptOverheadTokens()),
       );
       const result = await compactor.compact(
         this.session,
         trigger === 'overflow' ? 'manual' : 'threshold',
         {
-          contextWindow: this.activeContextWindow(),
+          contextWindow: this.activeInputWindow(),
           abortSignal: this.abortController.signal,
           imageLongEdge: this.activeModel().imageLongEdge,
           targetTokens:
@@ -1766,6 +1789,7 @@ export class Agent {
           languageModel: resolution.languageModel,
           contextWindow: resolution.contextWindow,
           contextWindowIsApproximate: resolution.contextWindowIsApproximate,
+          inputWindow: resolution.inputWindow,
           providerOptions: resolution.providerOptions,
           trigger: 'user_images',
         };
@@ -2529,6 +2553,7 @@ export class Agent {
                 languageModel: fallback.languageModel,
                 contextWindow: fallback.contextWindow,
                 contextWindowIsApproximate: fallback.contextWindowIsApproximate,
+                inputWindow: fallback.inputWindow,
                 providerOptions: fallback.providerOptions,
                 trigger: 'fallback',
               };
@@ -2603,6 +2628,7 @@ export class Agent {
                   languageModel: resolution.languageModel,
                   contextWindow: resolution.contextWindow,
                   contextWindowIsApproximate: resolution.contextWindowIsApproximate,
+                  inputWindow: resolution.inputWindow,
                   providerOptions: resolution.providerOptions,
                   trigger: 'tool_image',
                 };

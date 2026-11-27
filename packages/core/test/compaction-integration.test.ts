@@ -373,6 +373,65 @@ describe('compaction trigger', () => {
     expect(fail?.error).toBe('llm timeout');
     expect(events.at(-1)?.type).toBe('run_finished');
   });
+
+  it('compacts on the discovered input window while the display keeps the total context', async () => {
+    const compact = okCompact();
+    const compactor: CompactorApi = { maybeCompact: vi.fn(), compact };
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hi'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 10_000,
+      // Deployment-discovered input cap, smaller than the 10k total context.
+      inputWindow: 3_000,
+      compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 500, thresholdPercent: 85 },
+      compactor,
+    });
+    // ~2,000 tokens: below the 10k-window trigger (~8,500) but above the
+    // 3k-basis trigger (min(2,550, 3,000 - reserve 1,500) = 1,500).
+    agent.session.messages.push({ role: 'user', content: 'x'.repeat(8_000) });
+
+    for await (const _ev of agent.run('go')) {
+      // drain
+    }
+
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect(compact).toHaveBeenCalledWith(
+      agent.session,
+      'threshold',
+      expect.objectContaining({ contextWindow: 3_000 }),
+    );
+    const breakdown = agent.contextBreakdown();
+    expect(breakdown.contextWindow).toBe(10_000);
+    expect(breakdown.triggerTokens).toBeLessThanOrEqual(3_000);
+  });
+
+  it('does not compact below the input-basis trigger even with a large total window', async () => {
+    const compact = vi.fn();
+    const compactor: CompactorApi = { maybeCompact: vi.fn(), compact };
+    const agent = new Agent({
+      cwd: '/tmp',
+      model: makeModel(),
+      languageModel: textOnlyModel('hi'),
+      tools: {} as ToolSet,
+      sandboxMode: 'off',
+      home,
+      contextWindow: 200_000,
+      inputWindow: 3_000,
+      compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 500, thresholdPercent: 85 },
+      compactor,
+    });
+    // ~1,300 tokens: above nothing — under the 1,500-token input-basis trigger.
+    agent.session.messages.push({ role: 'user', content: 'x'.repeat(5_200) });
+
+    for await (const _ev of agent.run('go')) {
+      // drain
+    }
+    expect(compact).not.toHaveBeenCalled();
+  });
 });
 
 describe('Agent.compactSession', () => {

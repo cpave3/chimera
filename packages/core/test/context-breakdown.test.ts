@@ -87,4 +87,26 @@ describe('computeContextBreakdown', () => {
     expect(breakdown.lastPromptTokens).toBeNull();
     expect(breakdown.estimatedTotalTokens).toBe(0);
   });
+
+  it('derives the trigger from the input window while reporting the total context', () => {
+    const breakdown = computeContextBreakdown({
+      messages: [],
+      systemPrompt: '',
+      lastPromptTokens: null,
+      contextWindow: 100_000,
+      inputWindow: 30_000,
+      maxOutputTokens: 8_192,
+      compaction: {
+        enabled: true,
+        reserveTokens: 4_000,
+        keepRecentTokens: 500,
+        thresholdPercent: 85,
+      },
+    });
+    expect(breakdown.contextWindow).toBe(100_000);
+    // Without the input window the trigger would be min(85_000, 87_712) =
+    // 85_000. On the 30_000 basis: reserve floor is the 8_192 output budget +
+    // 4_096 growth = 12_288, so the trigger is 30_000 - 12_288 = 17_712.
+    expect(breakdown.triggerTokens).toBe(17_712);
+  });
 });
