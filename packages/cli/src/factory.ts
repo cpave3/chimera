@@ -57,7 +57,7 @@ import {
   SystemOneAudit,
 } from '@chimera/permissions';
 import {
-  boundedOutputDefault,
+  derivedOutputDefault,
   buildKeyResolver,
   loadProviders,
   localCapabilities,
@@ -1310,9 +1310,12 @@ export class CliAgentFactory implements AgentFactory {
         tools: currentTools,
         contextWindow: described.newWindows.context.value,
         contextWindowIsApproximate: described.newWindows.context.source === 'fallback',
-        ...(described.newWindows.inputLimit !== undefined
-          ? { inputWindow: described.newWindows.promptBasis }
-          : {}),
+        // Always present: a target without an input cap must reset the
+        // session's basis to its own context, not keep the previous model's.
+        inputWindow:
+          described.newWindows.inputLimit !== undefined
+            ? described.newWindows.promptBasis
+            : undefined,
         providerOptions: described.generation.providerOptions,
       };
     };
@@ -1405,7 +1408,9 @@ export class CliAgentFactory implements AgentFactory {
         languageModel: provider.getModel(modelId, agent.session.id),
         contextWindow: windows.context.value,
         contextWindowIsApproximate: windows.context.source === 'fallback',
-        ...(windows.inputLimit !== undefined ? { inputWindow: windows.promptBasis } : {}),
+        // Always present: an uncapped run model falls back to its own
+        // context, not the selected model's input cap.
+        inputWindow: windows.inputLimit !== undefined ? windows.promptBasis : undefined,
         providerOptions: generation.providerOptions,
       };
     } catch (err) {
@@ -1520,17 +1525,10 @@ export class CliAgentFactory implements AgentFactory {
     // The derived default is not persisted into settingsDefaults: discovery
     // re-runs per build, and a creation default must stay user-owned.
     const discoveredOutputDefault =
-      windows?.outputLimit !== undefined &&
+      windows !== undefined &&
       defaults.maxOutputTokens === undefined &&
-      overrides.maxOutputTokens === undefined &&
-      capabilities.settings.maxOutputTokens?.status === 'supported'
-        ? windows.inputLimit !== undefined
-          ? Math.min(
-              boundedOutputDefault(windows.context.value),
-              windows.outputLimit,
-              Math.max(1_024, windows.context.value - windows.inputLimit),
-            )
-          : Math.min(boundedOutputDefault(windows.context.value), windows.outputLimit)
+      overrides.maxOutputTokens === undefined
+        ? derivedOutputDefault(capabilities, windows.context.value)
         : undefined;
     const resolved = resolveModelSettings(
       spec,

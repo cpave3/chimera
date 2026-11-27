@@ -247,6 +247,17 @@ describe('model settings requests', () => {
     ['an unsafe discovered context', { context: { status: 'discovered', value: 2 ** 53 } }],
     ['an invalid limit status', { output: { status: 'guessed', value: 100 } }],
     ['a discovered limit without a value', { context: { status: 'discovered' } }],
+    [
+      'a valid but partial block',
+      {
+        output: { status: 'discovered', value: 4_096 },
+        input: { status: 'unknown' },
+      },
+    ],
+    [
+      'a block with a null member',
+      { context: { status: 'unknown' }, input: null, output: { status: 'unknown' } },
+    ],
   ])('rejects capability payloads with %s into the unavailable fallback', async (label, limits) => {
     void label;
     const spec = {

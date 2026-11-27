@@ -7,6 +7,7 @@ import {
 import type { CompactionConfig, Session } from '@chimera/core';
 import { validateModelSettings } from '@chimera/core';
 import {
+  derivedOutputDefault,
   localCapabilities,
   type ProviderRegistry,
   type ResolvedModelWindows,
@@ -85,19 +86,42 @@ export function compactionCallOptions(config: ChimeraConfig, registry: ProviderR
     const { provider, modelId } = registry.resolve(ref);
     const spec = config.providers![provider.id];
     const options = config.models?.[ref];
+    // A pinned requestProfile fixes the settings profile, but token limits
+    // are independently useful: fetch them through the provider's cache.
+    const fetchedLimits =
+      options?.requestProfile && spec.capabilitySource === 'manticore'
+        ? await provider.getCapabilities(modelId).catch(() => undefined)
+        : undefined;
     const base = options?.requestProfile
-      ? localCapabilities(modelId, { ...spec, requestProfile: options.requestProfile })
+      ? {
+          ...localCapabilities(modelId, { ...spec, requestProfile: options.requestProfile }),
+          ...(fetchedLimits?.limits ? { limits: fetchedLimits.limits } : {}),
+        }
       : await provider.getCapabilities(modelId);
     const capabilities = { ...base, settings: { ...base.settings, ...options?.capabilities } };
     validateModelSettings(options?.settings ?? {}, capabilities);
     const active = ref === `${session.model.providerId}/${session.model.modelId}`;
+    // A separate summary model gets its own discovered output bound; the
+    // active model's session settings already carry the factory's derivation.
+    const derivedOutput = active
+      ? undefined
+      : derivedOutputDefault(
+          capabilities,
+          resolveModelWindows({
+            providerShape: spec.shape,
+            providerId: provider.id,
+            modelId,
+            override: options?.contextWindow,
+            capabilities,
+          }).context.value,
+        );
     const defaults = active
       ? (session.model.settings ?? {
           maxOutputTokens: session.model.maxOutputTokens,
           temperature: session.model.temperature,
         })
       : {
-          maxOutputTokens: options?.maxOutputTokens,
+          maxOutputTokens: options?.maxOutputTokens ?? derivedOutput,
           parallelToolCalls: options?.parallelToolCalls,
           ...options?.settings,
         };

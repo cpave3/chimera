@@ -11,6 +11,7 @@ export {
 export { buildKeyResolver } from './key';
 export {
   boundedOutputDefault,
+  derivedOutputDefault,
   type ResolveModelProfileInput,
   resolveModelProfile,
 } from './model-profile';

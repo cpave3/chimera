@@ -387,7 +387,12 @@ describe('compaction trigger', () => {
       contextWindow: 10_000,
       // Deployment-discovered input cap, smaller than the 10k total context.
       inputWindow: 3_000,
-      compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 500, thresholdPercent: 85 },
+      compaction: {
+        enabled: true,
+        reserveTokens: 1_000,
+        keepRecentTokens: 500,
+        thresholdPercent: 85,
+      },
       compactor,
     });
     // ~2,000 tokens: below the 10k-window trigger (~8,500) but above the
@@ -421,7 +426,12 @@ describe('compaction trigger', () => {
       home,
       contextWindow: 200_000,
       inputWindow: 3_000,
-      compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 500, thresholdPercent: 85 },
+      compaction: {
+        enabled: true,
+        reserveTokens: 1_000,
+        keepRecentTokens: 500,
+        thresholdPercent: 85,
+      },
       compactor,
     });
     // ~1,300 tokens: above nothing — under the 1,500-token input-basis trigger.

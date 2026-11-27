@@ -20,16 +20,18 @@ const LIMIT_FIELDS = ['context', 'input', 'output'] as const;
 
 /**
  * Boundary validation for the discovery `limits` block. Absent or null means
- * no discovery (the deployed Manticore pre-merge build serves `limits: null`);
- * anything present but malformed rejects the whole payload so invalid token
- * counts are never trusted.
+ * no discovery (the deployed Manticore pre-merge build serves `limits: null`).
+ * A block that is present must be complete — every member a valid descriptor —
+ * so downstream code never sees a partial ModelLimits; anything malformed
+ * rejects the whole payload so invalid token counts are never trusted.
  */
 export function assertModelLimits(limits: unknown): asserts limits is ModelLimits | null {
   if (limits === undefined || limits === null) return;
   if (typeof limits !== 'object' || Array.isArray(limits)) throw new Error('Invalid model limits');
   for (const field of LIMIT_FIELDS) {
     const descriptor: unknown = (limits as Record<string, unknown>)[field];
-    if (descriptor === undefined || descriptor === null) continue;
+    if (descriptor === undefined || descriptor === null)
+      throw new Error(`Invalid model limit: ${field} is missing`);
     if (typeof descriptor !== 'object' || Array.isArray(descriptor))
       throw new Error(`Invalid model limit: ${field}`);
     const { status, value } = descriptor as Record<string, unknown>;

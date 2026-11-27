@@ -1484,11 +1484,16 @@ export class Agent {
   }
 
   /**
-   * The prompt basis in effect for the current step: the run model's input
-   * window when the deployment reports one, else the total context window.
+   * The prompt basis in effect for the current step: the active model's input
+   * window when the deployment reports one, else that model's own context
+   * window. A run-scoped override without its own input cap falls back to the
+   * override's context, never the selected model's cap — the two models' deployments
+   * are independent.
    */
   private activeInputWindow(): number {
-    return this.modelOverride?.inputWindow ?? this.opts.inputWindow ?? this.activeContextWindow();
+    if (this.modelOverride)
+      return this.modelOverride.inputWindow ?? this.modelOverride.contextWindow;
+    return this.opts.inputWindow ?? this.opts.contextWindow;
   }
 
   private activeContextWindowIsApproximate(): boolean {
