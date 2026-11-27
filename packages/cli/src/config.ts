@@ -188,10 +188,12 @@ export interface ChimeraConfig {
   /**
    * Per-model overrides. Keyed by `<providerId>/<modelId>`.
    *
-   * - `contextWindow` — honored by `resolveContextWindow`.
+   * - `contextWindow` — wins over every other context-window source
+   *   (discovered deployment limits, the built-in table, the fallback).
    * - `maxOutputTokens` — forwarded to the AI SDK's `maxOutputTokens` so the
    *   model is not capped by the provider's small default (synthetic.new
-   *   defaults to 2048, which truncates long final syntheses).
+   *   defaults to 2048, which truncates long final syntheses). A value above
+   *   a discovered output cap is rejected with an error naming the cap.
    */
   models?: Record<string, ModelOptions>;
   modes?: {

@@ -9,7 +9,7 @@ import {
   projectMemoryDir,
   type SandboxMode,
 } from '@chimera/core';
-import { loadProviders, resolveContextWindow } from '@chimera/providers';
+import { loadProviders } from '@chimera/providers';
 import { applyOverlay, diffOverlay, discardOverlay, forkOverlay } from '@chimera/sandbox';
 import { AgentRegistry, buildApp, startServer } from '@chimera/server';
 import type { ReloadingAgentRegistry } from '@chimera/subagents';
@@ -28,6 +28,7 @@ import {
   compactionModelOptions,
   recallPrunerFactory,
   resolveCompactionConfig,
+  startupSessionWindows,
 } from '../compaction';
 import {
   approvalReviewerEnabled,
@@ -175,13 +176,9 @@ async function runInteractiveSession(
   });
 
   const compactionConfig = resolveCompactionConfig({ cliOverride: opts.compaction, config });
-  const resolvedWindow = resolveContextWindow({
-    providerShape: providersConfig.providers[model.providerId]?.shape ?? 'openai',
-    providerId: model.providerId,
-    modelId: model.modelId,
-    override: config.models?.[ref]?.contextWindow,
-  });
-  const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.value);
+  const providerRegistry = loadProviders(providersConfig);
+  const resolvedWindow = await startupSessionWindows(config, providerRegistry, ref);
+  const invariant = checkCompactionInvariant(compactionConfig, resolvedWindow.promptBasis);
   if (!invariant.ok) {
     process.stderr.write(`${invariant.error}\n`);
     process.exit(1);
@@ -189,17 +186,16 @@ async function runInteractiveSession(
 
   let compactor: Compactor | undefined;
   if (compactionConfig.enabled) {
-    const registry = loadProviders(providersConfig);
     compactor = new Compactor({
       config: compactionConfig,
-      contextWindow: resolvedWindow.value,
+      contextWindow: resolvedWindow.context.value,
       imageLongEdge: config.models?.[ref]?.imageLongEdge,
       resolveModel: async (ref, sessionId) => {
-        const target = registry.resolve(ref);
+        const target = providerRegistry.resolve(ref);
         return target.provider.getModel(target.modelId, sessionId);
       },
-      resolveCallOptions: compactionCallOptions(config, registry),
-      ...compactionModelOptions(config, registry),
+      resolveCallOptions: compactionCallOptions(config, providerRegistry),
+      ...compactionModelOptions(config, providerRegistry),
       home: opts.home,
       createPruner: recallPrunerFactory(config, opts.home),
     });
@@ -215,6 +211,7 @@ async function runInteractiveSession(
     modDirs: opts.modDirs,
     noMods: opts.mods === false,
     providersConfig,
+    registry: providerRegistry,
     autoApprove: opts.autoApprove ?? 'host',
     hostBashPolicy: resolveHostBashPolicy(config, opts.home),
     mcpServers,

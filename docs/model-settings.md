@@ -23,6 +23,22 @@ This selects the OpenAI-compatible adapter and enables authenticated `/model-cap
 
 Deploy Manticore support first, then Chimera, then Legato. These source changes do not restart services or edit the user's global configuration.
 
+## Discovered token limits
+
+Manticore's capability response carries an additive `limits` block — `context`, `input`, and `output`, each either `{status: "discovered", value}` or `{status: "unknown"}`. Chimera consumes it as follows:
+
+- **Context window** resolves in this order: an explicit `models[reference].contextWindow` override, the discovered context limit, the built-in table, and finally the conservative 128,000 fallback. A covered alias no longer warns about an unknown window, and the fallback warning still names the config key when nothing resolves.
+- **Prompt basis** (compaction triggers and targets): `min(discovered input limit, resolved context window)`, or the context window itself when no input limit was discovered. Compaction subtracts the output reserve from this basis exactly once, so a small input cap with a larger total context compacts early without double-counting output room. Display surfaces (`usage_updated`, context fill, `/context`'s window) keep the total context window.
+- **Output budget**: when the profile supports `maxOutputTokens` and nothing is configured, the default is `min` of the existing bounded profile heuristic (8% of the window, clamped to 2,000–25,000) and the discovered output cap — never the raw cap itself. An explicit `maxOutputTokens` stays the operator's choice, but a value above a verified cap (or above the context left after a discovered input cap) is rejected with an error naming the limit. Profiles that cannot send the setting (Codex) are untouched.
+
+Metadata that is absent, null, or malformed never widens a budget: a `limits: null` block (served by the pre-limits Manticore build) means no discovery, and a present-but-invalid block rejects the whole capability payload into the existing `unavailable` fallback. Limits are read independently of the settings profile — a pinned `requestProfile` keeps its configured settings while still receiving discovered limits, and an unknown profile does not prevent window discovery.
+
+Startup commands resolve the startup model's windows after discovery and check the compaction invariant against the discovered prompt basis, sharing one provider registry with the session factory so a single authenticated fetch serves both. A model selected later (via `/model`, a mode switch, or the vision fallback) is checked the same way, and a discovered window that invalidates the configured `compaction` reserve or keep-recent values surfaces that actionable error instead of silently breaking compaction.
+
+**Limitations.** Discovery reflects what the deployment reports, not account entitlements. A discovered window is only as fresh as Manticore's own catalogue (verified 24 h, refreshed behind responses there). Values beyond positive safe integers are treated as unknown. The Codex profile cannot carry an output setting, so a Codex model's discovered output cap is currently unapplied — no default is derived and the compaction reserve floor keeps its fixed default for those models.
+
+**Contract fixture follow-up (not part of this change):** the optional `limits` block should be added to `contracts/model-settings-v1.json` as a coordinated cross-repository edit so all three copies (Chimera, Manticore, Legato) change together; the wire field is optional and the current fixture remains valid until then.
+
 ## Image input and vision routing
 
 Image turns stay on the selected model when its effective `vision` capability is true. Otherwise, Chimera uses `defaultVisionModel` for that run and then returns to the selected model. This applies to pasted attachments, appended messages, and tool-produced images. A vision-capable follow-up retains image history.

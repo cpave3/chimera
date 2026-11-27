@@ -24,9 +24,28 @@ export interface SettingCapability {
   reason?: string;
 }
 
+/**
+ * A deployment-discovered token limit: verified from the serving endpoint, or
+ * explicitly unknown. `value` is present only for a discovery and is always a
+ * positive safe integer.
+ */
+export type DiscoveredLimit = { status: 'discovered'; value: number } | { status: 'unknown' };
+
+export interface ModelLimits {
+  context: DiscoveredLimit;
+  input: DiscoveredLimit;
+  output: DiscoveredLimit;
+}
+
 export interface ModelCapabilities {
   /** Absent means unknown; a text-only array explicitly excludes image input. */
   inputModalities?: Array<'text' | 'image'>;
+  /**
+   * Token limits discovered through the serving provider (Manticore). Absent
+   * or null means no discovery ran; independent of the settings profile, so
+   * limits stay usable even when the profile is unknown or pinned.
+   */
+  limits?: ModelLimits;
   schemaVersion: 1;
   modelId: string;
   profile: string;
@@ -114,4 +133,18 @@ export function validateModelSettings(
     settings.thinkingBudgetTokens >= settings.maxOutputTokens
   )
     throw new Error('Thinking budget must be smaller than the output limit');
+  if (settings.maxOutputTokens !== undefined && capabilities.limits) {
+    const { context, input, output } = capabilities.limits;
+    if (output.status === 'discovered' && settings.maxOutputTokens > output.value)
+      throw new Error(
+        `maxOutputTokens ${settings.maxOutputTokens} exceeds the discovered output limit of ${output.value} tokens for this model`,
+      );
+    if (context.status === 'discovered' && input.status === 'discovered') {
+      const outputRoom = context.value - input.value;
+      if (outputRoom > 0 && settings.maxOutputTokens > outputRoom)
+        throw new Error(
+          `maxOutputTokens ${settings.maxOutputTokens} exceeds the context left above the discovered input limit (${outputRoom} = context ${context.value} - input ${input.value})`,
+        );
+    }
+  }
 }

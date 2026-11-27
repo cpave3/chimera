@@ -150,14 +150,15 @@ function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOption
         signal: AbortSignal.timeout(3000),
       });
       if (!response.ok) throw new Error(`Capability discovery returned ${response.status}`);
-      const capabilities = (await response.json()) as ModelCapabilities;
-      assertModelCapabilities(capabilities);
-      if (
-        capabilities.schemaVersion !== 1 ||
-        !capabilities.settings ||
-        typeof capabilities.profile !== 'string'
-      )
+      const payload = (await response.json()) as ModelCapabilities;
+      assertModelCapabilities(payload);
+      if (payload.schemaVersion !== 1 || !payload.settings || typeof payload.profile !== 'string')
         throw new Error('Invalid capability response');
+      // A pre-merge Manticore build serves `limits: null`; absent means the same.
+      const capabilities =
+        payload.limits === null || payload.limits === undefined
+          ? { ...payload, limits: undefined }
+          : payload;
       cache.set(modelId, { expires: Date.now() + 30_000, capabilities });
       return capabilities;
     } catch {

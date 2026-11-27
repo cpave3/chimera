@@ -31,6 +31,11 @@ export interface ContextBreakdownInput {
   systemPrompt: string;
   lastPromptTokens: number | null;
   contextWindow: number;
+  /**
+   * The prompt basis (discovered input limit capped by the context window).
+   * Compaction triggers are computed against this; defaults to `contextWindow`.
+   */
+  inputWindow?: number;
   compaction?: CompactionConfig;
   maxOutputTokens?: number;
   /** Long edge images are scaled to before pricing; see EstimateOptions. */
@@ -72,18 +77,16 @@ export function computeContextBreakdown(input: ContextBreakdownInput): ContextBr
 
   let triggerTokens: number | null = null;
   if (input.compaction?.enabled) {
+    const basis = input.inputWindow ?? input.contextWindow;
     const reserve = Math.min(
       Math.max(
         input.compaction.reserveTokens,
         (input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS) + GROWTH_MARGIN_TOKENS,
       ),
-      input.contextWindow / 2,
+      basis / 2,
     );
     triggerTokens = Math.floor(
-      Math.min(
-        (input.contextWindow * (input.compaction.thresholdPercent ?? 85)) / 100,
-        input.contextWindow - reserve,
-      ),
+      Math.min((basis * (input.compaction.thresholdPercent ?? 85)) / 100, basis - reserve),
     );
   }
 

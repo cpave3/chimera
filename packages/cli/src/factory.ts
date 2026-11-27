@@ -57,13 +57,16 @@ import {
   SystemOneAudit,
 } from '@chimera/permissions';
 import {
+  derivedOutputDefault,
   buildKeyResolver,
   loadProviders,
   localCapabilities,
+  type ProviderRegistry,
   type ProvidersConfig,
-  resolveContextWindow,
+  type ResolvedModelWindows,
   resolveModelProfile,
   resolveModelSettings,
+  resolveModelWindows,
 } from '@chimera/providers';
 import { RecallStore } from '@chimera/recall';
 import { DockerExecutor, writeSandboxBuildContext } from '@chimera/sandbox';
@@ -98,6 +101,7 @@ import {
 } from '@chimera/tools';
 import type { ToolSet } from 'ai';
 import { reviewContext } from './approval-reviewer';
+import { checkCompactionInvariant } from './compaction';
 import type {
   HostBashPolicyConfig,
   McpServerConfig,
@@ -123,6 +127,13 @@ export interface CliAgentFactoryOptions {
   modDirs?: string[];
   noMods?: boolean;
   providersConfig: ProvidersConfig;
+  /**
+   * A pre-built provider registry to share with the caller (the CLI commands
+   * warm the startup model's capabilities through it before the invariant
+   * check, and the factory's own discovery then hits the same 30s cache
+   * instead of re-fetching).
+   */
+  registry?: ProviderRegistry;
   autoApprove: AutoApproveLevel;
   hostBashPolicy?: HostBashPolicyConfig;
   mcpServers?: Record<string, McpServerConfig>;
@@ -320,7 +331,7 @@ export class CliAgentFactory implements AgentFactory {
     this.mods = opts.mods;
     this.modDirs = opts.modDirs;
     this.noMods = opts.noMods;
-    this.registry = loadProviders(opts.providersConfig, { warn: opts.warn });
+    this.registry = opts.registry ?? loadProviders(opts.providersConfig, { warn: opts.warn });
     this.autoApprove = opts.autoApprove;
     // The CLI commands pass the policy of the user's config, where the OS
     // sandbox is on by default. A factory built without one does not start
@@ -453,18 +464,32 @@ export class CliAgentFactory implements AgentFactory {
     }
     const ref = `${init.model.providerId}/${init.model.modelId}`;
     const { provider, modelId } = this.registry.resolve(ref);
-    await this.getModelCapabilities(ref);
+    const startupCapabilities = await this.getModelCapabilities(ref);
     for (const target of [
       this.defaultVisionModel,
+      this.fallbackModel,
       ...(this.modes?.all().map((mode) => mode.model) ?? []),
     ]) {
       if (target) await this.getModelCapabilities(target).catch(() => undefined);
     }
+    const providerSpec = this.providersConfig.providers[init.model.providerId];
+    const providerShape = providerSpec?.shape ?? provider.shape;
+    const resolvedWindows = resolveModelWindows({
+      providerShape,
+      providerId: init.model.providerId,
+      modelId,
+      override: this.modelsConfig[ref]?.contextWindow,
+      capabilities: startupCapabilities,
+      warn: this.warn,
+    });
+    this.assertCompactionFits(ref, resolvedWindows.promptBasis);
+
     const initialOverrides = modelSettingsOverrides[ref] ?? {};
     const initialGeneration = this.resolveGeneration(
       ref,
       initialOverrides,
       modelCreationDefaults[ref],
+      resolvedWindows,
     );
     init = {
       ...init,
@@ -478,17 +503,7 @@ export class CliAgentFactory implements AgentFactory {
     const sessionId = session?.id ?? init.requestedSessionId ?? newSessionId();
     const languageModel = provider.getModel(modelId, sessionId);
 
-    const providerSpec = this.providersConfig.providers[init.model.providerId];
-    const providerShape = providerSpec?.shape ?? provider.shape;
-    const resolvedWindow = resolveContextWindow({
-      providerShape,
-      providerId: init.model.providerId,
-      modelId,
-      override: this.modelsConfig[ref]?.contextWindow,
-      warn: this.warn,
-    });
-
-    const initialProfile = profileFor(ref, modelId, resolvedWindow.value);
+    const initialProfile = profileFor(ref, modelId, resolvedWindows.promptBasis);
     init = {
       ...init,
       model: {
@@ -503,7 +518,7 @@ export class CliAgentFactory implements AgentFactory {
 
     const skillsReg = this.skills;
     // The window of the model the session is on now; a model change moves it.
-    let sessionWindow = resolvedWindow.value;
+    let sessionWindow = resolvedWindows.context.value;
     const skillIndexFor = (contextWindow: number) =>
       skillsReg
         ? [
@@ -610,8 +625,11 @@ export class CliAgentFactory implements AgentFactory {
       sessionName: init.name,
       home: this.home,
       skillActivation,
-      contextWindow: resolvedWindow.value,
-      contextWindowIsApproximate: resolvedWindow.source === 'fallback',
+      contextWindow: resolvedWindows.context.value,
+      contextWindowIsApproximate: resolvedWindows.context.source === 'fallback',
+      ...(resolvedWindows.inputLimit !== undefined
+        ? { inputWindow: resolvedWindows.promptBasis }
+        : {}),
       initialMode: activeMode?.name ?? requestedMode,
       compaction: this.compaction,
       compactor: this.compactor,
@@ -990,7 +1008,7 @@ export class CliAgentFactory implements AgentFactory {
         gate,
         cwd: init.cwd,
         warn: this.warn,
-        contextWindow: resolvedWindow.value,
+        contextWindow: resolvedWindows.context.value,
         activate: (entries) => activateMcpTools(entries),
       });
       if (deferred) {
@@ -1190,7 +1208,9 @@ export class CliAgentFactory implements AgentFactory {
     });
 
     // Everything about a model that follows from its ref: used when the user
-    // or a mode moves the session to another model.
+    // or a mode moves the session to another model. Reads the factory's
+    // capability cache: startup warmed the session, vision, fallback and all
+    // mode models, and every settings change refreshes its target first.
     const describeModel = (
       ref: string,
       overrides = agent.session.modelSettingsOverrides?.[ref] ?? {},
@@ -1198,19 +1218,21 @@ export class CliAgentFactory implements AgentFactory {
       const { provider: newProvider, modelId: newModelId } = this.registry.resolve(ref);
       const newProviderSpec = this.providersConfig.providers[newProvider.id];
       const newProviderShape = newProviderSpec?.shape ?? newProvider.shape;
-      const newWindow = resolveContextWindow({
+      const newWindows = resolveModelWindows({
         providerShape: newProviderShape,
         providerId: newProvider.id,
         modelId: newModelId,
         override: this.modelsConfig[ref]?.contextWindow,
+        capabilities: this.modelCapabilities.get(ref),
         warn: this.warn,
       });
       const generation = this.resolveGeneration(
         ref,
         overrides,
         agent.session.modelCreationDefaults?.[ref],
+        newWindows,
       );
-      const profile = profileFor(ref, newModelId, newWindow.value);
+      const profile = profileFor(ref, newModelId, newWindows.promptBasis);
       const newModel: ModelConfig = {
         providerId: newProvider.id,
         modelId: newModelId,
@@ -1222,7 +1244,13 @@ export class CliAgentFactory implements AgentFactory {
         outputBudgetTokens: profile.outputBudgetTokens,
         ...generation.modelFields,
       };
-      return { model: newModel, provider: newProvider, modelId: newModelId, newWindow, generation };
+      return {
+        model: newModel,
+        provider: newProvider,
+        modelId: newModelId,
+        newWindows,
+        generation,
+      };
     };
 
     if (modesReg && activeMode) {
@@ -1253,7 +1281,7 @@ export class CliAgentFactory implements AgentFactory {
             next,
             nextTools,
             surface,
-            described?.newWindow.value ?? sessionWindow,
+            described?.newWindows.context.value ?? sessionWindow,
           ),
           tools: nextTools,
           effectiveModel,
@@ -1270,17 +1298,24 @@ export class CliAgentFactory implements AgentFactory {
       overrides = agent.session.modelSettingsOverrides?.[ref] ?? {},
     ) => {
       const described = describeModel(ref, overrides);
+      this.assertCompactionFits(ref, described.newWindows.promptBasis);
       const currentMode = modesReg ? modesReg.find(agent.session.mode) : undefined;
       const surface = surfaceFor(described.model);
       const currentTools = toolsInMode(surface, currentMode);
-      sessionWindow = described.newWindow.value;
+      sessionWindow = described.newWindows.context.value;
       return {
         model: described.model,
         languageModel: described.provider.getModel(described.modelId, agent.session.id),
         systemPrompt: promptFor(described.model, currentMode, currentTools, surface, sessionWindow),
         tools: currentTools,
-        contextWindow: described.newWindow.value,
-        contextWindowIsApproximate: described.newWindow.source === 'fallback',
+        contextWindow: described.newWindows.context.value,
+        contextWindowIsApproximate: described.newWindows.context.source === 'fallback',
+        // Always present: a target without an input cap must reset the
+        // session's basis to its own context, not keep the previous model's.
+        inputWindow:
+          described.newWindows.inputLimit !== undefined
+            ? described.newWindows.promptBasis
+            : undefined,
         providerOptions: described.generation.providerOptions,
       };
     };
@@ -1345,14 +1380,20 @@ export class CliAgentFactory implements AgentFactory {
     try {
       const { provider, modelId } = this.registry.resolve(ref);
       const providerSpec = this.providersConfig.providers[provider.id];
-      const window = resolveContextWindow({
+      const windows = resolveModelWindows({
         providerShape: providerSpec?.shape ?? provider.shape,
         providerId: provider.id,
         modelId,
         override: this.modelsConfig[ref]?.contextWindow,
+        capabilities: this.modelCapabilities.get(ref),
         warn: this.warn,
       });
-      const generation = this.resolveGeneration(ref);
+      const invariant = this.compaction
+        ? checkCompactionInvariant(this.compaction, windows.promptBasis)
+        : { ok: true as const };
+      if (!invariant.ok)
+        return { status: 'unavailable', reason: `model ${ref}: ${invariant.error}` };
+      const generation = this.resolveGeneration(ref, {}, undefined, windows);
       return {
         status: 'ok',
         ref,
@@ -1365,8 +1406,11 @@ export class CliAgentFactory implements AgentFactory {
           ...generation.modelFields,
         },
         languageModel: provider.getModel(modelId, agent.session.id),
-        contextWindow: window.value,
-        contextWindowIsApproximate: window.source === 'fallback',
+        contextWindow: windows.context.value,
+        contextWindowIsApproximate: windows.context.source === 'fallback',
+        // Always present: an uncapped run model falls back to its own
+        // context, not the selected model's input cap.
+        inputWindow: windows.inputLimit !== undefined ? windows.promptBasis : undefined,
         providerOptions: generation.providerOptions,
       };
     } catch (err) {
@@ -1391,8 +1435,17 @@ export class CliAgentFactory implements AgentFactory {
     const { provider, modelId } = this.registry.resolve(ref);
     const modelOptions = this.modelsConfig[ref];
     const spec = this.providersConfig.providers[provider.id];
+    // A pinned requestProfile fixes the settings profile, but token limits are
+    // independently useful: still fetch them through the provider's cache.
+    const fetched =
+      modelOptions?.requestProfile && spec.capabilitySource === 'manticore'
+        ? await provider.getCapabilities(modelId, refresh).catch(() => undefined)
+        : undefined;
     const base = modelOptions?.requestProfile
-      ? localCapabilities(modelId, { ...spec, requestProfile: modelOptions.requestProfile })
+      ? {
+          ...localCapabilities(modelId, { ...spec, requestProfile: modelOptions.requestProfile }),
+          ...(fetched?.limits ? { limits: fetched.limits } : {}),
+        }
       : await provider.getCapabilities(modelId, refresh);
     const capabilities = modelOptions?.capabilities
       ? ({
@@ -1426,7 +1479,25 @@ export class CliAgentFactory implements AgentFactory {
     );
   }
 
-  private resolveGeneration(ref: string, overrides: ModelSettings = {}, legacy?: ModelSettings) {
+  /**
+   * Reject a model whose discovered window makes the configured compaction
+   * impossible (reserve + keep-recent larger than the effective trigger). The
+   * message names the config keys to fix, mirroring the startup exit.
+   */
+  private assertCompactionFits(ref: string, promptBasis: number): void {
+    if (!this.compaction) return;
+    const invariant = checkCompactionInvariant(this.compaction, promptBasis);
+    if (!invariant.ok) {
+      throw new Error(`model ${ref}: ${invariant.error}`);
+    }
+  }
+
+  private resolveGeneration(
+    ref: string,
+    overrides: ModelSettings = {},
+    legacy?: ModelSettings,
+    windows?: ResolvedModelWindows,
+  ) {
     const { provider, modelId } = this.registry.resolve(ref);
     const options = this.modelsConfig[ref];
     const spec = this.providersConfig.providers[provider.id];
@@ -1448,10 +1519,23 @@ export class CliAgentFactory implements AgentFactory {
       ),
       ...options?.settings,
     };
+    // A discovered output cap bounds the profile heuristic — never the raw
+    // cap itself — so an unset limit stays modest and never silently
+    // overrides the operator's explicit choice (which the validator checks).
+    // The derived default is not persisted into settingsDefaults: discovery
+    // re-runs per build, and a creation default must stay user-owned.
+    const discoveredOutputDefault =
+      windows !== undefined &&
+      defaults.maxOutputTokens === undefined &&
+      overrides.maxOutputTokens === undefined
+        ? derivedOutputDefault(capabilities, windows.context.value)
+        : undefined;
     const resolved = resolveModelSettings(
       spec,
       capabilities,
-      defaults,
+      discoveredOutputDefault === undefined
+        ? defaults
+        : { ...defaults, maxOutputTokens: discoveredOutputDefault },
       overrides,
       options?.providerExtensions,
     );
