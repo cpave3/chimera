@@ -152,11 +152,7 @@ function buildProvider(id: string, spec: ProviderSpec, opts: LoadProvidersOption
       if (!response.ok) throw new Error(`Capability discovery returned ${response.status}`);
       const payload = (await response.json()) as ModelCapabilities;
       assertModelCapabilities(payload);
-      if (
-        payload.schemaVersion !== 1 ||
-        !payload.settings ||
-        typeof payload.profile !== 'string'
-      )
+      if (payload.schemaVersion !== 1 || !payload.settings || typeof payload.profile !== 'string')
         throw new Error('Invalid capability response');
       // A pre-merge Manticore build serves `limits: null`; absent means the same.
       const capabilities =

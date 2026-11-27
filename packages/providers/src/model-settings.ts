@@ -26,8 +26,7 @@ const LIMIT_FIELDS = ['context', 'input', 'output'] as const;
  */
 export function assertModelLimits(limits: unknown): asserts limits is ModelLimits | null {
   if (limits === undefined || limits === null) return;
-  if (typeof limits !== 'object' || Array.isArray(limits))
-    throw new Error('Invalid model limits');
+  if (typeof limits !== 'object' || Array.isArray(limits)) throw new Error('Invalid model limits');
   for (const field of LIMIT_FIELDS) {
     const descriptor: unknown = (limits as Record<string, unknown>)[field];
     if (descriptor === undefined || descriptor === null) continue;

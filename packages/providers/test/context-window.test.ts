@@ -1,8 +1,10 @@
+import type { ModelLimits } from '@chimera/core';
 import { describe, expect, it } from 'vitest';
 import {
+  __resetContextWindowWarnings,
   CONTEXT_WINDOW_FALLBACK,
   resolveContextWindow,
-  __resetContextWindowWarnings,
+  resolveModelWindows,
 } from '../src/context-window';
 
 describe('resolveContextWindow', () => {
@@ -92,5 +94,133 @@ describe('resolveContextWindow', () => {
     });
     expect(result.source).toBe('table');
     expect(result.value).toBeGreaterThan(0);
+  });
+
+  it('discovered deployment context beats the built-in table', () => {
+    __resetContextWindowWarnings();
+    const result = resolveContextWindow({
+      providerShape: 'anthropic',
+      providerId: 'proxy',
+      modelId: 'claude-sonnet-4-5',
+      discovered: 300_000,
+    });
+    expect(result).toEqual({ value: 300_000, source: 'discovered' });
+  });
+
+  it('discovered context covers an unknown alias without the fallback warning', () => {
+    __resetContextWindowWarnings();
+    const warnings: string[] = [];
+    const result = resolveContextWindow({
+      providerShape: 'openai',
+      providerId: 'manticore',
+      modelId: 'glm-go',
+      discovered: 1_000_000,
+      warn: (m) => warnings.push(m),
+    });
+    expect(result).toEqual({ value: 1_000_000, source: 'discovered' });
+    expect(warnings).toEqual([]);
+  });
+
+  it('an explicitly configured context override still beats discovery', () => {
+    __resetContextWindowWarnings();
+    const result = resolveContextWindow({
+      providerShape: 'openai',
+      providerId: 'manticore',
+      modelId: 'glm-go',
+      override: 128_000,
+      discovered: 1_000_000,
+    });
+    expect(result).toEqual({ value: 128_000, source: 'override' });
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    2 ** 53,
+    Number.POSITIVE_INFINITY,
+  ])('ignores an invalid discovered value of %s and keeps the legacy path', (invalid) => {
+    __resetContextWindowWarnings();
+    const warnings: string[] = [];
+    const result = resolveContextWindow({
+      providerShape: 'openai',
+      providerId: 'manticore',
+      modelId: 'glm-go',
+      discovered: invalid,
+      warn: (m) => warnings.push(m),
+    });
+    expect(result).toEqual({ value: CONTEXT_WINDOW_FALLBACK, source: 'fallback' });
+    expect(warnings.length).toBe(1);
+  });
+});
+
+describe('resolveModelWindows', () => {
+  const limits = (over: Partial<ModelLimits>): ModelLimits =>
+    ({
+      context: { status: 'unknown' },
+      input: { status: 'unknown' },
+      output: { status: 'unknown' },
+      ...over,
+    }) as ModelLimits;
+
+  it('resolves the prompt basis as the discovered input capped by the total context', () => {
+    __resetContextWindowWarnings();
+    const resolved = resolveModelWindows({
+      providerShape: 'openai',
+      providerId: 'manticore',
+      modelId: 'glm-go',
+      capabilities: {
+        limits: limits({
+          context: { status: 'discovered', value: 262_144 },
+          input: { status: 'discovered', value: 131_072 },
+          output: { status: 'discovered', value: 32_768 },
+        }),
+      },
+    });
+    expect(resolved.context).toEqual({ value: 262_144, source: 'discovered' });
+    expect(resolved.inputLimit).toBe(131_072);
+    expect(resolved.outputLimit).toBe(32_768);
+    expect(resolved.promptBasis).toBe(131_072);
+  });
+
+  it('keeps the prompt basis at the total context when no input limit is discovered', () => {
+    __resetContextWindowWarnings();
+    const resolved = resolveModelWindows({
+      providerShape: 'openai',
+      providerId: 'manticore',
+      modelId: 'glm-go',
+      capabilities: { limits: limits({ context: { status: 'discovered', value: 262_144 } }) },
+    });
+    expect(resolved.inputLimit).toBeUndefined();
+    expect(resolved.promptBasis).toBe(262_144);
+  });
+
+  it('clamps an oversized discovered input to the resolved context window', () => {
+    __resetContextWindowWarnings();
+    const resolved = resolveModelWindows({
+      providerShape: 'anthropic',
+      providerId: 'proxy',
+      modelId: 'claude-sonnet-4-5',
+      override: 200_000,
+      capabilities: {
+        limits: limits({ input: { status: 'discovered', value: 1_000_000 } }),
+      },
+    });
+    expect(resolved.context).toEqual({ value: 200_000, source: 'override' });
+    expect(resolved.promptBasis).toBe(200_000);
+  });
+
+  it('preserves legacy windows without capability metadata', () => {
+    __resetContextWindowWarnings();
+    const resolved = resolveModelWindows({
+      providerShape: 'openai',
+      providerId: 'local',
+      modelId: 'some-experimental',
+    });
+    expect(resolved.context).toEqual({ value: CONTEXT_WINDOW_FALLBACK, source: 'fallback' });
+    expect(resolved.inputLimit).toBeUndefined();
+    expect(resolved.outputLimit).toBeUndefined();
+    expect(resolved.promptBasis).toBe(CONTEXT_WINDOW_FALLBACK);
   });
 });

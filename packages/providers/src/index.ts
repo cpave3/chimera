@@ -4,6 +4,9 @@ export {
   type ResolveContextWindowOptions,
   type ResolvedContextWindow,
   resolveContextWindow,
+  type ResolveModelWindowsOptions,
+  resolveModelWindows,
+  type ResolvedModelWindows,
 } from './context-window';
 export { buildKeyResolver } from './key';
 export { type ResolveModelProfileInput, resolveModelProfile } from './model-profile';
